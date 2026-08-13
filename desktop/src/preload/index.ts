@@ -52,6 +52,18 @@ const api = {
     ipcRenderer.on('conversation:title-updated', handler)
     return () => ipcRenderer.removeListener('conversation:title-updated', handler)
   },
+  onConversationTitleError(
+    callback: (data: { conversationId: string; error: string }) => void
+  ): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; error: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('conversation:title-error', handler)
+    return () => ipcRenderer.removeListener('conversation:title-error', handler)
+  },
   // ── 文件附件 API ──
   inspectFile(path: string) {
     return ipcRenderer.invoke('file:inspect', path)

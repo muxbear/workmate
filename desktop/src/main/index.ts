@@ -364,8 +364,14 @@ app.whenReady().then(() => {
           },
           controller.signal
         )
-        // 对话流完成后异步生成 AI 总结标题（不阻塞响应；失败静默兜底为派生标题）
-        void generateConversationTitle(userId, conversationId, win)
+        // 对话流完成后异步生成 AI 总结标题（不阻塞响应；失败通过 title-error 事件提示）
+        void generateConversationTitle(
+          userId,
+          conversationId,
+          win,
+          modelService,
+          customModelId
+        )
         console.log('[main] invokeSendMessage completed, returning success')
         return { success: true }
       } catch (error) {
@@ -406,22 +412,28 @@ app.whenReady().then(() => {
 
   /**
    * 对话流结束后异步生成 AI 总结标题并推送更新事件（渲染层侧栏即时刷新）
-   * 失败（LLM 不可用/超时）时静默——会话标题保持派生标题（首条消息截断兜底）
+   * 失败（模型未配置/LLM 不可用/超时）时推送 title-error 事件，会话标题保持派生标题（首条消息截断兜底）
    */
   async function generateConversationTitle(
     userId: string,
     conversationId: string,
-    win: BrowserWindow
+    win: BrowserWindow,
+    modelService: ModelService,
+    customModelId?: string
   ): Promise<void> {
     try {
       const messages = await conversationStore.getMessages(userId, conversationId)
       if (messages.length === 0) return
-      const title = await summarizeTitle(messages)
+      const title = await summarizeTitle(messages, modelService, customModelId)
       if (!title) return
       conversationStore.saveAutoTitle(userId, conversationId, title)
       win.webContents.send('conversation:title-updated', { conversationId, title })
     } catch (err) {
       console.error('[main] generate conversation title failed:', err)
+      win.webContents.send('conversation:title-error', {
+        conversationId,
+        error: err instanceof Error ? err.message : '标题生成失败'
+      })
     }
   }
 

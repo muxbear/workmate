@@ -929,6 +929,8 @@ const sendMessage = (): void => {
   const hasFile = parts.some((p) => p.type === 'file')
   const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join('').trim()
   if (!hasFile && !text) return
+  // 发送后进入对话态前收起模型下拉，避免 chat 工具栏复用时残留展开态
+  modelOpen.value = false
   // 清空输入框（DOM + 快照 + 技能勾选 + 抑制挂载时提示词重插）
   if (el) el.textContent = ''
   taskInput.value = ''
@@ -1048,13 +1050,20 @@ const handleDocumentClick = (e: MouseEvent): void => {
   }
 }
 
+let removeTitleErrorListener: (() => void) | null = null
+
 onMounted(() => {
   document.addEventListener('mousedown', handleDocumentClick)
   // 自定义模型列表（设置页新增后聊天页下拉同步刷新；失败静默保留旧值）
   void modelStore.load()
+  // 标题总结失败时在对话态直接提示
+  removeTitleErrorListener = window.api.onConversationTitleError(({ error }) => {
+    showToast(error)
+  })
 })
 
 onUnmounted(() => {
+  removeTitleErrorListener?.()
   document.removeEventListener('mousedown', handleDocumentClick)
   if ('speechSynthesis' in window) window.speechSynthesis.cancel()
   // 输入框随页面卸载：丢弃未发送草稿的技能勾选（发送路径已清空，此处兜底导航/重挂载）
@@ -2503,6 +2512,75 @@ watch(
                 </span>
                 <span class="expert-chip-name">{{ catalog.selectedExpert.name }}</span>
               </div>
+              <div class="model-selector model-selector--compact">
+                <button
+                  class="model-btn"
+                  @mouseenter="modelMenuHover.open"
+                  @mouseleave="modelMenuHover.scheduleClose"
+                >
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  {{ model }}
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                <Transition name="dropdown">
+                  <div
+                    v-if="modelOpen"
+                    class="model-dropdown"
+                    @mouseenter="modelMenuHover.cancelClose"
+                    @mouseleave="modelMenuHover.closeNow"
+                  >
+                    <template
+                      v-for="group in modelGroups"
+                      :key="group.name"
+                    >
+                      <div
+                        v-if="group.items.length > 0"
+                        class="model-group-label"
+                      >
+                        {{ group.name }}
+                      </div>
+                      <button
+                        v-for="opt in group.items"
+                        :key="opt.id ?? opt.name"
+                        :class="['model-option', { 'model-option--active': model === opt.name }]"
+                        @click="selectModel(opt)"
+                      >
+                        <svg
+                          v-if="model === opt.name"
+                          width="10"
+                          height="10"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="3"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        <span v-else class="model-option-gap"></span>
+                        {{ opt.name }}
+                      </button>
+                    </template>
+                  </div>
+                </Transition>
+              </div>
               <div class="toolbar-spacer"></div>
               <button class="toolbar-btn">
                 <svg
@@ -2851,6 +2929,11 @@ watch(
 /* Model selector */
 .model-selector {
   position: relative;
+}
+
+.model-selector--compact .model-btn {
+  padding: 2px 8px;
+  font-size: 11px;
 }
 
 .model-btn {

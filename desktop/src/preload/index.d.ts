@@ -96,6 +96,10 @@ export interface ConversationAPI {
   onConversationTitleUpdated(
     callback: (data: { conversationId: string; title: string }) => void
   ): () => void
+  /** 监听 AI 总结标题生成失败（主进程推送错误信息，供对话页 toast 提示） */
+  onConversationTitleError(
+    callback: (data: { conversationId: string; error: string }) => void
+  ): () => void
 }
 
 export interface ModeAPI {

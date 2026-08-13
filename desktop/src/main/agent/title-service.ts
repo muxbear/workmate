@@ -1,4 +1,9 @@
-import { ChatDeepSeek } from '@langchain/deepseek'
+import type { ModelService } from '../model/ModelService'
+import {
+  createModelFromCredential,
+  resolveDefaultModel,
+  type ChatModel
+} from './ModelFactory'
 
 /** 标题长度上限（严格限制，超出截断） */
 export const TITLE_MAX_LEN = 20
@@ -25,14 +30,29 @@ export function cleanTitle(raw: string): string {
  * @throws 调用失败或输出为空时抛错（调用方兜底为首条消息截断）
  */
 export async function summarizeTitle(
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  modelService?: ModelService,
+  customModelId?: string
 ): Promise<string> {
-  // 用对话模型（deepseek-chat）而非推理模型：推理模型的 max_tokens 会被 reasoning_content 耗尽导致 content 为空
-  const llm = new ChatDeepSeek({
-    model: 'deepseek-chat',
-    temperature: 0,
-    maxTokens: 64
-  })
+  // 标题总结优先跟随欢迎态/对话态当前选择的模型；
+  // 未选择自定义模型时回退到系统默认模型，确保与对话使用的模型一致。
+  const selectedCredential = customModelId
+    ? modelService?.getCredential(customModelId)
+    : undefined
+
+  let llm: ChatModel
+  if (selectedCredential) {
+    llm = await createModelFromCredential(selectedCredential)
+  } else if (modelService) {
+    const resolved = await resolveDefaultModel(modelService, 'deepseek:deepseek-v4-pro')
+    if (typeof resolved === 'string') {
+      throw new Error('请先在“系统设置 -> 模型”中配置一个模型')
+    }
+    llm = resolved
+  } else {
+    throw new Error('请先在“系统设置 -> 模型”中配置一个模型')
+  }
+
   const transcript = messages
     .slice(0, MAX_MESSAGES_FOR_TITLE)
     .map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content.slice(0, MAX_MESSAGE_CHARS)}`)
