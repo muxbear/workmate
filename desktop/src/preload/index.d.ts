@@ -128,7 +128,7 @@ export interface WorkspaceFileContent {
   truncated: boolean
 }
 
-/** 工作空间 Word 文件原始字节（doc 会被主进程转换为 docx 后返回）。 */
+/** 工作空间 Word/PDF 文件原始字节（doc 会被主进程转换为 docx 后返回）。 */
 export interface WorkspaceFileBinary {
   name: string
   ext: string
@@ -154,7 +154,7 @@ export interface WorkspaceAPI {
   ): Promise<IpcResult<WorkspaceFileEntry[]>>
   /** 读取工作空间下文件文本内容 */
   readWorkspaceFile(workspaceId: string, relPath: string): Promise<IpcResult<WorkspaceFileContent>>
-  /** 读取工作空间下 Word 文件原始字节 */
+  /** 读取工作空间下 Word/PDF 文件原始字节 */
   readWorkspaceFileBytes(
     workspaceId: string,
     relPath: string

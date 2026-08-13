@@ -7,6 +7,7 @@ import FilePreview from './FilePreview.vue'
 import type { Workspace, WorkspaceFileEntry } from '../../../preload/index.d'
 
 const WordEditor = defineAsyncComponent(() => import('./WordEditor.vue'))
+const PdfPreview = defineAsyncComponent(() => import('./PdfPreview.vue'))
 
 const props = defineProps<{ fullscreen: boolean }>()
 const emit = defineEmits<{ (e: 'update:fullscreen', v: boolean): void }>()
@@ -34,7 +35,7 @@ interface Selection {
 interface FileTab {
   key: string // relPath，同文件去重键
   entry: WorkspaceFileEntry
-  kind: 'text' | 'word'
+  kind: 'text' | 'word' | 'pdf'
   content: string
   truncated: boolean
   document?: Uint8Array
@@ -159,6 +160,10 @@ async function openFile(entry: WorkspaceFileEntry): Promise<void> {
 
     if (getExt(entry.name) === 'doc' || getExt(entry.name) === 'docx') {
       tab.kind = 'word'
+      const result = await workspaceStore.readFileBytes(panelWorkspaceId.value!, entry.relPath)
+      tab.document = result.bytes
+    } else if (getExt(entry.name) === 'pdf') {
+      tab.kind = 'pdf'
       const result = await workspaceStore.readFileBytes(panelWorkspaceId.value!, entry.relPath)
       tab.document = result.bytes
     } else {
@@ -415,6 +420,11 @@ const expandPanel = (): void => {
             :document="activeTab.document"
             :title="activeTab.entry.name"
             @save="saveActiveWord"
+          />
+          <PdfPreview
+            v-else-if="activeTab.kind === 'pdf' && activeTab.document"
+            :document="activeTab.document"
+            :name="activeTab.entry.name"
           />
           <FilePreview
             v-else

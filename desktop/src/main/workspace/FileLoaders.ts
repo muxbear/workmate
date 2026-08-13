@@ -1,13 +1,20 @@
 import { closeSync, openSync, readFileSync, readSync, statSync } from 'fs'
 import { createRequire } from 'module'
+import { dirname } from 'path'
 import { TextDecoder } from 'util'
 import { unzipSync } from 'fflate'
 import { extractRawText } from 'mammoth'
 import * as XLSX from 'xlsx'
+import DOMMatrix from 'dommatrix'
 
-// pdf-parse@1.1.1 的 index.js 含调试代码：若 module.parent 为空（vitest/vite-node 加载场景）会在 import 时读 test 目录文件报错。
-// 用 createRequire 走 Node 原生 require，module.parent 恒有值从而跳过调试分支；生产 CJS 构建下 electron-vite 会转换 import.meta.url。
-const pdfParse = createRequire(import.meta.url)('pdf-parse') as typeof import('pdf-parse')
+// pdfjs-dist 的 cmaps/standard_fonts 需要通过本地文件路径提供给 Node 侧加载器。
+// 这里按 package.json 位置推导包根目录，避免依赖 process.cwd()，打包后更稳定。
+const pdfjsDistRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')).replace(
+  /\\/g,
+  '/'
+)
+const PDF_CMAP_URL = `${pdfjsDistRoot}/cmaps/`
+const PDF_STANDARD_FONT_DATA_URL = `${pdfjsDistRoot}/standard_fonts/`
 
 export interface LoadedText {
   content: string
@@ -101,12 +108,49 @@ async function loadPptx(filePath: string): Promise<LoadedText> {
 }
 
 async function loadPdf(filePath: string): Promise<LoadedText> {
-  // pdf.js 1.10.100 的 makeSubStream 直接用 this.bytes.buffer 取原始 ArrayBuffer，
-  // Node 的小 Buffer 来自共享字节池（byteOffset 非 0）会丢失偏移读到池内垃圾数据（>4KB 才用独立 ArrayBuffer）。
-  // 转成普通 Uint8Array（独立 ArrayBuffer、byteOffset=0）规避该问题；pdf-parse 类型声明只收 Buffer，故断言。
-  const u8 = new Uint8Array(readBytes(filePath))
-  const data = await pdfParse(u8 as unknown as Buffer)
-  return truncateText(data.text)
+  // Node 环境缺少浏览器原生 DOMMatrix；部分 pdfjs-dist 版本会在模块顶层使用它。
+  // 因此必须先补齐全局，再动态 import legacy 构建。
+  const globalScope = globalThis as typeof globalThis & { DOMMatrix?: typeof DOMMatrix }
+  if (!globalScope.DOMMatrix) {
+    globalScope.DOMMatrix = DOMMatrix
+  }
+
+  const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
+  const data = new Uint8Array(readBytes(filePath))
+  const loadingTask = pdfjs.getDocument({
+    data,
+    cMapUrl: PDF_CMAP_URL,
+    cMapPacked: true,
+    standardFontDataUrl: PDF_STANDARD_FONT_DATA_URL
+  })
+
+  try {
+    const document = await loadingTask.promise
+    const pages: string[] = []
+    let totalLength = 0
+
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber)
+      const textContent = await page.getTextContent()
+      let pageText = ''
+
+      for (const rawItem of textContent.items) {
+        if (!('str' in rawItem)) continue
+        pageText += rawItem.str
+        if (rawItem.hasEOL) pageText += '\n'
+      }
+
+      await page.cleanup()
+      pages.push(pageText)
+      totalLength += pageText.length + 2
+
+      if (totalLength >= MAX_TEXT_CHARS) break
+    }
+
+    return truncateText(pages.join('\n\n'))
+  } finally {
+    await loadingTask.destroy()
+  }
 }
 
 /**

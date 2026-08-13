@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
+import { readFile } from 'fs/promises'
 import { basename, extname, isAbsolute, join, resolve, sep } from 'path'
 import { homedir } from 'os'
 import type { WorkspaceRepository } from './WorkspaceRepository'
 import type { WorkspaceRow } from './types'
-import { loadFileText } from './FileLoaders'
+import { loadFileText, MAX_BINARY_BYTES } from './FileLoaders'
 import { WordConversionService } from './WordConversionService'
 
 /** 文件列表条目（relPath 统一用 '/' 分隔的相对路径，渲染层据此缩进与回传） */
@@ -19,7 +20,7 @@ export interface WorkspaceFileContent {
   truncated: boolean
 }
 
-/** Word 预览/编辑时主进程返回给渲染层的原始文件字节。 */
+/** Word/PDF 预览时主进程返回给渲染层的原始文件字节。 */
 export interface WorkspaceFileBinary {
   name: string
   ext: string
@@ -256,8 +257,8 @@ export class WorkspaceService {
   }
 
   /**
-   * 读取工作空间内 Word 文件的原始字节。
-   * docx 直接读取；doc 由主进程先转换为 docx。
+   * 读取工作空间内 Word/PDF 文件的原始字节。
+   * docx 直接读取；doc 由主进程先转换为 docx；pdf 按预览上限读取原始字节。
    */
   async readFileBytes(id: string, userId: string, relPath: string): Promise<WorkspaceFileBinary> {
     const target = this.resolveFilePath(id, userId, relPath)
@@ -269,7 +270,15 @@ export class WorkspaceService {
       return { name, ext: 'docx', bytes }
     }
 
-    throw new Error('仅支持 doc/docx 文件的 Word 预览')
+    if (ext === 'pdf') {
+      const buffer = await readFile(target)
+      if (buffer.byteLength > MAX_BINARY_BYTES) {
+        throw new Error('文件过大，暂不支持预览')
+      }
+      return { name, ext: 'pdf', bytes: new Uint8Array(buffer) }
+    }
+
+    throw new Error('仅支持 doc/docx/pdf 文件的字节预览')
   }
 
   /**

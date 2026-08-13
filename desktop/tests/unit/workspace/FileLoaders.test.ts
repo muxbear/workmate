@@ -113,6 +113,12 @@ describe('FileLoaders.loadFileText', () => {
     await expect(loadFileText(path, 'xlsx')).rejects.toThrow(/文件过大/)
   })
 
+  it('>20MB pdf 报文件过大', async () => {
+    const path = join(dir, 'big.pdf')
+    writeFileSync(path, Buffer.alloc(MAX_BINARY_BYTES + 1, 1))
+    await expect(loadFileText(path, 'pdf')).rejects.toThrow(/文件过大/)
+  })
+
   it('docx 提取文本超过 200KB 截断并置 truncated', async () => {
     const path = join(dir, 'long.docx')
     writeFileSync(path, makeDocx('x'.repeat(MAX_TEXT_CHARS + 1024)))

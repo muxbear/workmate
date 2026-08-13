@@ -1,6 +1,7 @@
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 export default defineConfig({
   main: {},
@@ -15,7 +16,18 @@ export default defineConfig({
         '@components': resolve('src/renderer/src/components')
       }
     },
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      viteStaticCopy({
+        targets: [
+          {
+            src: resolve('node_modules/pdfjs-dist/cmaps/*').replace(/\\/g, '/'),
+            dest: 'assets/pdfjs/cmaps',
+            rename: { stripBase: true }
+          }
+        ]
+      })
+    ],
     optimizeDeps: {
       exclude: ['@docx-editor.dev/fonts', 'harfbuzzjs']
     },
