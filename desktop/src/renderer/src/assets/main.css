@@ -11,6 +11,31 @@ body,
 body {
   margin: 0;
   overflow: hidden;
+  user-select: auto;
+}
+
+/* 桌面端仅禁止 UI 控件被划选，正文内容保留默认文本选择能力 */
+button,
+[role='button'],
+.expert-chip,
+.selection-chip,
+.share-select-all,
+.csp-tab-close,
+.space-chat,
+.sidebar--collapsed,
+.sidebar--expanded,
+.csp,
+.settings-nav,
+.settings-nav-item,
+.plus-menu,
+.workspace-menu,
+.perm-menu,
+.history-menu,
+.model-dropdown,
+.share-panel,
+.user-menu,
+.space-menu,
+.chat-menu {
   user-select: none;
 }
 
