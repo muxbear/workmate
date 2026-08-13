@@ -1,0 +1,13 @@
+# 操作系统
+.DS_Store
+./Thumbs.db
+Desktop.ini
+
+# Claude Code
+./CLAUDE.md
+
+# Codex
+./AGENTS.md
+
+# 日志
+*.log

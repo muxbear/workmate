@@ -1,0 +1,153 @@
+:root {
+  /* ========================================
+     暗色主题设计 Token — Ke-Hermes 登录模块
+     ======================================== */
+
+  /* === 品牌色系 === */
+  --color-bg-page: #060b1a;
+  --color-bg-form-area: #090e1f;
+  --color-bg-card: rgba(20, 29, 56, 0.95);
+  --color-bg-input: #0f172e;
+  --color-bg-brand-start: #050a1f;
+  --color-bg-brand-mid: #0a173d;
+  --color-bg-brand-end: #050d29;
+
+  --color-border-card: rgba(59, 130, 246, 0.13);
+  --color-border-input: #1f293d;
+
+  --color-accent: #3b82f6;
+  --color-accent-dark: #2563eb;
+  --color-accent-gradient: linear-gradient(90deg, #3b82f6, #2563eb);
+
+  /* === 文字色阶 === */
+  --color-text-primary: #f2f5fa;
+  --color-text-secondary: #8794ad;
+  --color-text-label: #c7d1e0;
+  --color-text-muted: #596680;
+  --color-text-error: #f04545;
+
+  /* === 圆角 === */
+  --radius-input: 10px;
+  --radius-card: 16px;
+  --radius-button: 10px;
+  --radius-checkbox: 6px;
+  --radius-oauth-icon: 26px;
+  --radius-logo: 20px;
+
+  /* === 尺寸 === */
+  --size-input-height: 52px;
+  --size-button-height: 52px;
+  --size-card-max-width: 480px;
+  --size-card-padding: 36px;
+  --size-card-gap: 20px;
+  --size-checkbox: 20px;
+  --size-oauth-icon: 42px;
+  --size-oauth-gap: 16px;
+  --size-logo: 80px;
+  --size-brand-padding-v: 32px;
+  --size-brand-padding-h: 28px;
+  --size-brand-block-gap: 32px;
+  --size-feature-icon: 32px;
+  --size-feature-row-gap: 20px;
+  --size-feature-col-gap: 28px;
+  --size-feature-icon-text-gap: 12px;
+  --size-login-tab-indicator-height: 3px;
+  --size-login-tab-indicator-width: 36px;
+
+  /* === 字号/字重 === */
+  --font-size-system-name: 28px;
+  --font-size-tagline: 16px;
+  --font-size-feature-title: 18px;
+  --font-size-feature-desc: 14px;
+  --font-size-button: 18px;
+  --font-size-input: 16px;
+  --font-size-login-tab: 18px;
+  --font-size-remember-forgot: 14px;
+  --font-size-agreement: 14px;
+  --font-size-oauth-label: 14px;
+  --font-size-register-link: 14px;
+  --font-size-copyright: 12px;
+  --font-size-oauth-text: 17px;
+
+  --font-weight-bold: 700;
+  --font-weight-semibold: 600;
+  --font-weight-normal: 400;
+
+  /* === 字体族 === */
+  --font-family-base: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+
+  /* === 阴影 === */
+  --shadow-card: 0px 4px 24px rgba(0, 0, 0, 0.5), 0px 0px 0px 1px rgba(59, 130, 246, 0.06);
+  --shadow-button: 0px 4px 16px rgba(59, 130, 246, 0.3);
+  --shadow-logo: 0px 4px 20px rgba(59, 130, 246, 0.25);
+
+  /* === 过渡 === */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* === 遮罩 === */
+  --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-modal-bg: rgba(15, 23, 46, 0.98);
+
+  /* === 工具分类色 === */
+  --color-tool-blue: #3b82f6;
+  --color-tool-cyan: #06b6d4;
+  --color-tool-green: #22c55e;
+  --color-tool-amber: #f59e0b;
+  --color-tool-purple: #a855f7;
+  --color-tool-pink: #ec4899;
+  --color-tool-indigo: #6366f1;
+  --color-tool-gray: #94a3b8;
+  --color-tool-emerald: #10b981;
+
+  /* === 第三方平台色 === */
+  --color-oauth-wechat: #07c160;
+  --color-oauth-alipay: #1777f9;
+  --color-oauth-feishu: #3370fa;
+  --color-oauth-dingtalk: #0089f9;
+  --color-oauth-wework: rgba(7, 193, 96, 0.85);
+
+  /* === 品牌区渐变 === */
+  --brand-gradient: linear-gradient(125.75deg, #050a1f 21.4%, #0a173d 57.1%, #050d29 92.9%);
+
+  /* ========================================
+     Legacy Compatibility — 现有聊天组件兼容映射
+     ======================================== */
+  --accent-primary: var(--color-accent);
+  --accent-primary-light: rgba(59, 130, 246, 0.15);
+  --foreground-primary: var(--color-text-primary);
+  --foreground-secondary: var(--color-text-secondary);
+  --foreground-muted: var(--color-text-muted);
+  --surface-primary: var(--color-bg-page);
+  --surface-secondary: #0a1124;
+  --surface-card: var(--color-bg-card);
+  --border-subtle: rgba(38, 51, 89, 0.25);
+  --border-medium: var(--color-border-input);
+
+  /* === Layout (保持不变) === */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 56px;
+  --right-panel-width: 280px;
+  --right-panel-collapsed-width: 40px;
+  --topbar-height: 52px;
+  --chat-header-height: 48px;
+
+  /* === Typography (向后兼容) === */
+  --font-family: var(--font-family-base);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-weight-medium: 500;
+
+  /* === Border Radius (向后兼容) === */
+  --radius-sm: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* === Transition (向后兼容) === */
+  --transition-duration: 0.25s;
+}

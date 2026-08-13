@@ -1,0 +1,172 @@
+import os
+
+from dotenv import load_dotenv
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
+
+load_dotenv()
+
+
+def get_default_workspace() -> str:
+    """Return the agent filesystem workspace directory.
+
+    Uses ``WORKSPACE`` from the environment when set to a non-empty path;
+    otherwise resolves to ``backend/workspace`` under the backend package root.
+    """
+    env = os.getenv("WORKSPACE", "").strip()
+    if env:
+        return os.path.abspath(env)
+
+    # config.py lives at backend/src/agent/config/ — four levels up to backend/
+    backend_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
+    return os.path.join(backend_root, "workspace")
+
+
+class Settings(BaseSettings):
+    # ---- Server ----
+    HOST: str = os.getenv("HOST", "127.0.0.1")
+    PORT: int = int(os.getenv("PORT") or 8000)
+
+    # ---- LLM (DeepSeek) ----
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "")
+
+    # ---- Embeddings (DashScope) ----
+    DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
+    DASHSCOPE_EMBEDDING: str = os.getenv("DASHSCOPE_EMBEDDING", "")
+    DASHSCOPE_BASE_URL: str = os.getenv("DASHSCOPE_BASE_URL", "")
+
+    # ---- Tavily ----
+    TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
+
+    # ---- Workspace ----
+    WORKSPACE: str = Field(default_factory=get_default_workspace)
+
+    @field_validator("WORKSPACE", mode="before")
+    @classmethod
+    def _workspace_use_default_when_empty(cls, value: object) -> str:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return get_default_workspace()
+        return str(value)
+
+    SKILLS_ROOT: str = f"{WORKSPACE}/skills/"
+
+    # ---- OpenSandBox
+    OPENSANDBOX_DOMAIN: str = os.getenv("OPENSANDBOX_DOMAIN", "http://127.0.0.1:8080")
+    OPENSANDBOX_API_KEY: str = os.getenv("OPENSANDBOX_API_KEY", "")
+    SANDBOX_TTL_SECONDS: int = int(os.getenv("SANDBOX_TTL_SECONDS", "1800"))
+    SANDBOX_CLEANUP_INTERVAL: int = int(os.getenv("SANDBOX_CLEANUP_INTERVAL", "300"))
+    SANDBOX_IMAGE: str = os.getenv(
+        "SANDBOX_IMAGE",
+        "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.2",
+    )
+    SANDBOX_CPU: str = os.getenv("SANDBOX_CPU", "2")
+    SANDBOX_MEMORY: str = os.getenv("SANDBOX_MEMORY", "3Gi")
+    SANDBOX_IDLE_TIMEOUT_MINUTES: int = int(
+        os.getenv("SANDBOX_IDLE_TIMEOUT_MINUTES", "10")
+    )
+    SANDBOX_ALLOWED_DOMAINS: str = os.getenv("SANDBOX_ALLOWED_DOMAINS", "")
+
+    @property
+    def sandbox_allowed_domains_list(self) -> list[str]:
+        """解析 SANDBOX_ALLOWED_DOMAINS 为域名列表。"""
+        raw = self.SANDBOX_ALLOWED_DOMAINS.strip()
+        if not raw:
+            return []
+        return [d.strip() for d in raw.split(",") if d.strip()]
+
+    # ---- Database ----
+    DATABASE_BACKEND: str = os.getenv("DATABASE_BACKEND", "sqlite")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "")
+
+    # ---- Checkpoint Database
+    CHECKPOINT_BACKEND: str = os.getenv("CHECKPOINT_BACKEND", "sqlite")
+    CHECKPOINT_DB_URL: str = os.getenv(
+        "CHECKPOINT_DB_URL", "postgresql://127.0.0.1:5432/ke_hermes"
+    )
+    CHECKPOINT_DB_PATH: str = os.getenv("CHECKPOINT_DB_PATH", "./db/ke_hermes.db")
+
+    # ---- Store Database
+    STORE_BACKEND: str = os.getenv("STORE_BACKEND", "sqlite")
+    STORE_DB_URL: str = os.getenv(
+        "STORE_DB_URL", "postgresql://127.0.0.1:5432/ke_hermes"
+    )
+    STORE_DB_PATH: str = os.getenv("STORE_DB_PATH", "./db/ke_hermes.db")
+
+    # ---- Encryption ----
+    ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "")
+
+    # ---- JWT ----
+    JWT_SECRET_KEY: str = ""
+    JWT_ACCESS_EXPIRE: int = int(os.getenv("JWT_ACCESS_EXPIRE") or 7200)
+    JWT_REFRESH_EXPIRE: int = int(os.getenv("JWT_REFRESH_EXPIRE") or 604800)
+
+    # ---- RSA ----
+    RSA_KEY_SIZE: int = int(os.getenv("RSA_KEY_SIZE") or 2048)
+
+    # ---- Rate Limit ----
+    LOGIN_MAX_FAILS: int = int(os.getenv("LOGIN_MAX_FAILS") or 5)
+    LOGIN_LOCK_MINUTES: int = int(os.getenv("LOGIN_LOCK_MINUTES") or 30)
+    SMS_DAILY_LIMIT: int = int(os.getenv("SMS_DAILY_LIMIT") or 5)
+
+    # ---- Captcha ----
+    CAPTCHA_EXPIRE: int = int(os.getenv("CAPTCHA_EXPIRE") or 300)
+    SLIDE_THRESHOLD: int = int(os.getenv("SLIDE_THRESHOLD") or 8)
+
+    # ---- Redis ----
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+
+    # ---- OAuth ----
+    OAUTH_GITHUB_CLIENT_ID: str = os.getenv("OAUTH_GITHUB_CLIENT_ID", "")
+    OAUTH_GITHUB_CLIENT_SECRET: str = os.getenv("OAUTH_GITHUB_CLIENT_SECRET", "")
+    OAUTH_GOOGLE_CLIENT_ID: str = ""
+    OAUTH_GOOGLE_CLIENT_SECRET: str = os.getenv("OAUTH_GOOGLE_CLIENT_SECRET", "")
+    OAUTH_WECHAT_CLIENT_ID: str = os.getenv("OAUTH_WECHAT_CLIENT_ID", "")
+    OAUTH_WECHAT_CLIENT_SECRET: str = os.getenv("OAUTH_WECHAT_CLIENT_SECRET", "")
+
+    # ---- SMS ----
+    SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "")
+    SMS_ACCESS_KEY: str = os.getenv("SMS_ACCESS_KEY", "")
+    SMS_SECRET_KEY: str = os.getenv("SMS_SECRET_KEY", "")
+    SMS_SIGN_NAME: str = os.getenv("SMS_SIGN_NAME", "")
+    SMS_TEMPLATE_CODE: str = os.getenv("SMS_TEMPLATE_CODE", "")
+
+    # ---- Milvus ----
+    MILVUS_URI: str = os.getenv("MILVUS_URI", "http://localhost:19530")
+    MILVUS_USER: str = os.getenv("MILVUS_USER", "root")
+    MILVUS_PASSWORD: str = os.getenv("MILVUS_PASSWORD", "Milvus")
+    MILVUS_DEFAULT_DB: str = os.getenv("MILVUS_DEFAULT_DB", "ke_hermes")
+
+    # ---- 向量数据库 ----
+    VECTOR_DB_BACKEND: str = os.getenv("VECTOR_DB_BACKEND", "milvus")
+    CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
+    CHROMA_PORT: int = int(os.getenv("CHROMA_PORT") or 8001)
+    CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
+
+    # ---- 文档存储 ----
+    DOC_STORE_BACKEND: str = os.getenv("DOC_STORE_BACKEND", "local")
+    DOC_UPLOAD_DIR: str = os.getenv("DOC_UPLOAD_DIR", "")
+
+    @property
+    def doc_upload_dir(self) -> str:
+        """Return the resolved document upload directory."""
+        raw = self.DOC_UPLOAD_DIR.strip()
+        if raw:
+            return os.path.abspath(raw)
+        return os.path.join(self.WORKSPACE, "docs_upload")
+
+    # ---- 图存储 ----
+    GRAPH_STORE_BACKEND: str = os.getenv("GRAPH_STORE_BACKEND", "langextract")
+
+    # ---- Embedding ----
+    DEFAULT_EMBEDDING_MODEL: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "text-embedding-v4")
+    DEFAULT_EMBEDDING_DIM: int = int(os.getenv("DEFAULT_EMBEDDING_DIM") or 1024)
+
+    # ---- 索引 ----
+    INDEXING_MAX_CONCURRENT: int = int(os.getenv("INDEXING_MAX_CONCURRENT") or 3)
+    BM25_DEFAULT_K1: float = float(os.getenv("BM25_DEFAULT_K1") or 1.5)
+    BM25_DEFAULT_B: float = float(os.getenv("BM25_DEFAULT_B") or 0.75)

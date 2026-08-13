@@ -1,0 +1,20 @@
+/node_modules
+/oh_modules
+/docs/
+/local.properties
+/.claude/
+/.idea
+/.vscode/
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+
+# 系统与日志
+.DS_Store
+Thumbs.db
+*.log

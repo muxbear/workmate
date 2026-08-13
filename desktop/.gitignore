@@ -1,0 +1,42 @@
+# 依赖
+node_modules/
+
+# 构建产物
+out/
+dist/
+
+# 环境变量
+.env
+.env.*
+!.env.sample
+
+# 测试与覆盖率
+coverage/
+.eslintcache
+
+# TypeScript 增量缓存
+*.tsbuildinfo
+
+# 本地数据库文件
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# 日志
+*.log
+npm-debug.log*
+
+# 编辑器与 IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude Code 本地缓存
+.claude/
+
+# Playwright MCP
+.playwright-mcp/
