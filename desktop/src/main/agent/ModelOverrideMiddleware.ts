@@ -1,5 +1,6 @@
-import { createMiddleware, initChatModel, type AgentMiddleware } from 'langchain'
+import { createMiddleware, type AgentMiddleware } from 'langchain'
 import type { ModelService } from '../model/ModelService'
+import { createModelFromCredential } from './ModelFactory'
 
 /**
  * 模型覆盖中间件：运行期按会话选择的模型替换默认模型（无需重建 agent）
@@ -23,14 +24,8 @@ export function createModelOverrideMiddleware(modelService: ModelService): Agent
       if (!modelId) return handler(request)
       const cred = modelService.getCredential(modelId)
       if (!cred) return handler(request)
-      // 端点 → OpenAI 兼容 baseURL（ChatOpenAI 内部拼接 /chat/completions）
-      const baseURL = cred.url.replace(/\/chat\/completions$/, '')
       // id 即 API 模型标识（name 是显示名，可被用户手改美化，不作为 API 参数）
-      const model = await initChatModel(cred.id, {
-        modelProvider: 'openai',
-        apiKey: cred.apiKey,
-        configuration: { baseURL }
-      })
+      const model = await createModelFromCredential(cred)
       return handler({ ...request, model })
     }
   })

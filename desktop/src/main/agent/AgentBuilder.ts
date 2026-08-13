@@ -5,6 +5,7 @@ import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
 import { PostgresStore } from '@langchain/langgraph-checkpoint-postgres/store'
 import type { WorkMode } from '../mode/work-mode'
 import { SqliteStore } from './SqliteStore'
+import type { ChatModel } from './ModelFactory'
 
 /** 云端 PostgreSQL 连接串（生产环境经 secure-storage 读取） */
 const cloudPostgresConnString = process.env.CLOUD_POSTGRES_CONN_STRING ?? ''
@@ -95,7 +96,7 @@ export class AgentBuilder {
     return this.checkpointer
   }
 
-  setModel(model: string): this {
+  setModel(model: string | ChatModel): this {
     this.config.model = model
     return this
   }

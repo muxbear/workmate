@@ -4,6 +4,13 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 const createDeepAgentMock = vi.fn()
+const { initChatModelMock } = vi.hoisted(() => ({ initChatModelMock: vi.fn() }))
+
+vi.mock('langchain', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('langchain')>()
+  return { ...actual, initChatModel: initChatModelMock }
+})
+
 vi.mock('deepagents', () => ({
   createDeepAgent: (config: unknown) => {
     createDeepAgentMock(config)
@@ -39,6 +46,14 @@ vi.mock('@langchain/langgraph-checkpoint-postgres/store', () => ({
   }
 }))
 
+vi.mock('../../../src/main/agent/SqliteStore', () => ({
+  SqliteStore: class {
+    static fromConnString(path: string) {
+      return { kind: 'SqliteStore', path }
+    }
+  }
+}))
+
 import { AgentManager } from '../../../src/main/agent/AgentManager'
 
 /** 假 ModelService（断言中间件注册用；getCredential 无实际调用） */
@@ -48,7 +63,16 @@ function createFakeModelService(): {
   listProviders: () => never[]
 } {
   return {
-    getCredential: vi.fn().mockReturnValue(null),
+    getCredential: vi.fn().mockImplementation((id: string) =>
+      id === 'deepseek-v4-pro'
+        ? {
+            id,
+            name: id,
+            apiKey: 'sk-test',
+            url: 'https://api.deepseek.com/chat/completions'
+          }
+        : null
+    ),
     list: () => [],
     listProviders: () => []
   }
@@ -61,6 +85,8 @@ describe('AgentManager', () => {
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), 'kw-am-'))
     createDeepAgentMock.mockClear()
+    initChatModelMock.mockClear()
+    initChatModelMock.mockResolvedValue({ id: 'mock-model' })
     manager = new AgentManager(workDir, join(workDir, 'ke-work.db'), join(workDir, 'ke-work.db'))
   })
 
@@ -113,8 +139,14 @@ describe('AgentManager', () => {
     await withService.switchMode('cloud')
     const config2 = createDeepAgentMock.mock.calls[1][0] as Record<string, never>
     expect((config2.middleware as { name?: string }[])[0].name).toBe('modelOverrideMiddleware')
-    // 原 config.model 断言不回归
-    expect(config2.model).toBe('deepseek:deepseek-v4-pro')
+    // 注入 modelService 后，默认模型应在 build 前解析为模型实例
+    expect(config.model).toEqual({ id: 'mock-model' })
+    expect(config2.model).toEqual({ id: 'mock-model' })
+    expect(initChatModelMock).toHaveBeenCalledWith('deepseek-v4-pro', {
+      modelProvider: 'openai',
+      apiKey: 'sk-test',
+      configuration: { baseURL: 'https://api.deepseek.com' }
+    })
   })
 
   it('AG-09: 未注入 modelService 时不注册中间件（config.middleware 缺失）', async () => {

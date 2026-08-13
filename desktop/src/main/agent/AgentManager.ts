@@ -4,13 +4,14 @@ import type { WorkMode } from '../mode/work-mode'
 import type { ModelService } from '../model/ModelService'
 import { AgentBuilder } from './AgentBuilder'
 import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
+import { resolveDefaultModel, type ChatModel } from './ModelFactory'
 
 /** 智能体生命周期管理（单例由调用方持有） */
 export class AgentManager {
   private agent: DeepAgent | null = null
   private builder: AgentBuilder | null = null
   private initPromise: Promise<void> | null = null
-  private model = 'deepseek:deepseek-v4-pro'
+  private model: string | ChatModel = 'deepseek:deepseek-v4-pro'
   private skills: string[] = []
 
   constructor(
@@ -33,9 +34,14 @@ export class AgentManager {
       this.defaultWorkspaceDir,
       this.checkpointDbPath,
       this.storeDbPath
-    )
-      .withModeDefaults()
-      .setModel(this.model)
+    ).withModeDefaults()
+
+    // 关键：默认模型必须先实例化，否则会像现在一样在中间件前抛错。
+    const model = this.modelService
+      ? await resolveDefaultModel(this.modelService, this.model)
+      : this.model
+
+    this.builder.setModel(model)
     // 自定义模型覆盖中间件：运行期按 configurable.model_override 切换模型（无需重建 agent）
     if (this.modelService) this.builder.setMiddleware([createModelOverrideMiddleware(this.modelService)])
     if (this.skills.length > 0) this.builder.setSkills(this.skills)
@@ -67,7 +73,7 @@ export class AgentManager {
     await this.initPromise
   }
 
-  setModel(model: string): this {
+  setModel(model: string | ChatModel): this {
     this.model = model
     this.builder?.setModel(model)
     return this
