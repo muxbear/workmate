@@ -19,8 +19,8 @@ describe('settings schema', () => {
     expect(isSettingsKey('ui')).toBe(false)
   })
 
-  it('12 项配置全部在 schema 内且类型/默认值合法', () => {
-    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(12)
+  it('13 项配置全部在 schema 内且类型/默认值合法', () => {
+    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(13)
     for (const [key, entry] of Object.entries(SETTINGS_SCHEMA)) {
       expect(isSettingsKey(key)).toBe(true)
       expect(['string', 'number', 'boolean']).toContain(entry.type)
@@ -33,6 +33,7 @@ describe('settings schema', () => {
     const d = defaultSettings()
     expect(d['ui.language']).toBe('zh-CN')
     expect(d['ui.fontSize']).toBe(17)
+    expect(d['ui.theme']).toBe('light')
     expect(d['skills.autoUpdate']).toBe(true)
     expect(d['skills.safeInstall']).toBe(false)
     expect(d['plugins.autoUpdate']).toBe(true)
@@ -50,6 +51,9 @@ describe('settings schema', () => {
     expect(isValidSettingsValue('ui.language', 'zh-CN')).toBe(true)
     expect(isValidSettingsValue('ui.fontSize', 8)).toBe(false)
     expect(isValidSettingsValue('ui.fontSize', 17)).toBe(true)
+    expect(isValidSettingsValue('ui.theme', 'sepia')).toBe(false)
+    expect(isValidSettingsValue('ui.theme', 'dark')).toBe(true)
+    expect(isValidSettingsValue('ui.theme', 'light')).toBe(true)
     expect(isValidSettingsValue('network.proxyMode', 'bogus')).toBe(false)
     expect(isValidSettingsValue('network.proxyUrl', 'not-a-url')).toBe(false)
     expect(isValidSettingsValue('network.proxyUrl', 'http://127.0.0.1:7890')).toBe(true)
@@ -67,9 +71,10 @@ describe('settings schema', () => {
   })
 
   it('normalizeSettings：嵌套对象输入拍平并保留合法值', () => {
-    const out = normalizeSettings({ ui: { language: 'en', fontSize: 20 } })
+    const out = normalizeSettings({ ui: { language: 'en', fontSize: 20, theme: 'dark' } })
     expect(out['ui.language']).toBe('en')
     expect(out['ui.fontSize']).toBe(20)
+    expect(out['ui.theme']).toBe('dark')
     expect(out['network.proxyMode']).toBe('direct') // 未提供项回默认
   })
 

@@ -645,8 +645,8 @@ const onNavigate = (tab: CatalogTab): void => {
   bottom: 100%;
   left: 0;
   margin-bottom: 4px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--kw-color-surface);
+  border: 1px solid var(--kw-color-border);
   border-radius: 10px;
   box-shadow:
     0 -2px 16px rgba(0, 0, 0, 0.1),
@@ -691,7 +691,7 @@ const onNavigate = (tab: CatalogTab): void => {
 
 .plus-menu-item svg:first-child {
   flex-shrink: 0;
-  color: #64748b;
+  color: var(--kw-color-text-subtle);
 }
 
 .plus-menu-item span {
@@ -701,7 +701,7 @@ const onNavigate = (tab: CatalogTab): void => {
 
 .plus-menu-chevron {
   flex-shrink: 0;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -712,8 +712,8 @@ const onNavigate = (tab: CatalogTab): void => {
   left: calc(100% + 2px);
   top: 0;
   min-width: 200px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--kw-color-surface);
+  border: 1px solid var(--kw-color-border);
   border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
   padding: 4px;
@@ -745,7 +745,7 @@ const onNavigate = (tab: CatalogTab): void => {
 
 .plus-submenu-item > svg:first-child {
   flex-shrink: 0;
-  color: #64748b;
+  color: var(--kw-color-text-subtle);
 }
 
 .plus-submenu-text {
@@ -758,14 +758,14 @@ const onNavigate = (tab: CatalogTab): void => {
 
 .plus-check {
   flex-shrink: 0;
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .plus-submenu-empty {
   margin: 0;
   padding: 10px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   text-align: center;
 }
 
@@ -791,9 +791,9 @@ const onNavigate = (tab: CatalogTab): void => {
   gap: 8px;
   padding: 6px 10px;
   border-radius: 7px;
-  background: rgba(8, 145, 178, 0.06);
-  border: 1px solid rgba(8, 145, 178, 0.1);
-  color: #9ca3af;
+  background: var(--kw-color-brand-hover);
+  border: 1px solid var(--kw-color-border-brand);
+  color: var(--kw-color-text-faint);
   margin-bottom: 4px;
 }
 
@@ -804,12 +804,12 @@ const onNavigate = (tab: CatalogTab): void => {
   outline: none;
   font-size: 12px;
   font-family: inherit;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   min-width: 0;
 }
 
 .plus-submenu-search-input::placeholder {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 /* 专家：彩色头像点 */
@@ -820,7 +820,7 @@ const onNavigate = (tab: CatalogTab): void => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ffffff;
+  color: var(--kw-color-on-accent);
   font-size: 10px;
   font-weight: 700;
   flex-shrink: 0;
@@ -860,7 +860,7 @@ const onNavigate = (tab: CatalogTab): void => {
 }
 
 .plus-switch--on {
-  background: linear-gradient(135deg, #0891b2, #0e7490);
+  background: var(--kw-gradient-brand);
 }
 
 .plus-switch-knob {
@@ -870,7 +870,7 @@ const onNavigate = (tab: CatalogTab): void => {
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: transform 0.15s ease;
 }
@@ -893,7 +893,7 @@ const onNavigate = (tab: CatalogTab): void => {
   padding: 8px 16px;
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.85);
-  color: #ffffff;
+  color: var(--kw-color-on-accent);
   font-size: 12px;
   z-index: 150;
   pointer-events: none;

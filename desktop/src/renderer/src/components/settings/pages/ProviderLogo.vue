@@ -83,7 +83,7 @@ const size = computed(() => props.size ?? 24)
   justify-content: center;
   flex-shrink: 0;
   border-radius: 50%;
-  color: #fff;
+  color: var(--kw-color-on-accent);
   overflow: hidden;
 }
 

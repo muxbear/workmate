@@ -7,6 +7,7 @@ import {
   safeStorage,
   session as electronSession,
   powerSaveBlocker,
+  nativeTheme,
   type IpcMainInvokeEvent
 } from 'electron'
 import { join } from 'path'
@@ -35,7 +36,7 @@ import { WorkspaceService } from './workspace/WorkspaceService'
 import { registerWorkspaceHandlers } from './ipc/workspace-handlers'
 import { MIGRATIONS_DIR } from './database/local/SqlMigrationRunner'
 import { SettingsStore } from './settings/SettingsStore'
-import { SettingsService, type ProxyMode } from './settings/SettingsService'
+import { SettingsService, type ProxyMode, type ThemeName } from './settings/SettingsService'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { ModelService } from './model/ModelService'
@@ -67,12 +68,17 @@ function cancelAllAgents(): void {
   abortControllers.clear()
 }
 
-function createWindow(): BrowserWindow {
+function getThemeBackground(theme: unknown): string {
+  return theme === 'dark' ? '#0f172a' : '#ffffff'
+}
+
+function createWindow(backgroundColor = '#ffffff'): BrowserWindow {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1024,
     height: 768,
     show: false,
+    backgroundColor,
     autoHideMenuBar: true,
     fullscreenable: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -243,7 +249,11 @@ app.whenReady().then(() => {
 
   const settingsStore = new SettingsStore(dataDir.getBaseDir())
   let workspaceService: WorkspaceService
+  const applyTheme = (theme: ThemeName): void => {
+    nativeTheme.themeSource = theme === 'dark' ? 'dark' : 'light'
+  }
   const settingsService = new SettingsService(settingsStore, dataDir.getBaseDir(), {
+    applyTheme,
     applyProxy: applyProxy as (mode: ProxyMode, url: string) => Promise<void>,
     setLockScreen,
     selectDir,
@@ -282,6 +292,7 @@ app.whenReady().then(() => {
     initialSettings.settings['network.proxyMode'] as string,
     initialSettings.settings['network.proxyUrl'] as string
   ).catch((err) => console.warn('[settings] apply proxy on startup failed:', err))
+  applyTheme(initialSettings.settings['ui.theme'] as ThemeName)
   setLockScreen(initialSettings.settings['lockScreen.remoteLock'] === true)
 
   // ── 启动快照与工作区状态（对齐 WorkBuddy last-launch.json / workspace-state.json）──
@@ -485,7 +496,7 @@ app.whenReady().then(() => {
     }
   }
 
-  createWindow()
+  createWindow(getThemeBackground(initialSettings.settings['ui.theme']))
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

@@ -103,7 +103,7 @@ const memoryImported = ref(false)
   justify-content: space-between;
   margin-top: 16px;
   border-radius: 16px;
-  background: #fff;
+  background: var(--kw-color-surface);
   border: 1px solid #dfe3e4;
   padding: 16px 24px;
 }
@@ -143,6 +143,6 @@ const memoryImported = ref(false)
 .s-imported {
   margin-top: 12px;
   font-size: 13px;
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 </style>

@@ -43,14 +43,14 @@ const emit = defineEmits<{
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--kw-color-surface);
   transform: translateX(4px);
   transition: transform 0.2s ease;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 .s-toggle--on {
-  background: #0891b2;
+  background: var(--kw-color-brand);
 }
 
 .s-toggle--on .s-toggle-dot {

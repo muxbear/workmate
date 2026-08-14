@@ -13,6 +13,7 @@ export type ApplyTiming = 'instant' | 'pending'
 export type SettingsKey =
   | 'ui.language'
   | 'ui.fontSize'
+  | 'ui.theme'
   | 'skills.autoUpdate'
   | 'skills.safeInstall'
   | 'plugins.autoUpdate'
@@ -34,6 +35,7 @@ export interface SettingsSchemaEntry {
 }
 
 const LANGUAGE_OPTIONS = ['zh-CN', 'zh-TW', 'en']
+const THEME_OPTIONS = ['light', 'dark']
 const PROXY_MODES = ['direct', 'system', 'manual']
 const SOUND_OPTIONS = ['none', 'crisp', 'soft']
 
@@ -52,6 +54,12 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     default: 17,
     applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 12 && (v as number) <= 24
+  },
+  'ui.theme': {
+    type: 'string',
+    default: 'light',
+    applyTiming: 'instant',
+    validate: (v) => THEME_OPTIONS.includes(v as string)
   },
   'skills.autoUpdate': { type: 'boolean', default: true, applyTiming: 'pending' },
   'skills.safeInstall': { type: 'boolean', default: false, applyTiming: 'pending' },

@@ -1,3 +1,4 @@
+import './theme/bootstrap'
 import './assets/main.css'
 import '@docx-editor.dev/core/styles/editor.css'
 

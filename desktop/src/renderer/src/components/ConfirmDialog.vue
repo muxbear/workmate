@@ -60,9 +60,9 @@ const emit = defineEmits<{
 
 .confirm-card {
   width: 380px;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 16px;
-  border: 1px solid rgba(8, 145, 178, 0.15);
+  border: 1px solid var(--kw-color-border-brand);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
   overflow: hidden;
 }
@@ -72,16 +72,16 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(8, 145, 178, 0.08);
+  border-bottom: 1px solid var(--kw-color-border-brand);
   font-size: 14px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .confirm-close {
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   padding: 4px;
 }
@@ -94,7 +94,7 @@ const emit = defineEmits<{
   margin: 0;
   font-size: 13px;
   line-height: 1.7;
-  color: #4b5563;
+  color: var(--kw-color-text-secondary);
 }
 
 .confirm-footer {
@@ -115,13 +115,13 @@ const emit = defineEmits<{
 }
 
 .confirm-btn--cancel {
-  background: #f0f6fa;
-  color: #6b7f95;
+  background: var(--kw-color-bg-tint);
+  color: var(--kw-color-text-muted);
 }
 
 .confirm-btn--danger {
   background: linear-gradient(135deg, #ef4444, #dc2626);
-  color: #fff;
+  color: var(--kw-color-on-accent);
   box-shadow: 0 2px 10px rgba(239, 68, 68, 0.3);
 }
 

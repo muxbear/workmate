@@ -5,6 +5,7 @@ import { ref } from 'vue'
 export type SettingsKey =
   | 'ui.language'
   | 'ui.fontSize'
+  | 'ui.theme'
   | 'skills.autoUpdate'
   | 'skills.safeInstall'
   | 'plugins.autoUpdate'
@@ -17,8 +18,14 @@ export type SettingsKey =
   | 'notification.sound'
 
 export type Language = 'zh-CN' | 'zh-TW' | 'en'
+export type ThemeName = 'light' | 'dark'
 export type ProxyMode = 'direct' | 'system' | 'manual'
 export type NotificationSound = 'none' | 'crisp' | 'soft'
+
+export const THEME_OPTIONS: Array<{ value: ThemeName; label: string }> = [
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' }
+]
 
 interface SettingsMeta {
   dataBaseDir: string
@@ -45,6 +52,7 @@ const DEFAULT_FONT_SIZE = 17
 export const useSettingsStore = defineStore('settings', () => {
   const language = ref<Language>('zh-CN')
   const fontSize = ref(DEFAULT_FONT_SIZE)
+  const theme = ref<ThemeName>('light')
   const skillAutoUpdate = ref(true)
   const pluginAutoUpdate = ref(true)
   const safeSkillInstall = ref(false)
@@ -68,6 +76,9 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'ui.fontSize':
         fontSize.value = value as number
+        break
+      case 'ui.theme':
+        theme.value = value as ThemeName
         break
       case 'skills.autoUpdate':
         skillAutoUpdate.value = value as boolean
@@ -105,6 +116,17 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 运行时效果：字体缩放（经 preload 的 webFrame.setZoomFactor 封装，默认 17 → 1.0；语言 i18n 同步 P2 接入） */
   function applyRuntimeEffects(): void {
     window.api.setZoomFactor(fontSize.value / DEFAULT_FONT_SIZE)
+    applyThemeToDom()
+  }
+
+  /** 运行时效果：主题根节点标记 + localStorage 启动缓存 */
+  function applyThemeToDom(): void {
+    const next = theme.value === 'dark' ? 'dark' : 'light'
+    if (typeof document === 'undefined') return
+    document.documentElement.dataset.theme = next
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('ke-work-theme', next)
+    }
   }
 
   /** 从主进程加载全部设置（App 挂载后调用；失败保留首帧默认值） */
@@ -154,6 +176,11 @@ export const useSettingsStore = defineStore('settings', () => {
     applyRuntimeEffects()
   }
 
+  /** 切换主题：乐观更新 -> 持久化；失败由 set 内部 load() 回滚 */
+  async function setTheme(next: ThemeName): Promise<void> {
+    await set('ui.theme', next)
+  }
+
   /** 刷新 ~/.ke-work 存储统计（打开设置页时调用） */
   async function refreshStorageStats(): Promise<void> {
     const result = await window.api.getStorageStats()
@@ -175,6 +202,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     language,
     fontSize,
+    theme,
     skillAutoUpdate,
     pluginAutoUpdate,
     safeSkillInstall,
@@ -190,6 +218,7 @@ export const useSettingsStore = defineStore('settings', () => {
     loaded,
     load,
     set,
+    setTheme,
     refreshStorageStats,
     changeWorkspaceDir
   }

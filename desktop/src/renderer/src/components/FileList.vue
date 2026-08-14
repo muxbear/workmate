@@ -179,11 +179,11 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
 }
 
 .fl-dir:hover {
-  background: rgba(8, 145, 178, 0.06);
+  background: var(--kw-color-brand-hover);
 }
 
 .fl-chevron {
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   flex-shrink: 0;
   transition: transform 0.15s ease;
 }
@@ -193,11 +193,11 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
 }
 
 .fl-row:has(.fl-dir:hover) .fl-chevron {
-  color: #64748b;
+  color: var(--kw-color-text-subtle);
 }
 
 .fl-icon {
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   flex-shrink: 0;
 }
 
@@ -242,12 +242,12 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
 }
 
 .fl-file-name:not(:disabled):hover {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .fl-file-name:disabled {
   cursor: default;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
 }
 
 .fl-empty,
@@ -255,7 +255,7 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
   margin: 0;
   padding: 10px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   text-align: center;
 }
 
@@ -264,6 +264,6 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
   padding: 10px;
   font-size: 12px;
   line-height: 1.5;
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 </style>

@@ -564,7 +564,7 @@ const saveModel = async (): Promise<void> => {
 .am-card {
   width: 100%;
   max-width: 700px;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 16px;
   box-shadow: 0 22px 60px rgba(15, 23, 42, 0.24);
   overflow: hidden;
@@ -667,7 +667,7 @@ const saveModel = async (): Promise<void> => {
   padding: 0 36px 0 40px;
   border: 1px solid #dfe3e4;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   font-size: 14px;
   font-family: inherit;
   color: #262d31;
@@ -710,7 +710,7 @@ const saveModel = async (): Promise<void> => {
   padding: 0 12px;
   border: 1px solid #dfe3e4;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   font-size: 14px;
   font-family: inherit;
   color: #262d31;
@@ -747,7 +747,7 @@ const saveModel = async (): Promise<void> => {
   padding: 4px;
   border: 1px solid #dfe3e4;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
 }
 
@@ -797,7 +797,7 @@ const saveModel = async (): Promise<void> => {
   padding: 0 12px;
   border: 1px solid #dfe3e4;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   font-size: 14px;
   font-family: inherit;
   color: #262d31;
@@ -876,7 +876,7 @@ const saveModel = async (): Promise<void> => {
   overflow: hidden;
   border: 1px solid #dfe3e4;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
 }
 
@@ -959,7 +959,7 @@ const saveModel = async (): Promise<void> => {
   padding: 8px 20px;
   border: 1px solid #dfe3e4;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   font-size: 14px;
   font-weight: 500;
   font-family: inherit;
@@ -975,7 +975,7 @@ const saveModel = async (): Promise<void> => {
   font-size: 14px;
   font-weight: 500;
   font-family: inherit;
-  color: #fff;
+  color: var(--kw-color-on-accent);
   cursor: pointer;
   transition: opacity 0.15s ease;
 }

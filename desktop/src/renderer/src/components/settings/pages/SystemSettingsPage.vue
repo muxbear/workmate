@@ -454,7 +454,7 @@ onMounted(() => {
 .s-range {
   width: 100%;
   margin: 10px 0 4px;
-  accent-color: #0891b2;
+  accent-color: var(--kw-color-brand);
 }
 
 .s-range-labels {
@@ -487,7 +487,7 @@ onMounted(() => {
 .s-group-title {
   font-size: 15px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   padding: 4px 4px 0;
 }
 
@@ -513,7 +513,7 @@ onMounted(() => {
 .s-progress-accent {
   height: 100%;
   width: 6px;
-  background: #06b6d4;
+  background: var(--kw-color-brand);
 }
 
 .s-legend {
@@ -554,7 +554,7 @@ onMounted(() => {
 }
 
 .s-dot--accent {
-  background: #06b6d4;
+  background: var(--kw-color-brand);
 }
 
 .s-dot--dark {
@@ -596,8 +596,8 @@ onMounted(() => {
   border-radius: 999px;
   font-size: 12px;
   line-height: 18px;
-  color: #6b7280;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
+  color: var(--kw-color-text-secondary);
+  background: var(--kw-color-bg-muted);
+  border: 1px solid var(--kw-color-border);
 }
 </style>

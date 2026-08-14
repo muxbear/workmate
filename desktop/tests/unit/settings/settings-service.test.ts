@@ -15,6 +15,7 @@ let deps: SettingsServiceDeps
 
 function createDeps(): SettingsServiceDeps {
   return {
+    applyTheme: vi.fn(),
     applyProxy: vi.fn().mockResolvedValue(undefined),
     setLockScreen: vi.fn(),
     selectDir: vi.fn().mockResolvedValue(null),
@@ -61,6 +62,14 @@ describe('SettingsService', () => {
     expect(deps.setLockScreen).toHaveBeenCalledWith(true)
     service.set('lockScreen.remoteLock', false)
     expect(deps.setLockScreen).toHaveBeenCalledWith(false)
+  })
+
+  it('set：主题分发 applyTheme', () => {
+    const service = new SettingsService(store, baseDir, deps)
+    service.set('ui.theme', 'dark')
+    expect(deps.applyTheme).toHaveBeenLastCalledWith('dark')
+    service.set('ui.theme', 'light')
+    expect(deps.applyTheme).toHaveBeenLastCalledWith('light')
   })
 
   it('set：默认工作空间路径分发 onWorkspaceBaseDirChange（空值回默认基址）', () => {

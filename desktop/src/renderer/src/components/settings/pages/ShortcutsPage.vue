@@ -171,7 +171,7 @@ const resetAll = (): void => {
   height: 40px;
   border-radius: 12px;
   border: 1px solid #dfe3e4;
-  background: #fff;
+  background: var(--kw-color-surface);
   padding: 0 12px 0 40px;
   font-size: 14px;
   color: #2d3438;
@@ -181,7 +181,7 @@ const resetAll = (): void => {
 }
 
 .s-search-input:focus {
-  border-color: #0891b2;
+  border-color: var(--kw-color-brand);
 }
 
 .s-search-input::placeholder {
@@ -191,7 +191,7 @@ const resetAll = (): void => {
 .s-reset-btn {
   flex-shrink: 0;
   border: 1px solid #e2e6e7;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 12px;
   padding: 0 16px;
   font-size: 14px;
@@ -209,7 +209,7 @@ const resetAll = (): void => {
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid #dfe3e4;
-  background: #fff;
+  background: var(--kw-color-surface);
 }
 
 .s-table-head,

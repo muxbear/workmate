@@ -532,7 +532,7 @@ const expandPanel = (): void => {
   position: relative;
   flex-shrink: 0;
   border-left: 1px solid rgba(8, 145, 178, 0.1);
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -557,7 +557,7 @@ const expandPanel = (): void => {
 }
 
 .csp-expand-btn {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 /* 顶部按钮栏 */
@@ -579,18 +579,18 @@ const expandPanel = (): void => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .csp-icon-btn:hover {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .csp-view-chevron {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   transition: transform 0.2s ease;
 }
 
@@ -608,8 +608,8 @@ const expandPanel = (): void => {
 }
 
 .csp-view-trigger--active {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .csp-view-menu {
@@ -619,9 +619,9 @@ const expandPanel = (): void => {
   min-width: 150px;
   padding: 6px 0;
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-  border: 1px solid rgba(8, 145, 178, 0.14);
+  border: 1px solid var(--kw-color-border-brand);
   z-index: 30;
 }
 
@@ -633,7 +633,7 @@ const expandPanel = (): void => {
   padding: 8px 14px;
   border: none;
   background: transparent;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   font-size: 12px;
   font-family: inherit;
   text-align: left;
@@ -642,15 +642,15 @@ const expandPanel = (): void => {
 }
 
 .csp-view-menu-item:hover {
-  background: rgba(8, 145, 178, 0.08);
+  background: var(--kw-color-brand-soft);
 }
 
 .csp-view-menu-item--active {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .csp-view-menu-item svg {
-  color: #0891b2;
+  color: var(--kw-color-brand);
   flex-shrink: 0;
 }
 
@@ -704,8 +704,8 @@ const expandPanel = (): void => {
 
 /* 概览卡片 */
 .csp-card {
-  background: #ffffff;
-  border: 1px solid rgba(8, 145, 178, 0.14);
+  background: var(--kw-color-surface);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 12px;
   padding: 14px;
   display: flex;
@@ -718,7 +718,7 @@ const expandPanel = (): void => {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -728,7 +728,7 @@ const expandPanel = (): void => {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   word-break: break-all;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -748,8 +748,8 @@ const expandPanel = (): void => {
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 10px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   flex-shrink: 0;
 }
 
@@ -757,8 +757,8 @@ const expandPanel = (): void => {
   padding: 4px 10px;
   border: none;
   border-radius: 8px;
-  background: rgba(8, 145, 178, 0.1);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   font-size: 11px;
   font-weight: 500;
   font-family: inherit;
@@ -768,7 +768,7 @@ const expandPanel = (): void => {
 }
 
 .csp-open:hover {
-  background: rgba(8, 145, 178, 0.18);
+  background: var(--kw-color-brand-soft);
 }
 
 .csp-card-sub {
@@ -777,14 +777,14 @@ const expandPanel = (): void => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 .csp-card-title {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -793,14 +793,14 @@ const expandPanel = (): void => {
 .csp-card-line {
   margin: 0;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
 }
 
 .csp-hint {
   margin: 0;
   font-size: 11px;
   line-height: 1.6;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   flex-shrink: 0;
 }
 
@@ -819,27 +819,27 @@ const expandPanel = (): void => {
   margin: 0;
   font-size: 13px;
   font-weight: 500;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
 }
 
 .csp-empty-hint {
   margin: 0;
   font-size: 11px;
   line-height: 1.6;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
 }
 
 .csp-empty-tip {
   margin: 0;
   padding: 20px 8px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   text-align: center;
 }
 
 /* 产物区 */
 .csp-artifacts {
-  border-top: 1px solid rgba(8, 145, 178, 0.1);
+  border-top: 1px solid var(--kw-color-border-brand);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -854,7 +854,7 @@ const expandPanel = (): void => {
   padding: 10px 14px;
   border: none;
   background: transparent;
-  color: #1a2332;
+  color: var(--kw-color-text);
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
@@ -864,7 +864,7 @@ const expandPanel = (): void => {
 }
 
 .csp-artifact-head:hover {
-  background: rgba(8, 145, 178, 0.04);
+  background: var(--kw-color-brand-hover);
 }
 
 .csp-artifact-head span {
@@ -872,7 +872,7 @@ const expandPanel = (): void => {
 }
 
 .csp-artifact-chevron {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   transition: transform 0.2s ease;
 }
 
@@ -922,10 +922,10 @@ const expandPanel = (): void => {
   gap: 4px;
   max-width: 160px;
   padding: 3px 8px;
-  border: 1px solid rgba(8, 145, 178, 0.14);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 8px;
-  background: #ffffff;
-  color: #374151;
+  background: var(--kw-color-surface);
+  color: var(--kw-color-text-secondary);
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
@@ -934,13 +934,13 @@ const expandPanel = (): void => {
 }
 
 .csp-tab:hover {
-  background: rgba(8, 145, 178, 0.06);
+  background: var(--kw-color-brand-hover);
 }
 
 .csp-tab--active {
-  background: rgba(8, 145, 178, 0.1);
+  background: var(--kw-color-brand-soft);
   border-color: rgba(8, 145, 178, 0.3);
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .csp-tab-name {
@@ -958,20 +958,20 @@ const expandPanel = (): void => {
   border-radius: 4px;
   font-size: 12px;
   line-height: 1;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   flex-shrink: 0;
 }
 
 .csp-tab-close:hover {
-  background: rgba(8, 145, 178, 0.15);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .csp-load-error {
   margin: 0;
   padding: 20px 8px;
   font-size: 12px;
-  color: #ef4444;
+  color: var(--kw-color-danger);
   text-align: center;
 }
 
@@ -1004,6 +1004,6 @@ const expandPanel = (): void => {
   bottom: 0;
   left: 2px;
   width: 2px;
-  background: rgba(8, 145, 178, 0.5);
+  background: var(--kw-color-border-brand);
 }
 </style>

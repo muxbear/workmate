@@ -206,7 +206,7 @@ const qrCenterCell = 24
   grid-template-columns: repeat(7, 1fr);
   grid-template-rows: repeat(7, 1fr);
   gap: 4px;
-  background: #fff;
+  background: var(--kw-color-surface);
   padding: 12px;
   box-sizing: border-box;
 }
@@ -221,7 +221,7 @@ const qrCenterCell = 24
 }
 
 .s-qr-cell--accent {
-  background: #06b6d4;
+  background: var(--kw-color-brand);
 }
 
 .s-qr-center {
@@ -236,8 +236,8 @@ const qrCenterCell = 24
   height: 42px;
   border-radius: 50%;
   border: 5px solid #fff;
-  background: #06b6d4;
-  color: #fff;
+  background: var(--kw-color-brand);
+  color: var(--kw-color-on-accent);
   font-size: 11px;
   font-weight: 700;
 }
@@ -255,7 +255,7 @@ const qrCenterCell = 24
   padding: 0;
   font-size: 13px;
   font-weight: 500;
-  color: #0891b2;
+  color: var(--kw-color-brand);
   cursor: pointer;
 }
 
@@ -266,7 +266,7 @@ const qrCenterCell = 24
 .s-config-btn {
   flex-shrink: 0;
   border: 1px solid #f0f1f2;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 8px 16px;
   font-size: 13px;
@@ -282,8 +282,8 @@ const qrCenterCell = 24
 }
 
 .s-config-btn--done {
-  background: rgba(8, 145, 178, 0.08);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .s-section-title {
@@ -308,7 +308,7 @@ const qrCenterCell = 24
   height: 32px;
   border-radius: 8px;
   border: 1px solid #d6dcde;
-  background: #fff;
+  background: var(--kw-color-surface);
   text-align: center;
   font-size: 13px;
   font-weight: 600;
@@ -318,7 +318,7 @@ const qrCenterCell = 24
 }
 
 .s-idle-input:focus {
-  border-color: #0891b2;
+  border-color: var(--kw-color-brand);
 }
 
 .s-tip {

@@ -218,8 +218,8 @@ defineExpose({ openWorkspaceFile })
   padding: 0;
   border: none;
   border-radius: 6px;
-  background: rgba(8, 145, 178, 0.06);
-  color: #0891b2;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-brand);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
@@ -227,8 +227,8 @@ defineExpose({ openWorkspaceFile })
 }
 
 .browser-btn:hover:not(:disabled) {
-  background: rgba(8, 145, 178, 0.14);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .browser-btn:disabled {
@@ -242,9 +242,9 @@ defineExpose({ openWorkspaceFile })
   min-width: 0;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid rgba(8, 145, 178, 0.18);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   color: #334155;
   font-size: 12px;
   font-family: inherit;
@@ -286,8 +286,8 @@ defineExpose({ openWorkspaceFile })
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(8, 145, 178, 0.12);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
 }
 </style>

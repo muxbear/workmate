@@ -6,9 +6,12 @@ import { isSettingsKey, isValidSettingsValue } from './schema'
 import { getDiskUsage, type StorageStats } from './DiskUsageService'
 
 export type ProxyMode = 'direct' | 'system' | 'manual'
+export type ThemeName = 'light' | 'dark'
 
 /** 外部效果依赖（index.ts 装配注入；可注入便于测试） */
 export interface SettingsServiceDeps {
+  /** 应用主题（nativeTheme.themeSource 同步） */
+  applyTheme: (theme: ThemeName) => void
   /** 应用代理（session.setProxy 封装） */
   applyProxy: (mode: ProxyMode, url: string) => Promise<void>
   /** 锁屏远程（powerSaveBlocker 封装） */
@@ -71,6 +74,9 @@ export class SettingsService {
       }
       case 'lockScreen.remoteLock':
         this.deps.setLockScreen(value === true)
+        break
+      case 'ui.theme':
+        this.deps.applyTheme(value as ThemeName)
         break
       case 'workspace.defaultWorkspaceDir':
         this.deps.onWorkspaceBaseDirChange((value as string) || DEFAULT_WORKSPACE_BASE_DIR)

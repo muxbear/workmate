@@ -146,7 +146,7 @@ const credits: { title: string; date: string; total: string; remaining: string }
   height: 52px;
   border-radius: 50%;
   background: #3b82f6;
-  color: #fff;
+  color: var(--kw-color-on-accent);
   font-size: 22px;
   font-weight: 600;
   display: flex;
@@ -170,14 +170,14 @@ const credits: { title: string; date: string; total: string; remaining: string }
 }
 
 .s-manage-btn:hover {
-  background: #fff;
-  color: #1a2332;
+  background: var(--kw-color-surface);
+  color: var(--kw-color-text);
 }
 
 .s-logout-btn {
   align-self: flex-start;
   border: 1px solid #dde1e3;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;
@@ -188,8 +188,8 @@ const credits: { title: string; date: string; total: string; remaining: string }
 }
 
 .s-logout-btn:hover {
-  background: #f7f9fb;
-  color: #1a2332;
+  background: var(--kw-color-bg-soft);
+  color: var(--kw-color-text);
 }
 
 .s-plan-top {
@@ -203,7 +203,7 @@ const credits: { title: string; date: string; total: string; remaining: string }
   border: none;
   border-radius: 8px;
   background: #17191b;
-  color: #fff;
+  color: var(--kw-color-on-accent);
   font-size: 13px;
   font-weight: 600;
   padding: 6px 12px;
@@ -246,7 +246,7 @@ const credits: { title: string; date: string; total: string; remaining: string }
 
 .s-detail-btn {
   border: 1px solid #f0f1f2;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;

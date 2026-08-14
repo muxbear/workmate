@@ -218,7 +218,7 @@ const memoryFiles = [
   resize: none;
   border-radius: 12px;
   border: 1px solid #dfe3e4;
-  background: #fff;
+  background: var(--kw-color-surface);
   padding: 16px;
   font-size: 14px;
   line-height: 1.6;
@@ -229,7 +229,7 @@ const memoryFiles = [
 }
 
 .s-textarea:focus {
-  border-color: #0891b2;
+  border-color: var(--kw-color-brand);
   box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
 }
 
@@ -255,8 +255,8 @@ const memoryFiles = [
 .s-confirm-btn {
   border: none;
   border-radius: 12px;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #fff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   font-size: 14px;
   font-weight: 600;
   padding: 10px 28px;
@@ -277,7 +277,7 @@ const memoryFiles = [
 
 .s-memory-card {
   border-radius: 16px;
-  background: #fff;
+  background: var(--kw-color-surface);
   border: 1px solid #dfe3e4;
   padding: 20px;
   transition: border-color 0.15s ease;
@@ -310,7 +310,7 @@ const memoryFiles = [
 
 .s-edit-btn {
   border: 1px solid #dfe3e4;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 8px 16px;
   font-size: 13px;

@@ -166,7 +166,7 @@ const items = [
 .s-manage-btn {
   flex-shrink: 0;
   border: 1px solid #f0f1f2;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 8px 16px;
   font-size: 13px;

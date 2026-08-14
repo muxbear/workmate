@@ -214,7 +214,7 @@ const removeModel = async (id: string): Promise<void> => {
   padding: 8px 16px;
   border: 1px solid #f0f1f2;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   font-size: 14px;
   font-weight: 500;

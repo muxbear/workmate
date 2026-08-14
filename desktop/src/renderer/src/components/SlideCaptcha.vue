@@ -139,7 +139,7 @@ onMounted(() => {
 
 .captcha-panel {
   width: min(360px, 90vw);
-  background: #ffffff;
+  background: var(--kw-color-surface);
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 24px 60px rgba(8, 145, 178, 0.12);
@@ -156,27 +156,27 @@ onMounted(() => {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   transition: color 0.15s ease;
   padding: 4px;
 }
 
 .close-button:hover {
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
 }
 
 .captcha-title {
   text-align: center;
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   margin: 0 0 4px;
 }
 
 .captcha-desc {
   text-align: center;
   font-size: 12px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 0 0 16px;
 }
 
@@ -185,8 +185,8 @@ onMounted(() => {
   position: relative;
   height: 44px;
   border-radius: 22px;
-  background: #f0f6fa;
-  border: 1px solid rgba(8, 145, 178, 0.2);
+  background: var(--kw-color-bg-tint);
+  border: 1px solid var(--kw-color-border-brand);
   overflow: hidden;
   user-select: none;
   margin-bottom: 12px;
@@ -230,7 +230,7 @@ onMounted(() => {
   justify-content: center;
   font-size: 12px;
   font-weight: 500;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   pointer-events: none;
 }
 
@@ -239,7 +239,7 @@ onMounted(() => {
 }
 
 .track--error .captcha-center-text {
-  color: #dc2626;
+  color: var(--kw-color-danger-strong);
 }
 
 /* Thumb */
@@ -250,11 +250,11 @@ onMounted(() => {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
+  background: var(--kw-gradient-brand);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ffffff;
+  color: var(--kw-color-on-accent);
   cursor: grab;
   box-shadow: 0 4px 12px rgba(8, 145, 178, 0.3);
   z-index: 1;
@@ -277,7 +277,7 @@ onMounted(() => {
   margin: 0 auto;
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   font-size: 12px;
   cursor: pointer;
   padding: 4px 8px;
@@ -286,6 +286,6 @@ onMounted(() => {
 }
 
 .captcha-refresh:hover {
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
 }
 </style>

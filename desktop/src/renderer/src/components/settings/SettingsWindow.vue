@@ -471,9 +471,9 @@ const subtitles: Partial<Record<PageKey, string>> = {
   display: flex;
   width: min(1240px, calc(100vw - 32px));
   height: min(880px, calc(100vh - 32px));
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 16px;
-  border: 1px solid rgba(8, 145, 178, 0.15);
+  border: 1px solid var(--kw-color-border-brand);
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
   overflow: hidden;
 }
@@ -497,7 +497,7 @@ const subtitles: Partial<Record<PageKey, string>> = {
 .settings-brand-text {
   font-size: 14px;
   font-weight: 700;
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .settings-nav {
@@ -524,12 +524,12 @@ const subtitles: Partial<Record<PageKey, string>> = {
 }
 
 .settings-nav-item:hover {
-  background: #f0f6fa;
+  background: var(--kw-color-bg-tint);
 }
 
 .settings-nav-item--active {
-  background: #e0f2f8;
-  color: #0e7490;
+  background: var(--kw-color-bg-tint);
+  color: var(--kw-color-brand-strong);
 }
 
 .settings-nav-icon {
@@ -538,14 +538,14 @@ const subtitles: Partial<Record<PageKey, string>> = {
 }
 
 .settings-nav-icon--active {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .settings-main {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  background: #fff;
+  background: var(--kw-color-surface);
   padding: 20px 24px;
 }
 
@@ -559,14 +559,14 @@ const subtitles: Partial<Record<PageKey, string>> = {
 .settings-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   letter-spacing: -0.01em;
 }
 
 .settings-subtitle {
   margin-top: 4px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 .settings-close {
@@ -610,14 +610,14 @@ const subtitles: Partial<Record<PageKey, string>> = {
 <style>
 /* ═══════════════════ 设置窗口共享样式（s- 前缀，11 个子页面共用） ═══════════════════ */
 .s-card {
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
   border: 1px solid #f3f4f6;
   border-radius: 12px;
   padding: 14px 16px;
 }
 
 .s-card--white {
-  background: #fff;
+  background: var(--kw-color-surface);
   border: 1px solid #e5e8e9;
 }
 
@@ -635,12 +635,12 @@ const subtitles: Partial<Record<PageKey, string>> = {
 .s-sec-title {
   font-size: 15px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .s-desc {
   font-size: 13px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
 }
 
 .s-desc strong {
@@ -654,7 +654,7 @@ const subtitles: Partial<Record<PageKey, string>> = {
   padding: 0;
   font-size: inherit;
   font-family: inherit;
-  color: #0891b2;
+  color: var(--kw-color-brand);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -675,9 +675,9 @@ const subtitles: Partial<Record<PageKey, string>> = {
   appearance: none;
   -webkit-appearance: none;
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #1a2332;
+  border: 1px solid var(--kw-color-border);
+  background: var(--kw-color-surface);
+  color: var(--kw-color-text);
   font-size: 13px;
   font-family: inherit;
   font-weight: 500;
@@ -690,7 +690,7 @@ const subtitles: Partial<Record<PageKey, string>> = {
   right: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   pointer-events: none;
 }
 
@@ -723,7 +723,7 @@ const subtitles: Partial<Record<PageKey, string>> = {
   height: 40px;
   border-radius: 8px;
   border: 1px solid #e0e4e5;
-  background: #fff;
+  background: var(--kw-color-surface);
   padding: 0 12px;
   font-size: 13px;
   color: #2c3337;
@@ -732,36 +732,36 @@ const subtitles: Partial<Record<PageKey, string>> = {
 }
 
 .s-input:focus {
-  border-color: #0891b2;
+  border-color: var(--kw-color-brand);
   box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
 }
 
 .s-btn {
   border: 1px solid #dde1e3;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .s-btn:hover {
-  background: #f7f9fb;
-  color: #1a2332;
+  background: var(--kw-color-bg-soft);
+  color: var(--kw-color-text);
 }
 
 .s-btn--primary {
   border: none;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #fff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   font-weight: 600;
 }
 
 .s-btn--primary:hover {
   background: linear-gradient(135deg, #0e7490, #155e75);
-  color: #fff;
+  color: var(--kw-color-on-accent);
 }
 
 .s-kbd {
@@ -771,8 +771,8 @@ const subtitles: Partial<Record<PageKey, string>> = {
   min-width: 28px;
   padding: 4px 8px;
   border-radius: 6px;
-  background: #f3f4f6;
-  border: 1px solid #d1d5db;
+  background: var(--kw-color-bg-muted);
+  border: 1px solid var(--kw-color-border);
   font-size: 13px;
   font-weight: 400;
   color: #2b3236;
@@ -786,8 +786,8 @@ const subtitles: Partial<Record<PageKey, string>> = {
   padding: 2px 6px;
   font-size: 11px;
   font-weight: 600;
-  background: rgba(8, 145, 178, 0.12);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
 }
 
 .s-sec-divider {

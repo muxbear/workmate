@@ -11,6 +11,8 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import SettingsWindow from '../components/settings/SettingsWindow.vue'
 import { useAgentStore } from '@renderer/store/agent'
 import { useWorkspaceStore } from '@renderer/store/workspace'
+import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
+import type { ThemeName } from '@renderer/store/settings'
 import type { Conversation } from '@renderer/store/agent'
 import type { Workspace } from '../../../preload/index.d'
 
@@ -18,6 +20,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const agentStore = useAgentStore()
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 
 // ── 当前登录用户展示 ──
 /** 显示名：用户名 → 手机号 → 兜底文案 */
@@ -350,6 +353,15 @@ const settingsOpen = ref(false)
 const openSettings = (): void => {
   userMenuOpen.value = false
   settingsOpen.value = true
+}
+
+/** 切换主题：乐观更新并持久化到主进程 settings.json */
+const selectTheme = async (next: ThemeName): Promise<void> => {
+  try {
+    await settingsStore.setTheme(next)
+  } catch (err) {
+    console.error('[Home] switch theme failed:', err)
+  }
 }
 
 /** 设置窗口内点「退出登录」：先关设置窗口，再走现有确认流程 */
@@ -1005,8 +1017,15 @@ const adjustMenuDirection = (): void => {
                 </svg>
                 <span>外观</span>
                 <div class="theme-toggle">
-                  <button class="theme-opt theme-opt--active">浅色</button>
-                  <button class="theme-opt">深色</button>
+                  <button
+                    v-for="option in THEME_OPTIONS"
+                    :key="option.value"
+                    class="theme-opt"
+                    :class="{ 'theme-opt--active': settingsStore.theme === option.value }"
+                    @click="selectTheme(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
                 </div>
               </div>
               <button class="menu-item">
@@ -1215,7 +1234,7 @@ const adjustMenuDirection = (): void => {
     -apple-system,
     BlinkMacSystemFont,
     sans-serif;
-  background: #ffffff;
+  background: var(--kw-color-surface);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1223,7 +1242,7 @@ const adjustMenuDirection = (): void => {
    ═══════════════════════════════════════════════════════════════════════════ */
 .sidebar--collapsed {
   width: 52px;
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
   border-right: 1px solid rgba(8, 145, 178, 0.1);
   display: flex;
   flex-direction: column;
@@ -1243,7 +1262,7 @@ const adjustMenuDirection = (): void => {
    ═══════════════════════════════════════════════════════════════════════════ */
 .sidebar--expanded {
   width: 256px;
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
   border-right: 1px solid rgba(8, 145, 178, 0.1);
   display: flex;
   flex-direction: column;
@@ -1273,14 +1292,14 @@ const adjustMenuDirection = (): void => {
 .sidebar-title {
   font-size: 14px;
   font-weight: 700;
-  color: #0e7490;
+  color: var(--kw-color-brand-strong);
   line-height: 1.3;
   margin: 0;
 }
 
 .sidebar-version {
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   line-height: 1.3;
   margin: 0;
 }
@@ -1292,7 +1311,7 @@ const adjustMenuDirection = (): void => {
   padding: 4px;
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   border-radius: 8px;
   cursor: pointer;
   flex-shrink: 0;
@@ -1302,8 +1321,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .sidebar-collapse-btn:hover {
-  background: rgba(8, 145, 178, 0.1);
-  color: #6b7f95;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-text-muted);
 }
 
 /* New Task button */
@@ -1323,8 +1342,8 @@ const adjustMenuDirection = (): void => {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #ffffff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   box-shadow: 0 2px 8px rgba(8, 145, 178, 0.25);
   transition:
     transform 0.1s ease,
@@ -1336,14 +1355,14 @@ const adjustMenuDirection = (): void => {
 }
 
 .new-task-btn--active {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   box-shadow: none;
   font-weight: 500;
 }
 
 .new-task-btn--active svg {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 /* Navigation */
@@ -1367,7 +1386,7 @@ const adjustMenuDirection = (): void => {
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
-  color: #4b5563;
+  color: var(--kw-color-text-secondary);
   cursor: pointer;
   text-align: left;
   transition:
@@ -1376,23 +1395,23 @@ const adjustMenuDirection = (): void => {
 }
 
 .nav-item:hover {
-  background: rgba(8, 145, 178, 0.05);
+  background: var(--kw-color-brand-hover);
 }
 
 .nav-item--active {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
 }
 
 .nav-icon {
   display: flex;
   align-items: center;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   flex-shrink: 0;
 }
 
 .nav-item--active .nav-icon {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .nav-label {
@@ -1406,15 +1425,15 @@ const adjustMenuDirection = (): void => {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(8, 145, 178, 0.1);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   flex-shrink: 0;
 }
 
 /* Divider */
 .sidebar-divider {
   margin: 4px 12px;
-  border-top: 1px solid rgba(8, 145, 178, 0.08);
+  border-top: 1px solid var(--kw-color-border-brand);
 }
 
 /* Spaces */
@@ -1437,7 +1456,7 @@ const adjustMenuDirection = (): void => {
   padding: 6px 12px;
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   font-size: 11px;
   font-weight: 600;
   font-family: inherit;
@@ -1449,8 +1468,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .spaces-toggle:hover {
-  color: #6b7f95;
-  background: rgba(8, 145, 178, 0.03);
+  color: var(--kw-color-text-muted);
+  background: var(--kw-color-brand-subtle);
 }
 
 .spaces-toggle svg {
@@ -1476,7 +1495,7 @@ const adjustMenuDirection = (): void => {
   gap: 6px;
   padding: 5px 12px;
   margin-bottom: 1px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   font-size: 12px;
   font-weight: 600;
   border-radius: 6px;
@@ -1484,16 +1503,16 @@ const adjustMenuDirection = (): void => {
 }
 
 .space-header:hover {
-  background: rgba(8, 145, 178, 0.03);
+  background: var(--kw-color-brand-subtle);
 }
 
 /* 当前激活工作空间（新建任务页右下角选中）标记：名字右侧红色实心圆点 */
 .space-header--active svg {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .space-header--active span {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .space-header-dot {
@@ -1503,7 +1522,7 @@ const adjustMenuDirection = (): void => {
   margin-left: 6px;
   vertical-align: middle;
   border-radius: 50%;
-  background: #ef4444;
+  background: var(--kw-color-danger);
   flex-shrink: 0;
 }
 
@@ -1511,7 +1530,7 @@ const adjustMenuDirection = (): void => {
 .space-header-name {
   flex: 1;
   min-width: 0;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -1519,7 +1538,7 @@ const adjustMenuDirection = (): void => {
 }
 
 .space-header svg {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   flex-shrink: 0;
 }
 
@@ -1558,7 +1577,7 @@ const adjustMenuDirection = (): void => {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -1566,8 +1585,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .space-header-btn:hover {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .space-header-collapse svg {
@@ -1585,9 +1604,9 @@ const adjustMenuDirection = (): void => {
   min-width: 160px;
   padding: 6px 0;
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-  border: 1px solid rgba(8, 145, 178, 0.14);
+  border: 1px solid var(--kw-color-border-brand);
   z-index: 10;
 }
 
@@ -1605,7 +1624,7 @@ const adjustMenuDirection = (): void => {
   padding: 8px 14px;
   border: none;
   background: transparent;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   font-size: 12px;
   font-family: inherit;
   text-align: left;
@@ -1614,24 +1633,24 @@ const adjustMenuDirection = (): void => {
 }
 
 .space-menu-item:hover {
-  background: rgba(8, 145, 178, 0.08);
+  background: var(--kw-color-brand-soft);
 }
 
 .space-menu-item svg {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   flex-shrink: 0;
 }
 
 .space-menu-item--danger {
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 
 .space-menu-item--danger svg {
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 
 .space-menu-item--danger:hover {
-  background: rgba(239, 68, 68, 0.06);
+  background: var(--kw-color-danger-soft);
 }
 
 .space-chat {
@@ -1664,15 +1683,15 @@ const adjustMenuDirection = (): void => {
 }
 
 .space-chat:hover {
-  background: rgba(8, 145, 178, 0.04);
+  background: var(--kw-color-brand-hover);
 }
 
 .space-chat--active {
-  background: rgba(8, 145, 178, 0.1);
+  background: var(--kw-color-brand-soft);
 }
 
 .space-chat--active .space-chat-title {
-  color: #0891b2;
+  color: var(--kw-color-brand);
   font-weight: 500;
 }
 
@@ -1688,7 +1707,7 @@ const adjustMenuDirection = (): void => {
 
 .space-chat-title {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
   margin: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -1701,7 +1720,7 @@ const adjustMenuDirection = (): void => {
   top: 50%;
   transform: translateY(-50%);
   font-size: 10px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   margin: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
@@ -1741,7 +1760,7 @@ const adjustMenuDirection = (): void => {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   flex-shrink: 0;
   transition:
@@ -1750,8 +1769,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .space-chat-action-btn:hover {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 /* Chat menu wrapper for positioning */
@@ -1767,9 +1786,9 @@ const adjustMenuDirection = (): void => {
   min-width: 150px;
   padding: 6px 0;
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-  border: 1px solid rgba(8, 145, 178, 0.14);
+  border: 1px solid var(--kw-color-border-brand);
   z-index: 10;
 }
 
@@ -1787,7 +1806,7 @@ const adjustMenuDirection = (): void => {
   padding: 8px 14px;
   border: none;
   background: transparent;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   font-size: 12px;
   font-family: inherit;
   text-align: left;
@@ -1796,24 +1815,24 @@ const adjustMenuDirection = (): void => {
 }
 
 .chat-menu-item:hover {
-  background: rgba(8, 145, 178, 0.08);
+  background: var(--kw-color-brand-soft);
 }
 
 .chat-menu-item svg {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   flex-shrink: 0;
 }
 
 .chat-menu-item--danger {
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 
 .chat-menu-item--danger svg {
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 
 .chat-menu-item--danger:hover {
-  background: rgba(239, 68, 68, 0.06);
+  background: var(--kw-color-danger-soft);
 }
 
 /* Space collapse transition */
@@ -1846,8 +1865,8 @@ const adjustMenuDirection = (): void => {
   padding: 10px 12px;
   border-radius: 12px;
   background: linear-gradient(135deg, rgba(8, 145, 178, 0.08), rgba(6, 182, 212, 0.06));
-  border: 1px solid rgba(8, 145, 178, 0.12);
-  color: #0891b2;
+  border: 1px solid var(--kw-color-border-brand);
+  color: var(--kw-color-brand);
 }
 
 .promo-text {
@@ -1858,13 +1877,13 @@ const adjustMenuDirection = (): void => {
 .promo-title {
   font-size: 11px;
   font-weight: 600;
-  color: #0e7490;
+  color: var(--kw-color-brand-strong);
   margin: 0;
 }
 
 .promo-sub {
   font-size: 10px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 0;
 }
 
@@ -1872,8 +1891,8 @@ const adjustMenuDirection = (): void => {
   padding: 4px 8px;
   border: none;
   border-radius: 8px;
-  background: #0891b2;
-  color: #ffffff;
+  background: var(--kw-color-brand);
+  color: var(--kw-color-on-accent);
   font-size: 10px;
   font-weight: 500;
   font-family: inherit;
@@ -1887,7 +1906,7 @@ const adjustMenuDirection = (): void => {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-top: 1px solid rgba(8, 145, 178, 0.08);
+  border-top: 1px solid var(--kw-color-border-brand);
 }
 
 .user-avatar-btn {
@@ -1906,15 +1925,15 @@ const adjustMenuDirection = (): void => {
 }
 
 .user-avatar-btn:hover {
-  background: rgba(8, 145, 178, 0.07);
+  background: var(--kw-color-brand-hover);
 }
 
 .user-avatar {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #ffffff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   font-size: 12px;
   font-weight: 700;
   display: flex;
@@ -1926,7 +1945,7 @@ const adjustMenuDirection = (): void => {
 .user-name {
   font-size: 12px;
   font-weight: 500;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1940,7 +1959,7 @@ const adjustMenuDirection = (): void => {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -1948,8 +1967,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .user-icon-btn:hover {
-  background: rgba(8, 145, 178, 0.08);
-  color: #6b7f95;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-text-muted);
 }
 
 /* User Menu Popup */
@@ -1958,12 +1977,12 @@ const adjustMenuDirection = (): void => {
   bottom: 48px;
   left: 8px;
   width: 260px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   border-radius: 16px;
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.14),
     0 2px 8px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(8, 145, 178, 0.1);
+  border: 1px solid var(--kw-color-border-brand);
   z-index: 30;
   overflow: hidden;
 }
@@ -1973,15 +1992,15 @@ const adjustMenuDirection = (): void => {
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--kw-color-border-soft);
 }
 
 .menu-avatar {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #fff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   font-size: 14px;
   font-weight: 700;
   display: flex;
@@ -1994,7 +2013,7 @@ const adjustMenuDirection = (): void => {
   flex: 1;
   font-size: 14px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .menu-copy-btn {
@@ -2003,17 +2022,17 @@ const adjustMenuDirection = (): void => {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
 .menu-copy-btn:hover {
-  background: #f3f4f6;
+  background: var(--kw-color-bg-muted);
 }
 
 .menu-section {
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--kw-color-border-soft);
 }
 
 .menu-item {
@@ -2024,7 +2043,7 @@ const adjustMenuDirection = (): void => {
   padding: 12px 20px;
   border: none;
   background: transparent;
-  color: #1a2332;
+  color: var(--kw-color-text);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -2033,11 +2052,11 @@ const adjustMenuDirection = (): void => {
 }
 
 .menu-item:hover {
-  background: rgba(8, 145, 178, 0.04);
+  background: var(--kw-color-brand-hover);
 }
 
 .menu-item > svg:first-child {
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   flex-shrink: 0;
 }
 
@@ -2060,21 +2079,21 @@ const adjustMenuDirection = (): void => {
 }
 
 .menu-item-row > svg:first-child {
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   flex-shrink: 0;
 }
 
 .menu-item-row > span {
   flex: 1;
   font-weight: 500;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .theme-toggle {
   display: flex;
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  background: #f3f4f6;
+  border: 1px solid var(--kw-color-border);
+  background: var(--kw-color-bg-muted);
   overflow: hidden;
 }
 
@@ -2082,7 +2101,7 @@ const adjustMenuDirection = (): void => {
   padding: 6px 12px;
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   font-size: 12px;
   font-weight: 500;
   font-family: inherit;
@@ -2096,8 +2115,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .theme-opt--active {
-  background: #ffffff;
-  color: #1a2332;
+  background: var(--kw-color-surface);
+  color: var(--kw-color-text);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
@@ -2109,7 +2128,7 @@ const adjustMenuDirection = (): void => {
   padding: 14px 20px;
   border: none;
   background: transparent;
-  color: #ef4444;
+  color: var(--kw-color-danger);
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
@@ -2119,7 +2138,7 @@ const adjustMenuDirection = (): void => {
 }
 
 .menu-logout:hover {
-  background: rgba(239, 68, 68, 0.04);
+  background: var(--kw-color-danger-soft);
 }
 
 .menu-logout:disabled {
@@ -2128,7 +2147,7 @@ const adjustMenuDirection = (): void => {
 }
 
 .menu-logout svg {
-  color: #ef4444;
+  color: var(--kw-color-danger);
   flex-shrink: 0;
 }
 
@@ -2137,7 +2156,7 @@ const adjustMenuDirection = (): void => {
   padding: 0 20px 10px;
   font-size: 12px;
   line-height: 1.5;
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 
 /* Menu slide animation */
@@ -2171,7 +2190,7 @@ const adjustMenuDirection = (): void => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   position: relative;
 }
 
@@ -2185,7 +2204,7 @@ const adjustMenuDirection = (): void => {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 .placeholder-icon {
@@ -2195,13 +2214,13 @@ const adjustMenuDirection = (): void => {
 .placeholder-title {
   font-size: 18px;
   font-weight: 600;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 0;
 }
 
 .placeholder-desc {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   margin: 0;
 }
 
@@ -2250,7 +2269,7 @@ const adjustMenuDirection = (): void => {
 
 .rename-card {
   width: 360px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
   overflow: hidden;
@@ -2263,7 +2282,7 @@ const adjustMenuDirection = (): void => {
   padding: 16px 20px 12px;
   font-size: 15px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .rename-close {
@@ -2274,13 +2293,13 @@ const adjustMenuDirection = (): void => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
 .rename-close:hover {
-  background: #f3f4f6;
+  background: var(--kw-color-bg-muted);
 }
 
 .rename-body {
@@ -2295,7 +2314,7 @@ const adjustMenuDirection = (): void => {
   border-radius: 8px;
   font-size: 13px;
   font-family: inherit;
-  color: #1a2332;
+  color: var(--kw-color-text);
   outline: none;
   transition:
     border-color 0.15s ease,
@@ -2303,7 +2322,7 @@ const adjustMenuDirection = (): void => {
 }
 
 .rename-input:focus {
-  border-color: #0891b2;
+  border-color: var(--kw-color-brand);
   box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
 }
 
@@ -2311,7 +2330,7 @@ const adjustMenuDirection = (): void => {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #ef4444;
+  color: var(--kw-color-danger);
 }
 
 .rename-footer {
@@ -2335,8 +2354,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .rename-btn--cancel {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--kw-color-bg-muted);
+  color: var(--kw-color-text-secondary);
 }
 
 .rename-btn--cancel:hover {
@@ -2344,8 +2363,8 @@ const adjustMenuDirection = (): void => {
 }
 
 .rename-btn--confirm {
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #ffffff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
 }
 
 .rename-btn--confirm:hover {

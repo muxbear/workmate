@@ -69,7 +69,7 @@ const renderedHtml = computed(() => {
   margin: 16px 0 8px;
   font-weight: 600;
   line-height: 1.4;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .message-content--rich h1 { font-size: 1.4em; }
@@ -101,8 +101,8 @@ const renderedHtml = computed(() => {
 .message-content--rich code {
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
   font-size: 0.9em;
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
 }
@@ -127,9 +127,9 @@ const renderedHtml = computed(() => {
   margin: 12px 0;
   padding: 8px 14px;
   border-left: 3px solid #0891b2;
-  background: rgba(8, 145, 178, 0.04);
+  background: var(--kw-color-brand-hover);
   border-radius: 0 8px 8px 0;
-  color: #4b5563;
+  color: var(--kw-color-text-secondary);
 }
 
 .message-content--rich table {
@@ -142,22 +142,22 @@ const renderedHtml = computed(() => {
 .message-content--rich th,
 .message-content--rich td {
   padding: 8px 12px;
-  border: 1px solid rgba(8, 145, 178, 0.15);
+  border: 1px solid var(--kw-color-border-brand);
   text-align: left;
 }
 
 .message-content--rich th {
-  background: rgba(8, 145, 178, 0.06);
+  background: var(--kw-color-brand-hover);
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .message-content--rich td {
-  color: #374151;
+  color: var(--kw-color-text-secondary);
 }
 
 .message-content--rich a {
-  color: #0891b2;
+  color: var(--kw-color-brand);
   text-decoration: none;
 }
 
@@ -167,13 +167,13 @@ const renderedHtml = computed(() => {
 
 .message-content--rich strong {
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .message-content--rich hr {
   margin: 16px 0;
   border: none;
-  border-top: 1px solid rgba(8, 145, 178, 0.12);
+  border-top: 1px solid var(--kw-color-border-brand);
 }
 
 .message-content--rich img {

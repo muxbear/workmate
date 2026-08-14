@@ -60,7 +60,7 @@ const renderedHtml = computed(() =>
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(8, 145, 178, 0.1);
+  border-bottom: 1px solid var(--kw-color-border-brand);
   flex-shrink: 0;
 }
 
@@ -74,15 +74,15 @@ const renderedHtml = computed(() =>
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #64748b;
+  color: var(--kw-color-text-subtle);
   cursor: pointer;
   flex-shrink: 0;
   transition: background-color 0.15s ease;
 }
 
 .fp-back:hover {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .fp-title {
@@ -94,7 +94,7 @@ const renderedHtml = computed(() =>
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -103,7 +103,7 @@ const renderedHtml = computed(() =>
 .fp-path {
   margin: 2px 0 0;
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

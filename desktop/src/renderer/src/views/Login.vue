@@ -557,6 +557,30 @@ const handleWechatLogin = async (): Promise<void> => {
   --transition-tab: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+:root[data-theme='dark'] .login-page {
+  --brand-400: #22d3ee;
+  --brand-500: #06b6d4;
+  --brand-600: #22d3ee;
+  --brand-700: #06b6d4;
+  --bg-page-start: #0f172a;
+  --bg-page-mid: #111827;
+  --bg-page-end: #162231;
+  --card-bg: rgba(31, 41, 55, 0.94);
+  --card-border: rgba(51, 65, 85, 0.8);
+  --card-shadow: 0 20px 60px rgba(0, 0, 0, 0.42), 0 8px 24px rgba(0, 0, 0, 0.28);
+  --input-bg: #1e293b;
+  --input-border: rgba(34, 211, 238, 0.24);
+  --input-border-focus: #22d3ee;
+  --tab-bg: #1e293b;
+  --tab-shadow: 0 1px 4px rgba(34, 211, 238, 0.18);
+  --text-title: #f8fafc;
+  --text-subtitle: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-placeholder: #64748b;
+  --error-50: #2b1a1e;
+  --error-200: #7f1d1d;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Page Layout
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -689,7 +713,7 @@ const handleWechatLogin = async (): Promise<void> => {
 }
 
 .mode-btn--active {
-  background: #ffffff;
+  background: var(--kw-color-surface);
   color: var(--text-title);
   box-shadow: var(--tab-shadow);
 }
@@ -746,7 +770,7 @@ const handleWechatLogin = async (): Promise<void> => {
   left: 4px;
   bottom: 4px;
   width: calc((100% - 8px) / 3);
-  background: #ffffff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   box-shadow: var(--tab-shadow);
   transition: var(--transition-tab);
@@ -798,7 +822,7 @@ const handleWechatLogin = async (): Promise<void> => {
 .input-row {
   display: flex;
   align-items: center;
-  border: 1px solid rgba(8, 145, 178, 0.18);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: var(--radius-input);
   background: var(--input-bg);
   overflow: hidden;
@@ -815,7 +839,7 @@ const handleWechatLogin = async (): Promise<void> => {
 
 .input-row:focus-within {
   border-color: var(--input-border-focus);
-  background: #ffffff;
+  background: var(--kw-color-surface);
 }
 
 .input-row--error {
@@ -829,13 +853,13 @@ const handleWechatLogin = async (): Promise<void> => {
   align-items: center;
   gap: 8px;
   padding: 0 14px;
-  color: #0e7490;
+  color: var(--kw-color-brand-strong);
   border-right: 1px solid rgba(8, 145, 178, 0.16);
   white-space: nowrap;
 }
 
 .input-prefix svg {
-  color: #06b6d4;
+  color: var(--kw-color-brand);
 }
 
 .prefix-text {
@@ -849,7 +873,7 @@ const handleWechatLogin = async (): Promise<void> => {
   display: flex;
   align-items: center;
   padding: 0 14px;
-  color: #94a3b8;
+  color: var(--kw-color-text-subtle);
 }
 
 /* Main input */
@@ -872,7 +896,7 @@ const handleWechatLogin = async (): Promise<void> => {
 /* Send code button */
 .send-code-btn {
   padding: 10px 16px;
-  border: 1px solid rgba(8, 145, 178, 0.18);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.9);
   color: var(--brand-700);
@@ -906,13 +930,13 @@ const handleWechatLogin = async (): Promise<void> => {
   padding: 11px 12px;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
   cursor: pointer;
   transition: color 0.15s ease;
 }
 
 .toggle-pwd-btn:hover {
-  color: #374151;
+  color: var(--kw-color-text-secondary);
 }
 
 /* Field error message */
@@ -966,7 +990,7 @@ const handleWechatLogin = async (): Promise<void> => {
   border: none;
   border-radius: var(--radius-btn);
   background: linear-gradient(135deg, var(--brand-600), var(--brand-700));
-  color: #ffffff;
+  color: var(--kw-color-on-accent);
   font-size: 15px;
   font-weight: 700;
   font-family: inherit;
@@ -1024,7 +1048,7 @@ const handleWechatLogin = async (): Promise<void> => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
   font-size: 12px;
 }
 
@@ -1060,7 +1084,7 @@ const handleWechatLogin = async (): Promise<void> => {
 
 .wechat-desc {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
   text-align: center;
   line-height: 1.6;
   margin: 0;
@@ -1077,7 +1101,7 @@ const handleWechatLogin = async (): Promise<void> => {
   border: none;
   border-radius: var(--radius-btn);
   background: linear-gradient(135deg, var(--wechat-500), var(--wechat-600));
-  color: #ffffff;
+  color: var(--kw-color-on-accent);
   font-size: 14px;
   font-weight: 500;
   font-family: inherit;
@@ -1113,7 +1137,7 @@ const handleWechatLogin = async (): Promise<void> => {
   justify-content: center;
   gap: 4px;
   padding: 14px 32px;
-  border-top: 1px solid rgba(8, 145, 178, 0.08);
+  border-top: 1px solid var(--kw-color-border-brand);
   background: rgba(240, 253, 255, 0.4);
 }
 

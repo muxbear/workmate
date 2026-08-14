@@ -32,7 +32,7 @@ describe('SettingsStore', () => {
     store.set('ui.fontSize', 20)
     const raw = readSettingsFile()
     expect(raw['version']).toBe(SETTINGS_VERSION)
-    expect(raw['ui'] as unknown).toEqual({ language: 'en', fontSize: 20 })
+    expect(raw['ui'] as unknown).toEqual({ language: 'en', fontSize: 20, theme: 'light' })
     expect(raw['skills'] as unknown).toEqual({ autoUpdate: true, safeInstall: false }) // 默认值也写盘
   })
 

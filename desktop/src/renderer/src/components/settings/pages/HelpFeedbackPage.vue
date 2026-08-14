@@ -141,7 +141,7 @@ const items = [
   justify-content: space-between;
   width: 100%;
   border: 1px solid #f1f2f3;
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
   border-radius: 12px;
   padding: 16px;
   text-align: left;

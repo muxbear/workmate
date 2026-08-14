@@ -963,7 +963,7 @@ const handleTextareaInput = (): void => {
     -apple-system,
     BlinkMacSystemFont,
     sans-serif;
-  background: #ffffff;
+  background: var(--kw-color-surface);
 }
 
 .assistant-left {
@@ -995,13 +995,13 @@ const handleTextareaInput = (): void => {
 .browser-title {
   font-size: 22px;
   font-weight: 700;
-  color: #1a2332;
+  color: var(--kw-color-text);
   margin: 0 0 8px;
 }
 
 .browser-subtitle {
   font-size: 13px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 0;
 }
 
@@ -1017,8 +1017,8 @@ const handleTextareaInput = (): void => {
   padding: 6px 14px;
   border: none;
   border-radius: 999px;
-  background: #f0f6fa;
-  color: #4b5563;
+  background: var(--kw-color-bg-tint);
+  color: var(--kw-color-text-secondary);
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
@@ -1030,13 +1030,13 @@ const handleTextareaInput = (): void => {
 }
 
 .category-tab:hover {
-  background: rgba(8, 145, 178, 0.1);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
 }
 
 .category-tab--active {
   background: #1a2332;
-  color: #ffffff;
+  color: var(--kw-color-on-accent);
   box-shadow: 0 2px 10px rgba(26, 35, 50, 0.25);
 }
 
@@ -1052,9 +1052,9 @@ const handleTextareaInput = (): void => {
   display: flex;
   gap: 14px;
   padding: 16px;
-  border: 1px solid rgba(8, 145, 178, 0.12);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   text-align: left;
   font-family: inherit;
   cursor: pointer;
@@ -1099,7 +1099,7 @@ const handleTextareaInput = (): void => {
 .assistant-card-name {
   font-size: 14px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1117,7 +1117,7 @@ const handleTextareaInput = (): void => {
 
 .assistant-card-desc {
   font-size: 12px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   line-height: 1.5;
   margin: 0 0 10px;
   display: -webkit-box;
@@ -1137,14 +1137,14 @@ const handleTextareaInput = (): void => {
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 4px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   font-weight: 500;
 }
 
 .assistant-tag--deploy {
-  background: rgba(8, 145, 178, 0.06);
-  color: #6b7f95;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-text-muted);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1155,7 +1155,7 @@ const handleTextareaInput = (): void => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--kw-color-surface);
 }
 
 /* Chat Header */
@@ -1164,7 +1164,7 @@ const handleTextareaInput = (): void => {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--kw-color-border-soft);
   background: #fafcfe;
   flex-shrink: 0;
 }
@@ -1177,7 +1177,7 @@ const handleTextareaInput = (): void => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -1185,14 +1185,14 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-back-btn:hover {
-  background: rgba(8, 145, 178, 0.08);
-  color: #6b7f95;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-text-muted);
 }
 
 .chat-header-name {
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 
 .chat-header-divider {
@@ -1204,7 +1204,7 @@ const handleTextareaInput = (): void => {
 
 .chat-header-connection {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 .chat-header-wechat {
@@ -1231,7 +1231,7 @@ const handleTextareaInput = (): void => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -1239,8 +1239,8 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-header-btn:hover {
-  background: rgba(8, 145, 178, 0.06);
-  color: #6b7f95;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-text-muted);
 }
 
 .chat-header-spacer {
@@ -1290,7 +1290,7 @@ const handleTextareaInput = (): void => {
 
 .chat-empty-text {
   font-size: 13px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 0;
 }
 
@@ -1318,8 +1318,8 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-avatar--user {
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #ffffff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1338,14 +1338,14 @@ const handleTextareaInput = (): void => {
   border-radius: 14px;
   white-space: pre-wrap;
   word-break: break-word;
-  background: #f5f9fb;
-  color: #1a2332;
+  background: var(--kw-color-input-bg);
+  color: var(--kw-color-text);
   border-bottom-left-radius: 4px;
 }
 
 .chat-msg-bubble--user {
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #ffffff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   border-radius: 14px;
   border-bottom-right-radius: 4px;
 }
@@ -1375,8 +1375,8 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-msg-action-btn:hover {
-  background: rgba(8, 145, 178, 0.08);
-  color: #6b7f95;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-text-muted);
 }
 
 /* Thinking Bubble */
@@ -1387,14 +1387,14 @@ const handleTextareaInput = (): void => {
   padding: 10px 14px;
   border-radius: 14px;
   border-bottom-left-radius: 4px;
-  background: #f5f9fb;
+  background: var(--kw-color-input-bg);
 }
 
 .thinking-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #0891b2;
+  background: var(--kw-color-brand);
   animation: dotBounce 0.6s ease-in-out infinite;
 }
 
@@ -1421,9 +1421,9 @@ const handleTextareaInput = (): void => {
   width: 100%;
   max-width: 672px;
   border-radius: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--kw-color-border);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
-  background: #ffffff;
+  background: var(--kw-color-surface);
   overflow: visible;
 }
 
@@ -1436,7 +1436,7 @@ const handleTextareaInput = (): void => {
   resize: none;
   font-size: 13px;
   font-family: inherit;
-  color: #1a2332;
+  color: var(--kw-color-text);
   line-height: 1.5;
   box-sizing: border-box;
   min-height: 44px;
@@ -1444,7 +1444,7 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-input-textarea::placeholder {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 /* Input Toolbar */
@@ -1463,7 +1463,7 @@ const handleTextareaInput = (): void => {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -1471,8 +1471,8 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-toolbar-btn:hover {
-  background: rgba(8, 145, 178, 0.08);
-  color: #6b7f95;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-text-muted);
 }
 
 .chat-toolbar-permission {
@@ -1483,7 +1483,7 @@ const handleTextareaInput = (): void => {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
@@ -1491,7 +1491,7 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-toolbar-permission:hover {
-  background: rgba(8, 145, 178, 0.06);
+  background: var(--kw-color-brand-hover);
 }
 
 .chat-toolbar-diamond {
@@ -1507,7 +1507,7 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-toolbar-diamond:hover {
-  background: rgba(8, 145, 178, 0.08);
+  background: var(--kw-color-brand-soft);
 }
 
 .chat-toolbar-spacer {
@@ -1524,10 +1524,10 @@ const handleTextareaInput = (): void => {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--kw-color-border);
   border-radius: 8px;
   background: transparent;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
@@ -1535,11 +1535,11 @@ const handleTextareaInput = (): void => {
 }
 
 .model-btn:hover {
-  background: rgba(8, 145, 178, 0.04);
+  background: var(--kw-color-brand-hover);
 }
 
 .model-btn svg:first-child {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 
 .model-dropdown {
@@ -1549,8 +1549,8 @@ const handleTextareaInput = (): void => {
   min-width: 160px;
   max-height: 320px;
   overflow-y: auto;
-  background: #ffffff;
-  border: 1px solid rgba(8, 145, 178, 0.15);
+  background: var(--kw-color-surface);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   z-index: 20;
@@ -1560,7 +1560,7 @@ const handleTextareaInput = (): void => {
   padding: 6px 12px 2px;
   font-size: 10px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -1575,18 +1575,18 @@ const handleTextareaInput = (): void => {
   background: transparent;
   font-size: 12px;
   font-family: inherit;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   cursor: pointer;
   text-align: left;
   transition: background-color 0.1s ease;
 }
 
 .model-option:hover {
-  background: rgba(8, 145, 178, 0.06);
+  background: var(--kw-color-brand-hover);
 }
 
 .model-option--active {
-  color: #0891b2;
+  color: var(--kw-color-brand);
   font-weight: 600;
 }
 
@@ -1604,7 +1604,7 @@ const handleTextareaInput = (): void => {
   border: none;
   border-radius: 50%;
   background: #e5e7eb;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     transform 0.1s ease,
@@ -1613,8 +1613,8 @@ const handleTextareaInput = (): void => {
 }
 
 .chat-send-btn--active {
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #ffffff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3);
 }
 
@@ -1631,7 +1631,7 @@ const handleTextareaInput = (): void => {
   flex-direction: column;
   height: 100%;
   border-left: 1px solid #ebebeb;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   flex-shrink: 0;
 }
 
@@ -1639,7 +1639,7 @@ const handleTextareaInput = (): void => {
   display: flex;
   align-items: center;
   padding: 8px 10px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--kw-color-border-soft);
   flex-shrink: 0;
 }
 
@@ -1651,7 +1651,7 @@ const handleTextareaInput = (): void => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -1659,8 +1659,8 @@ const handleTextareaInput = (): void => {
 }
 
 .overview-toolbar-btn:hover {
-  background: rgba(8, 145, 178, 0.06);
-  color: #6b7f95;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-text-muted);
 }
 
 .overview-toolbar-spacer {
@@ -1689,7 +1689,7 @@ const handleTextareaInput = (): void => {
   background: transparent;
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   font-family: inherit;
   cursor: pointer;
   text-align: left;
@@ -1697,7 +1697,7 @@ const handleTextareaInput = (): void => {
 }
 
 .overview-section-title svg {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   transition: transform 0.2s ease;
 }
 
@@ -1727,7 +1727,7 @@ const handleTextareaInput = (): void => {
   background: transparent;
   font-size: 12px;
   font-weight: 600;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   font-family: inherit;
   cursor: pointer;
   text-align: left;
@@ -1735,7 +1735,7 @@ const handleTextareaInput = (): void => {
 }
 
 .overview-subsection-title svg {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   transition: transform 0.2s ease;
 }
 
@@ -1753,7 +1753,7 @@ const handleTextareaInput = (): void => {
 }
 
 .overview-task-check {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   flex-shrink: 0;
   margin-top: 1px;
 }
@@ -1761,7 +1761,7 @@ const handleTextareaInput = (): void => {
 .overview-task-text {
   font-size: 12px;
   line-height: 1.5;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 /* Output File */
@@ -1785,7 +1785,7 @@ const handleTextareaInput = (): void => {
 .overview-file-name {
   font-size: 12px;
   line-height: 1.4;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

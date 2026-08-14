@@ -653,7 +653,7 @@ const runtimeTools = reactive([
 .s-head-icon {
   flex-shrink: 0;
   margin-top: 2px;
-  color: #06b6d4;
+  color: var(--kw-color-brand);
 }
 
 .s-desc--lg {
@@ -669,7 +669,7 @@ const runtimeTools = reactive([
 }
 
 .s-help-icon {
-  color: #06b6d4;
+  color: var(--kw-color-brand);
 }
 
 .s-inner-list {
@@ -685,7 +685,7 @@ const runtimeTools = reactive([
   gap: 12px;
   width: 100%;
   border: none;
-  background: #f3f4f5;
+  background: var(--kw-color-bg-muted);
   border-radius: 12px;
   padding: 12px 16px;
   text-align: left;
@@ -702,7 +702,7 @@ const runtimeTools = reactive([
 }
 
 .s-inner-row--static:hover {
-  background: #f3f4f5;
+  background: var(--kw-color-bg-muted);
 }
 
 .s-inner-icon {
@@ -738,7 +738,7 @@ const runtimeTools = reactive([
 .s-inner-box {
   margin-top: 8px;
   border-radius: 12px;
-  background: #f3f4f5;
+  background: var(--kw-color-bg-muted);
   padding: 12px 16px;
 }
 
@@ -777,7 +777,7 @@ const runtimeTools = reactive([
   height: 40px;
   border-radius: 12px;
   border: 1px solid #e0e4e5;
-  background: #fff;
+  background: var(--kw-color-surface);
   text-align: center;
   font-size: 13px;
   color: #2c3337;
@@ -786,7 +786,7 @@ const runtimeTools = reactive([
 }
 
 .s-num-input:focus {
-  border-color: #0891b2;
+  border-color: var(--kw-color-brand);
 }
 
 .s-num-input--sm {
@@ -802,7 +802,7 @@ const runtimeTools = reactive([
   align-items: center;
   gap: 6px;
   border: 1px solid #e0e4e5;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 999px;
   padding: 8px 12px;
   font-size: 13px;
@@ -812,13 +812,13 @@ const runtimeTools = reactive([
 }
 
 .s-dir-btn:hover {
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
 }
 
 .s-badge--status {
   border-radius: 999px;
-  background: rgba(8, 145, 178, 0.12);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   font-size: 13px;
   font-weight: 500;
   padding: 4px 10px;
@@ -868,7 +868,7 @@ const runtimeTools = reactive([
   width: 20px;
   height: 20px;
   border-radius: 4px;
-  color: #fff;
+  color: var(--kw-color-on-accent);
   font-size: 9px;
   font-weight: 700;
   flex-shrink: 0;
@@ -888,7 +888,7 @@ const runtimeTools = reactive([
 
 .s-audit-btn {
   border: 1px solid #e0e4e5;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 999px;
   padding: 8px 16px;
   font-size: 13px;
@@ -899,7 +899,7 @@ const runtimeTools = reactive([
 }
 
 .s-audit-btn:hover {
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
 }
 
 .s-audit-list {
@@ -915,7 +915,7 @@ const runtimeTools = reactive([
   justify-content: space-between;
   gap: 20px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kw-color-surface);
   padding: 10px 12px;
   margin-bottom: 8px;
   font-size: 13px;
@@ -941,7 +941,7 @@ const runtimeTools = reactive([
   justify-content: space-between;
   width: 100%;
   border: none;
-  background: #fff;
+  background: var(--kw-color-surface);
   border-radius: 8px;
   padding: 10px 12px;
   margin-top: 8px;
@@ -953,7 +953,7 @@ const runtimeTools = reactive([
 }
 
 .s-audit-more:hover {
-  background: #f7f9fb;
+  background: var(--kw-color-bg-soft);
 }
 
 .s-audit-empty {

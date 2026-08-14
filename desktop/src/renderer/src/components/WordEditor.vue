@@ -137,15 +137,15 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(8, 145, 178, 0.1);
-  background: #f7f9fb;
+  border-bottom: 1px solid var(--kw-color-border-brand);
+  background: var(--kw-color-bg-soft);
   flex-shrink: 0;
 }
 
 .we-toolbar-btn {
-  border: 1px solid rgba(8, 145, 178, 0.16);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--kw-color-surface);
   color: #475569;
   font-size: 12px;
   font-family: inherit;
@@ -157,26 +157,26 @@ onBeforeUnmount(() => {
 }
 
 .we-toolbar-btn:hover {
-  background: rgba(8, 145, 178, 0.08);
-  color: #0e7490;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
 }
 
 .we-toolbar-btn--active {
-  background: rgba(8, 145, 178, 0.12);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   border-color: rgba(8, 145, 178, 0.32);
 }
 
 .we-toolbar-btn--save {
   margin-left: auto;
-  color: #ffffff;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
+  color: var(--kw-color-on-accent);
+  background: var(--kw-gradient-brand);
   border: none;
 }
 
 .we-toolbar-btn--save:hover {
   opacity: 0.9;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
+  background: var(--kw-gradient-brand);
 }
 
 .we-host {

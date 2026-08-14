@@ -363,7 +363,7 @@ watch(
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
+  background: var(--kw-color-surface);
   font-family: 'Inter', 'Noto Sans SC', sans-serif;
 }
 .top-bar {
@@ -371,7 +371,7 @@ watch(
   align-items: center;
   gap: 0;
   padding: 16px 24px 0;
-  border-bottom: 1px solid rgba(8, 145, 178, 0.1);
+  border-bottom: 1px solid var(--kw-color-border-brand);
   flex-shrink: 0;
 }
 .tab-row {
@@ -383,14 +383,14 @@ watch(
   padding: 10px 16px;
   border: none;
   background: transparent;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
 }
 .tab-btn--active {
-  color: #0891b2;
+  color: var(--kw-color-brand);
 }
 .tab-indicator {
   position: absolute;
@@ -399,7 +399,7 @@ watch(
   right: 8px;
   height: 2px;
   border-radius: 2px;
-  background: #0891b2;
+  background: var(--kw-color-brand);
 }
 .top-spacer {
   flex: 1;
@@ -410,10 +410,10 @@ watch(
   gap: 6px;
   padding: 6px 12px;
   border-radius: 8px;
-  background: #f5f9fb;
-  border: 1px solid rgba(8, 145, 178, 0.15);
+  background: var(--kw-color-input-bg);
+  border: 1px solid var(--kw-color-border-brand);
   margin-right: 8px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 .search-input {
   border: none;
@@ -421,11 +421,11 @@ watch(
   outline: none;
   font-size: 12px;
   font-family: inherit;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
   width: 128px;
 }
 .search-input::placeholder {
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 .sync-btn {
   display: flex;
@@ -434,8 +434,8 @@ watch(
   padding: 6px 12px;
   border: none;
   border-radius: 8px;
-  background: linear-gradient(135deg, #0891b2, #0e7490);
-  color: #fff;
+  background: var(--kw-gradient-brand);
+  color: var(--kw-color-on-accent);
   font-size: 12px;
   font-weight: 500;
   font-family: inherit;
@@ -457,12 +457,12 @@ watch(
 .sec-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   margin: 0;
 }
 .sec-desc {
   font-size: 12px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 4px 0 0;
 }
 .sec-intro {
@@ -486,12 +486,12 @@ watch(
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
   font-family: inherit;
   cursor: pointer;
 }
 .sort-btn--active {
-  color: #0891b2;
+  color: var(--kw-color-brand);
   font-weight: 600;
 }
 
@@ -534,7 +534,7 @@ watch(
 .scene-card-label {
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
 }
 .scene-items {
   display: flex;
@@ -546,7 +546,7 @@ watch(
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #4b5563;
+  color: var(--kw-color-text-secondary);
 }
 .scene-item-dot {
   width: 16px;
@@ -568,10 +568,10 @@ watch(
 }
 .filter-chip {
   padding: 4px 12px;
-  border: 1px solid rgba(8, 145, 178, 0.15);
+  border: 1px solid var(--kw-color-border-brand);
   border-radius: 999px;
-  background: #f5f9fb;
-  color: #6b7f95;
+  background: var(--kw-color-input-bg);
+  color: var(--kw-color-text-muted);
   font-size: 12px;
   font-weight: 500;
   font-family: inherit;
@@ -580,9 +580,9 @@ watch(
   flex-shrink: 0;
 }
 .filter-chip--active {
-  background: #0891b2;
-  color: #fff;
-  border-color: #0891b2;
+  background: var(--kw-color-brand);
+  color: var(--kw-color-on-accent);
+  border-color: var(--kw-color-brand);
 }
 
 .expert-grid {
@@ -593,8 +593,8 @@ watch(
 .expert-card {
   padding: 16px;
   border-radius: 12px;
-  background: #f9fbfc;
-  border: 1px solid rgba(8, 145, 178, 0.1);
+  background: var(--kw-color-surface-soft);
+  border: 1px solid var(--kw-color-border-brand);
   cursor: pointer;
   transition:
     border-color 0.15s,
@@ -602,7 +602,7 @@ watch(
 }
 .expert-card:hover {
   border-color: rgba(8, 145, 178, 0.28);
-  background: #fff;
+  background: var(--kw-color-surface);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 .expert-card-head {
@@ -618,7 +618,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--kw-color-on-accent);
   font-size: 16px;
   font-weight: 700;
   flex-shrink: 0;
@@ -629,7 +629,7 @@ watch(
 .expert-name {
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   margin: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -637,7 +637,7 @@ watch(
 }
 .expert-title {
   font-size: 11px;
-  color: #6b7f95;
+  color: var(--kw-color-text-muted);
   margin: 0;
 }
 .expert-tags {
@@ -649,14 +649,14 @@ watch(
 .expert-tag {
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   font-size: 10px;
   font-weight: 500;
 }
 .expert-desc {
   font-size: 11px;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
   line-height: 1.5;
   margin: 0 0 12px;
   display: -webkit-box;
@@ -675,11 +675,11 @@ watch(
   gap: 4px;
   font-size: 11px;
   font-weight: 500;
-  color: #374151;
+  color: var(--kw-color-text-secondary);
 }
 .expert-users {
   font-size: 10px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 
 .grid-empty {
@@ -703,8 +703,8 @@ watch(
   gap: 12px;
   padding: 16px;
   border-radius: 12px;
-  background: #f9fbfc;
-  border: 1px solid rgba(8, 145, 178, 0.1);
+  background: var(--kw-color-surface-soft);
+  border: 1px solid var(--kw-color-border-brand);
   cursor: pointer;
   transition:
     border-color 0.15s,
@@ -712,14 +712,14 @@ watch(
 }
 .skill-card:hover {
   border-color: rgba(8, 145, 178, 0.28);
-  background: #fff;
+  background: var(--kw-color-surface);
 }
 .skill-card--connected {
   border-color: rgba(16, 185, 129, 0.25);
 }
 .skill-card--focus {
-  border-color: #0891b2;
-  background: #fff;
+  border-color: var(--kw-color-brand);
+  background: var(--kw-color-surface);
   box-shadow:
     0 0 0 3px rgba(8, 145, 178, 0.15),
     0 4px 12px rgba(8, 145, 178, 0.12);
@@ -751,16 +751,16 @@ watch(
 .skill-name {
   font-size: 13px;
   font-weight: 600;
-  color: #1a2332;
+  color: var(--kw-color-text);
   margin: 0;
 }
 .skill-count {
   font-size: 10px;
-  color: #9ca3af;
+  color: var(--kw-color-text-faint);
 }
 .skill-desc {
   font-size: 11px;
-  color: #6b7280;
+  color: var(--kw-color-text-secondary);
   line-height: 1.4;
   margin: 0 0 12px;
 }
@@ -768,8 +768,8 @@ watch(
   padding: 4px 12px;
   border: none;
   border-radius: 8px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   font-size: 11px;
   font-weight: 500;
   font-family: inherit;
@@ -797,8 +797,8 @@ watch(
   padding: 4px 12px;
   border: none;
   border-radius: 8px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0891b2;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
   font-size: 11px;
   font-weight: 500;
   font-family: inherit;
