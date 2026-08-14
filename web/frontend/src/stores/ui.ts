@@ -7,14 +7,53 @@ export interface HistoryItem {
   title: string
 }
 
+export type ThemeMode = 'light' | 'dark'
+
+const THEME_STORAGE_KEY = 'ui_theme'
+const DEFAULT_THEME: ThemeMode = 'light'
+
+function getInitialTheme(): ThemeMode {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch {
+    // 忽略本地存储不可用的场景
+  }
+  return DEFAULT_THEME
+}
+
+function applyThemeToDocument(theme: ThemeMode) {
+  if (typeof document === 'undefined') return
+  document.documentElement.dataset.theme = theme
+}
+
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(false)
   const rightPanelCollapsed = ref(false)
   const plusMenuOpen = ref(false)
   const searchQuery = ref('')
   const selectedModel = ref('DeepSeek V4')
+  const theme = ref<ThemeMode>(getInitialTheme())
   const histories = ref<HistoryItem[]>([])
   const activeThreadId = ref<string | null>(null)
+
+  function initTheme() {
+    applyThemeToDocument(theme.value)
+  }
+
+  function setTheme(mode: ThemeMode) {
+    theme.value = mode
+    applyThemeToDocument(mode)
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, mode)
+    } catch {
+      // 忽略本地存储不可用的场景
+    }
+  }
+
+  function toggleTheme() {
+    setTheme(theme.value === 'light' ? 'dark' : 'light')
+  }
 
   async function fetchHistories() {
     try {
@@ -69,8 +108,12 @@ export const useUiStore = defineStore('ui', () => {
       plusMenuOpen,
       searchQuery,
       selectedModel,
+      theme,
       histories,
       activeThreadId,
+      initTheme,
+      setTheme,
+      toggleTheme,
       fetchHistories,
       deleteHistory,
       toggleSidebar,

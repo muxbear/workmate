@@ -6,6 +6,7 @@ import { MotionPlugin } from '@vueuse/motion'
 import App from './App.vue'
 import router from './router'
 import i18n from './locales'
+import { useUiStore } from '@/stores/ui'
 import './assets/styles/main.css'
 
 import '@vue-flow/core/dist/style.css'
@@ -20,5 +21,7 @@ app.use(router)
 app.use(i18n)
 app.use(ElementPlus)
 app.use(MotionPlugin)
+
+useUiStore().initTheme()
 
 app.mount('#app')

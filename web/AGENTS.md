@@ -15,6 +15,6 @@
 | backend | uv（pyproject.toml） | `cd backend && uv run python run.py` |
 | frontend | npm | `cd frontend && npm run dev` |
 
-- 前端默认 `http://localhost:5173`，`/api` 代理到后端 `http://127.0.0.1:8000`。
+- 前端默认 `http://localhost:5173`，`/api` 代理到后端 `http://127.0.0.1:8001`。
 
 详细约定见 `frontend/AGENTS.md` 与 `backend/AGENTS.md`。

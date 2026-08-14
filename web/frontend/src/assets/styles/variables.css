@@ -151,3 +151,49 @@
   /* === Transition (向后兼容) === */
   --transition-duration: 0.25s;
 }
+
+/* ========================================
+   娴呰壊涓婚璁捐 Token
+   ======================================== */
+:root[data-theme='light'] {
+  --color-bg-page: #f4f6fa;
+  --color-bg-form-area: #ffffff;
+  --color-bg-card: rgba(255, 255, 255, 0.96);
+  --color-bg-input: #ffffff;
+  --color-bg-brand-start: #f7faff;
+  --color-bg-brand-mid: #eaf1ff;
+  --color-bg-brand-end: #f3f7ff;
+
+  --color-border-card: rgba(59, 130, 246, 0.18);
+  --color-border-input: #d7dee9;
+
+  --color-accent: #3b82f6;
+  --color-accent-dark: #2563eb;
+  --color-accent-gradient: linear-gradient(90deg, #3b82f6, #2563eb);
+
+  --color-text-primary: #152033;
+  --color-text-secondary: #4a5873;
+  --color-text-label: #24344d;
+  --color-text-muted: #7b879b;
+  --color-text-error: #dc2626;
+
+  --shadow-card: 0px 4px 24px rgba(15, 23, 42, 0.08), 0px 0px 0px 1px rgba(59, 130, 246, 0.08);
+  --shadow-button: 0px 4px 16px rgba(59, 130, 246, 0.22);
+  --shadow-logo: 0px 4px 20px rgba(59, 130, 246, 0.18);
+
+  --color-overlay: rgba(15, 23, 42, 0.28);
+  --color-modal-bg: rgba(255, 255, 255, 0.98);
+
+  --brand-gradient: linear-gradient(125.75deg, #f7faff 21.4%, #eaf1ff 57.1%, #f3f7ff 92.9%);
+
+  --accent-primary: var(--color-accent);
+  --accent-primary-light: rgba(59, 130, 246, 0.14);
+  --foreground-primary: var(--color-text-primary);
+  --foreground-secondary: var(--color-text-secondary);
+  --foreground-muted: var(--color-text-muted);
+  --surface-primary: var(--color-bg-page);
+  --surface-secondary: #eef2f7;
+  --surface-card: var(--color-bg-card);
+  --border-subtle: rgba(15, 30, 60, 0.08);
+  --border-medium: var(--color-border-input);
+}

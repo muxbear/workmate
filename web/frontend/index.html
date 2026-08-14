@@ -4,6 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ke-hermes</title>
+  <script>
+    ;(function () {
+      var theme = 'light'
+      try {
+        var saved = window.localStorage.getItem('ui_theme')
+        if (saved === 'light' || saved === 'dark') theme = saved
+      } catch (e) {}
+      document.documentElement.dataset.theme = theme
+    })()
+  </script>
 </head>
 <body>
   <div id="app"></div>

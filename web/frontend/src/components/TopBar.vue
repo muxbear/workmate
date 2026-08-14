@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Search, Bell, CircleUser, LogOut, ChevronRight } from 'lucide-vue-next'
+import { Search, Bell, CircleUser, LogOut, ChevronRight, Settings, Palette } from 'lucide-vue-next'
+import { ElMessage } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useAuth } from '@/composables/useAuth'
@@ -42,6 +43,11 @@ const breadcrumb = computed(() => {
 
 function toggleUserMenu() {
   userMenuOpen.value = !userMenuOpen.value
+}
+
+function handleSettings() {
+  userMenuOpen.value = false
+  ElMessage.info('设置页面开发中')
 }
 
 async function handleLogout() {
@@ -126,6 +132,26 @@ onUnmounted(() => {
                 {{ displayName.charAt(0) }}
               </span>
               <span class="user-fullname">{{ displayName }}</span>
+            </div>
+            <div class="user-dropdown-divider" />
+            <button class="user-dropdown-item" @click="handleSettings">
+              <Settings :size="14" />
+              <span>设置</span>
+            </button>
+            <div class="user-dropdown-item appearance-item">
+              <Palette :size="14" />
+              <span>外观</span>
+              <button
+                class="theme-switch"
+                :class="{ dark: uiStore.theme === 'dark' }"
+                role="switch"
+                :aria-checked="uiStore.theme === 'dark'"
+                @click.stop="uiStore.toggleTheme"
+              >
+                <span class="theme-option">浅色</span>
+                <span class="theme-option">深色</span>
+                <span class="theme-thumb" />
+              </button>
             </div>
             <div class="user-dropdown-divider" />
             <button class="user-dropdown-item logout" @click="handleLogout">
@@ -287,7 +313,7 @@ onUnmounted(() => {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  width: 200px;
+  width: 236px;
   background: var(--surface-card);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
@@ -344,6 +370,64 @@ onUnmounted(() => {
 .user-dropdown-item:hover {
   background: var(--surface-secondary);
   color: var(--foreground-primary);
+}
+
+.user-dropdown-item.appearance-item {
+  cursor: default;
+  justify-content: flex-start;
+}
+
+.user-dropdown-item.appearance-item:hover {
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+}
+
+.theme-switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 102px;
+  height: 24px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.theme-option {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+  text-align: center;
+  color: var(--foreground-muted);
+  transition: color var(--transition-fast);
+}
+
+.theme-switch:not(.dark) .theme-option:first-child,
+.theme-switch.dark .theme-option:last-child {
+  color: var(--foreground-primary);
+}
+
+.theme-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 47px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--surface-card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform var(--transition-fast);
+}
+
+.theme-switch.dark .theme-thumb {
+  transform: translateX(49px);
 }
 
 .user-dropdown-item.logout:hover {
