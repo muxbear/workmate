@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWorkspaceStore } from '@store/workspace'
 import { useAgentStore } from '@store/agent'
 import FileList from './FileList.vue'
 import FilePreview from './FilePreview.vue'
+import BrowserPanel from './BrowserPanel.vue'
 import type { Workspace, WorkspaceFileEntry } from '../../../preload/index.d'
 
 const WordEditor = defineAsyncComponent(() => import('./WordEditor.vue'))
@@ -48,6 +49,23 @@ const activeTabKey = ref<string | null>(null)
 const activeTab = computed(() => fileTabs.value.find((t) => t.key === activeTabKey.value) ?? null)
 
 const artifactsSelection = ref<Selection | null>(null)
+const browserPanelRef = ref<{
+  openWorkspaceFile: (workspaceId: string, relPath: string) => Promise<void>
+} | null>(null)
+
+/** 由内嵌浏览器直接预览的工作空间文件类型。 */
+const BROWSER_EXTENSIONS = new Set([
+  'html',
+  'htm',
+  'svg',
+  'pdf',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp'
+])
 
 const viewLabels: Record<ViewKey, string> = {
   overview: '概览',
@@ -97,6 +115,7 @@ function formatDateTime(ts: number): string {
 
 // ── 视图切换下拉 ──
 const switchView = (key: ViewKey): void => {
+  void window.api.browserSetVisible(open.value && key === 'browser')
   view.value = key
   viewMenuOpen.value = false
 }
@@ -137,7 +156,33 @@ onUnmounted(() => {
 })
 
 /** 文件树点击：已开标签则激活，否则新建标签并读取内容 */
+async function openInBrowser(entry: WorkspaceFileEntry): Promise<void> {
+  if (!panelWorkspaceId.value) return
+  view.value = 'browser'
+  open.value = true
+  await nextTick()
+  await browserPanelRef.value?.openWorkspaceFile(panelWorkspaceId.value, entry.relPath)
+}
+
 async function openFile(entry: WorkspaceFileEntry): Promise<void> {
+  const ext = getExt(entry.name)
+  if (BROWSER_EXTENSIONS.has(ext)) {
+    try {
+      await openInBrowser(entry)
+      return
+    } catch (err) {
+      console.error('[ChatSidePanel] open in browser failed:', err)
+      if (ext === 'pdf') {
+        await openLegacyFile(entry)
+        return
+      }
+      return
+    }
+  }
+  await openLegacyFile(entry)
+}
+
+async function openLegacyFile(entry: WorkspaceFileEntry): Promise<void> {
   if (fileTabs.value.some((t) => t.key === entry.relPath)) {
     activeTabKey.value = entry.relPath
     return
@@ -237,6 +282,10 @@ watch(panelWorkspaceId, () => {
   artifactsOpen.value = false
 })
 
+watch([open, view], () => {
+  void window.api.browserSetVisible(open.value && view.value === 'browser')
+})
+
 // ── 拖拽分割线（调整右栏宽度；localStorage 持久化）──
 const PANEL_WIDTH_KEY = 'ke-work.panel-width'
 const PANEL_WIDTH_MIN = 240
@@ -276,11 +325,13 @@ const collapsePanel = (): void => {
     emit('update:fullscreen', false)
   }
   open.value = false
+  void window.api.browserSetVisible(false)
 }
 
 /** 展开右栏（收起态顶部展开按钮） */
 const expandPanel = (): void => {
   open.value = true
+  void window.api.browserSetVisible(view.value === 'browser')
 }
 </script>
 
@@ -379,7 +430,7 @@ const expandPanel = (): void => {
 
     <template v-if="open">
     <!-- 视图体 -->
-    <div class="csp-body">
+    <div :class="['csp-body', { 'csp-body--browser-fullscreen': fullscreen && view === 'browser' }]">
       <!-- 概览 -->
       <template v-if="view === 'overview'">
         <template v-if="panelWorkspace">
@@ -441,14 +492,14 @@ const expandPanel = (): void => {
         <p v-else class="csp-empty-tip">未选择工作空间</p>
       </template>
 
-      <!-- 浏览器（占位） -->
+      <!-- 浏览器 -->
       <template v-else>
-        <p class="csp-empty-tip">浏览器视图开发中</p>
+        <BrowserPanel ref="browserPanelRef" :fullscreen="fullscreen" />
       </template>
     </div>
 
     <!-- 产物区（常驻） -->
-    <div class="csp-artifacts">
+    <div v-if="!fullscreen && view !== 'browser'" class="csp-artifacts">
       <button class="csp-artifact-head" data-artifact-toggle @click="artifactsOpen = !artifactsOpen">
         <span>产物</span>
         <svg :class="['csp-artifact-chevron', { 'csp-artifact-chevron--open': artifactsOpen }]" width="12" height="12"
@@ -629,6 +680,13 @@ const expandPanel = (): void => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* 全屏 + 浏览器视图：让浏览器内核真正铺满最大化区域（工具栏仍保留在顶部） */
+.csp-body--browser-fullscreen {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
 }
 
 .csp-view-body {

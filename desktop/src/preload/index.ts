@@ -153,10 +153,55 @@ const api = {
   writeWorkspaceFile(workspaceId: string, relPath: string, bytes: Uint8Array | ArrayBuffer) {
     return ipcRenderer.invoke('workspace:write-file', workspaceId, relPath, bytes)
   },
+  browserNavigate(url: string) {
+    return ipcRenderer.invoke('browser:navigate', url)
+  },
+  browserOpenWorkspaceFile(workspaceId: string, relPath: string) {
+    return ipcRenderer.invoke('browser:open-workspace-file', workspaceId, relPath)
+  },
+  browserBack() {
+    return ipcRenderer.invoke('browser:back')
+  },
+  browserForward() {
+    return ipcRenderer.invoke('browser:forward')
+  },
+  browserReload() {
+    return ipcRenderer.invoke('browser:reload')
+  },
+  browserStop() {
+    return ipcRenderer.invoke('browser:stop')
+  },
+  browserOpenExternal() {
+    return ipcRenderer.invoke('browser:open-external')
+  },
+  browserSetBounds(rect: { x: number; y: number; width: number; height: number }) {
+    return ipcRenderer.invoke('browser:set-bounds', rect)
+  },
+  browserSetVisible(visible: boolean) {
+    return ipcRenderer.invoke('browser:set-visible', visible)
+  },
+  onBrowserState(callback: (state: { displayUrl: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, state: { displayUrl: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }): void => {
+      callback(state)
+    }
+    ipcRenderer.on('browser:state-changed', handler)
+    return () => ipcRenderer.removeListener('browser:state-changed', handler)
+  },
+  onBrowserLoadError(callback: (error: string) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, error: string): void => {
+      callback(error)
+    }
+    ipcRenderer.on('browser:load-error', handler)
+    return () => ipcRenderer.removeListener('browser:load-error', handler)
+  },
   // ── 系统设置 API（机器级配置）──
   /** 全局字体缩放（webFrame.setZoomFactor；渲染层不直接 import electron） */
   setZoomFactor(ratio: number) {
     webFrame.setZoomFactor(ratio)
+  },
+  /** 获取当前渲染进程缩放系数（用于将 CSS 像素换算为窗口 DIP） */
+  getZoomFactor() {
+    return webFrame.getZoomFactor()
   },
   getAllSettings() {
     return ipcRenderer.invoke('config:get-all')

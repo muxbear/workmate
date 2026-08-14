@@ -6,7 +6,8 @@ import {
   ipcMain,
   safeStorage,
   session as electronSession,
-  powerSaveBlocker
+  powerSaveBlocker,
+  type IpcMainInvokeEvent
 } from 'electron'
 import { join } from 'path'
 import { randomBytes, randomUUID } from 'crypto'
@@ -40,6 +41,9 @@ import { registerModelHandlers } from './ipc/model-handlers'
 import { ModelService } from './model/ModelService'
 import { LastLaunchStore } from './state/LastLaunchStore'
 import { WorkspaceStateStore } from './state/WorkspaceStateStore'
+import { BrowserViewManager, BROWSER_PARTITION } from './browser/BrowserViewManager'
+import { WorkspacePreviewServer } from './browser/WorkspacePreviewServer'
+import { registerBrowserHandlers } from './browser/browser-handlers'
 
 import icon from '../../resources/icon.png?asset'
 
@@ -52,6 +56,8 @@ if (process.env.KE_WORK_USER_DATA) {
 
 // 取消控制器映射（按窗口 ID）
 const abortControllers = new Map<number, AbortController>()
+const browserManagers = new Map<number, BrowserViewManager>()
+let browserPreviewServer: WorkspacePreviewServer | null = null
 
 /** 取消所有正在执行中的 agent 任务（登出时停止全部任务/后台会话） */
 function cancelAllAgents(): void {
@@ -61,7 +67,7 @@ function cancelAllAgents(): void {
   abortControllers.clear()
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1024,
@@ -94,6 +100,17 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  if (browserPreviewServer) {
+    const manager = new BrowserViewManager(mainWindow, browserPreviewServer)
+    browserManagers.set(mainWindow.id, manager)
+    mainWindow.on('closed', () => {
+      browserManagers.delete(mainWindow.id)
+      manager.destroy()
+    })
+  }
+
+  return mainWindow
 }
 
 // This method will be called when Electron has finished
@@ -139,12 +156,26 @@ app.whenReady().then(() => {
     secureStorage
   })
   const session = new SessionService(dataDir.getBaseDir())
+  browserPreviewServer = new WorkspacePreviewServer()
+
+  const cleanupBrowserOnLogout = (): void => {
+    for (const manager of browserManagers.values()) {
+      manager.resetForLogout()
+    }
+    void browserPreviewServer?.revokeAll()
+  }
 
   // ── 初始化自定义模型服务（机器级配置；providers.json 首启种子写入，用户可手改）──
   const modelService = new ModelService(dataDir.getBaseDir())
 
   // ── 注册认证 IPC ──
-  registerAuthHandlers(ipcMain, { authService, dataSourceFactory, session, cancelAllAgents })
+  registerAuthHandlers(ipcMain, {
+    authService,
+    dataSourceFactory,
+    session,
+    cancelAllAgents,
+    onLogout: cleanupBrowserOnLogout
+  })
 
   // ── 初始化智能体（AgentManager）──
   // checkpoint（短期记忆）与 store（长期记忆）与业务表共用 ke-work.db（SqliteSaver/SqliteStore 自建表）
@@ -169,13 +200,17 @@ app.whenReady().then(() => {
 
   // ── 系统设置服务（代理/锁屏/目录依赖在此注入；机器级配置，不依赖登录态）──
   const applyProxy = async (mode: string, url: string): Promise<void> => {
-    await electronSession.defaultSession.setProxy(
-      mode === 'direct'
-        ? { mode: 'direct' }
-        : mode === 'system'
-          ? { mode: 'system' }
-          : { mode: 'fixed_servers', proxyRules: url }
-    )
+    const browserSession = electronSession.fromPartition(BROWSER_PARTITION)
+    if (mode === 'direct') {
+      await electronSession.defaultSession.setProxy({ mode: 'direct' })
+      await browserSession.setProxy({ mode: 'direct' })
+    } else if (mode === 'system') {
+      await electronSession.defaultSession.setProxy({ mode: 'system' })
+      await browserSession.setProxy({ mode: 'system' })
+    } else {
+      await electronSession.defaultSession.setProxy({ mode: 'fixed_servers', proxyRules: url })
+      await browserSession.setProxy({ mode: 'fixed_servers', proxyRules: url })
+    }
     console.log(`[settings] proxy applied: mode=${mode}`)
   }
   let lockScreenEnabled = false
@@ -225,6 +260,19 @@ app.whenReady().then(() => {
     { selectDir, openPath }
   )
   registerWorkspaceHandlers(ipcMain, { workspaceService, conversationStore, session })
+  registerBrowserHandlers(ipcMain, {
+    getBrowserManager: (event: IpcMainInvokeEvent): BrowserViewManager => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) throw new Error('No window found')
+      const existing = browserManagers.get(win.id)
+      if (existing) return existing
+      const manager = new BrowserViewManager(win, browserPreviewServer!)
+      browserManagers.set(win.id, manager)
+      return manager
+    },
+    workspaceService,
+    session
+  })
 
   // ── 自定义模型 IPC（机器级，models.json 本地文件）──
   registerModelHandlers(ipcMain, { modelService })
@@ -450,6 +498,9 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  if (browserPreviewServer) {
+    void browserPreviewServer.stop()
+  }
   if (process.platform !== 'darwin') {
     app.quit()
   }

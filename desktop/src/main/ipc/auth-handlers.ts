@@ -9,6 +9,8 @@ interface AuthHandlerDeps {
   session: SessionService
   /** 取消所有正在执行中的 agent 任务（登出前置动作） */
   cancelAllAgents?: () => void
+  /** 登出前的附加清理动作（例如隐藏并重置内嵌浏览器）。 */
+  onLogout?: () => void
 }
 
 /** 统一的 IPC 结果包裹：成功返回 data，失败返回 { success:false, error } */
@@ -76,6 +78,7 @@ export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void 
     try {
       // 登出前先停止所有正在执行中的任务（含后台会话）
       deps.cancelAllAgents?.()
+      deps.onLogout?.()
       await deps.authService.logout(account)
       deps.session.clear()
       return ok(null)

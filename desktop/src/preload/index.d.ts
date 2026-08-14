@@ -190,6 +190,8 @@ export interface SettingsSnapshot {
 export interface ConfigAPI {
   /** 全局字体缩放（webFrame.setZoomFactor 封装；渲染层不直接 import electron） */
   setZoomFactor(ratio: number): void
+  /** 获取当前渲染进程缩放系数（用于将 CSS 像素换算为窗口 DIP） */
+  getZoomFactor(): number
   /** 读取全部系统设置（默认值合并；机器级，不依赖登录态） */
   getAllSettings(): Promise<IpcResult<SettingsSnapshot>>
   /** 修改单项设置（主进程校验：白名单 + 类型/枚举/格式/区间；非法返回 error） */
@@ -252,9 +254,46 @@ export interface ModelAPI {
   listModelProviders(): Promise<IpcResult<ModelProvider[]>>
 }
 
+/** 内嵌浏览器状态 */
+export interface BrowserState {
+  displayUrl: string
+  canGoBack: boolean
+  canGoForward: boolean
+  isLoading: boolean
+}
+
+export interface BrowserAPI {
+  browserNavigate(url: string): Promise<IpcResult<null>>
+  browserOpenWorkspaceFile(
+    workspaceId: string,
+    relPath: string
+  ): Promise<IpcResult<{ displayUrl: string }>>
+  browserBack(): Promise<IpcResult<null>>
+  browserForward(): Promise<IpcResult<null>>
+  browserReload(): Promise<IpcResult<null>>
+  browserStop(): Promise<IpcResult<null>>
+  browserOpenExternal(): Promise<IpcResult<null>>
+  browserSetBounds(rect: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }): Promise<IpcResult<null>>
+  browserSetVisible(visible: boolean): Promise<IpcResult<null>>
+  onBrowserState(callback: (state: BrowserState) => void): () => void
+  onBrowserLoadError(callback: (error: string) => void): () => void
+}
+
 /** 渲染层可见的完整 API 形状 */
 export interface KeWorkWindowApi
-  extends AgentAPI, AuthAPI, ConversationAPI, ModeAPI, WorkspaceAPI, ConfigAPI, ModelAPI {}
+  extends AgentAPI,
+    AuthAPI,
+    ConversationAPI,
+    ModeAPI,
+    WorkspaceAPI,
+    ConfigAPI,
+    ModelAPI,
+    BrowserAPI {}
 
 declare global {
   interface Window {
