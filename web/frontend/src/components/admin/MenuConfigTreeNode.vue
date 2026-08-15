@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  ChevronRight, ChevronDown, Plus, Edit2, Trash2, Lock,
+  ChevronRight, ChevronDown, Plus, Edit2, Trash2,
   MessageSquare, Send, Database, Upload, LayoutGrid, Timer, Play,
   Bot, Cpu, Wrench, Zap, Puzzle, Shield, ShieldCheck, Users,
   UserPlus, Save, LayoutList, Folder, FolderTree, MousePointerClick,
@@ -9,6 +9,8 @@ import {
 import { PERM_TYPE_CONFIG, PERM_STATUS_CONFIG } from '@/types/admin'
 import type { PermResource } from '@/types/admin'
 import type { Component } from 'vue'
+import { useMenuConfigStore } from '@/stores/menuConfig'
+import { useTreeDrag } from '@/composables/useTreeDrag'
 
 const props = defineProps<{
   resource: PermResource
@@ -26,6 +28,29 @@ const emit = defineEmits<{
   delete: [resource: PermResource]
 }>()
 
+const store = useMenuConfigStore()
+const drag = useTreeDrag()
+
+function handlePointerDown(event: PointerEvent) {
+  drag.onPointerDown(event, props.resource)
+}
+
+function handlePointerMove(event: PointerEvent) {
+  drag.onPointerMove(event)
+}
+
+function handlePointerUp(event: PointerEvent) {
+  drag.onPointerUp(event)
+}
+
+function handlePointerCancel(event: PointerEvent) {
+  drag.onPointerCancel(event)
+}
+
+function handleNodeClick() {
+  drag.handleClick(() => emit('select', props.resource.id))
+}
+
 const iconMap: Record<string, Component> = {
   MessageSquare, Send, Database, Upload, LayoutGrid, Timer, Play,
   Bot, Cpu, Wrench, Zap, Puzzle, Shield, ShieldCheck, Users,
@@ -42,13 +67,25 @@ function resolveIcon(name: string): Component {
   <div>
     <div
       class="tree-node"
-      :class="{ active: selectedId === resource.id }"
+      :class="{
+        active: selectedId === resource.id,
+        dragging: store.draggingResourceId === resource.id,
+        'drop-before': store.dropTargetId === resource.id && store.dropPlacement === 'before',
+        'drop-after': store.dropTargetId === resource.id && store.dropPlacement === 'after',
+        'drop-inside': store.dropTargetId === resource.id && store.dropPlacement === 'inside',
+      }"
+      :data-resource-id="resource.id"
       :style="{ paddingLeft: `${depth * 16 + 8}px` }"
-      @click="emit('select', resource.id)"
+      @pointerdown="handlePointerDown"
+      @pointermove="handlePointerMove"
+      @pointerup="handlePointerUp"
+      @pointercancel="handlePointerCancel"
+      @click="handleNodeClick"
     >
       <button
         class="expand-btn"
         :class="{ invisible: childrenList.length === 0 }"
+        @pointerdown.stop
         @click.stop="emit('toggleExpand', resource.id)"
       >
         <ChevronDown v-if="expandedIds.has(resource.id)" :size="14" />
@@ -62,12 +99,6 @@ function resolveIcon(name: string): Component {
       <div class="node-body">
         <div class="node-label-row">
           <span class="node-label">{{ resource.label }}</span>
-          <span class="type-badge" :class="PERM_TYPE_CONFIG[resource.type].bg">
-            {{ PERM_TYPE_CONFIG[resource.type].label }}
-          </span>
-          <span v-if="resource.isBuiltin" class="builtin-badge">
-            <Lock :size="10" />内置
-          </span>
           <span
             v-if="resource.status !== 'active'"
             class="status-badge"
@@ -79,7 +110,7 @@ function resolveIcon(name: string): Component {
         <div class="node-key">{{ resource.permKey }}</div>
       </div>
 
-      <div class="node-actions">
+      <div class="node-actions" @pointerdown.stop>
         <button
           v-if="resource.type !== 'button'"
           class="action-btn"
@@ -91,12 +122,7 @@ function resolveIcon(name: string): Component {
         <button class="action-btn" @click.stop="emit('edit', resource)" title="编辑">
           <Edit2 :size="14" />
         </button>
-        <button
-          v-if="!resource.isBuiltin"
-          class="action-btn danger"
-          @click.stop="emit('delete', resource)"
-          title="删除"
-        >
+        <button class="action-btn danger" @click.stop="emit('delete', resource)" title="删除">
           <Trash2 :size="14" />
         </button>
       </div>
@@ -136,11 +162,19 @@ export default { name: 'MenuConfigTreeNode' }
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
   border: 1px solid transparent;
+  user-select: none;
 }
-.tree-node:hover { background: rgba(30,41,59,0.3); }
+.tree-node:hover { background: rgba(59,130,246,0.06); }
 .tree-node.active {
-  background: linear-gradient(90deg, rgba(59,130,246,0.12), rgba(139,92,246,0.06));
-  border-color: rgba(59,130,246,0.3);
+  background: rgba(59,130,246,0.12);
+  border-color: rgba(59,130,246,0.25);
+}
+.tree-node.dragging { opacity: 0.45; }
+.tree-node.drop-before { box-shadow: 0 -2px 0 0 var(--accent-primary); }
+.tree-node.drop-after { box-shadow: 0 2px 0 0 var(--accent-primary); }
+.tree-node.drop-inside {
+  background: rgba(59,130,246,0.12);
+  border-color: var(--accent-primary);
 }
 .expand-btn {
   width: 20px; height: 20px;
@@ -162,16 +196,6 @@ export default { name: 'MenuConfigTreeNode' }
 .node-body { flex: 1; min-width: 0; }
 .node-label-row { display: flex; align-items: center; gap: 6px; }
 .node-label { font-size: var(--font-size-sm); color: var(--foreground-primary); white-space: nowrap; }
-.type-badge {
-  font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm);
-  display: flex; align-items: center; gap: 3px;
-}
-.builtin-badge {
-  font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm);
-  background: rgba(100,116,139,0.1); color: var(--foreground-muted);
-  border: 1px solid rgba(100,116,139,0.3);
-  display: flex; align-items: center; gap: 3px;
-}
 .status-badge {
   font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm);
 }
@@ -197,8 +221,8 @@ export default { name: 'MenuConfigTreeNode' }
   border-radius: var(--radius-sm);
   display: flex; align-items: center;
 }
-.action-btn:hover { background: rgba(30,41,59,0.6); color: var(--foreground-primary); }
-.action-btn.danger:hover { background: rgba(239,68,68,0.15); color: #fca5a5; }
+.action-btn:hover { background: rgba(59,130,246,0.12); color: var(--accent-primary); }
+.action-btn.danger:hover { background: rgba(244,63,94,0.12); color: #fb7185; }
 .text-amber-300 { color: #fcd34d; }
 .text-sky-300 { color: #7dd3fc; }
 .text-violet-300 { color: #c4b5fd; }

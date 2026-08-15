@@ -53,6 +53,15 @@ export async function deleteResource(id: string): Promise<{ deleted: number }> {
   return res.data.data
 }
 
+export async function reorderResource(payload: {
+  sourceId: string
+  targetId: string
+  placement: 'before' | 'after' | 'inside'
+}): Promise<PermResource[]> {
+  const res = await instance.post('/rbac/resources/reorder', payload)
+  return res.data.data
+}
+
 // ── Roles ────────────────────────────────────────────────────────
 
 export async function fetchRoles(): Promise<RoleDef[]> {

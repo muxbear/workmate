@@ -2,11 +2,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  ChevronLeft, Plus, Edit2, Trash2, Check, X, Info, Lock, Search,
+  ChevronLeft, Plus, Edit2, Trash2, Check, X, Info, Search,
   Layers, KeyRound, Route, Save, MousePointerClick,
   MessageSquare, Send, Database, Upload, LayoutGrid, Timer, Play,
   Bot, Cpu, Wrench, Zap, Puzzle, Shield, ShieldCheck, Users,
   UserPlus, LayoutList, Folder, FolderTree, ScrollText,
+  ChevronsDownUp, ChevronsUpDown, FolderPlus,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -32,10 +33,22 @@ const router = useRouter()
 const store = useMenuConfigStore()
 const rbacStore = useRbacStore()
 
+const allExpanded = computed(() =>
+  store.resources.length > 0 && store.resources.every((r) => store.expandedIds.has(r.id)),
+)
+
 onMounted(() => {
   store.fetchAll()
   rbacStore.fetchAll()
 })
+
+function toggleExpandAll() {
+  if (allExpanded.value) {
+    store.expandedIds = new Set()
+  } else {
+    store.expandedIds = new Set(store.resources.map((r) => r.id))
+  }
+}
 
 // 弹窗
 const dialogOpen = ref(false)
@@ -143,10 +156,6 @@ async function submitForm() {
 }
 
 async function handleDelete(r: PermResource) {
-  if (r.isBuiltin) {
-    ElMessage.warning('内置资源不可删除')
-    return
-  }
   try {
     await ElMessageBox.confirm(`确定删除「${r.label}」及其所有下级资源吗？`, '确认删除', {
       confirmButtonText: '删除',
@@ -208,17 +217,23 @@ function handleBack() {
               placeholder="搜索名称或 permKey..."
             />
           </div>
-          <button class="tool-btn" @click="store.expandedIds = new Set(store.resources.map(r => r.id))">
-            全展开
+          <button
+            class="tool-btn icon-only"
+            :title="allExpanded ? '全部折叠' : '全部展开'"
+            @click="toggleExpandAll"
+          >
+            <ChevronsDownUp v-if="!allExpanded" :size="14" />
+            <ChevronsUpDown v-else :size="14" />
           </button>
-          <button class="tool-btn" @click="store.expandedIds = new Set()">
-            全折叠
-          </button>
-          <button class="create-root-btn" @click="openCreate(null, 'catalog')">
-            <Plus :size="14" />新建顶级目录
+          <button
+            class="create-root-btn icon-only"
+            title="新建顶级目录"
+            @click="openCreate(null, 'catalog')"
+          >
+            <FolderPlus :size="14" />
           </button>
         </div>
-        <div class="tree-area">
+        <div class="tree-area" data-tree-scroll>
           <MenuConfigTreeNode
             v-for="root in store.roots"
             :key="root.id"
@@ -258,9 +273,6 @@ function handleBack() {
                   <span class="status-badge" :class="PERM_STATUS_CONFIG[store.selected.status].color">
                     {{ PERM_STATUS_CONFIG[store.selected.status].label }}
                   </span>
-                  <span v-if="store.selected.isBuiltin" class="builtin-badge">
-                    <Lock :size="12" />内置
-                  </span>
                 </div>
                 <div class="detail-meta">
                   <span><KeyRound :size="12" />{{ store.selected.permKey }}</span>
@@ -270,7 +282,7 @@ function handleBack() {
             </div>
             <div class="detail-actions">
               <button class="action-btn" @click="openEdit(store.selected!)"><Edit2 :size="14" />编辑</button>
-              <button v-if="!store.selected!.isBuiltin" class="action-btn danger" @click="handleDelete(store.selected!)"><Trash2 :size="14" />删除</button>
+              <button class="action-btn danger" @click="handleDelete(store.selected!)"><Trash2 :size="14" />删除</button>
             </div>
           </div>
 
@@ -320,7 +332,7 @@ function handleBack() {
                   <td>{{ store.roleCoverages.filter(rc => rc.hasPermission).length }} 个角色</td>
                   <td>
                     <button class="sm-btn" @click="openEdit(b)"><Edit2 :size="14" /></button>
-                    <button v-if="!b.isBuiltin" class="sm-btn danger" @click="handleDelete(b)"><Trash2 :size="14" /></button>
+                    <button class="sm-btn danger" @click="handleDelete(b)"><Trash2 :size="14" /></button>
                   </td>
                 </tr>
               </tbody>
@@ -473,10 +485,10 @@ function handleBack() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
-  background: rgba(15, 23, 42, 0.7);
+  background: var(--surface-card);
 }
 .topbar-left { display: flex; align-items: center; gap: 16px; }
 .back-btn {
@@ -488,11 +500,11 @@ function handleBack() {
 .back-btn:hover { color: var(--foreground-primary); }
 .topbar-brand { display: flex; align-items: center; gap: 12px; }
 .brand-icon {
-  width: 40px; height: 40px;
-  border-radius: var(--radius-xl);
-  background: linear-gradient(135deg, #3b82f6, #9333ea);
+  width: 36px; height: 36px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(168, 85, 247, 0.2));
   display: flex; align-items: center; justify-content: center;
-  color: #fff;
+  color: var(--accent-primary);
 }
 .brand-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); color: var(--foreground-primary); margin: 0; }
 .brand-sub { font-size: var(--font-size-xs); color: var(--foreground-muted); margin: 2px 0 0; }
@@ -507,7 +519,7 @@ function handleBack() {
 .create-root-btn {
   display: flex; align-items: center; gap: 6px;
   padding: 8px 14px;
-  background: linear-gradient(135deg, #3b82f6, #9333ea);
+  background: var(--accent-primary);
   border: none; border-radius: var(--radius-md);
   color: #fff; font-size: var(--font-size-sm); cursor: pointer;
 }
@@ -516,17 +528,19 @@ function handleBack() {
 .mc-body {
   flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: minmax(340px, 440px) 1fr;
+  grid-template-columns: 260px 1fr;
   overflow: hidden;
 }
 .mc-left {
+  width: 260px;
   border-right: 1px solid var(--border-subtle);
-  background: rgba(15, 23, 42, 0.4);
+  background: var(--surface-card);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
 .tree-toolbar {
   display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;
   padding: 12px;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
@@ -552,7 +566,17 @@ function handleBack() {
   font-size: var(--font-size-xs);
   cursor: pointer;
 }
-.tool-btn:hover { background: rgba(30,41,59,0.6); }
+.tool-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
+.tool-btn.icon-only,
+.create-root-btn.icon-only {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 .tree-area {
   flex: 1; overflow-y: auto;
   padding: 8px;
@@ -566,7 +590,7 @@ function handleBack() {
   height: 100%; color: var(--foreground-muted); gap: 12px;
 }
 .detail-panel {
-  background: rgba(15, 23, 42, 0.4);
+  background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   padding: 24px;
@@ -591,12 +615,6 @@ function handleBack() {
 .status-badge {
   font-size: 11px; padding: 2px 8px; border-radius: var(--radius-sm);
 }
-.builtin-badge {
-  font-size: 11px; padding: 2px 8px; border-radius: var(--radius-sm);
-  background: rgba(100,116,139,0.1); color: var(--foreground-muted);
-  border: 1px solid rgba(100,116,139,0.3);
-  display: flex; align-items: center; gap: 3px;
-}
 .detail-meta {
   display: flex; gap: 16px; margin-top: 4px;
   font-size: var(--font-size-xs); color: var(--foreground-muted);
@@ -613,13 +631,13 @@ function handleBack() {
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
-.detail-actions .action-btn:hover { background: rgba(30,41,59,0.6); }
-.detail-actions .action-btn.danger { color: #fca5a5; border-color: rgba(239,68,68,0.3); }
-.detail-actions .action-btn.danger:hover { background: rgba(239,68,68,0.1); }
+.detail-actions .action-btn:hover { background: var(--surface-secondary); }
+.detail-actions .action-btn.danger { color: #fb7185; border-color: rgba(244,63,94,0.3); }
+.detail-actions .action-btn.danger:hover { background: rgba(244,63,94,0.12); }
 .detail-tabs {
   display: flex; gap: 0;
   margin: 20px 0 16px;
-  background: rgba(15,23,42,0.4);
+  background: var(--surface-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -642,13 +660,13 @@ function handleBack() {
 }
 .info-row > span:first-child { font-size: var(--font-size-sm); color: var(--foreground-muted); }
 .info-row > span:last-child { font-size: var(--font-size-sm); color: var(--foreground-secondary); }
-.info-row code { font-family: monospace; font-size: var(--font-size-xs); color: #93c5fd; }
+.info-row code { font-family: monospace; font-size: var(--font-size-xs); color: var(--accent-primary); }
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .section-header span { font-size: var(--font-size-sm); color: var(--foreground-muted); }
 .add-btn {
   display: flex; align-items: center; gap: 4px;
   padding: 4px 12px;
-  background: linear-gradient(135deg, #3b82f6, #9333ea);
+  background: var(--accent-primary);
   border: none; border-radius: var(--radius-md);
   color: #fff; font-size: var(--font-size-xs); cursor: pointer;
 }
@@ -667,7 +685,7 @@ function handleBack() {
   color: var(--foreground-muted); border-bottom: 1px solid var(--border-subtle);
 }
 .btn-table td { padding: 8px 12px; color: var(--foreground-primary); border-bottom: 1px solid var(--border-subtle); }
-.btn-table tr:hover td { background: rgba(30,41,59,0.2); }
+.btn-table tr:hover td { background: rgba(59,130,246,0.04); }
 .mono { font-family: monospace; font-size: var(--font-size-xs); }
 .mr-1 { margin-right: 4px; }
 .variant-tag { font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm); }
@@ -676,19 +694,19 @@ function handleBack() {
   color: var(--foreground-muted); cursor: pointer;
   border-radius: var(--radius-sm); display: inline-flex; align-items: center;
 }
-.sm-btn:hover { background: rgba(30,41,59,0.6); }
-.sm-btn.danger:hover { background: rgba(239,68,68,0.15); color: #fca5a5; }
+.sm-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
+.sm-btn.danger:hover { background: rgba(244,63,94,0.12); color: #fb7185; }
 .section-desc { font-size: var(--font-size-sm); color: var(--foreground-muted); }
 .role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .role-cell {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px; border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(15,23,42,0.4);
+  background: var(--surface-card);
 }
 .role-cell.granted {
-  background: rgba(16,185,129,0.05);
-  border-color: rgba(16,185,129,0.3);
+  background: rgba(16,185,129,0.08);
+  border-color: rgba(16,185,129,0.25);
 }
 .role-cell-name { font-size: var(--font-size-sm); color: var(--foreground-primary); }
 .role-cell-key { font-size: var(--font-size-xs); font-family: monospace; color: var(--foreground-muted); }
@@ -703,11 +721,40 @@ function handleBack() {
   background: rgba(100,116,139,0.15); color: var(--foreground-muted);
 }
 
+/* 资源类型、状态、按钮变体配色 */
+.text-amber-300 { color: #fbbf24; }
+.text-sky-300 { color: #7dd3fc; }
+.text-violet-300 { color: #c4b5fd; }
+.text-emerald-300 { color: #6ee7b7; }
+.text-slate-300 { color: #94a3b8; }
+.text-rose-300 { color: #fb7185; }
+.text-blue-300 { color: #93c5fd; }
+.text-zinc-300 { color: #a1a1aa; }
+
+.bg-amber-500\/15 { background: rgba(245,158,11,0.15); }
+.bg-sky-500\/15 { background: rgba(14,165,233,0.15); }
+.bg-violet-500\/15 { background: rgba(139,92,246,0.15); }
+.bg-emerald-500\/15 { background: rgba(16,185,129,0.15); }
+.bg-slate-500\/15 { background: rgba(100,116,139,0.15); }
+.bg-rose-500\/15 { background: rgba(244,63,94,0.15); }
+.bg-blue-500\/15 { background: rgba(59,130,246,0.15); }
+.bg-zinc-500\/15 { background: rgba(113,113,122,0.15); }
+
+.border-amber-500\/30 { border: 1px solid rgba(245,158,11,0.3); }
+.border-sky-500\/30 { border: 1px solid rgba(14,165,233,0.3); }
+.border-violet-500\/30 { border: 1px solid rgba(139,92,246,0.3); }
+.border-emerald-500\/30 { border: 1px solid rgba(16,185,129,0.3); }
+.border-slate-500\/30 { border: 1px solid rgba(100,116,139,0.3); }
+.border-rose-500\/30 { border: 1px solid rgba(244,63,94,0.3); }
+.border-blue-500\/30 { border: 1px solid rgba(59,130,246,0.3); }
+.border-zinc-500\/30 { border: 1px solid rgba(113,113,122,0.3); }
+
 /* 弹窗 */
-.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.dialog-overlay { position: fixed; inset: 0; background: var(--color-overlay); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .dialog-panel {
-  background: var(--surface-card); border: 1px solid var(--border-subtle);
+  background: var(--color-modal-bg); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl); width: 640px; max-height: 90vh; overflow-y: auto;
+  box-shadow: var(--shadow-card);
 }
 .dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 0; }
 .dialog-header h3 { font-size: var(--font-size-md); color: var(--foreground-primary); margin: 0; }
@@ -741,10 +788,11 @@ function handleBack() {
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
+.dialog-cancel:hover { background: var(--surface-secondary); }
 .dialog-submit {
   display: flex; align-items: center; gap: 4px;
   padding: 8px 18px;
-  background: linear-gradient(135deg, #3b82f6, #9333ea);
+  background: var(--accent-primary);
   border: none; border-radius: var(--radius-md);
   color: #fff; font-size: var(--font-size-sm);
   cursor: pointer;

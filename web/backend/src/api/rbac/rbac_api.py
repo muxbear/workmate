@@ -9,6 +9,7 @@ from api.rbac.schemas import (
     MyPermissionsResponse,
     PermResourceResponse,
     ResourceCreateRequest,
+    ResourceReorderRequest,
     ResourceUpdateRequest,
     RoleCreateRequest,
     RolePermissionsResponse,
@@ -62,6 +63,19 @@ async def update_resource(
     svc = RbacService(db)
     data = await svc.update_resource(resource_id, req)
     return ok(data, message="资源更新成功")
+
+
+@router.post("/resources/reorder", response_model=ApiResponse[list[PermResourceResponse]])
+@handle_errors
+async def reorder_resource(
+    req: ResourceReorderRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(RequirePermission("admin:resources")),
+):
+    """Reorder a permission resource within the tree."""
+    svc = RbacService(db)
+    data = await svc.reorder_resource(req)
+    return ok(data, message="资源顺序已更新")
 
 
 @router.delete("/resources/{resource_id}", response_model=ApiResponse[dict])

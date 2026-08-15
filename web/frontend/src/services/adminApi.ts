@@ -183,6 +183,7 @@ export const INITIAL_ROLES: RoleDef[] = [
 let roles: RoleDef[] = [...INITIAL_ROLES]
 
 export const PERM_RESOURCES: PermResource[] = [
+  { id: 'g-home', parentId: null, type: 'catalog', label: '首页', permKey: 'home', icon: 'LayoutDashboard', sortOrder: 0, status: 'active', isBuiltin: true, description: '首页概览' },
   { id: 'g-chat', parentId: null, type: 'catalog', label: '聊天', permKey: 'chat', icon: 'MessageSquare', sortOrder: 1, status: 'active', isBuiltin: true, description: '对话交互相关权限' },
   { id: 'm-chat', parentId: 'g-chat', type: 'menu', label: '对话', permKey: 'chat:conversation', path: '/', icon: 'MessageSquare', sortOrder: 1, status: 'active', isBuiltin: true, description: '对话主页面' },
   { id: 'b-chat-send', parentId: 'm-chat', type: 'button', label: '发送消息', permKey: 'chat:send', icon: 'Send', sortOrder: 1, status: 'active', isBuiltin: true, btnVariant: 'primary' },
@@ -196,7 +197,7 @@ export const PERM_RESOURCES: PermResource[] = [
   { id: 'b-kb-delete', parentId: 'm-kb', type: 'button', label: '删除知识库', permKey: 'knowledge:delete', icon: 'Trash2', sortOrder: 3, status: 'active', isBuiltin: true, btnVariant: 'danger', danger: true },
 
   { id: 'g-ctrl', parentId: null, type: 'catalog', label: '控制', permKey: 'control', icon: 'LayoutGrid', sortOrder: 3, status: 'active', isBuiltin: true, description: '控制面板相关权限' },
-  { id: 'm-ctrl-overview', parentId: 'g-ctrl', type: 'menu', label: '概览', permKey: 'control:overview', path: '/overview', icon: 'LayoutGrid', sortOrder: 1, status: 'active', isBuiltin: true, description: '系统概览仪表盘' },
+  { id: 'm-ctrl-overview', parentId: 'g-home', type: 'menu', label: '概览', permKey: 'control:overview', path: '/overview', icon: 'LayoutGrid', sortOrder: 1, status: 'active', isBuiltin: true, description: '系统概览仪表盘' },
   { id: 'm-ctrl-scheduled', parentId: 'g-ctrl', type: 'menu', label: '定时任务', permKey: 'control:scheduled', path: '/scheduled-tasks', icon: 'Timer', sortOrder: 2, status: 'active', isBuiltin: true, description: '定时任务管理' },
   { id: 'b-ctrl-task-create', parentId: 'm-ctrl-scheduled', type: 'button', label: '新建任务', permKey: 'control:task:create', icon: 'Plus', sortOrder: 1, status: 'active', isBuiltin: true, btnVariant: 'primary' },
   { id: 'b-ctrl-task-run', parentId: 'm-ctrl-scheduled', type: 'button', label: '执行任务', permKey: 'control:task:run', icon: 'Play', sortOrder: 2, status: 'active', isBuiltin: true, btnVariant: 'primary' },

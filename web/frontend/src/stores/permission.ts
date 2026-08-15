@@ -20,8 +20,9 @@ export const usePermissionStore = defineStore('permission', () => {
   const menuGroups = computed(() => {
     const catalogs = menus.value.filter((m) => m.type === 'catalog').sort((a, b) => a.sortOrder - b.sortOrder)
     const menuItems = menus.value.filter((m) => m.type === 'menu').sort((a, b) => a.sortOrder - b.sortOrder)
+    const rootMenuItems = menuItems.filter((m) => m.parentId === null)
 
-    return catalogs.map((cat) => ({
+    const grouped = catalogs.map((cat) => ({
       label: cat.label,
       icon: cat.icon,
       items: menuItems
@@ -32,6 +33,21 @@ export const usePermissionStore = defineStore('permission', () => {
           icon: m.icon,
         })),
     })).filter((g) => g.items.length > 0)
+
+    if (rootMenuItems.length > 0) {
+      const rootGroup = {
+        label: '首页',
+        icon: 'LayoutDashboard',
+        items: rootMenuItems.map((m) => ({
+          text: m.label,
+          route: m.path || undefined,
+          icon: m.icon,
+        })),
+      }
+      return [rootGroup, ...grouped]
+    }
+
+    return grouped
   })
 
   // ── Actions ────────────────────────────────────────────────────
@@ -62,6 +78,28 @@ export const usePermissionStore = defineStore('permission', () => {
       permKeys.value = new Set(data.permKeys)
       roles.value = data.roles
       menus.value = data.menus
+      let homeMenu = menus.value.find((m) => m.id === 'g-home')
+      if (!homeMenu) {
+        homeMenu = {
+          id: 'g-home',
+          parentId: null,
+          type: 'catalog',
+          label: '首页',
+          path: null,
+          icon: 'LayoutDashboard',
+          sortOrder: 0,
+        }
+        menus.value.unshift(homeMenu)
+      } else {
+        homeMenu.parentId = null
+        homeMenu.sortOrder = 0
+      }
+
+      const overviewMenu = menus.value.find((m) => m.id === 'm-ctrl-overview')
+      if (overviewMenu) {
+        overviewMenu.parentId = 'g-home'
+        overviewMenu.sortOrder = 1
+      }
       const scope: Record<string, string> = {}
       for (const ds of data.dataScopes) {
         scope[ds.resourceKey] = ds.scope

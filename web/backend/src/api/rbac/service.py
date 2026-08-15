@@ -12,6 +12,7 @@ from api.rbac.schemas import (
     MyPermissionsResponse,
     PermResourceResponse,
     ResourceCreateRequest,
+    ResourceReorderRequest,
     ResourceUpdateRequest,
     RoleCreateRequest,
     RolePermissionsResponse,
@@ -109,12 +110,74 @@ class RbacService:
         await self.db.refresh(resource)
         return self._to_resource_response(resource)
 
+    async def reorder_resource(self, req: ResourceReorderRequest) -> list[PermResourceResponse]:
+        source = await self._get_resource(req.source_id)
+        target = await self._get_resource(req.target_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="源资源不存在")
+        if not target:
+            raise HTTPException(status_code=404, detail="目标资源不存在")
+        if source.id == target.id:
+            raise HTTPException(status_code=400, detail="不能将资源移动到自身")
+        if await self._is_descendant(req.source_id, req.target_id):
+            raise HTTPException(status_code=400, detail="不能移动到自己的子节点")
+
+        new_parent_id = target.id if req.placement == "inside" else target.parent_id
+
+        if source.type == "catalog":
+            if new_parent_id is not None or req.placement == "inside":
+                raise HTTPException(status_code=400, detail="目录只能位于根级")
+        elif source.type == "menu":
+            if not new_parent_id:
+                if source.parent_id is not None or req.placement == "inside":
+                    raise HTTPException(status_code=400, detail="菜单必须位于目录下")
+            else:
+                parent = await self._get_resource(new_parent_id)
+                if not parent or parent.type != "catalog":
+                    raise HTTPException(status_code=400, detail="菜单必须位于目录下")
+        elif source.type == "button":
+            if not new_parent_id:
+                raise HTTPException(status_code=400, detail="按钮必须位于菜单下")
+            parent = await self._get_resource(new_parent_id)
+            if not parent or parent.type != "menu":
+                raise HTTPException(status_code=400, detail="按钮必须位于菜单下")
+        else:
+            raise HTTPException(status_code=400, detail="未知资源类型")
+
+        result = await self.db.execute(
+            select(PermissionResource)
+            .where(PermissionResource.parent_id == new_parent_id)
+            .order_by(PermissionResource.sort_order)
+        )
+        siblings = [r for r in result.scalars().all() if r.id != source.id]
+
+        if req.placement == "inside":
+            insert_index = len(siblings)
+        else:
+            target_index = next((i for i, r in enumerate(siblings) if r.id == target.id), -1)
+            if target_index == -1:
+                raise HTTPException(status_code=400, detail="目标节点不在目标层级")
+            insert_index = target_index if req.placement == "before" else target_index + 1
+
+        siblings.insert(insert_index, source)
+
+        for index, resource in enumerate(siblings):
+            values: dict[str, object] = {"sort_order": (index + 1) * 10}
+            if resource.id == source.id:
+                values["parent_id"] = new_parent_id
+            await self.db.execute(
+                update(PermissionResource)
+                .where(PermissionResource.id == resource.id)
+                .values(**values)
+            )
+
+        await self.db.flush()
+        return await self.list_resources()
+
     async def delete_resource(self, resource_id: str) -> dict[str, object]:
         resource = await self._get_resource(resource_id)
         if not resource:
             raise HTTPException(status_code=404, detail="资源不存在")
-        if resource.is_builtin:
-            raise HTTPException(status_code=403, detail="内置资源不可删除")
 
         # Cascade delete children
         ids_to_delete = {resource_id}
@@ -377,6 +440,7 @@ class RbacService:
         """Seed built-in roles and permission resources on first run."""
         existing = await self.db.execute(select(Role).where(Role.is_builtin))
         if existing.first():
+            await self._sync_overview_resource()
             return  # Already seeded
 
         logger.info("Seeding built-in RBAC data...")
@@ -399,9 +463,16 @@ class RbacService:
 
         # Permission resources
         resources_data: list[dict[str, object]] = [
+            # Home
+            {"id": "g-home", "parent": None, "type": "catalog",
+             "label": "首页", "perm_key": "home", "icon": "LayoutDashboard", "sort": 0},
+            {"id": "m-ctrl-overview", "parent": "g-home", "type": "menu",
+             "label": "概览", "perm_key": "control:overview", "path": "/overview",
+             "icon": "LayoutDashboard", "sort": 1},
+
             # Chat
             {"id": "g-chat", "parent": None, "type": "catalog",
-             "label": "聊天", "perm_key": "chat", "icon": "MessageSquare", "sort": 1},
+             "label": "聊天", "perm_key": "chat", "icon": "MessageSquare", "sort": 2},
             {"id": "m-chat", "parent": "g-chat", "type": "menu",
              "label": "对话", "perm_key": "chat:conversation", "path": "/chat", "icon": "MessageSquare", "sort": 1},
             {"id": "b-chat-send", "parent": "m-chat", "type": "button",
@@ -412,7 +483,7 @@ class RbacService:
              "label": "删除对话", "perm_key": "chat:delete", "icon": "Trash2", "sort": 3, "danger": True},
 
             {"id": "g-kb", "parent": None, "type": "catalog",
-             "label": "知识库", "perm_key": "knowledge", "icon": "Database", "sort": 2},
+             "label": "知识库", "perm_key": "knowledge", "icon": "Database", "sort": 3},
             {"id": "m-kb", "parent": "g-kb", "type": "menu",
              "label": "知识库", "perm_key": "knowledge:base", "path": "/knowledge-base",
              "icon": "Database", "sort": 1},
@@ -426,10 +497,7 @@ class RbacService:
 
             # Control
             {"id": "g-ctrl", "parent": None, "type": "catalog",
-             "label": "控制", "perm_key": "control", "icon": "LayoutGrid", "sort": 3},
-            {"id": "m-ctrl-overview", "parent": "g-ctrl", "type": "menu",
-             "label": "概览", "perm_key": "control:overview", "path": "/overview",
-             "icon": "LayoutDashboard", "sort": 1},
+             "label": "控制", "perm_key": "control", "icon": "LayoutGrid", "sort": 4},
             {"id": "m-ctrl-scheduled", "parent": "g-ctrl", "type": "menu",
              "label": "定时任务", "perm_key": "control:scheduled",
              "path": "/scheduled-tasks", "icon": "Timer", "sort": 2},
@@ -440,7 +508,7 @@ class RbacService:
 
             # Agent
             {"id": "g-agent", "parent": None, "type": "catalog",
-             "label": "智能体", "perm_key": "agent", "icon": "Bot", "sort": 4},
+             "label": "智能体", "perm_key": "agent", "icon": "Bot", "sort": 5},
             {"id": "m-agent-manage", "parent": "g-agent", "type": "menu",
              "label": "智能体管理", "perm_key": "agent:manage", "path": "/agents",
              "icon": "Bot", "sort": 1},
@@ -456,14 +524,14 @@ class RbacService:
 
             # MCP
             {"id": "g-mcp", "parent": None, "type": "catalog",
-             "label": "MCP", "perm_key": "mcp", "icon": "CloudMoon", "sort": 5},
+             "label": "MCP", "perm_key": "mcp", "icon": "CloudMoon", "sort": 6},
             {"id": "m-mcp-square", "parent": "g-mcp", "type": "menu",
              "label": "MCP 广场", "perm_key": "mcp:square", "path": "/mcp",
              "icon": "CloudMoon", "sort": 1},
 
             # Admin
             {"id": "g-admin", "parent": None, "type": "catalog",
-             "label": "管理", "perm_key": "admin", "icon": "Shield", "sort": 6},
+             "label": "管理", "perm_key": "admin", "icon": "Shield", "sort": 7},
             {"id": "m-admin-dashboard", "parent": "g-admin", "type": "menu",
              "label": "后台管理", "perm_key": "admin:dashboard", "path": "/admin",
              "icon": "Shield", "sort": 1},
@@ -578,6 +646,46 @@ class RbacService:
         await self.db.flush()
         logger.info("Built-in RBAC data seeded successfully.")
 
+    async def _sync_overview_resource(self) -> None:
+        home_result = await self.db.execute(
+            select(PermissionResource).where(PermissionResource.id == "g-home")
+        )
+        home = home_result.scalar_one_or_none()
+        if not home:
+            home = PermissionResource(
+                id="g-home",
+                parent_id=None,
+                type="catalog",
+                label="首页",
+                perm_key="home",
+                path=None,
+                icon="LayoutDashboard",
+                sort_order=0,
+                status="active",
+                is_builtin=True,
+                description="首页概览",
+                btn_variant=None,
+                danger=False,
+            )
+            self.db.add(home)
+            await self.db.flush()
+        else:
+            home.parent_id = None
+            home.sort_order = 0
+
+        result = await self.db.execute(
+            select(PermissionResource).where(
+                PermissionResource.perm_key == "control:overview"
+            )
+        )
+        resource = result.scalar_one_or_none()
+        if not resource:
+            return
+
+        resource.parent_id = "g-home"
+        resource.sort_order = 1
+        await self.db.flush()
+
     # ── Helpers ───────────────────────────────────────────────────
 
     async def _get_resource(self, resource_id: str) -> PermissionResource | None:
@@ -585,6 +693,22 @@ class RbacService:
             select(PermissionResource).where(PermissionResource.id == resource_id)
         )
         return result.scalar_one_or_none()
+
+    async def _is_descendant(self, source_id: str, target_id: str) -> bool:
+        result = await self.db.execute(select(PermissionResource))
+        resources = list(result.scalars().all())
+        children_by_parent: dict[str | None, list[str]] = {}
+        for resource in resources:
+            children_by_parent.setdefault(resource.parent_id, []).append(resource.id)
+
+        stack = [target_id]
+        while stack:
+            current = stack.pop()
+            for child_id in children_by_parent.get(current, []):
+                if child_id == source_id:
+                    return True
+                stack.append(child_id)
+        return False
 
     async def _get_role(self, role_id: str) -> Role | None:
         result = await self.db.execute(select(Role).where(Role.id == role_id))

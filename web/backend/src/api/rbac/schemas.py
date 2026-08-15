@@ -69,6 +69,14 @@ class ResourceUpdateRequest(BaseModel):
     danger: bool | None = None
 
 
+class ResourceReorderRequest(BaseModel):
+    """Move a permission resource to a new tree position."""
+
+    source_id: str = Field(alias="sourceId")
+    target_id: str = Field(alias="targetId")
+    placement: str = Field(pattern=r"^(before|after|inside)$")
+
+
 # ── Role schemas ─────────────────────────────────────────────────
 
 
