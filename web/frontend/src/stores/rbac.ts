@@ -3,7 +3,6 @@ import { defineStore } from 'pinia'
 import type { RoleDef, PermResource, DataResource, DataScope } from '@/types/admin'
 import {
   fetchRoles,
-  fetchResources,
   fetchRolePermissions,
   saveRolePermissions,
   createRole,
@@ -147,14 +146,13 @@ export const useRbacStore = defineStore('rbac', () => {
   async function fetchAll() {
     loading.value = true
     try {
-      const [r, pr] = await Promise.all([fetchRoles(), fetchResources()])
+      const r = await fetchRoles()
       // Augment with frontend presentation fields
       roles.value = r.map((role) => ({
         ...role,
         status: (role as Record<string, unknown>).is_active !== false ? 'active' as const : 'inactive' as const,
         ...roleColors(role.key),
       }))
-      permResources.value = pr
 
       // Load permissions for each role
       for (const role of roles.value) {
@@ -179,6 +177,10 @@ export const useRbacStore = defineStore('rbac', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  function setPermResources(resources: PermResource[]) {
+    permResources.value = resources
   }
 
   function selectRole(roleId: string) {
@@ -267,5 +269,6 @@ export const useRbacStore = defineStore('rbac', () => {
     handleSave,
     handleCreateRole,
     handleDeleteRole,
+    setPermResources,
   }
 })

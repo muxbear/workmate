@@ -17,11 +17,13 @@ const props = defineProps<{
   depth: number
   expandedIds: Set<string>
   readonly: boolean
+  selectedId?: string
 }>()
 
 const emit = defineEmits<{
   toggle: [id: string]
   toggleExpand: [id: string]
+  select: [id: string]
 }>()
 
 const store = inject<ReturnType<typeof useRbacStore>>('rbacStore')!
@@ -44,7 +46,10 @@ function isExpanded() {
 }
 
 const childrenList = computed(() =>
-  store.getChildren(props.node.id).sort((a, b) => a.sortOrder - b.sortOrder)
+  store
+    .getChildren(props.node.id)
+    .filter((child) => child.type !== 'button')
+    .sort((a, b) => a.sortOrder - b.sortOrder),
 )
 
 const checkState = computed(() => store.getCheckState(props.node.id))
@@ -61,8 +66,9 @@ const permStats = computed(() => {
   <div>
     <div
       class="perm-row"
-      :class="{ 'depth-0': depth === 0 }"
+      :class="{ 'is-selected': selectedId === node.id }"
       :style="{ paddingLeft: `${depth * 20 + 12}px` }"
+      @click="emit('select', node.id)"
     >
       <button
         class="tri-check"
@@ -84,18 +90,19 @@ const permStats = computed(() => {
       </button>
       <span v-else class="expand-spacer" />
 
-      <component :is="resolveIcon(node.icon)" :size="16" class="node-icon" :class="typeConfig.color" />
+      <div class="node-icon" :class="typeConfig.bg">
+        <component :is="resolveIcon(node.icon)" :size="14" :class="typeConfig.color" />
+      </div>
 
-      <span class="node-label">{{ node.label }}</span>
-
-      <span class="type-badge" :class="typeConfig.bg">
-        {{ typeConfig.label }}
-      </span>
-
-      <code class="perm-key">{{ node.permKey }}</code>
+      <div class="node-body">
+        <div class="node-label-row">
+          <span class="node-label">{{ node.label }}</span>
+        </div>
+        <div class="node-key">{{ node.permKey }}</div>
+      </div>
 
       <span v-if="childrenList.length > 0" class="perm-count">
-        {{ checkedCount }}/{{ subCount }}
+        {{ permStats.checkedCount }}/{{ permStats.subCount }}
       </span>
     </div>
 
@@ -107,8 +114,10 @@ const permStats = computed(() => {
         :depth="depth + 1"
         :expanded-ids="expandedIds"
         :readonly="readonly"
+        :selected-id="selectedId"
         @toggle="emit('toggle', $event)"
         @toggle-expand="emit('toggleExpand', $event)"
+        @select="emit('select', $event)"
       />
     </template>
   </div>
@@ -123,12 +132,18 @@ export default { name: 'PermissionTreeNode' }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 8px;
   border-radius: var(--radius-md);
-  transition: background var(--transition-fast);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  border: 1px solid transparent;
+  user-select: none;
 }
-.perm-row:hover { background: rgba(30, 41, 59, 0.3); }
-.perm-row.depth-0 { background: rgba(30, 41, 59, 0.2); }
+.perm-row:hover { background: rgba(59, 130, 246, 0.06); }
+.perm-row.is-selected {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.25);
+}
 .tri-check {
   width: 16px; height: 16px;
   border-radius: 3px;
@@ -152,7 +167,7 @@ export default { name: 'PermissionTreeNode' }
 }
 .tri-check:disabled { opacity: 0.6; cursor: not-allowed; }
 .expand-btn {
-  width: 18px; height: 18px;
+  width: 20px; height: 20px;
   display: flex; align-items: center; justify-content: center;
   background: none; border: none;
   color: var(--foreground-muted);
@@ -161,17 +176,28 @@ export default { name: 'PermissionTreeNode' }
   flex-shrink: 0;
 }
 .expand-btn:hover { color: var(--foreground-secondary); }
-.expand-spacer { width: 18px; flex-shrink: 0; }
-.node-icon { flex-shrink: 0; }
-.node-label { font-size: var(--font-size-sm); color: var(--foreground-secondary); white-space: nowrap; }
-.type-badge { font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm); flex-shrink: 0; }
-.perm-key {
-  font-size: 10px; font-family: monospace;
-  padding: 1px 6px; border-radius: var(--radius-sm);
-  background: var(--surface-primary); color: var(--foreground-muted);
+.expand-spacer { width: 20px; flex-shrink: 0; }
+.node-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.node-body { flex: 1; min-width: 0; }
+.node-label-row { display: flex; align-items: center; gap: 6px; }
+.node-label { font-size: var(--font-size-sm); color: var(--foreground-primary); white-space: nowrap; }
+.node-key {
+  font-size: var(--font-size-xs);
+  font-family: monospace;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .perm-count {
-  margin-left: auto;
   font-size: 11px; color: var(--foreground-muted);
   flex-shrink: 0;
 }

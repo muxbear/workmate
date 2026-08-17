@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, provide } from 'vue'
+import { computed, ref, watch, onMounted, provide } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  ChevronLeft, Plus, Check, Lock, ShieldCheck, Save, Search,
+  ChevronLeft, Plus, Check, Minus, ShieldCheck, Save, Search,
   ChevronRight, ChevronDown, LayoutGrid, FolderTree, PenLine,
   Database, FolderTree as FolderTreeIcon, Shield, Sparkles,
   Info,
 } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRbacStore } from '@/stores/rbac'
+import { useMenuConfigStore } from '@/stores/menuConfig'
 import { isSuperAdmin } from '@/services/adminApi'
 import { PERM_TYPE_CONFIG } from '@/types/admin'
 import type { PermResource } from '@/types/admin'
@@ -18,18 +19,38 @@ import DataScopeSelector from '@/components/admin/DataScopeSelector.vue'
 
 const router = useRouter()
 const store = useRbacStore()
+const resourceStore = useMenuConfigStore()
 provide('rbacStore', store)
 
-onMounted(() => {
-  store.fetchAll()
+onMounted(async () => {
+  await Promise.all([store.fetchAll(), resourceStore.fetchAll()])
+  syncPermResources()
 })
 
-const expandedIds = ref<Set<string>>(new Set(store.permResources.filter((r) => r.type === 'catalog').map((r) => r.id)))
+function syncPermResources() {
+  store.setPermResources(resourceStore.resources)
+  expandedIds.value = new Set(resourceStore.resources.filter((r) => r.type === 'catalog').map((r) => r.id))
+  if (selectedPermId.value && !resourceStore.resources.some((r) => r.id === selectedPermId.value)) {
+    selectedPermId.value = ''
+  }
+}
+
+const expandedIds = ref<Set<string>>(new Set(resourceStore.resources.filter((r) => r.type === 'catalog').map((r) => r.id)))
+const selectedPermId = ref<string>('')
+
+const selectedPerm = computed(() => resourceStore.resources.find((r) => r.id === selectedPermId.value) ?? null)
+const selectedChildren = computed(() => selectedPerm.value ? getPermChildren(selectedPerm.value.id) : [])
+
+watch(() => resourceStore.resources, syncPermResources, { deep: true })
 
 function toggleExpand(id: string) {
   const next = new Set(expandedIds.value)
   next.has(id) ? next.delete(id) : next.add(id)
   expandedIds.value = next
+}
+
+function handleSelectPerm(id: string) {
+  selectedPermId.value = id
 }
 
 // 角色创建弹窗
@@ -75,7 +96,7 @@ function handleBack() {
 }
 
 function getPermChildren(parentId: string | null): PermResource[] {
-  return store.permResources
+  return resourceStore.resources
     .filter((r) => r.parentId === parentId)
     .sort((a, b) => a.sortOrder - b.sortOrder)
 }
@@ -84,7 +105,7 @@ function getPermChildren(parentId: string | null): PermResource[] {
 function getDescendantPermKeys(permId: string): string[] {
   const keys: string[] = []
   function walk(id: string) {
-    const children = store.permResources.filter((r) => r.parentId === id)
+    const children = resourceStore.resources.filter((r) => r.parentId === id)
     for (const c of children) {
       keys.push(c.permKey)
       walk(c.id)
@@ -118,36 +139,26 @@ function getPermStats(node: PermResource) {
       </div>
     </div>
 
-    <div v-if="store.loading" class="loading-state">加载中...</div>
+    <div v-if="store.loading || resourceStore.loading" class="loading-state">加载中...</div>
 
     <div v-else class="rbac-body">
       <aside class="rbac-left">
         <div class="left-header">
-          <span>内置角色</span>
+          <span>角色</span>
         </div>
         <div class="role-list">
           <RoleListItem
-            v-for="role in store.roles.filter((r) => r.isBuiltin)"
+            v-for="role in store.roles"
             :key="role.id"
             :role="role"
             :is-active="store.activeRoleId === role.id"
             @select="store.selectRole(role.id)"
           />
-          <template v-if="store.roles.some((r) => !r.isBuiltin)">
-            <div class="left-header custom-header">自定义角色</div>
-            <RoleListItem
-              v-for="role in store.roles.filter((r) => !r.isBuiltin)"
-              :key="role.id"
-              :role="role"
-              :is-active="store.activeRoleId === role.id"
-              @select="store.selectRole(role.id)"
-            />
-          </template>
         </div>
         <div class="left-footer">
           <button class="add-role-btn" @click="showAddRole = true">
             <Plus :size="14" />
-            新建自定义角色
+            新建角色
           </button>
         </div>
       </aside>
@@ -162,9 +173,6 @@ function getPermStats(node: PermResource) {
             <div>
               <div class="header-role-name">
                 {{ store.activeRole.name }}
-                <span v-if="store.activeRole.isBuiltin" class="badge builtin-badge">
-                  <Lock :size="10" />系统内置
-                </span>
                 <span v-if="store.isSuper" class="badge super-badge">
                   <ShieldCheck :size="10" />全权限保护
                 </span>
@@ -218,13 +226,13 @@ function getPermStats(node: PermResource) {
         </div>
 
         <!-- 功能权限 Tab -->
-        <div v-if="store.activeTab === 'func'" class="tab-content">
-          <div v-if="store.isSuper" class="notice notice-red">
+        <div v-if="store.activeTab === 'func'" class="tab-content func-perm">
+          <div v-if="store.isSuper" class="notice notice-red func-notice">
             <ShieldCheck :size="16" />
             <span><b>超级管理员</b>拥有系统全部权限，无需也不可配置。在权限校验链路中超管直接放行。</span>
           </div>
 
-          <div class="perm-toolbar">
+          <div class="perm-toolbar func-toolbar">
             <div class="search-wrap">
               <Search :size="14" />
               <input
@@ -247,17 +255,83 @@ function getPermStats(node: PermResource) {
             </div>
           </div>
 
-          <div class="perm-tree">
-            <PermissionTreeNode
-              v-for="root in getPermChildren(null)"
-              :key="root.id"
-              :node="root"
-              :depth="0"
-              :expanded-ids="expandedIds"
-              :readonly="store.readonly"
-              @toggle="store.togglePerm"
-              @toggle-expand="toggleExpand"
-            />
+          <div class="perm-split">
+            <section class="resource-tree-pane">
+              <div class="pane-header">
+                <span>资源树</span>
+                <span class="pane-count">{{ resourceStore.resources.length }} 个资源</span>
+              </div>
+              <div class="perm-tree">
+                <PermissionTreeNode
+                  v-for="root in getPermChildren(null)"
+                  :key="root.id"
+                  :node="root"
+                  :depth="0"
+                  :expanded-ids="expandedIds"
+                  :readonly="store.readonly"
+                  :selected-id="selectedPermId"
+                  @toggle="store.togglePerm"
+                  @toggle-expand="toggleExpand"
+                  @select="handleSelectPerm"
+                />
+              </div>
+            </section>
+
+            <section class="sub-perm-pane">
+              <div class="sub-perm-tabs">
+                <button class="sub-perm-tab active" type="button">
+                  <FolderTreeIcon :size="14" />下级权限
+                </button>
+              </div>
+
+              <div class="sub-perm-head">
+                <template v-if="selectedPerm">
+                  <span class="sub-perm-title">{{ selectedPerm.label }}</span>
+                  <span class="sub-perm-subtitle">下级权限资源</span>
+                </template>
+                <template v-else>
+                  <span class="sub-perm-title">请选择资源节点</span>
+                  <span class="sub-perm-subtitle">从左侧资源树中选择一个节点</span>
+                </template>
+              </div>
+
+              <div class="sub-perm-list">
+                <div v-if="!selectedPerm" class="empty-hint">
+                  暂无下级权限，请先选择左侧资源树节点
+                </div>
+                <div v-else-if="selectedChildren.length === 0" class="empty-hint">
+                  该节点没有下级权限资源
+                </div>
+                <div
+                  v-for="child in selectedChildren"
+                  :key="child.id"
+                  class="sub-perm-item"
+                >
+                  <button
+                    class="perm-check"
+                    :class="store.getCheckState(child.id)"
+                    :disabled="store.readonly"
+                    @click="store.togglePerm(child.id)"
+                  >
+                    <Check v-if="store.getCheckState(child.id) === 'all'" :size="10" stroke-width="3" />
+                    <Minus v-else-if="store.getCheckState(child.id) === 'partial'" :size="10" stroke-width="3" />
+                  </button>
+
+                  <LayoutGrid v-if="child.type === 'catalog'" :size="16" class="sub-perm-icon catalog" />
+                  <FolderTreeIcon v-else-if="child.type === 'menu'" :size="16" class="sub-perm-icon menu" />
+                  <PenLine v-else :size="16" class="sub-perm-icon button" />
+
+                  <div class="sub-perm-info">
+                    <div class="sub-perm-name">{{ child.label }}</div>
+                    <code class="sub-perm-key">{{ child.permKey }}</code>
+                  </div>
+
+                  <span class="sub-perm-type" :class="`type-${child.type}`">
+                    {{ PERM_TYPE_CONFIG[child.type].label }}
+                  </span>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -298,7 +372,7 @@ function getPermStats(node: PermResource) {
       <div v-if="showAddRole" class="dialog-overlay" @click.self="showAddRole = false">
         <div class="dialog-panel">
           <div class="dialog-header">
-            <h3>新建自定义角色</h3>
+            <h3>新建角色</h3>
             <button class="dialog-close" @click="showAddRole = false">&times;</button>
           </div>
           <p class="dialog-sub">创建后可在权限配置中精细调整各模块权限。</p>
@@ -403,7 +477,6 @@ function getPermStats(node: PermResource) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.custom-header { margin-top: 8px; }
 .role-list {
   flex: 1;
   overflow-y: auto;
@@ -483,7 +556,6 @@ function getPermStats(node: PermResource) {
   align-items: center;
   gap: 4px;
 }
-.builtin-badge { background: rgba(30,41,59,0.6); color: var(--foreground-muted); border: 1px solid var(--border-subtle); }
 .super-badge { background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.4); }
 .header-role-desc { margin-top: 2px; font-size: var(--font-size-xs); color: var(--foreground-muted); }
 .header-right { display: flex; align-items: center; gap: 16px; }
@@ -535,6 +607,15 @@ function getPermStats(node: PermResource) {
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
+}
+.func-perm {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.func-notice,
+.func-toolbar {
+  flex-shrink: 0;
 }
 .notice {
   display: flex;
@@ -595,12 +676,173 @@ function getPermStats(node: PermResource) {
   color: var(--foreground-muted);
 }
 .legend span { display: flex; align-items: center; gap: 4px; }
-.perm-tree {
-  background: rgba(15,23,42,0.6);
+.perm-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+}
+.resource-tree-pane,
+.sub-perm-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.resource-tree-pane {
+  flex: 0.9;
+}
+.sub-perm-pane {
+  flex: 1.1;
+}
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--foreground-muted);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+.pane-count {
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+.perm-tree {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--surface-primary);
+  border: 0;
+  border-radius: 0;
   padding: 8px;
 }
+.sub-perm-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.sub-perm-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px 10px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid var(--accent-primary);
+  color: var(--foreground-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.sub-perm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.sub-perm-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--foreground-secondary);
+}
+.sub-perm-subtitle {
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+.sub-perm-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.empty-hint {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+}
+.sub-perm-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--surface-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.perm-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--foreground-muted);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.perm-check.all {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+  color: #fff;
+}
+.perm-check.partial {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary-light);
+}
+.perm-check:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.sub-perm-icon {
+  flex-shrink: 0;
+}
+.sub-perm-icon.catalog { color: #fcd34d; }
+.sub-perm-icon.menu { color: #7dd3fc; }
+.sub-perm-icon.button { color: #c4b5fd; }
+.sub-perm-info {
+  flex: 1;
+  min-width: 0;
+}
+.sub-perm-name {
+  font-size: var(--font-size-sm);
+  color: var(--foreground-secondary);
+}
+.sub-perm-key {
+  display: block;
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-perm-type {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+}
+.sub-perm-type.type-catalog { color: #fcd34d; background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.3); }
+.sub-perm-type.type-menu { color: #7dd3fc; background: rgba(14,165,233,0.15); border-color: rgba(14,165,233,0.3); }
+.sub-perm-type.type-button { color: #c4b5fd; background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.3); }
 .scope-list {
   display: flex;
   flex-direction: column;

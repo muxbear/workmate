@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Shield, Sparkles, Lock } from 'lucide-vue-next'
+import { Shield, Sparkles } from 'lucide-vue-next'
 import type { RoleDef } from '@/types/admin'
 import { isSuperAdmin } from '@/services/adminApi'
 
@@ -25,10 +25,7 @@ defineEmits<{
         <Shield v-else :size="16" />
       </div>
       <div class="role-info">
-        <div class="role-name">
-          {{ role.name }}
-          <Lock v-if="role.isBuiltin" :size="12" class="builtin-lock" />
-        </div>
+        <div class="role-name">{{ role.name }}</div>
         <div class="role-count">{{ role.userCount }} 名成员</div>
       </div>
       <div v-if="isActive" class="active-dot" />
@@ -84,9 +81,6 @@ defineEmits<{
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--foreground-primary);
-}
-.builtin-lock {
-  color: var(--foreground-muted);
 }
 .role-count {
   font-size: 11px;
