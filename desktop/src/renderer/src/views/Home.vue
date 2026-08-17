@@ -178,16 +178,28 @@ const handleAddSpaceItem = (spaceName: string): void => {
 }
 
 // ── Navigation ──
-type NavKey = '新建任务' | '助理' | '项目' | '专家·技能·连接器' | '自动化' | '更多'
-const activeNav = ref<NavKey>('新建任务')
+type NavKey = '新建任务' | '助理' | '项目' | '自动化' | '更多'
+type AgentNavKey = '专家' | '技能' | '连接器'
+type AppNav = NavKey | AgentNavKey
+const activeNav = ref<AppNav>('新建任务')
 
 const navItems = [
   { label: '助理' as NavKey, icon: 'bot' },
   { label: '项目' as NavKey, icon: 'folder' },
-  { label: '专家·技能·连接器' as NavKey, icon: 'cpu' },
   { label: '自动化' as NavKey, icon: 'workflow' },
   { label: '更多' as NavKey, icon: 'more', tag: '资库·灵感' }
 ]
+
+/** 智能体子菜单（父菜单位于“项目”下方，可折叠展开） */
+const agentMenuOpen = ref(true)
+const agentSubItems: Array<{ label: AgentNavKey }> = [
+  { label: '专家' },
+  { label: '技能' },
+  { label: '连接器' }
+]
+const isAgentSectionActive = computed(
+  () => activeNav.value === '专家' || activeNav.value === '技能' || activeNav.value === '连接器'
+)
 
 /** 会话按工作空间分组（遍历 workspaceStore.workspaces，含无会话的空空间）；无绑定会话归"默认空间"组 */
 interface ConversationGroup {
@@ -370,9 +382,12 @@ const handleSettingsLogout = (): void => {
   openLogoutConfirm()
 }
 
-const switchNav = (nav: NavKey): void => {
+const switchNav = (nav: AppNav): void => {
   activeNav.value = nav
   userMenuOpen.value = false
+  if (agentSubItems.some((item) => item.label === nav)) {
+    agentMenuOpen.value = true
+  }
   if (nav === '新建任务') {
     // 仅进入欢迎态，不创建会话条目（发送第一条消息时才创建）
     agentStore.resetNewTask()
@@ -494,89 +509,127 @@ const adjustMenuDirection = (): void => {
           </span>
           <span class="nav-label">新建任务</span>
         </button>
-        <button
-          v-for="item in navItems"
-          :key="item.label"
-          :class="['nav-item', { 'nav-item--active': activeNav === item.label }]"
-          @click="switchNav(item.label)"
-        >
-          <span class="nav-icon">
-            <svg
-              v-if="item.icon === 'bot'"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
+        <template v-for="item in navItems" :key="item.label">
+          <button
+            :class="['nav-item', { 'nav-item--active': activeNav === item.label }]"
+            @click="switchNav(item.label)"
+          >
+            <span class="nav-icon">
+              <svg
+                v-if="item.icon === 'bot'"
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="3" width="18" height="14" rx="3" />
+                <path d="M8 21h8M12 17v4" />
+              </svg>
+              <svg
+                v-else-if="item.icon === 'folder'"
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                />
+              </svg>
+              <svg
+                v-else-if="item.icon === 'workflow'"
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="2" y="3" width="6" height="6" rx="1" />
+                <rect x="9" y="2" width="6" height="8" rx="1" />
+                <rect x="16" y="3" width="6" height="6" rx="1" />
+                <path d="M5 9v4a2 2 0 0 0 2 2h3M12 6v2M19 9v4a2 2 0 0 1-2 2h-2" />
+              </svg>
+              <svg
+                v-else
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="19" cy="12" r="1" />
+                <circle cx="5" cy="12" r="1" />
+              </svg>
+            </span>
+            <span class="nav-label">{{ item.label }}</span>
+            <span v-if="item.tag" class="nav-tag">{{ item.tag }}</span>
+          </button>
+
+          <template v-if="item.label === '项目'">
+            <button
+              class="nav-item nav-item--group"
+              :class="{ 'nav-item--active': isAgentSectionActive }"
+              type="button"
+              :aria-expanded="agentMenuOpen"
+              @click="agentMenuOpen = !agentMenuOpen"
             >
-              <rect x="3" y="3" width="18" height="14" rx="3" />
-              <path d="M8 21h8M12 17v4" />
-            </svg>
-            <svg
-              v-else-if="item.icon === 'folder'"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path
-                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-              />
-            </svg>
-            <svg
-              v-else-if="item.icon === 'cpu'"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <rect x="4" y="4" width="16" height="16" rx="2" />
-              <rect x="9" y="9" width="6" height="6" />
-              <line x1="9" y1="1" x2="9" y2="4" />
-              <line x1="15" y1="1" x2="15" y2="4" />
-              <line x1="9" y1="20" x2="9" y2="23" />
-              <line x1="15" y1="20" x2="15" y2="23" />
-              <line x1="20" y1="9" x2="23" y2="9" />
-              <line x1="20" y1="14" x2="23" y2="14" />
-              <line x1="1" y1="9" x2="4" y2="9" />
-              <line x1="1" y1="14" x2="4" y2="14" />
-            </svg>
-            <svg
-              v-else-if="item.icon === 'workflow'"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <rect x="2" y="3" width="6" height="6" rx="1" />
-              <rect x="9" y="2" width="6" height="8" rx="1" />
-              <rect x="16" y="3" width="6" height="6" rx="1" />
-              <path d="M5 9v4a2 2 0 0 0 2 2h3M12 6v2M19 9v4a2 2 0 0 1-2 2h-2" />
-            </svg>
-            <svg
-              v-else
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <circle cx="12" cy="12" r="1" />
-              <circle cx="19" cy="12" r="1" />
-              <circle cx="5" cy="12" r="1" />
-            </svg>
-          </span>
-          <span class="nav-label">{{ item.label }}</span>
-          <span v-if="item.tag" class="nav-tag">{{ item.tag }}</span>
-        </button>
+              <span class="nav-icon">
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                  <rect x="9" y="9" width="6" height="6" />
+                  <line x1="9" y1="1" x2="9" y2="4" />
+                  <line x1="15" y1="1" x2="15" y2="4" />
+                  <line x1="9" y1="20" x2="9" y2="23" />
+                  <line x1="15" y1="20" x2="15" y2="23" />
+                  <line x1="20" y1="9" x2="23" y2="9" />
+                  <line x1="20" y1="14" x2="23" y2="14" />
+                  <line x1="1" y1="9" x2="4" y2="9" />
+                  <line x1="1" y1="14" x2="4" y2="14" />
+                </svg>
+              </span>
+              <span class="nav-label">智能体</span>
+              <svg
+                class="nav-chevron"
+                :class="{ 'nav-chevron--collapsed': !agentMenuOpen }"
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            <Transition name="agent-collapse">
+              <div v-show="agentMenuOpen" class="agent-submenu">
+                <button
+                  v-for="sub in agentSubItems"
+                  :key="sub.label"
+                  :class="['nav-item nav-item--sub', { 'nav-item--active': activeNav === sub.label }]"
+                  @click="switchNav(sub.label)"
+                >
+                  <span class="nav-label">{{ sub.label }}</span>
+                </button>
+              </div>
+            </Transition>
+          </template>
+        </template>
       </nav>
 
       <div class="sidebar-divider"></div>
@@ -1192,7 +1245,14 @@ const adjustMenuDirection = (): void => {
         <!-- ── Page components ── -->
         <AssistantPage v-else-if="activeNav === '助理'" key="assistant" />
         <ProjectPage v-else-if="activeNav === '项目'" key="project" />
-        <ExpertPage v-else-if="activeNav === '专家·技能·连接器'" key="expert" />
+        <ExpertPage
+          v-else-if="activeNav === '专家'"
+          key="expert"
+          section="expert"
+          @summon="switchNav('新建任务')"
+        />
+        <ExpertPage v-else-if="activeNav === '技能'" key="skill" section="skill" />
+        <ExpertPage v-else-if="activeNav === '连接器'" key="connector" section="connector" />
         <AutomationPage v-else-if="activeNav === '自动化'" key="automation" />
         <div v-else key="placeholder" class="placeholder-page">
           <div class="placeholder-icon">
@@ -1428,6 +1488,50 @@ const adjustMenuDirection = (): void => {
   background: var(--kw-color-brand-soft);
   color: var(--kw-color-brand);
   flex-shrink: 0;
+}
+
+/* 智能体父菜单 */
+.nav-item--group {
+  position: relative;
+}
+
+.nav-chevron {
+  flex-shrink: 0;
+  color: var(--kw-color-text-faint);
+  transition: transform 0.2s ease;
+}
+
+.nav-chevron--collapsed {
+  transform: rotate(-90deg);
+}
+
+.agent-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 20px;
+  margin: 2px 0;
+}
+
+.nav-item--sub {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 12px;
+}
+
+.agent-collapse-enter-active,
+.agent-collapse-leave-active {
+  transition:
+    opacity 0.2s ease,
+    max-height 0.25s ease;
+  max-height: 120px;
+  overflow: hidden;
+}
+
+.agent-collapse-enter-from,
+.agent-collapse-leave-to {
+  opacity: 0;
+  max-height: 0;
 }
 
 /* Divider */

@@ -7,14 +7,21 @@ import { useModelStore } from '@store/models'
 import MessageContent from '@components/MessageContent.vue'
 import ChatSidePanel from '@components/ChatSidePanel.vue'
 import PlusMenu from '@components/PlusMenu.vue'
-import { useCatalogStore, type Mode, type SkillItem } from '@store/catalog'
+import { useCatalogStore, type CatalogTab, type Mode, type SkillItem } from '@store/catalog'
 import type { MessagePart } from '../../../preload/index.d'
 
 const agentStore = useAgentStore()
 const workspaceStore = useWorkspaceStore()
 const catalog = useCatalogStore()
 const modelStore = useModelStore()
-const emit = defineEmits<{ navigate: [tab: '专家·技能·连接器'] }>()
+type CatalogNavTarget = '专家' | '技能' | '连接器'
+const emit = defineEmits<{ navigate: [tab: CatalogNavTarget] }>()
+
+const CATALOG_NAV_TARGETS: Record<CatalogTab, CatalogNavTarget> = {
+  expert: '专家',
+  skill: '技能',
+  connector: '连接器'
+}
 
 // 通过本地 computed 包装 agentStore，建立正确的 Vue 响应式依赖链
 const currentMessages = computed(() => agentStore.currentMessages)
@@ -533,10 +540,10 @@ watch([welcomeInputRef, chatInputRef], ([w, c]) => {
   }
 })
 
-/** 菜单内导航 → Home 切换页面（具体标签页由 catalog store 的 pageTab 决定） */
-const onPlusNavigate = (): void => {
+/** 菜单内导航 → Home 切换到“智能体”下对应的专家 / 技能 / 连接器页面 */
+const onPlusNavigate = (tab: CatalogTab): void => {
   showInputPlusMenu.value = false
-  emit('navigate', '专家·技能·连接器')
+  emit('navigate', CATALOG_NAV_TARGETS[tab])
 }
 
 // ── Workspace selector 状态 ──

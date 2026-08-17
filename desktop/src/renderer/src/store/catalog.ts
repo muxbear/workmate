@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, reactive, ref } from 'vue'
 
 /**
  * 目录数据与「+」菜单状态管理（渲染层）
- * 数据源与"专家·技能·连接器"页（ExpertPage）共用；选择类状态（技能除外）经 localStorage 持久化
+ * 数据源与"智能体"下的专家 / 技能 / 连接器页面（ExpertPage）共用；选择类状态（技能除外）经 localStorage 持久化
  */
 
 export type Mode = 'default' | 'local' | 'knowledge'
@@ -36,9 +36,11 @@ export interface ConnectorItem {
   desc: string
   color: string
   connected: boolean
+  /** 外部授权页面地址（点击连接器右侧 + 时在系统浏览器打开） */
+  authUrl: string
 }
 
-/** 本地文件（专家页数据同源，此处唯一声明，ExpertPage 引用） */
+/** 本地文件（专家/技能/连接器页数据同源，此处唯一声明，ExpertPage 引用） */
 export const experts: Expert[] = [
   {
     id: 1,
@@ -183,57 +185,64 @@ export const skillItems: SkillItem[] = [
   }
 ]
 
-export const connectorItems: ConnectorItem[] = [
+export const connectorItems = reactive<ConnectorItem[]>([
   {
     id: 1,
     name: 'GitHub',
     desc: '同步仓库、PR、Issue，代码直接入上下文',
     color: 'linear-gradient(135deg,#1f2937,#374151)',
-    connected: true
+    connected: true,
+    authUrl: 'https://github.com/login'
   },
   {
     id: 2,
     name: 'Notion',
     desc: '读写 Notion 页面与数据库，知识无缝流动',
     color: 'linear-gradient(135deg,#1a1a1a,#333)',
-    connected: false
+    connected: false,
+    authUrl: 'https://www.notion.so/login'
   },
   {
     id: 3,
     name: '飞书',
     desc: '同步飞书文档、多维表格与日历事件',
     color: 'linear-gradient(135deg,#2f6fe5,#1652c4)',
-    connected: true
+    connected: true,
+    authUrl: 'https://open.feishu.cn/app'
   },
   {
     id: 4,
     name: '钉钉',
     desc: '同步钉钉审批、文档与工作群消息',
     color: 'linear-gradient(135deg,#2489ff,#0067e6)',
-    connected: false
+    connected: false,
+    authUrl: 'https://open.dingtalk.com/'
   },
   {
     id: 5,
     name: '数据库',
     desc: '直连 MySQL / PostgreSQL，自然语言查询',
     color: 'linear-gradient(135deg,#f59e0b,#d97706)',
-    connected: false
+    connected: false,
+    authUrl: 'https://www.postgresql.org/'
   },
   {
     id: 6,
     name: 'Slack',
     desc: '发送消息、查看频道，团队协作更顺畅',
     color: 'linear-gradient(135deg,#4a154b,#611f69)',
-    connected: false
+    connected: false,
+    authUrl: 'https://slack.com/signin'
   },
   {
     id: 7,
     name: 'Google Drive',
     desc: '读取与创建 Google Docs / Sheets / Slides',
     color: 'linear-gradient(135deg,#34a853,#1e8e3e)',
-    connected: false
+    connected: false,
+    authUrl: 'https://accounts.google.com/v3/signin/identifier'
   }
-]
+])
 
 const STORAGE_KEY = 'ke-work:task-selection'
 
@@ -303,7 +312,7 @@ function buildExpertPrompt(expert: Expert): string {
 
 export const useCatalogStore = defineStore('catalog', () => {
   // ====== 状态(State) ======
-  /** 专家·技能·连接器页当前标签页（导航目标） */
+  /** 智能体下专家 / 技能 / 连接器页的目标标签页（PlusMenu 导航目标） */
   const pageTab = ref<CatalogTab>('expert')
   /** 任务模式（互斥）：default=默认 / local=本地文件 / knowledge=知识库 */
   const mode = ref<Mode>(loadPersisted().mode)
@@ -331,6 +340,8 @@ export const useCatalogStore = defineStore('catalog', () => {
       .map((id) => experts.find((e) => e.id === id))
       .filter((e): e is Expert => !!e)
   )
+  /** 已授权连接器（授权通过后才会出现在「+」菜单的连接器二级菜单） */
+  const availableConnectors = computed(() => connectorItems.filter((c) => c.connected))
 
   // ====== 持久化 ======
   function persist(): void {
@@ -388,9 +399,15 @@ export const useCatalogStore = defineStore('catalog', () => {
     selectedSkillIds.value = []
   }
 
-  /** 跳转到专家·技能·连接器页某标签页 */
+  /** 跳转到智能体下某个标签页 */
   function gotoTab(tab: CatalogTab): void {
     pageTab.value = tab
+  }
+
+  /** 连接器授权通过后标记为可用 */
+  function authorizeConnector(id: number): void {
+    const connector = connectorItems.find((c) => c.id === id)
+    if (connector) connector.connected = true
   }
 
   /**
@@ -422,6 +439,7 @@ export const useCatalogStore = defineStore('catalog', () => {
     selectedExpert,
     selectedSkills,
     recentExperts,
+    availableConnectors,
     // 方法
     setMode,
     recordExpertUse,
@@ -430,6 +448,7 @@ export const useCatalogStore = defineStore('catalog', () => {
     toggleSkill,
     clearSkills,
     gotoTab,
-    gotoConnector
+    gotoConnector,
+    authorizeConnector
   }
 })

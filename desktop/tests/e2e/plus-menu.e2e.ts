@@ -9,8 +9,8 @@
  *  - 模式开关互斥（radio）
  *  - 专家选中：工具栏「+」右侧徽标 + textarea 使用提示词 + 菜单关闭；hover 删除图标；点击移除
  *  - 技能选中：输入框光标处插入 token（图标+名称）+ 菜单保持打开连续多选；hover 删除；发送序列化为 /技能名
- *  - 召唤更多专家 → 专家·技能·连接器页「专家」标签页
- *  - 连接器点击 → 「连接器」标签页 + 对应授权连接卡片高亮
+ *  - 召唤更多专家 → 智能体下的「专家」页面
+ *  - 连接器点击 → 智能体下的「连接器」页面 + 对应授权连接卡片高亮
  */
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, rmSync } from 'fs'
@@ -331,26 +331,26 @@ describe('E2E 「+」菜单', () => {
     expect(bubbleText).not.toContain('第一行第二行')
   }, 60_000)
 
-  it('「召唤更多专家」→ 跳转专家·技能·连接器页「专家」标签页', async () => {
+  it('「召唤更多专家」→ 跳转智能体下的「专家」页面', async () => {
     await gotoNewTask()
     await openPlusMenu()
     await hoverTop('专家')
     await page.locator('.plus-submenu-item', { hasText: '召唤更多专家' }).click()
 
     await page.locator('.expert-page').waitFor({ state: 'visible', timeout: WAIT })
-    const activeTab = await page.locator('.tab-btn--active').textContent()
+    const activeTab = await page.locator('.page-title').textContent()
     expect(activeTab?.trim()).toBe('专家')
     await page.locator('.plus-menu').waitFor({ state: 'hidden', timeout: 5_000 })
   }, 60_000)
 
-  it('连接器点击 → 跳转「连接器」标签页并高亮对应授权连接卡片', async () => {
+  it('连接器点击 → 跳转智能体下的「连接器」页面并高亮对应授权连接卡片', async () => {
     await gotoNewTask()
     await openPlusMenu()
     await hoverTop('连接器')
     await page.locator('.plus-submenu-item', { hasText: 'GitHub' }).click()
 
     await page.locator('.expert-page').waitFor({ state: 'visible', timeout: WAIT })
-    const activeTab = await page.locator('.tab-btn--active').textContent()
+    const activeTab = await page.locator('.page-title').textContent()
     expect(activeTab?.trim()).toBe('连接器')
 
     // 对应授权连接卡片高亮（data-connector-id 定位）

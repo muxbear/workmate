@@ -71,8 +71,9 @@ const filteredSkills = computed(() => {
 
 const filteredConnectors = computed(() => {
   const kw = connectorSearch.value.trim().toLowerCase()
-  if (!kw) return store.connectorItems
-  return store.connectorItems.filter(
+  const available = store.availableConnectors
+  if (!kw) return available
+  return available.filter(
     (c) => c.name.toLowerCase().includes(kw) || c.desc.toLowerCase().includes(kw)
   )
 })

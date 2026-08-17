@@ -1,8 +1,20 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { useCatalogStore, experts, skillItems, connectorItems } from '@store/catalog'
+import {
+  useCatalogStore,
+  experts,
+  skillItems,
+  connectorItems,
+  type CatalogTab,
+  type ConnectorItem,
+  type SkillItem
+} from '@store/catalog'
 
-/** 数据与「+」菜单共源（catalog store）；标签页状态由 store 驱动，支持菜单内跳转 */
+/** 当前渲染的子页面：专家 / 技能 / 连接器（由 Home 的“智能体”菜单指定） */
+defineProps<{ section: CatalogTab }>()
+const emit = defineEmits<{ summon: [] }>()
+
+/** 数据与「+」菜单共源（catalog store）；当前渲染内容由父级传入的 section 决定 */
 const catalog = useCatalogStore()
 
 const expertFilter = ref('全部')
@@ -56,6 +68,31 @@ const filteredExperts = computed(() =>
   )
 )
 
+/** 召唤专家：与“+ 菜单 → 专家 → 选择该专家”共用同一 catalog.setExpert 逻辑 */
+const summonExpert = (id: number): void => {
+  catalog.setExpert(id)
+  emit('summon')
+}
+
+// ── 技能安装提示（轻量 toast，点击技能卡片右侧 + 后展示） ──
+const skillToast = ref('')
+let skillToastTimer: ReturnType<typeof setTimeout> | null = null
+const showToast = (text: string): void => {
+  skillToast.value = text
+  if (skillToastTimer) clearTimeout(skillToastTimer)
+  skillToastTimer = setTimeout(() => {
+    skillToast.value = ''
+  }, 1800)
+}
+const installSkill = (skill: SkillItem): void => {
+  showToast(`${skill.name}技能已安装，去试试`)
+}
+
+// ── 连接器授权：在系统浏览器中打开该连接器的授权页面 ──
+const openConnectorAuth = (conn: ConnectorItem): void => {
+  void window.api.openExternal(conn.authUrl)
+}
+
 // ── 连接器聚焦：菜单点击「连接器」→ 定位并高亮对应授权连接卡片 ──
 const focusedConnectorId = ref<number | null>(null)
 let focusTimer: ReturnType<typeof setTimeout> | null = null
@@ -85,21 +122,9 @@ watch(
   <div class="expert-page">
     <!-- Top bar -->
     <div class="top-bar">
-      <div class="tab-row">
-        <button
-          v-for="[key, label] in [
-            ['expert', '专家'],
-            ['skill', '技能'],
-            ['connector', '连接器']
-          ] as const"
-          :key="key"
-          :class="['tab-btn', { 'tab-btn--active': catalog.pageTab === key }]"
-          @click="catalog.gotoTab(key)"
-        >
-          {{ label }}
-          <span v-if="catalog.pageTab === key" class="tab-indicator"></span>
-        </button>
-      </div>
+      <h1 class="page-title">
+        {{ section === 'expert' ? '专家' : section === 'skill' ? '技能' : '连接器' }}
+      </h1>
       <div class="top-spacer"></div>
       <div class="search-box">
         <svg
@@ -116,9 +141,9 @@ watch(
         <input
           type="text"
           :placeholder="
-            catalog.pageTab === 'expert'
+            section === 'expert'
               ? '搜索专家'
-              : catalog.pageTab === 'skill'
+              : section === 'skill'
                 ? '搜索技能'
                 : '搜索连接器'
           "
@@ -126,7 +151,7 @@ watch(
           class="search-input"
         />
       </div>
-      <button v-if="catalog.pageTab === 'expert'" class="sync-btn">
+      <button v-if="section === 'expert'" class="sync-btn">
         <svg
           width="12"
           height="12"
@@ -145,7 +170,7 @@ watch(
     <div class="page-body">
       <Transition name="fade" mode="out-in">
         <!-- ── Expert Tab ── -->
-        <div v-if="catalog.pageTab === 'expert'" key="expert">
+        <div v-if="section === 'expert'" key="expert">
           <!-- Featured scenes -->
           <section class="scene-section">
             <h2 class="sec-title">精选场景</h2>
@@ -219,6 +244,14 @@ watch(
                     <p class="expert-name">{{ expert.name }}</p>
                     <p class="expert-title">{{ expert.title }}</p>
                   </div>
+                  <button
+                    class="expert-summon-btn"
+                    type="button"
+                    title="召唤该专家"
+                    @click="summonExpert(expert.id)"
+                  >
+                    召唤
+                  </button>
                 </div>
                 <div class="expert-tags">
                   <span v-for="tag in expert.tags.slice(0, 3)" :key="tag" class="expert-tag">{{
@@ -264,7 +297,7 @@ watch(
         </div>
 
         <!-- ── Skill Tab ── -->
-        <div v-else-if="catalog.pageTab === 'skill'" key="skill">
+        <div v-else-if="section === 'skill'" key="skill">
           <div class="sec-intro">
             <h2 class="sec-title">技能广场</h2>
             <p class="sec-desc">为KE-WORK扩展专项能力，一键调用即可赋能任意对话</p>
@@ -293,9 +326,27 @@ watch(
                 <div class="skill-head">
                   <p class="skill-name">{{ skill.name }}</p>
                   <span class="skill-count">{{ skill.count }}</span>
+                  <button
+                    class="skill-install-btn"
+                    type="button"
+                    title="安装技能"
+                    @click="installSkill(skill)"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
                 </div>
                 <p class="skill-desc">{{ skill.desc }}</p>
-                <button class="skill-add-btn">+ 添加技能</button>
               </div>
             </div>
           </div>
@@ -341,19 +392,38 @@ watch(
                       ><span class="connected-dot"></span>已连接</span
                     >
                   </div>
+                  <button
+                    class="skill-install-btn"
+                    type="button"
+                    title="授权连接器"
+                    @click="openConnectorAuth(conn)"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
                 </div>
                 <p class="skill-desc">{{ conn.desc }}</p>
-                <button
-                  :class="['conn-action-btn', { 'conn-action-btn--connected': conn.connected }]"
-                >
-                  {{ conn.connected ? '管理连接' : '立即连接' }}
-                </button>
               </div>
             </div>
           </div>
         </div>
       </Transition>
     </div>
+
+    <Transition name="toast">
+      <div v-if="skillToast" class="skill-toast">{{ skillToast }}</div>
+    </Transition>
+
   </div>
 </template>
 
@@ -374,6 +444,16 @@ watch(
   border-bottom: 1px solid var(--kw-color-border-brand);
   flex-shrink: 0;
 }
+
+.page-title {
+  margin: 0 16px 0 0;
+  padding-bottom: 10px;
+  color: var(--kw-color-text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .tab-row {
   display: flex;
   gap: 4px;
@@ -624,7 +704,42 @@ watch(
   flex-shrink: 0;
 }
 .expert-info {
+  flex: 1;
   min-width: 0;
+}
+.expert-summon-btn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--kw-color-brand);
+  color: var(--kw-color-on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(4px);
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease,
+    transform 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.expert-card:hover .expert-summon-btn {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+}
+
+.expert-summon-btn:hover {
+  background: var(--kw-color-brand-strong);
+}
+
+.expert-summon-btn:active {
+  transform: scale(0.96);
 }
 .expert-name {
   font-size: 13px;
@@ -754,6 +869,10 @@ watch(
   color: var(--kw-color-text);
   margin: 0;
 }
+.skill-head > .skill-name {
+  flex: 1;
+  min-width: 0;
+}
 .skill-count {
   font-size: 10px;
   color: var(--kw-color-text-faint);
@@ -764,16 +883,32 @@ watch(
   line-height: 1.4;
   margin: 0 0 12px;
 }
-.skill-add-btn {
-  padding: 4px 12px;
+.skill-install-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 8px;
+  padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 50%;
   background: var(--kw-color-brand-soft);
   color: var(--kw-color-brand);
-  font-size: 11px;
-  font-weight: 500;
-  font-family: inherit;
   cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.skill-install-btn:hover {
+  background: var(--kw-color-brand);
+  color: var(--kw-color-on-accent);
+}
+
+.skill-install-btn:active {
+  transform: scale(0.92);
 }
 .connected-badge {
   display: flex;
@@ -793,22 +928,6 @@ watch(
   background: #10b981;
   display: inline-block;
 }
-.conn-action-btn {
-  padding: 4px 12px;
-  border: none;
-  border-radius: 8px;
-  background: var(--kw-color-brand-soft);
-  color: var(--kw-color-brand);
-  font-size: 11px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-}
-.conn-action-btn--connected {
-  background: rgba(16, 185, 129, 0.08);
-  color: #059669;
-}
-
 .fade-enter-active,
 .fade-leave-active {
   transition:
@@ -821,6 +940,35 @@ watch(
 }
 .fade-leave-to {
   opacity: 0;
+}
+
+/* 技能安装提示 toast */
+.skill-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.85);
+  color: var(--kw-color-on-accent);
+  font-size: 12px;
+  z-index: 150;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(6px);
 }
 
 @media (max-width: 1200px) {
