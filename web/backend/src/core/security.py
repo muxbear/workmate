@@ -2,6 +2,7 @@ import base64
 import logging
 import secrets
 import time
+from typing import Any
 
 import bcrypt
 import jwt
@@ -123,7 +124,10 @@ def _get_jwt_secret() -> str:
     return _jwt_secret
 
 
-def create_token_pair(user_id: str) -> TokenPair:
+def create_token_pair(
+    user_id: str,
+    extra: dict[str, Any] | None = None,
+) -> TokenPair:
     secret = _get_jwt_secret()
     now = int(time.time())
     access_payload = {
@@ -132,6 +136,8 @@ def create_token_pair(user_id: str) -> TokenPair:
         "iat": now,
         "exp": now + settings.JWT_ACCESS_EXPIRE,
     }
+    if extra:
+        access_payload.update(extra)
     refresh_payload = {
         "sub": user_id,
         "type": "refresh",

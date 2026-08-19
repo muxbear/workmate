@@ -236,6 +236,24 @@ const api = {
   },
   listModelProviders() {
     return ipcRenderer.invoke('model:list-providers')
+  },
+  // ── Web 技能同步 API ──
+  skillSync: {
+    getStatus() {
+      return ipcRenderer.invoke('skill-sync:status')
+    },
+    authorize() {
+      return ipcRenderer.invoke('skill-sync:authorize')
+    },
+    sync() {
+      return ipcRenderer.invoke('skill-sync:sync')
+    },
+    getCachedSkills() {
+      return ipcRenderer.invoke('skill-sync:cached')
+    },
+    disconnect() {
+      return ipcRenderer.invoke('skill-sync:disconnect')
+    }
   }
 }
 

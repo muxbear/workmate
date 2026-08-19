@@ -14,6 +14,7 @@ from db.models.knowledge_base_relation import KnowledgeBaseRelation
 from db.models.login_record import LoginRecord
 from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
+from db.models.oauth2_client import OAuth2Client
 from db.models.permission_resource import PermissionResource
 from db.models.personnel import Personnel
 from db.models.provider import Provider
@@ -42,6 +43,7 @@ __all__ = [
     "LoginRecord",
     "McpInstallation",
     "McpTool",
+    "OAuth2Client",
     "PermissionResource",
     "Personnel",
     "Provider",

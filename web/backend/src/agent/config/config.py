@@ -127,6 +127,9 @@ class Settings(BaseSettings):
     OAUTH_GOOGLE_CLIENT_SECRET: str = os.getenv("OAUTH_GOOGLE_CLIENT_SECRET", "")
     OAUTH_WECHAT_CLIENT_ID: str = os.getenv("OAUTH_WECHAT_CLIENT_ID", "")
     OAUTH_WECHAT_CLIENT_SECRET: str = os.getenv("OAUTH_WECHAT_CLIENT_SECRET", "")
+    OAUTH2_FRONTEND_URL: str = os.getenv(
+        "OAUTH2_FRONTEND_URL", "http://localhost:5173"
+    )
 
     # ---- SMS ----
     SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "")

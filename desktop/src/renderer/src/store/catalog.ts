@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, nextTick, reactive, ref } from 'vue'
+import type { DesktopSkill } from '../../../preload/index.d'
 
 /**
  * 目录数据与「+」菜单状态管理（渲染层）
- * 数据源与"智能体"下的专家 / 技能 / 连接器页面（ExpertPage）共用；选择类状态（技能除外）经 localStorage 持久化
+ * 数据源与"智能体"下的 ExpertPage / SkillPage / ConnectorPage 共用；选择类状态（技能除外）经 localStorage 持久化
  */
 
 export type Mode = 'default' | 'local' | 'knowledge'
@@ -22,12 +23,9 @@ export interface Expert {
   users: string
 }
 
-export interface SkillItem {
-  id: number
-  name: string
-  desc: string
-  color: string
-  count: string
+export interface SkillItem extends DesktopSkill {
+  /** 当前静态技能广场展示的使用量文案；Web 同步后可选 */
+  count?: string
 }
 
 export interface ConnectorItem {
@@ -40,7 +38,7 @@ export interface ConnectorItem {
   authUrl: string
 }
 
-/** 本地文件（专家/技能/连接器页数据同源，此处唯一声明，ExpertPage 引用） */
+/** 本地文件（专家/技能/连接器页数据同源，此处唯一声明，相关页面引用） */
 export const experts: Expert[] = [
   {
     id: 1,
@@ -140,50 +138,7 @@ export const experts: Expert[] = [
   }
 ]
 
-export const skillItems: SkillItem[] = [
-  {
-    id: 1,
-    name: 'PDF 深度解析',
-    desc: '上传 PDF 自动提炼核心摘要、数据与结论',
-    color: 'linear-gradient(135deg,#0891b2,#0e7490)',
-    count: '12k+'
-  },
-  {
-    id: 2,
-    name: '数据图表生成',
-    desc: '自然语言描述需求，一键生成可交互图表',
-    color: 'linear-gradient(135deg,#8b5cf6,#7c3aed)',
-    count: '8.3k+'
-  },
-  {
-    id: 3,
-    name: '代码审查助手',
-    desc: '自动检测安全漏洞、性能问题与规范违反',
-    color: 'linear-gradient(135deg,#f97316,#ea580c)',
-    count: '6.1k+'
-  },
-  {
-    id: 4,
-    name: '多语言翻译',
-    desc: '支持 50+ 语种，保留专业术语与原文格式',
-    color: 'linear-gradient(135deg,#10b981,#059669)',
-    count: '21k+'
-  },
-  {
-    id: 5,
-    name: '会议纪要提炼',
-    desc: '上传录音或文字，自动生成结构化纪要',
-    color: 'linear-gradient(135deg,#06b6d4,#0891b2)',
-    count: '9.7k+'
-  },
-  {
-    id: 6,
-    name: '智能 PPT 生成',
-    desc: '输入主题与大纲，自动排版美观的演示文稿',
-    color: 'linear-gradient(135deg,#ec4899,#db2777)',
-    count: '15k+'
-  }
-]
+export const skillItems = ref<SkillItem[]>([])
 
 export const connectorItems = reactive<ConnectorItem[]>([
   {
@@ -320,7 +275,7 @@ export const useCatalogStore = defineStore('catalog', () => {
   /** 插入输入框的专家提示词原文（切换/删除专家时用于移除） */
   const selectedExpertPrompt = ref<string>(loadPersisted().selectedExpertPrompt)
   /** 已选技能 id（选择顺序即展示顺序；不持久化，随输入框会话状态） */
-  const selectedSkillIds = ref<number[]>([])
+  const selectedSkillIds = ref<string[]>([])
   /** 最近使用专家 id（最近在前，上限 5） */
   const recentExpertIds = ref<number[]>(loadPersisted().recentExpertIds)
   /** 连接器定位目标（一次性：跳转后高亮对应授权连接卡片） */
@@ -332,7 +287,7 @@ export const useCatalogStore = defineStore('catalog', () => {
   )
   const selectedSkills = computed(() =>
     selectedSkillIds.value
-      .map((id) => skillItems.find((s) => s.id === id))
+      .map((id) => skillItems.value.find((s) => s.id === id))
       .filter((s): s is SkillItem => !!s)
   )
   const recentExperts = computed(() =>
@@ -385,7 +340,7 @@ export const useCatalogStore = defineStore('catalog', () => {
   }
 
   /** 技能多选切换（不持久化，随输入框会话状态） */
-  function toggleSkill(id: number): void {
+  function toggleSkill(id: string): void {
     const idx = selectedSkillIds.value.indexOf(id)
     if (idx === -1) {
       selectedSkillIds.value = [...selectedSkillIds.value, id]
@@ -397,6 +352,16 @@ export const useCatalogStore = defineStore('catalog', () => {
   /** 清空全部技能（发送时调用） */
   function clearSkills(): void {
     selectedSkillIds.value = []
+  }
+
+  /** 用 Web 同步结果替换技能广场数据。 */
+  function setSkills(skills: SkillItem[]): void {
+    skillItems.value = skills
+  }
+
+  /** 清空服务器技能数据（断开连接或退出登录时使用）。 */
+  function clearSkillItems(): void {
+    skillItems.value = []
   }
 
   /** 跳转到智能体下某个标签页 */
@@ -447,6 +412,8 @@ export const useCatalogStore = defineStore('catalog', () => {
     clearExpert,
     toggleSkill,
     clearSkills,
+    setSkills,
+    clearSkillItems,
     gotoTab,
     gotoConnector,
     authorizeConnector

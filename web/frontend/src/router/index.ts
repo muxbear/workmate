@@ -150,6 +150,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '第三方登录', guest: true },
   },
   {
+    path: '/oauth2/authorize',
+    name: 'oauth2-authorize',
+    component: () => import('@/views/OAuth2AuthorizeView.vue'),
+    meta: { title: '客户端授权' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     redirect: '/',

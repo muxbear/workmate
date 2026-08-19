@@ -15,7 +15,7 @@ defineProps<{ compact?: boolean }>()
 const emit = defineEmits<{
   close: []
   navigate: [tab: CatalogTab]
-  'select-skill': [id: number]
+  'select-skill': [id: string]
   'select-files': [paths: string[]]
 }>()
 
@@ -109,7 +109,7 @@ const onSelectExpert = (id: number): void => {
 }
 
 /** 选择技能：通知页面在光标处插入 token，菜单保持打开（连续多选，点外部关闭） */
-const onSelectSkill = (id: number): void => {
+const onSelectSkill = (id: string): void => {
   emit('select-skill', id)
 }
 

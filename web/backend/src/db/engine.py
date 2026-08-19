@@ -80,6 +80,7 @@ async def init_db():
     from db.base import Base
     from db.models.cron_job import CronJob  # noqa: F401  ensure table is registered
     from db.models.data_scope import DataScope  # noqa: F401
+    from db.models.oauth2_client import OAuth2Client  # noqa: F401
     from db.models.permission_resource import PermissionResource  # noqa: F401
     from db.models.role import Role  # noqa: F401
     from db.models.role_permission import RolePermission  # noqa: F401

@@ -42,12 +42,14 @@ async def lifespan(app: FastAPI):
 
     # 首次启动时种子化 MCP 工具和内置技能
     from api.mcp.service import seed_mcp_tools
+    from api.oauth2.client_service import seed_oauth2_clients
     from api.skill.service import seed_builtin_skills
     from api.tools.service import seed_builtin_tools
     from db.engine import async_session
 
     async with async_session() as session:
         await seed_mcp_tools(session)
+        await seed_oauth2_clients(session)
         await seed_builtin_skills(session)
         await seed_builtin_tools(session)
         await session.commit()

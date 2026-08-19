@@ -5,6 +5,8 @@ import { useUserStore } from '../store/user'
 import AssistantPage from './AssistantPage.vue'
 import ProjectPage from './ProjectPage.vue'
 import ExpertPage from './ExpertPage.vue'
+import SkillPage from './SkillPage.vue'
+import ConnectorPage from './ConnectorPage.vue'
 import AutomationPage from './AutomationPage.vue'
 import NewTaskPage from './NewTaskPage.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -12,6 +14,7 @@ import SettingsWindow from '../components/settings/SettingsWindow.vue'
 import { useAgentStore } from '@renderer/store/agent'
 import { useWorkspaceStore } from '@renderer/store/workspace'
 import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
+import { useSkillSyncStore } from '@renderer/store/skillSync'
 import type { ThemeName } from '@renderer/store/settings'
 import type { Conversation } from '@renderer/store/agent'
 import type { Workspace } from '../../../preload/index.d'
@@ -21,6 +24,7 @@ const userStore = useUserStore()
 const agentStore = useAgentStore()
 const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
+const skillSyncStore = useSkillSyncStore()
 
 // ── 当前登录用户展示 ──
 /** 显示名：用户名 → 手机号 → 兜底文案 */
@@ -348,6 +352,7 @@ const handleLogout = async (): Promise<void> => {
     showLogoutConfirm.value = false
     userMenuOpen.value = false
     userStore.logout() // 清渲染层 pinia + localStorage
+    skillSyncStore.resetLocal() // 清 Web 技能同步状态，避免切换账号残留
     workspaceStore.reset() // 清工作空间列表/选中态，防切换账号残留
     await router.push('/') // 此时主进程 session 已清，守卫放行至登录页
   } catch (err: unknown) {
@@ -1245,14 +1250,9 @@ const adjustMenuDirection = (): void => {
         <!-- ── Page components ── -->
         <AssistantPage v-else-if="activeNav === '助理'" key="assistant" />
         <ProjectPage v-else-if="activeNav === '项目'" key="project" />
-        <ExpertPage
-          v-else-if="activeNav === '专家'"
-          key="expert"
-          section="expert"
-          @summon="switchNav('新建任务')"
-        />
-        <ExpertPage v-else-if="activeNav === '技能'" key="skill" section="skill" />
-        <ExpertPage v-else-if="activeNav === '连接器'" key="connector" section="connector" />
+        <ExpertPage v-else-if="activeNav === '专家'" key="expert" @summon="switchNav('新建任务')" />
+        <SkillPage v-else-if="activeNav === '技能'" key="skill" />
+        <ConnectorPage v-else-if="activeNav === '连接器'" key="connector" />
         <AutomationPage v-else-if="activeNav === '自动化'" key="automation" />
         <div v-else key="placeholder" class="placeholder-page">
           <div class="placeholder-icon">

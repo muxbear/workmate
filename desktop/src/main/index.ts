@@ -39,12 +39,14 @@ import { SettingsStore } from './settings/SettingsStore'
 import { SettingsService, type ProxyMode, type ThemeName } from './settings/SettingsService'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
+import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
 import { ModelService } from './model/ModelService'
 import { LastLaunchStore } from './state/LastLaunchStore'
 import { WorkspaceStateStore } from './state/WorkspaceStateStore'
 import { BrowserViewManager, BROWSER_PARTITION } from './browser/BrowserViewManager'
 import { WorkspacePreviewServer } from './browser/WorkspacePreviewServer'
 import { registerBrowserHandlers } from './browser/browser-handlers'
+import { SkillSyncService } from './skills/SkillSyncService'
 
 import icon from '../../resources/icon.png?asset'
 
@@ -164,11 +166,23 @@ app.whenReady().then(() => {
   const session = new SessionService(dataDir.getBaseDir())
   browserPreviewServer = new WorkspacePreviewServer()
 
+  const skillSyncService = new SkillSyncService({
+    secureStorage,
+    openExternal: (url) => shell.openExternal(url),
+    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
+    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+  })
+  registerSkillSyncHandlers(ipcMain, { skillSyncService, session })
+
   const cleanupBrowserOnLogout = (): void => {
     for (const manager of browserManagers.values()) {
       manager.resetForLogout()
     }
     void browserPreviewServer?.revokeAll()
+    const localUserId = session.getCurrentUserId()
+    if (localUserId) {
+      void skillSyncService.disconnect(localUserId)
+    }
   }
 
   // ── 初始化自定义模型服务（机器级配置；providers.json 首启种子写入，用户可手改）──
@@ -248,6 +262,7 @@ app.whenReady().then(() => {
   }
 
   const settingsStore = new SettingsStore(dataDir.getBaseDir())
+  // eslint-disable-next-line prefer-const
   let workspaceService: WorkspaceService
   const applyTheme = (theme: ThemeName): void => {
     nativeTheme.themeSource = theme === 'dark' ? 'dark' : 'light'

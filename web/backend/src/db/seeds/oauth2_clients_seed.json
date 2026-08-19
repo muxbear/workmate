@@ -1,0 +1,25 @@
+{
+  "clients": [
+    {
+      "client_id": "ke-work-desktop",
+      "client_name": "KE-WORK 桌面版",
+      "client_type": "public",
+      "redirect_uris": [
+        "http://127.0.0.1:{port}/callback",
+        "http://localhost:{port}/callback"
+      ],
+      "allowed_scopes": ["skill:read"],
+      "grant_types": ["authorization_code"],
+      "enabled": true
+    },
+    {
+      "client_id": "workmate-mobile",
+      "client_name": "WorkMate 移动版",
+      "client_type": "public",
+      "redirect_uris": ["workmate://oauth/callback"],
+      "allowed_scopes": ["skill:read", "agent:read"],
+      "grant_types": ["authorization_code"],
+      "enabled": true
+    }
+  ]
+}

@@ -205,10 +205,10 @@ const insertFileTokenAtCaret = (el: HTMLElement, filePath: string): void => {
 }
 
 /** 从 DOM 移除第一个指定技能的 token */
-const removeSkillTokenFromDom = (el: HTMLElement, id: number): void => {
+const removeSkillTokenFromDom = (el: HTMLElement, id: string): void => {
   for (const node of Array.from(el.children)) {
     if (node instanceof HTMLElement && node.classList.contains('skill-token')) {
-      if (Number(node.dataset.skillId) === id) {
+      if (node.dataset.skillId === id) {
         node.remove()
         break
       }
@@ -218,7 +218,7 @@ const removeSkillTokenFromDom = (el: HTMLElement, id: number): void => {
 }
 
 /** 菜单选技能：切 store 勾选（真相源）+ 同步 DOM（插入或移除 token） */
-const onSelectSkillToken = (id: number): void => {
+const onSelectSkillToken = (id: string): void => {
   const skill = catalog.skillItems.find((s) => s.id === id)
   const el = getInputEl()
   if (!skill || !el) return
@@ -377,7 +377,8 @@ const onInputClick = (e: MouseEvent): void => {
   e.preventDefault()
   const prevSibling = token.previousSibling
   if (token.classList.contains('skill-token')) {
-    catalog.toggleSkill(Number(token.dataset.skillId)) // 移除勾选，菜单勾选态同步消失
+    const skillId = token.dataset.skillId
+    if (skillId) catalog.toggleSkill(skillId) // 移除勾选，菜单勾选态同步消失
   }
   token.remove()
   taskInput.value = el.innerText
@@ -412,8 +413,8 @@ const onInputSync = (): void => {
   taskInput.value = el.innerText
   // 对账：DOM 中不存在的 token 从勾选中移除（退格键/选择删除路径）
   const domIds = new Set(
-    Array.from(el.querySelectorAll<HTMLElement>('.skill-token')).map((t) =>
-      Number(t.dataset.skillId)
+    Array.from(el.querySelectorAll<HTMLElement>('.skill-token')).map(
+      (t) => t.dataset.skillId ?? ''
     )
   )
   for (const id of [...catalog.selectedSkillIds]) {

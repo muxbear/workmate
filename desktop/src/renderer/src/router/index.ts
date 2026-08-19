@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { useUserStore } from '../store/user'
+import { useSkillSyncStore } from '../store/skillSync'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -32,6 +33,7 @@ router.beforeEach(async (to, _from, next) => {
   if (to.meta.requiresAuth && !mainLoggedIn) {
     // 主进程未登录：清除本地残留登录态（token 可能过期/伪造），回登录页
     userStore.logout()
+    useSkillSyncStore().resetLocal()
     next({ path: '/' })
     return
   }

@@ -7,9 +7,28 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useCatalogStore, experts, skillItems } from '../../src/renderer/src/store/catalog'
+import {
+  useCatalogStore,
+  experts,
+  skillItems,
+  type SkillItem
+} from '../../src/renderer/src/store/catalog'
 
 const STORAGE_KEY = 'ke-work:task-selection'
+
+function makeSkill(id: string, name = `skill-${id}`): SkillItem {
+  return {
+    id,
+    name,
+    desc: 'desc',
+    category: 'custom',
+    icon: 'Zap',
+    color: 'linear-gradient(135deg,#0891b2,#0e7490)',
+    enabled: true,
+    isBuiltin: false,
+    source: 'web'
+  }
+}
 
 /** node 环境下 localStorage stub（store 内部有 typeof 守卫，无 stub 也能跑，持久化断言需 stub） */
 const storage = new Map<string, string>()
@@ -29,6 +48,7 @@ vi.stubGlobal('localStorage', {
 beforeEach(() => {
   storage.clear()
   setActivePinia(createPinia())
+  skillItems.value = []
 })
 
 describe('catalog store: 模式 radio 互斥', () => {
@@ -99,18 +119,20 @@ describe('catalog store: 专家单选与最近使用', () => {
 describe('catalog store: 技能多选', () => {
   it('按选择顺序追加，可切换移除', () => {
     const store = useCatalogStore()
-    store.toggleSkill(1)
-    store.toggleSkill(2)
-    expect(store.selectedSkillIds).toEqual([1, 2])
-    expect(store.selectedSkills.map((s) => s.id)).toEqual([1, 2])
-    store.toggleSkill(1)
-    expect(store.selectedSkillIds).toEqual([2])
+    store.setSkills([makeSkill('1'), makeSkill('2')])
+    store.toggleSkill('1')
+    store.toggleSkill('2')
+    expect(store.selectedSkillIds).toEqual(['1', '2'])
+    expect(store.selectedSkills.map((s) => s.id)).toEqual(['1', '2'])
+    store.toggleSkill('1')
+    expect(store.selectedSkillIds).toEqual(['2'])
   })
 
   it('clearSkills 清空全部技能', () => {
     const store = useCatalogStore()
-    store.toggleSkill(1)
-    store.toggleSkill(2)
+    store.setSkills([makeSkill('1'), makeSkill('2')])
+    store.toggleSkill('1')
+    store.toggleSkill('2')
     store.clearSkills()
     expect(store.selectedSkillIds).toEqual([])
     expect(store.selectedSkills).toEqual([])
@@ -122,8 +144,9 @@ describe('catalog store: 持久化', () => {
     const store = useCatalogStore()
     store.setMode('local')
     store.setExpert(3)
-    store.toggleSkill(1)
-    store.toggleSkill(2)
+    store.setSkills([makeSkill('1'), makeSkill('2')])
+    store.toggleSkill('1')
+    store.toggleSkill('2')
     // 重建 pinia 与 store（模拟应用重启）
     setActivePinia(createPinia())
     const fresh = useCatalogStore()
@@ -168,10 +191,11 @@ describe('catalog store: 持久化', () => {
 describe('catalog store: 数据源', () => {
   it('专家/技能数据与页面共源（非空且含预期条目）', () => {
     expect(experts.length).toBe(8)
-    expect(skillItems.length).toBe(6)
+    expect(skillItems.value.length).toBe(0)
     const store = useCatalogStore()
     expect(store.experts.length).toBe(8)
     expect(store.experts[0].name).toBe('林晓雯')
+    expect(store.skillItems.length).toBe(0)
     expect(store.connectorItems.length).toBe(7)
     expect(store.connectorItems[0].name).toBe('GitHub')
     expect(store.connectorItems.some((c) => c.name === '钉钉')).toBe(true)

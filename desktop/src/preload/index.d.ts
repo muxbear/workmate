@@ -284,6 +284,40 @@ export interface BrowserAPI {
   onBrowserLoadError(callback: (error: string) => void): () => void
 }
 
+/** Web 技能同步状态 */
+export type SkillSyncStatus = {
+  status: 'unknown' | 'unauthorized' | 'authorized' | 'syncing'
+  webUser?: WebUser | null
+}
+
+/** Web 端授权用户信息 */
+export interface WebUser {
+  id: string
+  nickname: string
+  avatar?: string
+}
+
+/** 桌面端技能列表项（Web SkillInfo 映射后的结果） */
+export interface DesktopSkill {
+  id: string
+  name: string
+  desc: string
+  category: string
+  icon: string
+  color: string
+  enabled: boolean
+  isBuiltin: boolean
+  source: string
+}
+
+export interface SkillSyncAPI {
+  getStatus(): Promise<IpcResult<SkillSyncStatus>>
+  authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
+  sync(): Promise<IpcResult<{ skills: DesktopSkill[]; syncedAt: number }>>
+  getCachedSkills(): Promise<IpcResult<DesktopSkill[]>>
+  disconnect(): Promise<IpcResult<null>>
+}
+
 /** 渲染层可见的完整 API 形状 */
 export interface KeWorkWindowApi
   extends AgentAPI,
@@ -293,7 +327,8 @@ export interface KeWorkWindowApi
     WorkspaceAPI,
     ConfigAPI,
     ModelAPI,
-    BrowserAPI {}
+    BrowserAPI,
+    SkillSyncAPI {}
 
 declare global {
   interface Window {
