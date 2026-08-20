@@ -5,10 +5,16 @@
       "client_name": "KE-WORK 桌面版",
       "client_type": "public",
       "redirect_uris": [
-        "http://127.0.0.1:{port}/callback",
-        "http://localhost:{port}/callback"
+        "http://127.0.0.1:{port}/callback"
       ],
-      "allowed_scopes": ["skill:read"],
+      "allowed_scopes": [
+        "skill:read",
+        "user:read",
+        "agent:read",
+        "conversation:read",
+        "conversation:write",
+        "workspace:read"
+      ],
       "grant_types": ["authorization_code"],
       "enabled": true
     },

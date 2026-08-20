@@ -28,7 +28,11 @@ export const oauth2Api = {
       { state },
     ),
 
-  /** 使用授权码兑换 token */
+  /**
+   * 使用授权码兑换 token。
+   * 注：/api/oauth2/token 返回 RFC 6749 §5.1 标准 JSON（非 envelope），
+   * 桌面端主进程直连调用；Web 前端一般不在浏览器中兑换。
+   */
   exchangeToken: (data: TokenRequest) =>
-    request.post<ApiResponse<TokenResponse>>('/oauth2/token', data),
+    request.post<TokenResponse>('/oauth2/token', data),
 }

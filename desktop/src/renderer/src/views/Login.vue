@@ -41,6 +41,8 @@ const captchaOpen = ref(false)
 const loading = ref(false)
 const error = ref('')
 const wechatPrompt = ref('')
+const oauth2Loading = ref(false)
+const oauth2Error = ref('')
 
 // Field-level errors (matching Figma design)
 const phoneError = ref('')
@@ -225,6 +227,51 @@ const handleWechatLogin = async (): Promise<void> => {
     wechatPrompt.value = ''
   }
 }
+
+/** 记录本地协议同意（版本 + 时间；协议更新后需重新同意） */
+function recordAgreement(): void {
+  localStorage.setItem('oauth2_agreed_version', '1')
+  localStorage.setItem('oauth2_agreed_at', String(Date.now()))
+}
+
+/**
+ * 云端 OAuth2 登录：
+ * 同意协议 → 主进程授权流程（浏览器授权 → 回跳 → 换 token → 账号关联）
+ * 需要确认（切换身份/换绑）时弹确认框后继续
+ */
+const handleOAuth2Login = async (): Promise<void> => {
+  oauth2Error.value = ''
+  oauth2Loading.value = true
+  try {
+    const result = await window.api.loginByOAuth2()
+    if (!result.success) {
+      throw new Error(result.error)
+    }
+    if (result.data.status === 'needs-confirmation') {
+      const confirmed = window.confirm(result.data.message || '确认继续？')
+      if (!confirmed) {
+        oauth2Error.value = '已取消操作'
+        return
+      }
+      const confirmResult = await window.api.confirmOAuth2Link(
+        result.data.action || 'switch-identity'
+      )
+      if (!confirmResult.success) {
+        throw new Error(confirmResult.error)
+      }
+      if (confirmResult.data.status !== 'logged-in') {
+        throw new Error(confirmResult.data.message || '登录失败')
+      }
+    }
+    recordAgreement()
+    router.push('/home')
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    oauth2Error.value = message || 'OAuth2 登录失败，请重试。'
+  } finally {
+    oauth2Loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -281,6 +328,8 @@ const handleWechatLogin = async (): Promise<void> => {
         </label>
       </div>
 
+      <!-- 本地模式：Tabs + 表单 -->
+      <template v-if="workMode === 'local'">
       <!-- Tabs -->
       <div class="card-tabs">
         <div class="tabs-track">
@@ -495,6 +544,49 @@ const handleWechatLogin = async (): Promise<void> => {
           </div>
         </Transition>
       </div>
+      </template>
+
+      <!-- 云端模式：WorkMate Web OAuth2 登录 -->
+      <template v-else>
+        <div class="oauth-panel">
+          <div class="oauth-logo-circle">
+            <svg width="34" height="34" viewBox="0 0 64 64" fill="none">
+              <defs>
+                <linearGradient id="oauth-lg1" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#06b6d4" />
+                  <stop offset="100%" stop-color="#0e7490" />
+                </linearGradient>
+                <linearGradient id="oauth-lg2" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#22d3ee" />
+                  <stop offset="100%" stop-color="#0891b2" />
+                </linearGradient>
+              </defs>
+              <ellipse cx="32" cy="38" rx="12" ry="14" fill="url(#oauth-lg1)" />
+              <circle cx="32" cy="20" r="9" fill="url(#oauth-lg1)" />
+              <path d="M32 11 C28 5 24 3 22 6 C26 7 29 9 32 11Z" fill="url(#oauth-lg2)" />
+              <path d="M32 11 C32 4 35 1 38 4 C35 6 33 8 32 11Z" fill="#06b6d4" />
+              <circle cx="29" cy="19" r="2.5" fill="white" />
+              <path d="M32 25 L29 28 L35 28Z" fill="#f0fdff" />
+            </svg>
+          </div>
+          <p class="oauth-title">WorkMate Web 登录</p>
+          <p class="oauth-agreement">
+            请先阅读并同意
+            <button class="agreement-link" type="button">《服务条款》</button>
+            和
+            <button class="agreement-link" type="button">《隐私协议》</button>
+          </p>
+          <button
+            class="login-btn oauth-login-btn"
+            :disabled="oauth2Loading"
+            @click="handleOAuth2Login"
+          >
+            {{ oauth2Loading ? '授权中…' : '同意并登录' }}
+          </button>
+          <p v-if="oauth2Error" class="global-error oauth-error">{{ oauth2Error }}</p>
+          <p class="oauth-hint">将打开系统浏览器完成 WorkMate Web 账号授权</p>
+        </div>
+      </template>
 
       <!-- Footer links -->
       <div class="card-footer">
@@ -555,6 +647,75 @@ const handleWechatLogin = async (): Promise<void> => {
   --shadow-btn: 0 4px 15px rgba(8, 145, 178, 0.35);
   --shadow-wechat-btn: 0 4px 15px rgba(7, 193, 96, 0.3);
   --transition-tab: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OAuth2 云端登录面板
+   ═══════════════════════════════════════════════════════════════════════════ */
+.oauth-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 28px 8px 12px;
+  min-height: 300px;
+}
+
+.oauth-logo-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.12), rgba(14, 116, 144, 0.16));
+  border: 1px solid rgba(8, 145, 178, 0.2);
+}
+
+.oauth-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-title);
+}
+
+.oauth-agreement {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.7;
+}
+
+.agreement-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--brand-600);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agreement-link:hover {
+  color: var(--brand-700);
+}
+
+.oauth-login-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.oauth-error {
+  margin: 0;
+}
+
+.oauth-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 :root[data-theme='dark'] .login-page {

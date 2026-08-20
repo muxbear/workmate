@@ -57,6 +57,15 @@ async function handleApprove() {
     const message = err instanceof Error ? err.message : '授权失败'
     error.value = message
     ElMessage.error(message)
+    // RFC 6749 §4.1.2.1：approve 失败应回跳 redirect_uri 携带 error，由客户端统一处理
+    if (context.value) {
+      const errorUrl = appendQuery(context.value.redirectUri, {
+        error: 'server_error',
+        error_description: message,
+        state: context.value.state,
+      })
+      window.location.assign(errorUrl)
+    }
   }
 }
 

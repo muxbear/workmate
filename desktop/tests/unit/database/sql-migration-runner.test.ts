@@ -39,12 +39,12 @@ describe('迁移文件格式', () => {
 })
 
 describe('seedMigrationFiles', () => {
-  it('生成 0000-0006.sql（内置 v1-v7 全量落盘）', () => {
+  it('生成 0000-0007.sql（内置 v1-v8 全量落盘）', () => {
     seedMigrationFiles(dir)
     const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
     expect(files).toHaveLength(MIGRATIONS.length)
     expect(files[0]).toBe('0000_ke_work_baseline.sql')
-    expect(files[files.length - 1]).toBe('0006_conversation_workspaces.sql')
+    expect(files[files.length - 1]).toBe('0007_oauth2_web_account.sql')
   })
 
   it('不覆盖磁盘已有文件（用户手动追加/修改优先）', () => {
@@ -63,13 +63,14 @@ describe('seedMigrationFiles', () => {
 })
 
 describe('runSqlMigrations', () => {
-  it('种子后全量应用：user_version=7 且表存在', () => {
+  it('种子后全量应用：user_version=8 且表存在', () => {
     const db = createDb()
     runSqlMigrations(db, dir)
-    expect(db.pragma('user_version', { simple: true })).toBe(7)
+    expect(db.pragma('user_version', { simple: true })).toBe(8)
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get()).toBeTruthy()
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workspaces'").get()).toBeTruthy()
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_workspaces'").get()).toBeTruthy()
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='oauth2_sessions'").get()).toBeTruthy()
     db.close()
   })
 
@@ -77,20 +78,20 @@ describe('runSqlMigrations', () => {
     const db = createDb()
     runSqlMigrations(db, dir)
     runSqlMigrations(db, dir)
-    expect(db.pragma('user_version', { simple: true })).toBe(7)
+    expect(db.pragma('user_version', { simple: true })).toBe(8)
     db.close()
   })
 
-  it('增量追加：新增 0007 迁移文件 → 应用后 version=8', () => {
+  it('增量追加：新增 0008 迁移文件 → 应用后 version=9', () => {
     const db = createDb()
     runSqlMigrations(db, dir)
     writeFileSync(
-      join(dir, '0007_ke_work_extra.sql'),
+      join(dir, '0008_ke_work_extra.sql'),
       'CREATE TABLE IF NOT EXISTS extra_table (id INTEGER);',
       'utf-8'
     )
     runSqlMigrations(db, dir)
-    expect(db.pragma('user_version', { simple: true })).toBe(8)
+    expect(db.pragma('user_version', { simple: true })).toBe(9)
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='extra_table'").get()).toBeTruthy()
     db.close()
   })
@@ -98,9 +99,9 @@ describe('runSqlMigrations', () => {
   it('数据库已到高版本：低序号文件跳过（升级前旧库兼容）', () => {
     const db = createDb()
     runSqlMigrations(db, dir)
-    db.pragma('user_version = 7')
+    db.pragma('user_version = 8')
     runSqlMigrations(db, dir)
-    expect(db.pragma('user_version', { simple: true })).toBe(7)
+    expect(db.pragma('user_version', { simple: true })).toBe(8)
     db.close()
   })
 
@@ -109,7 +110,7 @@ describe('runSqlMigrations', () => {
     const formatted = formatMigrationFile(MIGRATIONS[0].sql)
     writeFileSync(join(dir, '0000_ke_work_baseline.sql'), formatted, 'utf-8')
     runSqlMigrations(db, dir)
-    expect(db.pragma('user_version', { simple: true })).toBe(7)
+    expect(db.pragma('user_version', { simple: true })).toBe(8)
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_logs'").get()).toBeTruthy()
     db.close()
   })
@@ -118,7 +119,7 @@ describe('runSqlMigrations', () => {
     const db = createDb()
     const missingDir = join(dir, 'nested', 'missing')
     runSqlMigrations(db, missingDir)
-    expect(db.pragma('user_version', { simple: true })).toBe(7)
+    expect(db.pragma('user_version', { simple: true })).toBe(8)
     expect(existsSync(missingDir)).toBe(true)
     db.close()
   })

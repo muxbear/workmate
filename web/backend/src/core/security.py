@@ -133,6 +133,7 @@ def create_token_pair(
     access_payload = {
         "sub": user_id,
         "type": "access",
+        "aud": "ke-hermes",
         "iat": now,
         "exp": now + settings.JWT_ACCESS_EXPIRE,
     }
@@ -154,7 +155,14 @@ def create_token_pair(
 def decode_token(token: str, expected_type: str = "access") -> dict:
     secret = _get_jwt_secret()
     try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        # access token 携带 aud=ke-hermes（RFC 9700 §4.3.2 方向）；
+        # 显式声明 audience 才能通过校验；无 aud 的历史 token 不受影响
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            audience="ke-hermes",
+        )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:

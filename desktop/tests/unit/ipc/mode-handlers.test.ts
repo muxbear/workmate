@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { registerModeHandlers } from '../../../src/main/ipc/mode-handlers'
 import { SessionService } from '../../../src/main/services/SessionService'
 
-function createFakeIpcMain() {
+function createFakeIpcMain(): {
+  handle: ReturnType<typeof vi.fn>
+  handlers: Map<string, (...args: unknown[]) => unknown>
+  invoke: <T>(channel: string, ...args: unknown[]) => Promise<T>
+} {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   return {
     handle: vi.fn((channel: string, fn: (...args: unknown[]) => unknown) => {
@@ -43,7 +47,7 @@ describe('mode IPC handlers', () => {
     expect(result.data).toBe('cloud')
   })
 
-  it('mode:set 联动工厂/AgentManager/登出并持久化', async () => {
+  it('mode:set 持久化 + 工厂切换 + 清登录态（Agent 构建延迟到登录后）', async () => {
     const ipc = createFakeIpcMain()
     const setMode = vi.fn()
     const switchMode = vi.fn().mockResolvedValue(undefined)
@@ -60,7 +64,7 @@ describe('mode IPC handlers', () => {
     expect(result.success).toBe(true)
     expect(storeSet).toHaveBeenCalledWith('cloud') // 持久化
     expect(setMode).toHaveBeenCalledWith('cloud') // 工厂切换
-    expect(switchMode).toHaveBeenCalledWith('cloud') // Agent 重建
+    expect(switchMode).not.toHaveBeenCalled() // Agent 构建延迟到登录成功后
     expect(logout).toHaveBeenCalled() // 登录态清除（需重新登录）
   })
 
@@ -78,7 +82,7 @@ describe('mode IPC handlers', () => {
     expect(result.error).toBeTruthy()
   })
 
-  it('Agent 重建失败时返回错误且模式回滚', async () => {
+  it('mode:set 不再因 Agent 构建失败而失败（云端后端未配置时仍可进入登录入口）', async () => {
     const ipc = createFakeIpcMain()
     const storeSet = vi.fn()
     const setMode = vi.fn()
@@ -91,10 +95,9 @@ describe('mode IPC handlers', () => {
       session: new SessionService()
     })
     const result = await ipc.invoke<{ success: boolean; error?: string }>('mode:set', 'cloud')
-    expect(result.success).toBe(false)
-    // 持久化与工厂均未切换（回滚）
-    expect(storeSet).not.toHaveBeenCalled()
-    expect(setMode).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(storeSet).toHaveBeenCalledWith('cloud')
+    expect(setMode).toHaveBeenCalledWith('cloud')
   })
 
   it('session:check 未登录返回 loggedIn=false', async () => {

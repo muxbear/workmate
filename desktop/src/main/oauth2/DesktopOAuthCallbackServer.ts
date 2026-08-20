@@ -1,7 +1,7 @@
 import { createServer, type Server, type ServerResponse } from 'http'
 import type { AddressInfo } from 'net'
 
-interface CallbackResult {
+export interface CallbackResult {
   code?: string
   error?: string
 }
@@ -27,8 +27,9 @@ function sendHtml(res: ServerResponse, status: number, message: string): void {
 /**
  * OAuth2 loopback 回调服务器。
  *
- * 只监听 127.0.0.1 随机端口，仅接受 /callback，校验 state 后返回
- * 授权码或错误。回调完成或超时后关闭。
+ * 只监听 127.0.0.1 随机端口，仅接受 /callback。
+ * state 未设置或不匹配时仅返回 400、不结束流程，
+ * 避免本机任意进程探测端口导致授权被中断（RFC 8252 §7.3）。
  */
 export class DesktopOAuthCallbackServer {
   private server: Server | null = null
@@ -109,9 +110,9 @@ export class DesktopOAuthCallbackServer {
     const code = url.searchParams.get('code')
     const error = url.searchParams.get('error')
 
-    if (state !== this.expectedState) {
+    // state 未设置或不匹配：只拒绝，不结束授权流程（防探测中断）
+    if (!this.expectedState || state !== this.expectedState) {
       sendHtml(res, 400, '授权状态校验失败')
-      this.settle({ error: 'state mismatch' })
       return
     }
 
@@ -127,7 +128,6 @@ export class DesktopOAuthCallbackServer {
 
     if (!code) {
       sendHtml(res, 400, '未收到授权码')
-      this.settle({ error: 'missing code' })
       return
     }
 

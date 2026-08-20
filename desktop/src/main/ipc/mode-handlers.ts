@@ -20,7 +20,7 @@ const VALID_MODES = ['local', 'cloud']
  * mode:set 流程：校验 → 构建 Agent（失败回滚）→ 持久化 → 切换工厂 → 通知 → 清除登录态
  */
 export function registerModeHandlers(ipc: IpcMain, deps: ModeHandlerDeps): void {
-  const { modeStore, dataSourceFactory, agentManager, authService } = deps
+  const { modeStore, dataSourceFactory, authService } = deps
 
   ipc.handle('mode:get', async () => {
     return { success: true, data: dataSourceFactory.getMode() }
@@ -36,15 +36,15 @@ export function registerModeHandlers(ipc: IpcMain, deps: ModeHandlerDeps): void 
       return { success: false, error: '非法的工作模式' }
     }
     try {
-      // 1. 先构建新模式的 Agent（失败则不切换，保持原模式）
-      await agentManager.switchMode(mode as 'local' | 'cloud')
-      // 2. 持久化模式
+      // 1. 持久化模式
       modeStore.setMode(mode as 'local' | 'cloud')
-      // 3. 切换数据源工厂
+      // 2. 切换数据源工厂
       dataSourceFactory.setMode(mode as 'local' | 'cloud')
-      // 4. 清除登录态（不同模式需重新登录）
+      // 3. 清除登录态（不同模式需重新登录）
       await authService.logout('')
       deps.session.clear()
+      // Agent 构建延迟到登录成功后（见 oauth2-handlers.completeLogin）：
+      // 避免云端后端未配置时阻塞登录入口（登录页需先进入 OAuth 面板）
       return { success: true, data: mode }
     } catch (err) {
       return { success: false, error: (err as Error).message }

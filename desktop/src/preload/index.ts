@@ -93,6 +93,12 @@ const api = {
   loginByWechat(code: string) {
     return ipcRenderer.invoke('auth:login-wechat', code)
   },
+  loginByOAuth2() {
+    return ipcRenderer.invoke('auth:login-oauth2')
+  },
+  confirmOAuth2Link(action: string) {
+    return ipcRenderer.invoke('auth:confirm-oauth2-link', action)
+  },
   logout(account: string) {
     return ipcRenderer.invoke('auth:logout', account)
   },
@@ -238,6 +244,11 @@ const api = {
     return ipcRenderer.invoke('model:list-providers')
   },
   // ── Web 技能同步 API ──
+  oauth2: {
+    getStatus() {
+      return ipcRenderer.invoke('oauth2:status')
+    }
+  },
   skillSync: {
     getStatus() {
       return ipcRenderer.invoke('skill-sync:status')

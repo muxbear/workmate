@@ -116,6 +116,32 @@ CREATE TABLE IF NOT EXISTS conversation_workspaces (
   PRIMARY KEY (user_id, conversation_id)
 );
 `
+  },
+  {
+    // OAuth2 Web 账号绑定：users 增加 web 身份字段 + oauth2_sessions 会话索引表
+    // SQLite ADD COLUMN 不支持 UNIQUE 约束，用独立唯一索引保证 1:1 绑定
+    version: 8,
+    name: 'oauth2_web_account',
+    sql: `
+ALTER TABLE users ADD COLUMN web_account_id TEXT;
+ALTER TABLE users ADD COLUMN web_nickname TEXT;
+ALTER TABLE users ADD COLUMN web_avatar TEXT;
+ALTER TABLE users ADD COLUMN web_linked_at INTEGER;
+ALTER TABLE users ADD COLUMN is_web_only INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_web_account ON users(web_account_id);
+
+CREATE TABLE IF NOT EXISTS oauth2_sessions (
+  id              TEXT PRIMARY KEY,
+  local_user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  web_account_id  TEXT NOT NULL,
+  scope           TEXT NOT NULL DEFAULT '',
+  expires_at      INTEGER,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth2_sessions_user ON oauth2_sessions(local_user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth2_sessions_web ON oauth2_sessions(web_account_id);
+`
   }
 ]
 

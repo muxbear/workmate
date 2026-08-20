@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function */
 import type { CloudDataSource } from './CloudDataSource'
 import type {
   AuditLogInput,
   IAuthRepository,
+  OAuth2SessionRecord,
   SmsCodeRecord,
   UserRecord
 } from '../interfaces/IAuthRepository'
@@ -56,10 +58,16 @@ export class CloudAuthRepository implements IAuthRepository {
   findByAccount(_account: string): Promise<UserRecord | null> {
     return Promise.resolve(null)
   }
+  findById(_userId: string): Promise<UserRecord | null> {
+    return Promise.resolve(null)
+  }
   findByMobile(_mobile: string): Promise<UserRecord | null> {
     return Promise.resolve(null)
   }
   findByWechatOpenid(_openid: string): Promise<UserRecord | null> {
+    return Promise.resolve(null)
+  }
+  findByWebAccountId(_webAccountId: string): Promise<UserRecord | null> {
     return Promise.resolve(null)
   }
   async createUser(_input: {
@@ -70,6 +78,30 @@ export class CloudAuthRepository implements IAuthRepository {
   }): Promise<UserRecord> {
     throw new Error('cloud users are managed by server')
   }
+  async createWebOnlyUser(_input: {
+    webAccountId: string
+    webNickname?: string
+    webAvatar?: string
+  }): Promise<UserRecord> {
+    throw new Error('cloud users are managed by server')
+  }
+  async linkWebAccount(_input: {
+    userId: string
+    webAccountId: string
+    webNickname?: string
+    webAvatar?: string
+  }): Promise<void> {}
+  async unlinkWebAccount(_userId: string): Promise<void> {}
+  async getOAuth2Session(_localUserId: string): Promise<OAuth2SessionRecord | null> {
+    return null
+  }
+  async saveOAuth2Session(_input: {
+    localUserId: string
+    webAccountId: string
+    scope: string
+    expiresAt: number | null
+  }): Promise<void> {}
+  async clearOAuth2Session(_localUserId: string): Promise<void> {}
   async recordLoginFailure(
     _userId: string,
     _maxAttempts: number,

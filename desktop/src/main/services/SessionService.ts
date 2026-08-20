@@ -10,6 +10,7 @@ const SESSION_FILE = 'session.json'
  */
 export class SessionService {
   private userId: string | null = null
+  private webAccountId: string | null = null
   private readonly filePath: string | null
 
   /**
@@ -28,32 +29,50 @@ export class SessionService {
   private load(): void {
     if (!this.filePath || !existsSync(this.filePath)) return
     try {
-      const raw = JSON.parse(readFileSync(this.filePath, 'utf-8')) as { userId?: unknown }
+      const raw = JSON.parse(readFileSync(this.filePath, 'utf-8')) as {
+        userId?: unknown
+        webAccountId?: unknown
+      }
       if (typeof raw.userId === 'string') {
         this.userId = raw.userId
       }
+      if (typeof raw.webAccountId === 'string') {
+        this.webAccountId = raw.webAccountId
+      }
     } catch {
       this.userId = null
+      this.webAccountId = null
     }
   }
 
   private persist(): void {
     if (!this.filePath) return
-    writeFileSync(this.filePath, JSON.stringify({ userId: this.userId }), 'utf-8')
+    writeFileSync(
+      this.filePath,
+      JSON.stringify({ userId: this.userId, webAccountId: this.webAccountId }),
+      'utf-8'
+    )
   }
 
-  setCurrentUser(userId: string): void {
+  setCurrentUser(userId: string, webAccountId?: string | null): void {
     this.userId = userId
+    this.webAccountId = webAccountId ?? null
     this.persist()
   }
 
   clear(): void {
     this.userId = null
+    this.webAccountId = null
     this.persist()
   }
 
   getCurrentUserId(): string | null {
     return this.userId
+  }
+
+  /** 当前登录用户绑定的 Web 账号 id（OAuth2 登录后非空） */
+  getWebAccountId(): string | null {
+    return this.webAccountId
   }
 
   /** 获取当前用户 id，未登录时抛错 */

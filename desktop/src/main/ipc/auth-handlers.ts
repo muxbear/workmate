@@ -1,6 +1,9 @@
 import type { AuthService } from '../services/AuthService'
 import type { DataSourceFactory } from '../database/DataSourceFactory'
 import type { SessionService } from '../services/SessionService'
+import type { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
+import type { ISecureStorage } from '../security/secure-storage'
+import { oauth2SessionTokenKey } from './oauth2-handlers'
 import type { IpcMain } from 'electron'
 
 interface AuthHandlerDeps {
@@ -11,6 +14,9 @@ interface AuthHandlerDeps {
   cancelAllAgents?: () => void
   /** 登出前的附加清理动作（例如隐藏并重置内嵌浏览器）。 */
   onLogout?: () => void
+  /** OAuth2 客户端（登出时撤销 refresh token） */
+  oauth2Client?: OAuth2ClientService
+  secureStorage?: ISecureStorage
 }
 
 /** 统一的 IPC 结果包裹：成功返回 data，失败返回 { success:false, error } */
@@ -79,6 +85,16 @@ export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void 
       // 登出前先停止所有正在执行中的任务（含后台会话）
       deps.cancelAllAgents?.()
       deps.onLogout?.()
+      // 撤销 OAuth2 refresh token 并清理本地 token 存储
+      const localUserId = deps.session.getCurrentUserId()
+      if (localUserId && deps.oauth2Client && deps.secureStorage) {
+        const key = oauth2SessionTokenKey(localUserId)
+        const token = deps.oauth2Client.loadToken(key)
+        if (token) {
+          await deps.oauth2Client.revoke(token.refreshToken)
+          deps.oauth2Client.deleteToken(key)
+        }
+      }
       await deps.authService.logout(account)
       deps.session.clear()
       return ok(null)

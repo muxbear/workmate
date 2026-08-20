@@ -75,10 +75,27 @@ class TokenRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """授权码兑换 token 响应."""
+    """RFC 6749 §5.1 标准 token 响应（access_token 等 snake_case 字段）."""
 
-    accessToken: str
-    refreshToken: str
-    expiresIn: int
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    refresh_token: str
     scope: str
     user: OAuth2UserInfo
+
+
+class RefreshTokenRequest(BaseModel):
+    """refresh_token 换取新 token 请求."""
+
+    grant_type: str = Field(default="refresh_token")
+    client_id: str = Field(min_length=1, max_length=64)
+    refresh_token: str = Field(min_length=1)
+    scope: str = Field(default="")
+
+
+class RevokeTokenRequest(BaseModel):
+    """RFC 7009 撤销 token 请求."""
+
+    token: str = Field(min_length=1)
+    token_type_hint: str = Field(default="", max_length=32)

@@ -122,6 +122,7 @@ describe('AgentBuilder', () => {
   })
 
   it('AG-05: setMode 保留自定义项，重载默认 backend/记忆', async () => {
+    process.env.CLOUD_POSTGRES_CONN_STRING = 'postgres://mock'
     const builder = await createAgentBuilder('local', workDir, checkpointPath, storePath)
     builder.setModel('m1').setSkills(['/skills/'])
     await builder.setMode('cloud').withModeDefaults()
@@ -130,5 +131,16 @@ describe('AgentBuilder', () => {
     expect(config.model).toBe('m1') // 自定义保留
     expect(config.skills).toEqual(['/skills/']) // 自定义保留
     expect((config.checkpointer as { kind: string }).kind).toBe('PostgresSaver') // 模式默认更新
+    delete process.env.CLOUD_POSTGRES_CONN_STRING
+  })
+
+  it('AG-08: cloud 未配置 CLOUD_POSTGRES_CONN_STRING 时回退本地记忆', async () => {
+    delete process.env.CLOUD_POSTGRES_CONN_STRING
+    await createAgentBuilder('cloud', workDir, checkpointPath, storePath)
+      .setModel('deepseek:deepseek-v4-pro')
+      .build()
+    const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
+    expect((config.checkpointer as { kind: string }).kind).toBe('SqliteSaver')
+    expect(config.store).toBeInstanceOf(SqliteStore)
   })
 })

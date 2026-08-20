@@ -7,10 +7,12 @@ from api.oauth2.oauth2_schemas import OAuth2ScopeInfo
 SCOPE_LABELS: dict[str, str] = {
     "skill:read": "读取并同步技能列表",
     "skill:write": "创建、修改、删除技能",
+    "user:read": "读取用户资料（昵称、头像）",
     "agent:read": "读取智能体配置",
     "agent:write": "修改智能体配置",
     "conversation:read": "读取会话",
     "conversation:write": "创建和修改会话",
+    "workspace:read": "读取工作区",
 }
 
 

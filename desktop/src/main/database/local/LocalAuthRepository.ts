@@ -3,6 +3,7 @@ import type { LocalDataSource } from './LocalDataSource'
 import type {
   AuditLogInput,
   IAuthRepository,
+  OAuth2SessionRecord,
   SmsCodeRecord,
   UserRecord
 } from '../interfaces/IAuthRepository'
@@ -22,6 +23,11 @@ interface UserRow {
   locked_until: number | null
   created_at: number
   updated_at: number
+  web_account_id: string | null
+  web_nickname: string | null
+  web_avatar: string | null
+  web_linked_at: number | null
+  is_web_only: number
 }
 
 function toUserRecord(row: UserRow): UserRecord {
@@ -38,7 +44,12 @@ function toUserRecord(row: UserRow): UserRecord {
     failedLoginAttempts: row.failed_login_attempts,
     lockedUntil: row.locked_until,
     tokenHash: row.token_hash,
-    tokenExpire: row.token_expire
+    tokenExpire: row.token_expire,
+    webAccountId: row.web_account_id ?? undefined,
+    webNickname: row.web_nickname ?? undefined,
+    webAvatar: row.web_avatar ?? undefined,
+    webLinkedAt: row.web_linked_at ?? undefined,
+    isWebOnly: row.is_web_only === 1
   }
 }
 
@@ -70,6 +81,14 @@ export class LocalAuthRepository implements IAuthRepository {
     return this.findBy('wechat_openid', openid)
   }
 
+  findById(userId: string): Promise<UserRecord | null> {
+    return this.findBy('id', userId)
+  }
+
+  findByWebAccountId(webAccountId: string): Promise<UserRecord | null> {
+    return this.findBy('web_account_id', webAccountId)
+  }
+
   async createUser(input: {
     username: string
     passwordHash?: string
@@ -94,6 +113,127 @@ export class LocalAuthRepository implements IAuthRepository {
         now
       )
     return (await this.findByAccount(input.username))!
+  }
+
+  async createWebOnlyUser(input: {
+    webAccountId: string
+    webNickname?: string
+    webAvatar?: string
+  }): Promise<UserRecord> {
+    const now = Date.now()
+    const id = randomUUID()
+    const username = `web_${input.webAccountId}`
+    this.ds
+      .getDb()
+      .prepare(
+        'INSERT INTO users (id, username, password_hash, web_account_id, web_nickname, web_avatar, web_linked_at, is_web_only, work_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
+      )
+      .run(
+        id,
+        username,
+        '', // web-only 用户无可用密码
+        input.webAccountId,
+        input.webNickname ?? null,
+        input.webAvatar ?? null,
+        now,
+        'local',
+        now,
+        now
+      )
+    return (await this.findById(id))!
+  }
+
+  async linkWebAccount(input: {
+    userId: string
+    webAccountId: string
+    webNickname?: string
+    webAvatar?: string
+  }): Promise<void> {
+    this.ds
+      .getDb()
+      .prepare(
+        'UPDATE users SET web_account_id = ?, web_nickname = ?, web_avatar = ?, web_linked_at = COALESCE(web_linked_at, ?), updated_at = ? WHERE id = ?'
+      )
+      .run(
+        input.webAccountId,
+        input.webNickname ?? null,
+        input.webAvatar ?? null,
+        Date.now(),
+        Date.now(),
+        input.userId
+      )
+  }
+
+  async unlinkWebAccount(userId: string): Promise<void> {
+    this.ds
+      .getDb()
+      .prepare(
+        'UPDATE users SET web_account_id = NULL, web_nickname = NULL, web_avatar = NULL, updated_at = ? WHERE id = ?'
+      )
+      .run(Date.now(), userId)
+    this.ds
+      .getDb()
+      .prepare('DELETE FROM oauth2_sessions WHERE local_user_id = ?')
+      .run(userId)
+  }
+
+  async getOAuth2Session(
+    localUserId: string
+  ): Promise<OAuth2SessionRecord | null> {
+    const row = this.ds
+      .getDb()
+      .prepare('SELECT * FROM oauth2_sessions WHERE local_user_id = ?')
+      .get(localUserId) as
+      | {
+          id: string
+          local_user_id: string
+          web_account_id: string
+          scope: string
+          expires_at: number | null
+          created_at: number
+          updated_at: number
+        }
+      | undefined
+    if (!row) return null
+    return {
+      id: row.id,
+      localUserId: row.local_user_id,
+      webAccountId: row.web_account_id,
+      scope: row.scope,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }
+  }
+
+  async saveOAuth2Session(input: {
+    localUserId: string
+    webAccountId: string
+    scope: string
+    expiresAt: number | null
+  }): Promise<void> {
+    const now = Date.now()
+    this.ds
+      .getDb()
+      .prepare(
+        'INSERT INTO oauth2_sessions (id, local_user_id, web_account_id, scope, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(local_user_id) DO UPDATE SET web_account_id = excluded.web_account_id, scope = excluded.scope, expires_at = excluded.expires_at, updated_at = excluded.updated_at'
+      )
+      .run(
+        randomUUID(),
+        input.localUserId,
+        input.webAccountId,
+        input.scope,
+        input.expiresAt,
+        now,
+        now
+      )
+  }
+
+  async clearOAuth2Session(localUserId: string): Promise<void> {
+    this.ds
+      .getDb()
+      .prepare('DELETE FROM oauth2_sessions WHERE local_user_id = ?')
+      .run(localUserId)
   }
 
   async recordLoginFailure(

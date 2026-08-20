@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_current_user_id, get_db, require_scope
 from api.skill.schemas import (
     SkillBatchDeleteRequest,
     SkillCreateRequest,
@@ -54,7 +54,7 @@ async def skill_list(
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     category: str | None = Query(None, description="分类筛选"),
     enabled: bool | None = Query(None, description="启用状态筛选"),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("skill:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """分页列出所有已入库的技能，按上传时间倒序排列。"""

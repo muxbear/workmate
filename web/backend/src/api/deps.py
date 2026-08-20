@@ -40,3 +40,29 @@ async def get_current_user_id(request: Request) -> str:
     # payload: 如果验证通过，返回 Token 中携带的数据载荷（通常是一个字典），包含用户ID、过期时间等信息。如果验证失败，该函数内部通常会直接抛出异常（如 401 或 403）
     payload = decode_token(token, "access")
     return str(payload["sub"])
+
+
+def require_scope(required: str):
+    """资源接口 scope 校验依赖工厂.
+
+    - OAuth2 客户端 token（含 ``client_id`` claim）：必须携带 scope 且包含 required。
+    - Web 第一方 token（无 ``client_id`` claim）：按自身登录态放行（Web 登录不受 OAuth2 scope 约束）。
+
+    返回通过校验的 user_id。
+    """
+
+    async def _dependency(request: Request) -> str:
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        token = auth.split(" ", 1)[1]
+        payload = decode_token(token, "access")
+        if "client_id" in payload:
+            scopes = set(str(payload.get("scope", "")).split())
+            if required not in scopes:
+                raise HTTPException(
+                    status_code=403, detail=f"Insufficient scope: {required}"
+                )
+        return str(payload["sub"])
+
+    return _dependency

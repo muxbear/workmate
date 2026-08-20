@@ -16,8 +16,8 @@ describe('WorkspaceRepository（workspaces 表）', () => {
     ds.close()
   })
 
-  it('WSR-01: migration v4-v7 生效（user_version=7，workspaces 含 user_id 列）', () => {
-    expect(ds.getDb().pragma('user_version', { simple: true })).toBe(7)
+  it('WSR-01: migration v4-v8 生效（user_version=8，workspaces 含 user_id 列）', () => {
+    expect(ds.getDb().pragma('user_version', { simple: true })).toBe(8)
     const titles = ds
       .getDb()
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_titles'")

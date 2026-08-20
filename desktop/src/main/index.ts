@@ -40,6 +40,7 @@ import { SettingsService, type ProxyMode, type ThemeName } from './settings/Sett
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
+import { registerOAuth2Handlers } from './ipc/oauth2-handlers'
 import { ModelService } from './model/ModelService'
 import { LastLaunchStore } from './state/LastLaunchStore'
 import { WorkspaceStateStore } from './state/WorkspaceStateStore'
@@ -47,6 +48,7 @@ import { BrowserViewManager, BROWSER_PARTITION } from './browser/BrowserViewMana
 import { WorkspacePreviewServer } from './browser/WorkspacePreviewServer'
 import { registerBrowserHandlers } from './browser/browser-handlers'
 import { SkillSyncService } from './skills/SkillSyncService'
+import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
 
 import icon from '../../resources/icon.png?asset'
 
@@ -121,6 +123,46 @@ function createWindow(backgroundColor = '#ffffff'): BrowserWindow {
   return mainWindow
 }
 
+/**
+ * 打开 OAuth2 授权窗口（内嵌 BrowserWindow）。
+ *
+ * 默认流程用 shell.openExternal 打开系统浏览器（RFC 8252 推荐）；
+ * 设置 WORKMATE_OAUTH_INTERNAL_BROWSER=1 时改为应用内授权窗口，
+ * 供自动化测试/无头环境使用。授权完成回跳 loopback 回调后自动关闭。
+ */
+async function openOAuthWindow(url: string): Promise<void> {
+  const win = new BrowserWindow({
+    width: 960,
+    height: 720,
+    show: true,
+    autoHideMenuBar: true,
+    title: 'WorkMate Web 登录',
+    webPreferences: {
+      sandbox: false
+    }
+  })
+
+  const closeOnCallback = (targetUrl: string): void => {
+    try {
+      const u = new URL(targetUrl)
+      if (
+        u.protocol === 'http:' &&
+        (u.hostname === '127.0.0.1' || u.hostname === 'localhost') &&
+        u.pathname === '/callback'
+      ) {
+        win.close()
+      }
+    } catch {
+      // 忽略无法解析的 URL
+    }
+  }
+  // 只在导航完成后关闭：will-navigate 阶段关闭会取消回跳请求，
+  // 导致 loopback 回调服务器收不到授权码
+  win.webContents.on('did-redirect-navigation', (_event, url) => closeOnCallback(url))
+  win.webContents.on('did-navigate', (_event, targetUrl) => closeOnCallback(targetUrl))
+  await win.loadURL(url)
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -160,15 +202,50 @@ app.whenReady().then(() => {
   // ── 初始化认证服务与会话 ──
   const authService = new AuthService({
     repository: dataSourceFactory.createAuthRepository(),
+    localAuthRepository: dataSourceFactory.createLocalAuthRepository(),
     jwtSecret,
     secureStorage
   })
   const session = new SessionService(dataDir.getBaseDir())
   browserPreviewServer = new WorkspacePreviewServer()
 
+  // ── 初始化自定义模型服务（机器级配置；providers.json 首启种子写入，用户可手改）──
+  const modelService = new ModelService(dataDir.getBaseDir())
+
+  // ── 初始化智能体（AgentManager）──
+  // checkpoint（短期记忆）与 store（长期记忆）与业务表共用 ke-work.db（SqliteSaver/SqliteStore 自建表）
+  const appDbPath = join(dataDir.getBaseDir(), 'ke-work.db')
+  const agentManager = new AgentManager(
+    dataDir.getDir('workspace'),
+    appDbPath,
+    appDbPath,
+    modelService
+  )
+  agentManager.init(mode).catch((err) => console.error('[main] agent init failed:', err))
+
+  const oauth2Client = new OAuth2ClientService({
+    secureStorage,
+    openExternal: (url) =>
+      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
+        ? openOAuthWindow(url)
+        : shell.openExternal(url),
+    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
+    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+  })
+  registerOAuth2Handlers(ipcMain, {
+    authService,
+    oauth2Client,
+    session,
+    secureStorage,
+    agentManager
+  })
+
   const skillSyncService = new SkillSyncService({
     secureStorage,
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: (url) =>
+      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
+        ? openOAuthWindow(url)
+        : shell.openExternal(url),
     apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
     clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
   })
@@ -185,28 +262,16 @@ app.whenReady().then(() => {
     }
   }
 
-  // ── 初始化自定义模型服务（机器级配置；providers.json 首启种子写入，用户可手改）──
-  const modelService = new ModelService(dataDir.getBaseDir())
-
   // ── 注册认证 IPC ──
   registerAuthHandlers(ipcMain, {
     authService,
     dataSourceFactory,
     session,
     cancelAllAgents,
-    onLogout: cleanupBrowserOnLogout
+    onLogout: cleanupBrowserOnLogout,
+    oauth2Client,
+    secureStorage
   })
-
-  // ── 初始化智能体（AgentManager）──
-  // checkpoint（短期记忆）与 store（长期记忆）与业务表共用 ke-work.db（SqliteSaver/SqliteStore 自建表）
-  const appDbPath = join(dataDir.getBaseDir(), 'ke-work.db')
-  const agentManager = new AgentManager(
-    dataDir.getDir('workspace'),
-    appDbPath,
-    appDbPath,
-    modelService
-  )
-  agentManager.init(mode).catch((err) => console.error('[main] agent init failed:', err))
 
   // ── 注册会话 IPC（基于 LangGraph checkpointer 的会话读写；自定义标题落本地业务表）──
   const conversationStore = new ConversationStore(

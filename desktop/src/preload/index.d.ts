@@ -24,6 +24,25 @@ export interface AuthResult {
   user: { id: string; username: string; mobile?: string }
 }
 
+/** OAuth2 登录确认动作：switch-identity=切换登录身份；rebind=本地用户换绑 Web 账号 */
+export type OAuth2LoginAction = 'switch-identity' | 'rebind'
+
+/** OAuth2 登录结果（需要确认时 status=needs-confirmation） */
+export interface OAuth2LoginResponse {
+  status: 'logged-in' | 'needs-confirmation'
+  user?: { id: string; username: string }
+  action?: OAuth2LoginAction
+  message?: string
+  webUser?: WebUser
+}
+
+/** OAuth2 绑定状态 */
+export interface OAuth2StatusResponse {
+  linked: boolean
+  webAccountId: string | null
+  webUser?: WebUser | null
+}
+
 export interface AgentAPI {
   openExternal: (url: string) => Promise<void>
   openWeChatAuth: (
@@ -59,6 +78,9 @@ export interface AuthAPI {
   loginBySms(mobile: string, code: string): Promise<IpcResult<AuthResult>>
   sendSmsCode(mobile: string): Promise<IpcResult<null>>
   loginByWechat(code: string): Promise<IpcResult<AuthResult>>
+  loginByOAuth2(): Promise<IpcResult<OAuth2LoginResponse>>
+  confirmOAuth2Link(action: OAuth2LoginAction): Promise<IpcResult<OAuth2LoginResponse>>
+  getOAuth2Status(): Promise<IpcResult<OAuth2StatusResponse>>
   logout(account: string): Promise<IpcResult<null>>
 }
 

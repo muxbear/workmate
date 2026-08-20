@@ -28,6 +28,7 @@ export class DataSourceFactory {
   private cloudBaseUrl = ''
   private readonly emitter = new EventEmitter()
 
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   private constructor() {}
 
   static getInstance(): DataSourceFactory {
@@ -94,9 +95,23 @@ export class DataSourceFactory {
   }
 
   createAuthRepository(): IAuthRepository {
-    return this.mode === 'local'
-      ? new LocalAuthRepository(this.getLocalDataSource())
-      : new CloudAuthRepository(this.getCloudDataSource())
+    if (this.mode === 'local') {
+      return new LocalAuthRepository(this.getLocalDataSource())
+    }
+    if (!this.cloudBaseUrl) {
+      // cloud 模式未配置 CLOUD_API_BASE_URL 时降级本地实现，避免应用启动崩溃；
+      // 登录流程（本地密码 / OAuth2 账号关联）本身就走本地仓库
+      console.warn(
+        '[data-source] cloud mode without CLOUD_API_BASE_URL, fallback to local auth repository'
+      )
+      return new LocalAuthRepository(this.getLocalDataSource())
+    }
+    return new CloudAuthRepository(this.getCloudDataSource())
+  }
+
+  /** 本地认证仓库（OAuth2 账号关联始终写本地 users/oauth2_sessions，与工作模式无关） */
+  createLocalAuthRepository(): IAuthRepository {
+    return new LocalAuthRepository(this.getLocalDataSource())
   }
 
   /** 工作空间仓储（机器级资源，与工作模式无关，复用本地连接） */

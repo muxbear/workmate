@@ -7,8 +7,10 @@ import type { WorkMode } from '../mode/work-mode'
 import { SqliteStore } from './SqliteStore'
 import type { ChatModel } from './ModelFactory'
 
-/** 云端 PostgreSQL 连接串（生产环境经 secure-storage 读取） */
-const cloudPostgresConnString = process.env.CLOUD_POSTGRES_CONN_STRING ?? ''
+/** 云端 PostgreSQL 连接串（每次读取，测试可动态设置；为空时云端模式回退本地记忆） */
+function getCloudPostgresConnString(): string {
+  return process.env.CLOUD_POSTGRES_CONN_STRING ?? ''
+}
 
 /**
  * 按工作模式创建 backend（虚拟文件系统后端）
@@ -42,17 +44,33 @@ function createBackend(mode: WorkMode, defaultWorkspaceDir: string) {
 
 /** 按工作模式创建短期记忆（Checkpointer） */
 function createCheckpointer(mode: WorkMode, dbPath: string) {
-  return mode === 'local'
-    ? SqliteSaver.fromConnString(dbPath)
-    : PostgresSaver.fromConnString(cloudPostgresConnString)
+  if (mode === 'local') {
+    return SqliteSaver.fromConnString(dbPath)
+  }
+  if (!getCloudPostgresConnString()) {
+    console.warn(
+      '[agent-builder] cloud mode without CLOUD_POSTGRES_CONN_STRING, fallback to local checkpoint'
+    )
+    return SqliteSaver.fromConnString(dbPath)
+  }
+  return PostgresSaver.fromConnString(getCloudPostgresConnString())
 }
 
-/** 按工作模式创建长期记忆（Store）：local 用 SqliteStore（参考 PostgresStore 移植），cloud 用 PostgresStore */
+/**
+ * 按工作模式创建长期记忆（Store）：local 用 SqliteStore（参考 PostgresStore 移植），
+ * cloud 配置了 Postgres 时用 PostgresStore，未配置时回退本地 SqliteStore，
+ * 保证云端模式在无云端记忆后端时对话仍可用
+ */
 async function createStore(mode: WorkMode, storeDbPath: string) {
-  if (mode === 'local') {
+  if (mode === 'local' || !getCloudPostgresConnString()) {
+    if (mode === 'cloud' && !getCloudPostgresConnString()) {
+      console.warn(
+        '[agent-builder] cloud mode without CLOUD_POSTGRES_CONN_STRING, fallback to local store'
+      )
+    }
     return SqliteStore.fromConnString(storeDbPath)
   }
-  const store = PostgresStore.fromConnString(cloudPostgresConnString)
+  const store = PostgresStore.fromConnString(getCloudPostgresConnString())
   await store.setup()
   return store
 }

@@ -36,9 +36,9 @@ describe('DataSourceFactory', () => {
     expect(factory.createConfigRepository().constructor.name).toBe('CloudConfigRepository')
   })
 
-  it('cloud 模式未配置 baseUrl 抛错', () => {
+  it('cloud 模式未配置 baseUrl 降级本地实现（不崩溃）', () => {
     factory.setMode('cloud')
-    expect(() => factory.createAuthRepository()).toThrow(/cloudBaseUrl/)
+    expect(factory.createAuthRepository().constructor.name).toBe('LocalAuthRepository')
   })
 
   it('WM-04: setMode 通知订阅者且能获取对应实现', () => {

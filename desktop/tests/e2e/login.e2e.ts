@@ -115,19 +115,21 @@ describe('E2E 登录全流程', () => {
     expect(homeVisible).toBe(0)
   }, 90_000)
 
-  it('E2E-03: 无云端后端时切换云端模式回滚（模式保持本地 + 错误提示）', async () => {
+  it('E2E-03: 切换云端工作进入 OAuth 登录面板（不再依赖云端后端可用性）', async () => {
     await launchApp()
     // 前序用例的登录态仍在 localStorage → 清除后回到登录页
     await page.evaluate(() => localStorage.clear())
     await page.reload()
     await page.locator('.login-card').waitFor({ state: 'visible', timeout: 15_000 })
-    // 登录页点击云端工作 → mode:set 经主进程尝试重建云端 Agent（无 Postgres 连接串）应失败
+    // 登录页点击云端工作 → mode:set 持久化模式并切换数据源（Agent 构建延迟到登录后）
     await page.getByText('云端工作').click()
-    // 失败后模式回滚：本地工作按钮仍为选中态
+    // 云端按钮选中，且显示 OAuth2 登录面板（协议同意 + 登录按钮）
     await page
       .locator('.mode-btn--active')
-      .filter({ hasText: '本地工作' })
+      .filter({ hasText: '云端工作' })
       .waitFor({ state: 'visible', timeout: 15_000 })
+    await page.locator('.oauth-panel').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.getByRole('button', { name: '同意并登录' }).waitFor({ state: 'visible' })
   }, 90_000)
 
   it('E2E-04: 退出登录——确认弹窗后回登录页，token 与主进程会话清除', async () => {

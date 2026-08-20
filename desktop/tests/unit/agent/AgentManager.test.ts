@@ -97,10 +97,12 @@ describe('AgentManager', () => {
   })
 
   it('AG-06b: 模式切换重建 agent，保留自定义配置', async () => {
+    process.env.CLOUD_POSTGRES_CONN_STRING = 'postgres://mock'
     await manager.init('local')
     const first = await manager.ready()
     manager.setModel('deepseek:deepseek-v4-pro').setSkills(['/skills/'])
     await manager.switchMode('cloud')
+    delete process.env.CLOUD_POSTGRES_CONN_STRING
     const second = await manager.ready()
     expect(second).not.toBe(first)
     const config = createDeepAgentMock.mock.calls[1][0] as Record<string, never>
@@ -109,10 +111,12 @@ describe('AgentManager', () => {
   })
 
   it('AG-06c: switchMode 后 getCheckpointer 指向新实例', async () => {
+    process.env.CLOUD_POSTGRES_CONN_STRING = 'postgres://mock'
     await manager.init('local')
     const localCp = manager.getCheckpointer()
     expect((localCp as unknown as { kind: string }).kind).toBe('SqliteSaver')
     await manager.switchMode('cloud')
+    delete process.env.CLOUD_POSTGRES_CONN_STRING
     const cloudCp = manager.getCheckpointer()
     expect((cloudCp as unknown as { kind: string }).kind).toBe('PostgresSaver')
     expect(cloudCp).not.toBe(localCp)
