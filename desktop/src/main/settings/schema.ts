@@ -1,12 +1,11 @@
 import { isAbsolute } from 'path'
 
 /**
- * 系统设置 Schema 权威（VS Code 默认值合并模式 + WorkBuddy 嵌套功能域分组）
+ * 绯荤粺璁剧疆 Schema 鏉冨▉锛圴S Code 榛樿鍊煎悎骞舵ā寮?+ WorkBuddy 宓屽鍔熻兘鍩熷垎缁勶級
  *
- * 存储 key 为嵌套路径字符串（如 'ui.language'），磁盘文件为嵌套对象（对齐 WorkBuddy
- * settings.json 的 camelCase 域分组：sandbox/claw/enabledPlugins 实测）；主进程为唯一
- * 校验权威（白名单 + 类型 + 枚举/格式/区间），渲染层不可信。
- */
+ * 瀛樺偍 key 涓哄祵濂楄矾寰勫瓧绗︿覆锛堝 'ui.language'锛夛紝纾佺洏鏂囦欢涓哄祵濂楀璞★紙瀵归綈 WorkBuddy
+ * settings.json 鐨?camelCase 鍩熷垎缁勶細sandbox/claw/enabledPlugins 瀹炴祴锛夛紱涓昏繘绋嬩负鍞竴
+ * 鏍￠獙鏉冨▉锛堢櫧鍚嶅崟 + 绫诲瀷 + 鏋氫妇/鏍煎紡/鍖洪棿锛夛紝娓叉煋灞備笉鍙俊銆? */
 
 export type ApplyTiming = 'instant' | 'pending'
 
@@ -24,13 +23,17 @@ export type SettingsKey =
   | 'privacy.experienceImprovement'
   | 'notification.clientNotifications'
   | 'notification.sound'
+  | 'runtime.enabled'
+  | 'runtime.python.enabled'
+  | 'runtime.node.enabled'
+  | 'runtime.git.enabled'
 
 export interface SettingsSchemaEntry {
   type: 'string' | 'number' | 'boolean'
   default: unknown
-  /** 生效时机：instant=保存即生效；pending=功能无落点仅持久化（UI 显式标注"后续版本生效"） */
+  /** 鐢熸晥鏃舵満锛歩nstant=淇濆瓨鍗崇敓鏁堬紱pending=鍔熻兘鏃犺惤鐐逛粎鎸佷箙鍖栵紙UI 鏄惧紡鏍囨敞"鍚庣画鐗堟湰鐢熸晥"锛?*/
   applyTiming: ApplyTiming
-  /** 枚举/格式/区间校验（非法值回退默认） */
+  /** 鏋氫妇/鏍煎紡/鍖洪棿鏍￠獙锛堥潪娉曞€煎洖閫€榛樿锛?*/
   validate?: (v: unknown) => boolean
 }
 
@@ -39,7 +42,7 @@ const THEME_OPTIONS = ['light', 'dark']
 const PROXY_MODES = ['direct', 'system', 'manual']
 const SOUND_OPTIONS = ['none', 'crisp', 'soft']
 
-/** http(s)://host[:port][/path] 格式（代理地址必填校验） */
+/** http(s)://host[:port][/path] 鏍煎紡锛堜唬鐞嗗湴鍧€蹇呭～鏍￠獙锛?*/
 const PROXY_URL_RE = /^https?:\/\/[^:\s/]+(:\d{1,5})?(\/.*)?$/
 
 export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
@@ -90,18 +93,22 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     default: 'none',
     applyTiming: 'pending',
     validate: (v) => SOUND_OPTIONS.includes(v as string)
-  }
+  },
+  'runtime.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
+  'runtime.python.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
+  'runtime.node.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
+  'runtime.git.enabled': { type: 'boolean', default: true, applyTiming: 'instant' }
 }
 
-/** settings.json 顶层结构版本（对齐 WorkBuddy workspace-state.json 的 version 字段） */
+/** settings.json 椤跺眰缁撴瀯鐗堟湰锛堝榻?WorkBuddy workspace-state.json 鐨?version 瀛楁锛?*/
 export const SETTINGS_VERSION = 1
 
-/** 白名单守卫 */
+/** 鐧藉悕鍗曞畧鍗?*/
 export function isSettingsKey(k: string): k is SettingsKey {
   return Object.prototype.hasOwnProperty.call(SETTINGS_SCHEMA, k)
 }
 
-/** 单值完整校验（白名单 + 类型 + 枚举/格式/区间）；非法返回 false */
+/** 鍗曞€煎畬鏁存牎楠岋紙鐧藉悕鍗?+ 绫诲瀷 + 鏋氫妇/鏍煎紡/鍖洪棿锛夛紱闈炴硶杩斿洖 false */
 export function isValidSettingsValue(key: SettingsKey, value: unknown): boolean {
   const entry = SETTINGS_SCHEMA[key]
   if (!entry) return false
@@ -110,7 +117,7 @@ export function isValidSettingsValue(key: SettingsKey, value: unknown): boolean 
   return true
 }
 
-/** 全默认值（扁平 key 映射） */
+/** 鍏ㄩ粯璁ゅ€硷紙鎵佸钩 key 鏄犲皠锛?*/
 export function defaultSettings(): Record<SettingsKey, unknown> {
   const out = {} as Record<SettingsKey, unknown>
   for (const [key, entry] of Object.entries(SETTINGS_SCHEMA)) {
@@ -130,7 +137,7 @@ function isValidValue(entry: SettingsSchemaEntry, value: unknown): boolean {
   }
 }
 
-/** 嵌套对象拍平：{"ui":{"language":"zh-CN"}} → {"ui.language":"zh-CN"} */
+/** 宓屽瀵硅薄鎷嶅钩锛歿"ui":{"language":"zh-CN"}} 鈫?{"ui.language":"zh-CN"} */
 export function flattenSettings(obj: Record<string, unknown>, prefix = ''): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj)) {
@@ -144,7 +151,7 @@ export function flattenSettings(obj: Record<string, unknown>, prefix = ''): Reco
   return out
 }
 
-/** 扁平 key 映射还原为嵌套对象（persist 写盘用，对齐 WorkBuddy 嵌套域格式） */
+/** 鎵佸钩 key 鏄犲皠杩樺師涓哄祵濂楀璞★紙persist 鍐欑洏鐢紝瀵归綈 WorkBuddy 宓屽鍩熸牸寮忥級 */
 export function unflattenSettings(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [path, value] of Object.entries(flat)) {
@@ -163,9 +170,7 @@ export function unflattenSettings(flat: Record<string, unknown>): Record<string,
 }
 
 /**
- * 默认值合并（VS Code 模式）：默认值 ∪ 文件内值，逐字段类型/枚举校验，非法值回退默认。
- * 输入为磁盘嵌套对象（含 version 等非设置字段会被 flatten 后忽略）。
- */
+ * 榛樿鍊煎悎骞讹紙VS Code 妯″紡锛夛細榛樿鍊?鈭?鏂囦欢鍐呭€硷紝閫愬瓧娈电被鍨?鏋氫妇鏍￠獙锛岄潪娉曞€煎洖閫€榛樿銆? * 杈撳叆涓虹鐩樺祵濂楀璞★紙鍚?version 绛夐潪璁剧疆瀛楁浼氳 flatten 鍚庡拷鐣ワ級銆? */
 export function normalizeSettings(raw: Record<string, unknown>): Record<SettingsKey, unknown> {
   const flat = flattenSettings(raw)
   const out = defaultSettings()

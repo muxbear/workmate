@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+﻿import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
@@ -223,6 +223,45 @@ const api = {
   },
   openDataDir() {
     return ipcRenderer.invoke('config:open-data-dir')
+  },
+  // ── 内置运行时管理 API ──
+  listRuntimes() {
+    return ipcRenderer.invoke('runtime:list')
+  },
+  installRuntime(id: string, version?: string) {
+    return ipcRenderer.invoke('runtime:install', id, version)
+  },
+  uninstallRuntime(id: string) {
+    return ipcRenderer.invoke('runtime:uninstall', id)
+  },
+  detectRuntime(id: string) {
+    return ipcRenderer.invoke('runtime:detect', id)
+  },
+  onRuntimeProgress(
+    callback: (data: {
+      id: string
+      phase: 'downloading' | 'extracting' | 'verifying' | 'done' | 'error'
+      percent: number
+      receivedBytes: number
+      totalBytes: number
+      message?: string
+    }) => void
+  ): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        id: string
+        phase: 'downloading' | 'extracting' | 'verifying' | 'done' | 'error'
+        percent: number
+        receivedBytes: number
+        totalBytes: number
+        message?: string
+      }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('runtime:progress', handler)
+    return () => ipcRenderer.removeListener('runtime:progress', handler)
   },
   // ── 自定义模型 API（机器级配置）──
   listModels() {

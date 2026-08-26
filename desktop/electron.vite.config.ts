@@ -32,9 +32,7 @@ export default defineConfig({
       exclude: ['@docx-editor.dev/fonts', 'harfbuzzjs']
     },
     server: {
-      // 桌面端 dev 用独立端口，避免与 Web 前端授权页（http://localhost:5173）
-      // 冲突；授权 URL 由后端按 OAUTH2_FRONTEND_URL 指向 5173
-      port: 5174,
+      port: 5172,
       strictPort: true,
       // 配置代理
       proxy: {

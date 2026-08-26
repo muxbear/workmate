@@ -16,6 +16,10 @@ export type SettingsKey =
   | 'privacy.experienceImprovement'
   | 'notification.clientNotifications'
   | 'notification.sound'
+  | 'runtime.enabled'
+  | 'runtime.python.enabled'
+  | 'runtime.node.enabled'
+  | 'runtime.git.enabled'
 
 export type Language = 'zh-CN' | 'zh-TW' | 'en'
 export type ThemeName = 'light' | 'dark'
@@ -63,6 +67,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const experienceImprovement = ref(true)
   const clientNotifications = ref(true)
   const notificationSound = ref<NotificationSound>('none')
+  const runtimeEnabled = ref(true)
+  const runtimePythonEnabled = ref(true)
+  const runtimeNodeEnabled = ref(true)
+  const runtimeGitEnabled = ref(true)
 
   const meta = ref<SettingsMeta>()
   const storageStats = ref<StorageStats | null>(null)
@@ -109,6 +117,18 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'notification.sound':
         notificationSound.value = value as NotificationSound
+        break
+      case 'runtime.enabled':
+        runtimeEnabled.value = value as boolean
+        break
+      case 'runtime.python.enabled':
+        runtimePythonEnabled.value = value as boolean
+        break
+      case 'runtime.node.enabled':
+        runtimeNodeEnabled.value = value as boolean
+        break
+      case 'runtime.git.enabled':
+        runtimeGitEnabled.value = value as boolean
         break
     }
   }
@@ -213,6 +233,10 @@ export const useSettingsStore = defineStore('settings', () => {
     experienceImprovement,
     clientNotifications,
     notificationSound,
+    runtimeEnabled,
+    runtimePythonEnabled,
+    runtimeNodeEnabled,
+    runtimeGitEnabled,
     meta,
     storageStats,
     loaded,

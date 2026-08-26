@@ -41,6 +41,8 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
 import { registerOAuth2Handlers } from './ipc/oauth2-handlers'
+import { BinaryManager } from './runtime/BinaryManager'
+import { registerRuntimeHandlers } from './ipc/runtime-handlers'
 import { ModelService } from './model/ModelService'
 import { LastLaunchStore } from './state/LastLaunchStore'
 import { WorkspaceStateStore } from './state/WorkspaceStateStore'
@@ -385,6 +387,11 @@ app.whenReady().then(() => {
 
   // ── 注册系统设置 IPC（机器级，不调 requireUserId）──
   registerConfigHandlers(ipcMain, { settingsService })
+
+  // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
+  const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)
+  binaryManager.init()
+  registerRuntimeHandlers(ipcMain, { binaryManager })
 
   // 打开默认工作目录（~/.ke-work/workspace；未绑定工作空间的会话使用）
   ipcMain.handle('workspace:open-default', async () => {

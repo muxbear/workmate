@@ -1,4 +1,4 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+﻿import { ElectronAPI } from '@electron-toolkit/preload'
 
 /** IPC 统一结果包裹（与主进程 auth-handlers 一致） */
 export interface IpcResult<T> {
@@ -209,6 +209,51 @@ export interface SettingsSnapshot {
   meta: { dataBaseDir: string; workspaceBaseDir: string }
 }
 
+/** 内置运行时类型标识 */
+export type RuntimeId = 'python' | 'node' | 'git'
+
+/** 内置运行时安装状态 */
+export type RuntimeStatus = 'not-installed' | 'installed' | 'installing' | 'error'
+
+/** 内置运行时信息（渲染层消费） */
+export interface RuntimeInfo {
+  id: RuntimeId
+  name: string
+  description: string
+  mark: string
+  color: string
+  status: RuntimeStatus
+  version?: string
+  executablePath?: string
+  installPath?: string
+  enabled: boolean
+  error?: string
+}
+
+/** 内置运行时安装进度事件 */
+export interface RuntimeProgress {
+  id: RuntimeId
+  phase: 'downloading' | 'extracting' | 'verifying' | 'done' | 'error'
+  /** 下载进度百分比 0–100 */
+  percent: number
+  receivedBytes: number
+  totalBytes: number
+  message?: string
+}
+
+export interface RuntimeAPI {
+  /** 列出所有内置运行时状态（机器级，不依赖登录态） */
+  listRuntimes(): Promise<IpcResult<RuntimeInfo[]>>
+  /** 安装运行时（完成后返回最新列表） */
+  installRuntime(id: RuntimeId, version?: string): Promise<IpcResult<RuntimeInfo[]>>
+  /** 卸载运行时（完成后返回最新列表） */
+  uninstallRuntime(id: RuntimeId): Promise<IpcResult<RuntimeInfo[]>>
+  /** 探测已安装运行时版本 */
+  detectRuntime(id: RuntimeId): Promise<IpcResult<string | null>>
+  /** 监听安装进度事件（主进程推送） */
+  onRuntimeProgress(callback: (data: RuntimeProgress) => void): () => void
+}
+
 export interface ConfigAPI {
   /** 全局字体缩放（webFrame.setZoomFactor 封装；渲染层不直接 import electron） */
   setZoomFactor(ratio: number): void
@@ -350,7 +395,8 @@ export interface KeWorkWindowApi
     ConfigAPI,
     ModelAPI,
     BrowserAPI,
-    SkillSyncAPI {}
+    SkillSyncAPI,
+    RuntimeAPI {}
 
 declare global {
   interface Window {

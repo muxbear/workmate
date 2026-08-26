@@ -1,7 +1,8 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 defineProps<{
   modelValue: boolean
   size?: 'md' | 'sm'
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -14,7 +15,8 @@ const emit = defineEmits<{
     type="button"
     role="switch"
     :aria-checked="modelValue"
-    :class="['s-toggle', { 's-toggle--on': modelValue, 's-toggle--sm': size === 'sm' }]"
+    :disabled="disabled"
+    :class="['s-toggle', { 's-toggle--on': modelValue, 's-toggle--sm': size === 'sm', 's-toggle--disabled': disabled }]"
     @click="emit('update:modelValue', !modelValue)"
   >
     <span class="s-toggle-dot" />
@@ -55,6 +57,11 @@ const emit = defineEmits<{
 
 .s-toggle--on .s-toggle-dot {
   transform: translateX(24px);
+}
+
+.s-toggle--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 小尺寸（个性化页「加载过程欢迎语」） */

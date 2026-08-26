@@ -1,18 +1,15 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync } from 'fs'
+﻿import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 
 /**
- * 预定义的子目录列表（会话数据已迁移至 LangGraph checkpointer，无 conversations 目录；
- * 配置/状态/快照文件已对齐 WorkBuddy 顶层平铺，无 config 子目录）
+ * 棰勫畾涔夌殑瀛愮洰褰曞垪琛紙浼氳瘽鏁版嵁宸茶縼绉昏嚦 LangGraph checkpointer锛屾棤 conversations 鐩綍锛? * 閰嶇疆/鐘舵€?蹇収鏂囦欢宸插榻?WorkBuddy 椤跺眰骞抽摵锛屾棤 config 瀛愮洰褰曪級
  */
-export const SUB_DIRS = ['logs', 'cache', 'workspace'] as const
+export const SUB_DIRS = ['logs', 'cache', 'workspace', 'binaries'] as const
 export type SubDir = (typeof SUB_DIRS)[number]
 
 /**
- * 数据目录管理器（单例）
- * 以 ~/.ke-work 为基础目录，管理应用数据的子目录
- */
+ * 鏁版嵁鐩綍绠＄悊鍣紙鍗曚緥锛? * 浠?~/.ke-work 涓哄熀纭€鐩綍锛岀鐞嗗簲鐢ㄦ暟鎹殑瀛愮洰褰? */
 export class DataDirectory {
   private baseDir: string
 
@@ -20,20 +17,18 @@ export class DataDirectory {
     this.baseDir = baseDir
   }
 
-  /** 获取基础目录路径 ~/.ke-work */
+  /** 鑾峰彇鍩虹鐩綍璺緞 ~/.ke-work */
   getBaseDir(): string {
     return this.baseDir
   }
 
-  /** 获取指定子目录的路径 ~/.ke-work/<sub> */
+  /** 鑾峰彇鎸囧畾瀛愮洰褰曠殑璺緞 ~/.ke-work/<sub> */
   getDir(sub: SubDir): string {
     return join(this.baseDir, sub)
   }
 
   /**
-   * 确保指定子目录存在（懒初始化）
-   * @param sub 子目录名称
-   * @returns 子目录的完整路径
+   * 纭繚鎸囧畾瀛愮洰褰曞瓨鍦紙鎳掑垵濮嬪寲锛?   * @param sub 瀛愮洰褰曞悕绉?   * @returns 瀛愮洰褰曠殑瀹屾暣璺緞
    */
   ensureDir(sub: SubDir): string {
     const dirPath = this.getDir(sub)
@@ -44,7 +39,7 @@ export class DataDirectory {
     return dirPath
   }
 
-  /** 一次性创建所有预定义子目录 */
+  /** 涓€娆℃€у垱寤烘墍鏈夐瀹氫箟瀛愮洰褰?*/
   ensureAll(): void {
     SUB_DIRS.forEach((sub) => this.ensureDir(sub))
   }
@@ -53,10 +48,9 @@ export class DataDirectory {
 let instance: DataDirectory | null = null
 
 /**
- * 初始化数据目录（应用启动时调用）
- * 创建基础目录及所有子目录；基础目录默认为 ~/.ke-work，
- * 可通过环境变量 KE_WORK_HOME 覆盖（测试隔离/多实例部署）
- * @returns DataDirectory 单例实例
+ * 鍒濆鍖栨暟鎹洰褰曪紙搴旂敤鍚姩鏃惰皟鐢級
+ * 鍒涘缓鍩虹鐩綍鍙婃墍鏈夊瓙鐩綍锛涘熀纭€鐩綍榛樿涓?~/.ke-work锛? * 鍙€氳繃鐜鍙橀噺 KE_WORK_HOME 瑕嗙洊锛堟祴璇曢殧绂?澶氬疄渚嬮儴缃诧級
+ * @returns DataDirectory 鍗曚緥瀹炰緥
  */
 export function initDataDirectory(): DataDirectory {
   if (instance) return instance
@@ -76,9 +70,9 @@ export function initDataDirectory(): DataDirectory {
 }
 
 /**
- * 获取已初始化的 DataDirectory 单例
- * @returns DataDirectory 实例
- * @throws 如果尚未调用 initDataDirectory
+ * 鑾峰彇宸插垵濮嬪寲鐨?DataDirectory 鍗曚緥
+ * @returns DataDirectory 瀹炰緥
+ * @throws 濡傛灉灏氭湭璋冪敤 initDataDirectory
  */
 export function getDataDirectory(): DataDirectory {
   if (!instance) {
@@ -87,16 +81,13 @@ export function getDataDirectory(): DataDirectory {
   return instance
 }
 
-/** 旧布局 config/ 子目录下的配置文件（对齐 WorkBuddy 顶层平铺后迁出） */
+/** 鏃у竷灞€ config/ 瀛愮洰褰曚笅鐨勯厤缃枃浠讹紙瀵归綈 WorkBuddy 椤跺眰骞抽摵鍚庤縼鍑猴級 */
 const LEGACY_CONFIG_DIR = 'config'
 const LEGACY_CONFIG_FILES = ['work-mode.json', 'session.json', 'secrets.bin'] as const
 
 /**
- * 旧目录布局一次性迁移：将 config/ 子目录下的配置文件平铺到基础目录顶层（对齐 WorkBuddy）。
- * - 顶层目标已存在时跳过不覆盖（以顶层为准）
- * - 迁移失败仅 warn 不阻断启动（下次启动重试）
- * - 迁移完成后 config/ 目录为空则删除
- */
+ * 鏃х洰褰曞竷灞€涓€娆℃€ц縼绉伙細灏?config/ 瀛愮洰褰曚笅鐨勯厤缃枃浠跺钩閾哄埌鍩虹鐩綍椤跺眰锛堝榻?WorkBuddy锛夈€? * - 椤跺眰鐩爣宸插瓨鍦ㄦ椂璺宠繃涓嶈鐩栵紙浠ラ《灞備负鍑嗭級
+ * - 杩佺Щ澶辫触浠?warn 涓嶉樆鏂惎鍔紙涓嬫鍚姩閲嶈瘯锛? * - 杩佺Щ瀹屾垚鍚?config/ 鐩綍涓虹┖鍒欏垹闄? */
 export function migrateLegacyConfigFiles(baseDir: string): void {
   const legacyDir = join(baseDir, LEGACY_CONFIG_DIR)
   if (!existsSync(legacyDir)) return
@@ -108,7 +99,7 @@ export function migrateLegacyConfigFiles(baseDir: string): void {
     try {
       renameSync(src, dst)
       moved = true
-      console.log(`[data-dir] migrated ${LEGACY_CONFIG_DIR}/${file} → ${file}`)
+      console.log(`[data-dir] migrated ${LEGACY_CONFIG_DIR}/${file} 鈫?${file}`)
     } catch (err) {
       console.warn(`[data-dir] failed to migrate ${file}:`, err)
     }
