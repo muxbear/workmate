@@ -75,5 +75,39 @@ describe('ElectronSafeStorage', () => {
     const fresh = new ElectronSafeStorage(join(dir, 'secrets.bin'), fake)
     expect(fresh.get('k')).toBeNull()
     expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('解密失败时删除损坏文件，后续可正常写入新密钥', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kw-sec-'))
+    const fake = createFakeSafeStorage()
+    const s = new ElectronSafeStorage(join(dir, 'secrets.bin'), fake)
+    s.set('k', 'v')
+    // 篡改文件后，用新实例读取（解密失败）
+    writeFileSync(join(dir, 'secrets.bin'), 'corrupted')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fresh = new ElectronSafeStorage(join(dir, 'secrets.bin'), fake)
+    expect(fresh.get('k')).toBeNull()
+    // 解密失败后旧文件应被删除
+    expect(existsSync(join(dir, 'secrets.bin'))).toBe(false)
+    // 后续 set() 可正常创建新文件
+    fresh.set('new-key', 'new-value')
+    expect(existsSync(join(dir, 'secrets.bin'))).toBe(true)
+    expect(fresh.get('new-key')).toBe('new-value')
+    warnSpy.mockRestore()
+  })
+
+  it('persist 写入失败时不抛异常，密钥保留在内存中', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kw-sec-'))
+    const fake = createFakeSafeStorage()
+    // 使用不存在的目录模拟写入失败
+    const s = new ElectronSafeStorage(join(dir, 'nonexistent', 'secrets.bin'), fake)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // set 不应抛出异常
+    expect(() => s.set('k', 'v')).not.toThrow()
+    // 密钥仍在内存中
+    expect(s.get('k')).toBe('v')
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 })

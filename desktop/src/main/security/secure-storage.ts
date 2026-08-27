@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 
 /** 系统级安全存储接口（Windows DPAPI / macOS Keychain 的抽象） */
 export interface ISecureStorage {
@@ -42,6 +42,12 @@ export class ElectronSafeStorage implements ISecureStorage {
         }
       } catch (err) {
         console.warn('[secure-storage] failed to load secrets file:', err)
+        // 解密失败（DPAPI 密钥变更/文件损坏）：删除旧文件，后续 set() 可正常创建新文件
+        try {
+          unlinkSync(this.filePath)
+        } catch {
+          // 删除失败忽略：persist() 会覆写
+        }
         this.cache = {}
       }
     }
@@ -53,7 +59,19 @@ export class ElectronSafeStorage implements ISecureStorage {
       k,
       v: this.safeStorage.encryptString(v).toString('base64')
     }))
-    writeFileSync(this.filePath, JSON.stringify(records), 'utf-8')
+    try {
+      writeFileSync(this.filePath, JSON.stringify(records), 'utf-8')
+    } catch (err) {
+      // 写入失败（权限/锁定）：尝试删除旧文件后重写
+      console.warn('[secure-storage] failed to persist secrets file:', err)
+      try {
+        unlinkSync(this.filePath)
+        writeFileSync(this.filePath, JSON.stringify(records), 'utf-8')
+      } catch (retryErr) {
+        // 仍然失败则仅警告：密钥保留在内存中，不影响本次运行
+        console.warn('[secure-storage] retry persist also failed:', retryErr)
+      }
+    }
   }
 
   get(key: string): string | null {
