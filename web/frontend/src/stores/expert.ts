@@ -323,7 +323,7 @@ function mockFetchExperts(params: ExpertListParams): Promise<{
 /* ------------------------------------------------------------------ */
 
 /** 后端 API 是否可用（首次请求失败后切换到 mock 模式） */
-let useMock = true // 先用 mock，后端实现后改为 false
+let useMock = false // 先用 mock，后端实现后改为 false
 
 export const useExpertStore = defineStore('expert', () => {
   const experts = ref<Expert[]>([])

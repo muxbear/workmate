@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, X, Wrench, Zap, Network, Star } from 'lucide-vue-next'
+import { Plus, X, Wrench, Zap, Network } from 'lucide-vue-next'
 import type {
   Expert,
   ExpertUpdateRequest,
@@ -12,6 +12,10 @@ import {
   EXPERT_CATEGORY_LABELS,
   EXPERT_COLORS,
 } from '@/types/expert'
+import { useModelStore } from '@/stores/model'
+import { useToolStore } from '@/stores/tool'
+import { useSkillStore } from '@/stores/skill'
+import { useMcpStore } from '@/stores/mcp'
 
 const props = defineProps<{
   visible: boolean
@@ -29,6 +33,12 @@ const emit = defineEmits<{
 }>()
 
 const activeTab = ref<'basic' | 'model' | 'tools' | 'skills' | 'mcp'>('basic')
+
+/* ---- 外部 Store ---- */
+const modelStore = useModelStore()
+const toolStore = useToolStore()
+const skillStore = useSkillStore()
+const mcpStore = useMcpStore()
 
 /* ---- 表单状态 ---- */
 const formName = ref('')
@@ -74,24 +84,37 @@ const sceneOptions = [
   { key: 'sme', label: '小微企业' },
 ]
 
-const mockTools = [
-  { name: 'http_request', displayName: 'HTTP 请求', type: 'function' },
-  { name: 'execute_code', displayName: '代码执行', type: 'function' },
-  { name: 'web_scraper', displayName: '网页抓取', type: 'function' },
-  { name: 'tavily_search', displayName: 'Tavily 搜索', type: 'function' },
-  { name: 'kb_search', displayName: '知识库搜索', type: 'function' },
-  { name: 'sql_query', displayName: 'SQL 查询', type: 'function' },
-  { name: 'image_generate', displayName: '图片生成', type: 'function' },
-  { name: 'github-mcp', displayName: 'GitHub MCP', type: 'mcp' },
-  { name: 'notion-mcp', displayName: 'Notion MCP', type: 'mcp' },
-  { name: 'filesystem-mcp', displayName: '文件系统 MCP', type: 'mcp' },
-]
+/* ---- 提供商 & 模型（来自模型菜单配置）---- */
+const providers = computed(() => modelStore.providers)
 
-const mockMcpTools = [
-  { id: 'mcp-1', name: 'github-mcp', description: 'GitHub 仓库管理' },
-  { id: 'mcp-2', name: 'notion-mcp', description: 'Notion 页面读写' },
-  { id: 'mcp-3', name: 'filesystem-mcp', description: '本地文件系统' },
-]
+const selectedProvider = computed(() =>
+  providers.value.find((p) => p.id === formProviderId.value) ?? null,
+)
+
+/** 当前提供商下的模型列表 */
+const availableModels = computed(() => {
+  if (!selectedProvider.value) return []
+  return selectedProvider.value.models.filter((m) => m.status === 'active' || m.status === 'beta')
+})
+
+/** 提供商切换时清空模型选择 */
+watch(formProviderId, () => {
+  formModelId.value = ''
+})
+
+/* ---- 工具列表（来自工具菜单配置）---- */
+const builtinTools = computed(() =>
+  toolStore.tools.filter((t) => t.source === 'builtin'),
+)
+const mcpTypeTools = computed(() =>
+  toolStore.tools.filter((t) => t.source === 'third-party'),
+)
+
+/* ---- 技能列表（来自技能菜单配置）---- */
+const availableSkills = computed(() => skillStore.skills)
+
+/* ---- MCP 工具列表（来自 MCP 菜单配置）---- */
+const mcpTools = computed(() => mcpStore.tools)
 
 /* ---- watch expert ---- */
 watch(
@@ -122,7 +145,6 @@ watch(
         enabled: c.enabled,
       }))
     } else {
-      // reset
       formName.value = ''
       formTitle.value = ''
       formCategory.value = 'custom'
@@ -171,6 +193,20 @@ function toggleTool(name: string) {
   }
 }
 
+/* ---- skill toggle ---- */
+function toggleSkill(id: string) {
+  const idx = formSkillIds.value.indexOf(id)
+  if (idx === -1) {
+    formSkillIds.value.push(id)
+  } else {
+    formSkillIds.value.splice(idx, 1)
+  }
+}
+
+function removeSkill(id: string) {
+  formSkillIds.value = formSkillIds.value.filter((s) => s !== id)
+}
+
 /* ---- mcp config management ---- */
 function addMcpConfig() {
   formMcpConfigs.value.push({
@@ -186,7 +222,7 @@ function removeMcpConfig(idx: number) {
 }
 
 function onMcpToolSelect(idx: number, mcpToolId: string) {
-  const mcp = mockMcpTools.find((m) => m.id === mcpToolId)
+  const mcp = mcpTools.value.find((m) => m.id === mcpToolId)
   if (mcp) {
     formMcpConfigs.value[idx].mcpToolName = mcp.name
   }
@@ -245,6 +281,22 @@ function handleSave() {
 
 const isEditing = computed(() => props.mode === 'edit')
 const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.expert?.name || ''}` : '新建专家')
+
+/* ---- 加载外部数据 ---- */
+onMounted(() => {
+  if (modelStore.providers.length === 0) {
+    modelStore.fetchAll()
+  }
+  if (toolStore.tools.length === 0) {
+    toolStore.fetchTools()
+  }
+  if (skillStore.skills.length === 0) {
+    skillStore.fetchSkills()
+  }
+  if (mcpStore.tools.length === 0) {
+    mcpStore.fetchTools()
+  }
+})
 </script>
 
 <template>
@@ -359,17 +411,50 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
       <el-tab-pane label="模型与提示词" name="model">
         <el-form label-width="90px" label-position="right">
           <el-form-item label="提供商">
-            <el-select v-model="formProviderId" placeholder="选择提供商" clearable style="width: 100%">
-              <el-option label="DeepSeek" value="p1" />
-              <el-option label="OpenAI" value="p2" />
-              <el-option label="通义千问" value="p3" />
+            <el-select
+              v-model="formProviderId"
+              placeholder="选择提供商"
+              clearable
+              style="width: 100%"
+              :loading="modelStore.loading"
+            >
+              <el-option
+                v-for="p in providers"
+                :key="p.id"
+                :label="p.name"
+                :value="p.id"
+              >
+                <span>{{ p.logo }} {{ p.name }}</span>
+                <el-tag
+                  v-if="p.status !== 'connected'"
+                  size="small"
+                  type="info"
+                  style="margin-left: 8px"
+                >
+                  {{ p.status === 'unconfigured' ? '未配置' : '连接异常' }}
+                </el-tag>
+              </el-option>
             </el-select>
           </el-form-item>
           <el-form-item label="模型">
-            <el-select v-model="formModelId" placeholder="选择模型" clearable style="width: 100%">
-              <el-option label="deepseek-chat" value="m1" />
-              <el-option label="gpt-4o" value="m2" />
-              <el-option label="qwen-max" value="m3" />
+            <el-select
+              v-model="formModelId"
+              :placeholder="formProviderId ? '选择模型' : '请先选择提供商'"
+              :disabled="!formProviderId"
+              clearable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="m in availableModels"
+                :key="m.id"
+                :label="m.displayName"
+                :value="m.id"
+              >
+                <span>{{ m.displayName }}</span>
+                <el-tag size="small" type="info" style="margin-left: 8px">
+                  {{ m.type }}
+                </el-tag>
+              </el-option>
             </el-select>
           </el-form-item>
           <el-form-item label="系统提示词">
@@ -390,10 +475,12 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
             <Wrench :size="14" />
             内置工具
           </div>
-          <div class="tool-list">
+          <div v-if="toolStore.loading" class="tool-loading">加载中...</div>
+          <div v-else-if="builtinTools.length === 0" class="tool-empty">暂无内置工具</div>
+          <div v-else class="tool-list">
             <div
-              v-for="tool in mockTools.filter(t => t.type === 'function')"
-              :key="tool.name"
+              v-for="tool in builtinTools"
+              :key="tool.id"
               class="tool-item"
               :class="{ 'tool-item--active': formToolNames.includes(tool.name) }"
               @click="toggleTool(tool.name)"
@@ -407,19 +494,19 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
         <div class="tool-section">
           <div class="tool-section-title">
             <Network :size="14" />
-            MCP 工具
+            第三方工具
           </div>
-          <div class="tool-list">
+          <div v-if="mcpTypeTools.length === 0" class="tool-empty">暂无第三方工具</div>
+          <div v-else class="tool-list">
             <div
-              v-for="tool in mockTools.filter(t => t.type === 'mcp')"
-              :key="tool.name"
+              v-for="tool in mcpTypeTools"
+              :key="tool.id"
               class="tool-item"
               :class="{ 'tool-item--active': formToolNames.includes(tool.name) }"
               @click="toggleTool(tool.name)"
             >
               <el-checkbox :model-value="formToolNames.includes(tool.name)" size="small" />
               <span class="tool-name">{{ tool.displayName }}</span>
-              <el-tag size="small" type="warning">MCP</el-tag>
             </div>
           </div>
         </div>
@@ -428,25 +515,29 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
       <!-- 技能 -->
       <el-tab-pane label="技能" name="skills">
         <div class="skill-section">
-          <div v-if="formSkillIds.length === 0" class="skill-empty">
-            暂未关联技能
+          <div v-if="skillStore.loading" class="skill-empty">加载中...</div>
+          <div v-else-if="availableSkills.length === 0" class="skill-empty">
+            暂无技能，请先在技能页面添加
           </div>
           <div v-else class="skill-list">
             <el-tag
-              v-for="skillId in formSkillIds"
-              :key="skillId"
-              closable
+              v-for="skill in availableSkills"
+              :key="skill.id"
+              :closable="formSkillIds.includes(skill.id)"
+              :type="formSkillIds.includes(skill.id) ? 'primary' : 'info'"
+              :effect="formSkillIds.includes(skill.id) ? 'dark' : 'plain'"
               size="default"
-              @close="formSkillIds = formSkillIds.filter(id => id !== skillId)"
+              style="cursor: pointer; margin: 4px"
+              @click="toggleSkill(skill.id)"
+              @close="removeSkill(skill.id)"
             >
               <Zap :size="12" style="margin-right: 4px" />
-              {{ skillId }}
+              {{ skill.name }}
             </el-tag>
           </div>
-          <el-button size="small" plain @click="formSkillIds.push('skill-' + Date.now())">
-            <Plus :size="14" style="margin-right: 4px" />
-            添加技能
-          </el-button>
+          <div v-if="availableSkills.length > 0" class="skill-hint">
+            点击技能标签切换选中状态
+          </div>
         </div>
       </el-tab-pane>
 
@@ -461,10 +552,11 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
                   placeholder="选择 MCP 工具"
                   size="small"
                   style="width: 200px"
+                  filterable
                   @change="(val: string) => onMcpToolSelect(idx, val)"
                 >
                   <el-option
-                    v-for="mcp in mockMcpTools"
+                    v-for="mcp in mcpTools"
                     :key="mcp.id"
                     :label="mcp.name"
                     :value="mcp.id"
@@ -594,6 +686,14 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
   gap: 6px;
 }
 
+.tool-loading,
+.tool-empty {
+  color: var(--foreground-muted);
+  font-size: var(--font-size-sm);
+  padding: 16px 0;
+  text-align: center;
+}
+
 .tool-item {
   display: flex;
   align-items: center;
@@ -603,10 +703,10 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: border-color var(--transition-fast);
+}
 
-  &:hover {
-    border-color: rgba(59, 130, 246, 0.25);
-  }
+.tool-item:hover {
+  border-color: rgba(59, 130, 246, 0.25);
 }
 
 .tool-item--active {
@@ -635,7 +735,7 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
 .skill-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
 }
 
 .skill-empty {
@@ -643,6 +743,11 @@ const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.e
   font-size: var(--font-size-sm);
   padding: 24px 0;
   text-align: center;
+}
+
+.skill-hint {
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
 }
 
 /* mcp section */

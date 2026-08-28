@@ -11,6 +11,7 @@
         "skill:read",
         "user:read",
         "agent:read",
+        "expert:read",
         "conversation:read",
         "conversation:write",
         "workspace:read"
@@ -23,7 +24,7 @@
       "client_name": "WorkMate 移动版",
       "client_type": "public",
       "redirect_uris": ["workmate://oauth/callback"],
-      "allowed_scopes": ["skill:read", "agent:read"],
+      "allowed_scopes": ["skill:read", "agent:read", "expert:read"],
       "grant_types": ["authorization_code"],
       "enabled": true
     }

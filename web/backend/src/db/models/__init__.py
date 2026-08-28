@@ -1,6 +1,8 @@
 from db.models.agent import Agent
 from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
+from db.models.agent_mcp_config import AgentMcpConfig
+from db.models.expert_profile import ExpertProfile
 from db.models.ai_model import AIModel
 from db.models.chat_attachment import ChatAttachment
 from db.models.conversation import Conversation
@@ -32,6 +34,8 @@ __all__ = [
     "Agent",
     "AgentSkill",
     "AgentTool",
+    "AgentMcpConfig",
+    "ExpertProfile",
     "AIModel",
     "Conversation",
     "CronJob",

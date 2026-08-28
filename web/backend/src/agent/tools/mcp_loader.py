@@ -1,4 +1,4 @@
-"""MCP 工具加载器（改进2）— 将 MCP 服务器工具适配为 LangChain BaseTool。
+"""MCP 工具加载器（改进2）— 将 MCP 服务器工具适配为 LangChain BaseTool。.
 
 通过 langchain-mcp-adapters 将 MCP 工具纳入 Agent 的统一工具体系，
 使 Agent 通过 agent_tools 关联表即可配置 MCP 工具。
@@ -23,16 +23,31 @@ _mcp_clients: dict[str, Any] = {}
 async def _get_mcp_config(
     db: AsyncSession,
     mcp_tool_name: str,
+    agent_id: str | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """从 mcp_installations 表读取用户配置；无用户上下文时用默认空配置。"""
-    if user_id is None:
-        return {}
-
+    """获取 MCP 配置：优先专家级(agent_mcp_configs) > 用户级(mcp_installations) > 默认空。."""
     mcp_tool = (await db.execute(
         select(McpTool).where(McpTool.name == mcp_tool_name)
     )).scalar_one_or_none()
     if mcp_tool is None:
+        return {}
+
+    # 1. 优先从 agent_mcp_configs 读取专家级配置
+    if agent_id is not None:
+        from db.models.agent_mcp_config import AgentMcpConfig
+        agent_config = (await db.execute(
+            select(AgentMcpConfig).where(
+                AgentMcpConfig.agent_id == agent_id,
+                AgentMcpConfig.mcp_tool_id == mcp_tool.id,
+                AgentMcpConfig.enabled,
+            )
+        )).scalar_one_or_none()
+        if agent_config is not None:
+            return agent_config.config
+
+    # 2. Fallback 到用户级配置
+    if user_id is None:
         return {}
 
     installation = (await db.execute(
@@ -50,7 +65,7 @@ async def load_mcp_tools_for_agent(
     agent_id: str,
     user_id: str | None = None,
 ) -> list[Any]:
-    """加载 Agent 关联的 MCP 工具，返回适配后的 BaseTool 列表。
+    """加载 Agent 关联的 MCP 工具，返回适配后的 BaseTool 列表。.
 
     流程：
     1. 查询 agent_tools 关联表中 tool_type='mcp' 的记录。
@@ -75,7 +90,7 @@ async def load_mcp_tools_for_agent(
             logger.warning("MCP 工具 '%s' 未配置 implementation（MCP 名称），跳过", tool_row.name)
             continue
 
-        config = await _get_mcp_config(db, mcp_name, user_id)
+        config = await _get_mcp_config(db, mcp_name, agent_id=agent_id, user_id=user_id)
 
         try:
             client = await _get_or_create_client(mcp_name, config)
@@ -91,7 +106,7 @@ async def load_mcp_tools_for_agent(
 
 
 async def _get_or_create_client(mcp_name: str, config: dict) -> Any:
-    """获取或创建 MCP 客户端连接（带缓存）。"""
+    """获取或创建 MCP 客户端连接（带缓存）。."""
     cache_key = f"{mcp_name}:{hash(frozenset(config.items())) if config else 'default'}"
 
     if cache_key in _mcp_clients:
@@ -118,7 +133,7 @@ async def _get_or_create_client(mcp_name: str, config: dict) -> Any:
 
 
 async def close_mcp_clients() -> None:
-    """关闭所有缓存的 MCP 客户端连接（应用关闭时调用）。"""
+    """关闭所有缓存的 MCP 客户端连接（应用关闭时调用）。."""
     global _mcp_clients
     for key, client in _mcp_clients.items():
         try:
