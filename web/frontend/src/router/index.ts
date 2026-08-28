@@ -46,6 +46,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '代理管理中心' },
       },
       {
+        path: 'experts',
+        name: 'experts',
+        component: () => import('@/views/ExpertView.vue'),
+        meta: { title: '专家' },
+      },
+      {
         path: 'models',
         name: 'models',
         component: () => import('@/views/ModelsView.vue'),

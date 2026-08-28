@@ -13,6 +13,8 @@ from api.agents.schemas import (
     AgentInfo,
     AgentListResponse,
     AgentUpdateRequest,
+    AgentVersionBrief,
+    AgentVersionDetail,
     CronJobBrief,
     SkillBrief,
 )
@@ -26,10 +28,13 @@ from api.agents.service import (
     get_agent_cron_jobs,
     get_agent_file,
     get_agent_skills,
+    get_agent_version,
     list_agent_file_descriptions,
+    list_agent_versions,
     list_agents,
     remove_agent_config,
     remove_skill_from_agent,
+    rollback_agent_version,
     save_agent_file,
     toggle_agent_status,
     update_agent,
@@ -208,4 +213,38 @@ async def agent_remove_skill(
 async def agent_cron_jobs(agent_id: str, db: AsyncSession = Depends(get_db)):
     """获取智能体的所有定时任务。"""  # noqa: D415
     result = await get_agent_cron_jobs(db, agent_id)
+    return ok(result)
+
+
+
+# ── Agent 版本管理端点（改进4）─────────────────────────────────────────
+
+@router.get("/{agent_id}/versions", response_model=ApiResponse[list[AgentVersionBrief]])
+@handle_errors
+async def agent_versions_list(agent_id: str, db: AsyncSession = Depends(get_db)):
+    """获取 Agent 的版本历史列表。"""  # noqa: D415
+    result = await list_agent_versions(db, agent_id)
+    return ok(result)
+
+
+@router.get("/{agent_id}/versions/{version_id}", response_model=ApiResponse[AgentVersionDetail])
+@handle_errors
+async def agent_version_detail(
+    agent_id: str, version_id: str, db: AsyncSession = Depends(get_db)
+):
+    """获取某个版本快照的详细内容。"""  # noqa: D415
+    result = await get_agent_version(db, agent_id, version_id)
+    return ok(result)
+
+
+@router.post(
+    "/{agent_id}/versions/{version_id}/rollback",
+    response_model=ApiResponse[AgentInfo],
+)
+@handle_errors
+async def agent_version_rollback(
+    agent_id: str, version_id: str, db: AsyncSession = Depends(get_db)
+):
+    """回滚到指定版本的配置。"""  # noqa: D415
+    result = await rollback_agent_version(db, agent_id, version_id)
     return ok(result)

@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.rbac.deps import RequirePermission
 from api.personnel.schemas import (
     PersonnelCreateRequest,
     PersonnelResponse,
     PersonnelUpdateRequest,
 )
 from api.personnel.service import PersonnelService
+from api.rbac.deps import RequirePermission
 from core.decorators import handle_errors
 from core.response import ApiResponse, ok
 

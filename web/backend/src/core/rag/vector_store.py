@@ -116,7 +116,11 @@ class MilvusVectorStore(BaseVectorStore):
 
         try:
             from pymilvus import (
-                Collection, CollectionSchema, DataType, FieldSchema, utility,
+                Collection,
+                CollectionSchema,
+                DataType,
+                FieldSchema,
+                utility,
             )
             # 删除旧集合（可能由旧版 Schema 创建，与新版本不兼容）
             if utility.has_collection(collection_name):
@@ -179,8 +183,8 @@ class MilvusVectorStore(BaseVectorStore):
         self, kb_id: str, documents: list[Document], embeddings: list[list[float]]
     ) -> list[str]:
         await self._ensure_connected()
-        import uuid
         import time
+        import uuid
 
         collection = self._collections.get(kb_id)
         if collection is None:

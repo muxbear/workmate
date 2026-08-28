@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.schemas import AuthResponse
-from api.deps import get_db, get_cache
+from api.deps import get_cache, get_db
 from api.oauth.schemas import OAuthCallbackRequest
 from api.oauth.service import get_auth_url, handle_callback
+from core.cache import KeyValueCache
 from core.decorators import handle_errors
 from core.response import ApiResponse, ok
-from core.cache import KeyValueCache
 
 router = APIRouter(prefix="/api/oauth", tags=["oauth"])
 

@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, Request
 
 from api.deps import get_cache
 from api.sms.service import SendSmsRequest, send_sms
+from core.cache import KeyValueCache
 from core.decorators import handle_errors, rate_limit
 from core.response import ok
-from core.cache import KeyValueCache
 
 router = APIRouter(prefix="/api/sms", tags=["sms"])
 

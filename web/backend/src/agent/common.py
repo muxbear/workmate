@@ -3,7 +3,6 @@
 所有关键导入使用懒加载以避免循环导入（agent ↔ api ↔ core ↔ db 之间的复杂依赖）。
 """
 
-from ast import Raise
 import logging
 
 from agent import tools as agent_tools
@@ -12,7 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 def get_tool_registry() -> dict[str, object]:
-    """构建工具名称字符串到可调用工具函数的映射。"""
+    """[已废弃] 使用 agent.tools.registry.get_tool_registry(db) 替代。
+
+    过渡期：仍返回硬编码的工具列表，但发出 DeprecationWarning。
+    """
+    import warnings
+    warnings.warn(
+        "get_tool_registry() 已废弃，请使用 agent.tools.registry.get_tool_registry(db)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry: dict[str, object] = {}
     for name in agent_tools.__all__:
         tool = getattr(agent_tools, name, None)
@@ -41,7 +49,6 @@ async def resolve_model(
     from pydantic import SecretStr
     from sqlalchemy import select
 
-    from agent.config import settings
     from agent.models.llm import llm as default_llm
     from core.security import decrypt_api_key
     from db.engine import async_session

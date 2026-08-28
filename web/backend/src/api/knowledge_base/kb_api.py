@@ -74,6 +74,7 @@ async def get_available_models(
     provider_id: 指定则只返回该提供商下的模型
     """
     from sqlalchemy import select
+
     from db.models.ai_model import AIModel
 
     conditions = [
@@ -112,6 +113,7 @@ async def get_available_providers(
     返回的每个 provider 带有一个简化的 models 列表。
     """
     from sqlalchemy import select
+
     from db.models.ai_model import AIModel
     from db.models.provider import Provider
 

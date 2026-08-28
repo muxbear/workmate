@@ -1,7 +1,8 @@
 """Request and response schemas for agent management."""
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from agent.memory.scopes import MemoryScope
 
@@ -56,9 +57,7 @@ class SkillBrief(BaseModel):
     icon: str
     enabled: bool
 
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentAddSkillRequest(BaseModel):
@@ -75,9 +74,7 @@ class FileBrief(BaseModel):
     description: str = ""
     read_only: bool = False
 
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentInfo(BaseModel):
@@ -103,9 +100,7 @@ class AgentInfo(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CronJobBrief(BaseModel):
@@ -126,8 +121,7 @@ class CronJobBrief(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentListResponse(BaseModel):
@@ -147,12 +141,41 @@ class AgentFileContent(BaseModel):
     created_at: datetime | str
     updated_at: datetime | str
 
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentFileUpdateRequest(BaseModel):
     """Request body for updating file content."""
 
     content: str
+
+
+
+# ── Agent 版本管理（改进4）──────────────────────────────────────────────
+
+
+class AgentVersionBrief(BaseModel):
+    """版本列表中的单条简要信息。"""
+
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    agent_id: str
+    version: int
+    change_summary: str = ""
+    changed_by: str = ""
+    created_at: datetime
+
+
+class AgentVersionDetail(BaseModel):
+    """版本详情，包含完整快照。"""
+
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    agent_id: str
+    version: int
+    snapshot: dict
+    change_summary: str = ""
+    changed_by: str = ""
+    created_at: datetime

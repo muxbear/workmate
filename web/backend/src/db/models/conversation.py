@@ -1,9 +1,11 @@
-from datetime import datetime
-from db.base import Base
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, DateTime, JSON, func
-
 import uuid
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from db.base import Base
+
 
 class Conversation(Base):
     __tablename__ = "conversations"

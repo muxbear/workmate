@@ -6,7 +6,6 @@ import time
 from dataclasses import dataclass
 from datetime import timedelta
 
-from opensandbox.models import NetworkPolicy, NetworkRule
 from opensandbox.sync import SandboxSync
 
 from agent.config import settings

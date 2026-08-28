@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, Request
 
 from api.deps import get_cache
 from api.email.service import SendEmailRequest, send_email_code
+from core.cache import KeyValueCache
 from core.decorators import handle_errors, rate_limit
 from core.response import ok
-from core.cache import KeyValueCache
 
 router = APIRouter(prefix="/api/email", tags=["email"])
 

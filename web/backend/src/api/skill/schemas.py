@@ -1,7 +1,7 @@
 """Request and response schemas for skill upload."""
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SkillValidationError(BaseModel):
@@ -49,9 +49,7 @@ class SkillInfo(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SkillListResponse(BaseModel):

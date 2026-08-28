@@ -6,16 +6,16 @@ NOTE: 为避免与 core.__init__ 的循环导入，各子模块在使用时按�
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .vector_store import BaseVectorStore
     from .bm25_index import BM25Indexer
-    from .splitters import ChunkStrategy, ChunkStrategyRegistry, create_chunk_registry
+    from .embedding import get_embedding_model
     from .loaders import (
         DocumentLoaderRegistry,
         DocumentLoaderStrategy,
         FallbackLoaderStrategy,
         create_default_loader_registry,
     )
-    from .embedding import get_embedding_model
+    from .splitters import ChunkStrategy, ChunkStrategyRegistry, create_chunk_registry
+    from .vector_store import BaseVectorStore
 
 
 def _lazy_import(name: str):

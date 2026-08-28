@@ -32,6 +32,8 @@ class ToolInfo(BaseModel):
     used_by_agents: list[str] = []
     tags: list[str] = []
     params: list[ToolParam] = []
+    implementation: str | None = None
+    tool_type: str = "function"
     created_at: datetime
     updated_at: datetime
 
@@ -58,6 +60,8 @@ class ToolCreateRequest(BaseModel):
     version: str = "1.0.0"
     tags: list[str] = []
     params: list[ToolParam] = []
+    implementation: str | None = None
+    tool_type: str = "function"
 
 
 class ToolUpdateRequest(BaseModel):
@@ -73,6 +77,8 @@ class ToolUpdateRequest(BaseModel):
     version: str | None = None
     tags: list[str] | None = None
     params: list[ToolParam] | None = None
+    implementation: str | None = None
+    tool_type: str | None = None
 
 
 class ToolToggleRequest(BaseModel):

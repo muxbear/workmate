@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
     from api.knowledge_base.doc_service import IndexingPipeline
@@ -43,7 +43,7 @@ class IndexingContext:
     embedding_model: Any | None = None
     chunk_registry: ChunkStrategyRegistry | None = None
 
-    on_status_change: Callable[["IndexingContext"], Awaitable[None]] | None = None
+    on_status_change: Callable[[IndexingContext], Awaitable[None]] | None = None
 
     async def transition_to(self, state: DocState, status: str, progress: int) -> None:
         self.current_state = state

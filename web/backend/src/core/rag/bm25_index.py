@@ -19,7 +19,7 @@ class BM25Indexer:
     对 Milvus Collection 调用 BM25 函数索引，对 Chroma 使用内置全文检索。
     """
 
-    def __init__(self, vector_store: "BaseVectorStore"):
+    def __init__(self, vector_store: BaseVectorStore):
         self._store = vector_store
 
     async def index(self, kb_id: str, documents: list[Document]) -> None:

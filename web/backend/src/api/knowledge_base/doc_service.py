@@ -18,9 +18,14 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.config import settings
-from api.knowledge_base.doc_state import IndexingContext, DocState, QueuedState
-from api.knowledge_base.schemas import KBDocResponse, KBDocUploadResponse, DocStageInfo, IndexConfigSchema
-from core.rag.loaders import DocumentLoaderRegistry, create_default_loader_registry
+from api.knowledge_base.doc_state import IndexingContext, QueuedState
+from api.knowledge_base.schemas import (
+    DocStageInfo,
+    IndexConfigSchema,
+    KBDocResponse,
+    KBDocUploadResponse,
+)
+from core.rag.loaders import DocumentLoaderRegistry
 from core.rag.splitters import ChunkStrategyRegistry, create_chunk_registry
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
@@ -571,7 +576,7 @@ async def get_document(
 async def delete_document(
     db: AsyncSession, kb_id: str, doc_id: str, user_id: str,
     vector_store: BaseVectorStore | None = None,
-    mediator: "KnowledgeBaseMediator | None" = None,
+    mediator: KnowledgeBaseMediator | None = None,
 ) -> None:
     """删除文档——级联删除向量数据、源文件和图谱数据。"""
     from api.knowledge_base.service import _get_kb_or_404

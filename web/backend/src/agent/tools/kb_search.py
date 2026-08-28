@@ -33,10 +33,11 @@ def kb_search(
 async def _kb_search_async(
     query: str, kb_id: str, kb_name: str, mode: str, top_k: int
 ) -> dict[str, Any]:
+    from sqlalchemy import select
+
     from api.knowledge_base.schemas import SearchRequest
     from api.knowledge_base.search_service import get_search_orchestrator
     from db.engine import async_session
-    from sqlalchemy import select
     from db.models.knowledge_base import KnowledgeBase
 
     orch = get_search_orchestrator()
@@ -148,8 +149,9 @@ def list_knowledge_bases() -> dict[str, Any]:
 
 
 async def _list_kb_async() -> dict[str, Any]:
-    from db.engine import async_session
     from sqlalchemy import select
+
+    from db.engine import async_session
     from db.models.knowledge_base import KnowledgeBase
 
     async with async_session() as db:

@@ -16,9 +16,9 @@ from api.captcha.service import (
     verify_slide,
 )
 from api.deps import get_cache
+from core.cache import KeyValueCache
 from core.decorators import handle_errors
 from core.response import ApiResponse, error, ok
-from core.cache import KeyValueCache
 
 router = APIRouter(prefix="/api/captcha", tags=["captcha"])
 

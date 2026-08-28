@@ -7,8 +7,7 @@ v1 提供：列出 + 读取 + 写入（管理员）。Files 标签页仅展示�
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -16,7 +15,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.graph import get_store
-from agent.memory.file_data import create_agent_file_data, file_value_to_agent_file_content
+from agent.memory.file_data import (
+    create_agent_file_data,
+    file_value_to_agent_file_content,
+)
 from agent.memory.scopes import DEFAULT_ORG_ID, MemoryScope, infer_scope
 from api.agents.schemas import AgentFileContent
 from api.deps import get_db
@@ -117,6 +119,6 @@ async def write_policy(
         description=req.description,
         scope=MemoryScope.ORG,
         read_only=True,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     ))

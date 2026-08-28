@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter, Depends, Form, Query, Request, UploadFile, File
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db

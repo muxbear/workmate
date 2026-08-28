@@ -521,6 +521,9 @@ class RbacService:
             {"id": "m-agent-skills", "parent": "g-agent", "type": "menu",
              "label": "技能", "perm_key": "agent:skills", "path": "/skills",
              "icon": "Zap", "sort": 4},
+            {"id": "m-agent-expert", "parent": "g-agent", "type": "menu",
+             "label": "专家", "perm_key": "agent:expert", "path": "/experts",
+             "icon": "Brain", "sort": 5},
 
             # MCP
             {"id": "g-mcp", "parent": None, "type": "catalog",
@@ -600,7 +603,7 @@ class RbacService:
                 "chat:conversation", "chat:send", "chat:create",
                 "knowledge:base", "knowledge:create",
                 "control:overview", "control:scheduled",
-                "agent:manage", "agent:tools", "agent:skills",
+                "agent:manage", "agent:tools", "agent:expert", "agent:skills", "agent:expert",
                 "mcp:square",
                 "admin:dashboard", "admin:users", "admin:user:create", "admin:user:edit",
             ],
@@ -608,7 +611,7 @@ class RbacService:
                 "chat:conversation", "chat:send", "chat:create",
                 "knowledge:base", "knowledge:create",
                 "control:overview",
-                "agent:manage", "agent:tools",
+                "agent:manage", "agent:tools", "agent:expert",
                 "mcp:square",
                 "admin:dashboard",
             ],
@@ -686,7 +689,55 @@ class RbacService:
         resource.sort_order = 1
         await self.db.flush()
 
+        # Sync expert menu (added after initial seed)
+        await self._sync_expert_menu()
+
     # ── Helpers ───────────────────────────────────────────────────
+
+    async def _sync_expert_menu(self) -> None:
+        """Ensure the expert menu exists (added after initial seed)."""
+        result = await self.db.execute(
+            select(PermissionResource).where(PermissionResource.id == "m-agent-expert")
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return  # Already exists
+
+        expert_menu = PermissionResource(
+            id="m-agent-expert",
+            parent_id="g-agent",
+            type="menu",
+            label="专家",
+            perm_key="agent:expert",
+            path="/experts",
+            icon="Brain",
+            sort_order=5,
+            status="active",
+            is_builtin=True,
+            description="专家管理",
+            btn_variant=None,
+            danger=False,
+        )
+        self.db.add(expert_menu)
+        await self.db.flush()
+
+        # Grant agent:expert to all roles that already have agent:manage
+        rp_result = await self.db.execute(
+            select(RolePermission).where(RolePermission.perm_key == "agent:manage")
+        )
+        for rp in rp_result.scalars().all():
+            # Check if already exists
+            dup = await self.db.execute(
+                select(RolePermission).where(
+                    RolePermission.role_id == rp.role_id,
+                    RolePermission.perm_key == "agent:expert",
+                )
+            )
+            if not dup.scalar_one_or_none():
+                self.db.add(RolePermission(role_id=rp.role_id, perm_key="agent:expert"))
+
+        await self.db.flush()
+        logger.info("Expert menu synced successfully.")
 
     async def _get_resource(self, resource_id: str) -> PermissionResource | None:
         result = await self.db.execute(

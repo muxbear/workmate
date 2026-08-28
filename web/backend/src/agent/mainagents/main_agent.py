@@ -2,7 +2,10 @@
 
 import logging
 
-from agent.common import get_tool_registry, resolve_model  # noqa: F401  re-export for callers
+from agent.common import (  # noqa: F401  re-export for callers
+    get_tool_registry,
+    resolve_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +30,10 @@ async def create_main_agent(checkpointer=None, store=None, sandbox_manager=None)
         builder = AgentBuilder()
         await builder.with_agent_from_db(session)
         await builder.with_memory(session)
+        await builder.with_tools(session)
 
     await builder.with_model()
     builder.with_system_prompt()
-    await builder.with_tools()
     await builder.with_subagents()
     builder.with_sandbox(sandbox_manager=sandbox_manager)
     builder.with_backend()

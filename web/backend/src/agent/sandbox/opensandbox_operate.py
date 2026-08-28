@@ -1,18 +1,15 @@
 import asyncio
-import os
 from datetime import timedelta
 
-from agent.config import settings
 import httpx
+from code_interpreter import CodeInterpreter, SupportedLanguage
 from deepagents.graph import logger
-
 from opensandbox import Sandbox
 from opensandbox.config import ConnectionConfig, ConnectionConfigSync
 from opensandbox.models import NetworkPolicy, NetworkRule, WriteEntry
-
 from opensandbox.sync import SandboxSync
 
-from code_interpreter import CodeInterpreter, SupportedLanguage
+from agent.config import settings
 
 
 def _default_network_policy(

@@ -7,7 +7,7 @@ deepagents 使用的 FileData 格式为 ``{"content": str, "encoding": str, ...}
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from agent.memory.scopes import MemoryScope, infer_scope
@@ -34,7 +34,7 @@ def create_agent_file_data(
         包含 content / encoding / description / scope / read_only / org_id
         及时间戳的 dict，可直接作为 ``store.aput()`` 的 value。
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return {
         "content": content,
         "encoding": "utf-8",

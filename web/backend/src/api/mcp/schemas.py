@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class McpConfigFieldSchema(BaseModel):
@@ -39,11 +39,7 @@ class McpToolResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-
-        from_attributes = True
-
+    model_config = ConfigDict(from_attributes=True)
 
 class InstallMcpRequest(BaseModel):
     """Request body for installing an MCP tool."""

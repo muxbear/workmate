@@ -5,7 +5,6 @@ from api.auth.schemas import (
     AccountLoginRequest,
     AuthResponse,
     EmailRegisterRequest,
-    LoginFailInfo,
     PhoneLoginRequest,
     RefreshRequest,
     RegisterRequest,
@@ -19,10 +18,10 @@ from api.auth.service import (
     register_email,
     register_phone,
 )
-from api.deps import get_client_ip, get_db, get_cache
+from api.deps import get_cache, get_client_ip, get_db
+from core.cache import KeyValueCache
 from core.decorators import handle_errors
 from core.response import ApiResponse, ok
-from core.cache import KeyValueCache
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 

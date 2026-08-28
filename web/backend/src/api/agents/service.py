@@ -4,10 +4,11 @@ import os
 import shutil
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.graph import get_store
+from agent.config import settings
+from agent.graph import get_store, invalidate_graph
 from agent.memory.scopes import (
     DEFAULT_ORG_ID,
     MemoryScope,
@@ -22,19 +23,20 @@ from api.agents.schemas import (
     AgentInfo,
     AgentListResponse,
     AgentUpdateRequest,
+    AgentVersionBrief,
+    AgentVersionDetail,
     CronJobBrief,
     FileBrief,
     SkillBrief,
 )
+from api.skill.service import get_skill_upload_path
 from db.models.agent import Agent
 from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
 from db.models.cron_job import CronJob
+from db.models.mcp_tool import McpTool
 from db.models.skill import Skill
 from db.models.tool import Tool
-
-from agent.config import settings
-from api.skill.service import get_skill_upload_path
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +113,7 @@ async def _get_agent_files_by_scope(
 
 def _file_namespace(scope: MemoryScope, *, agent_id: str, user_id: str | None = None, org_id: str | None = None) -> tuple[str, ...]:
     """返回文件作用域对应的 Store namespace（不区分模板/用户）。"""
-    from agent.memory.scopes import DEFAULT_ORG_ID, scope_namespace
+    from agent.memory.scopes import scope_namespace
     return scope_namespace(
         scope, agent_id=agent_id, user_id=user_id, org_id=org_id or DEFAULT_ORG_ID,
     )
@@ -169,6 +171,62 @@ async def _get_agent_tool_names(db: AsyncSession, agent_id: str) -> list[str]:
     return list(rows)
 
 
+async def _sync_files_with_store(
+    db: AsyncSession,
+    agent_id: str,
+    files: list[str],
+    *,
+    user_id: str | None = None,
+) -> list[str]:
+    """校验 Agent.files 与 Store 中实际内容的一致性（改进5）。
+
+    规则：
+    - Agent.files 中存在但 Store 中不存在的文件名 -> 从列表中移除。
+    - Store 中存在但 Agent.files 中不存在的文件 -> 不自动添加。
+    - 同时持久化修正后的列表到 Agent.files 字段。
+    """
+    try:
+        store = get_store()
+    except RuntimeError:
+        # Store 未初始化，跳过校验
+        return files
+
+    valid_files: list[str] = []
+    dirty = False
+
+    for filename in files:
+        scope = infer_scope(filename)
+
+        # USER/MIXTURE scope files need user_id for namespace.
+        # Skip verification when user_id is unavailable (e.g. system-level listing).
+        if scope in (MemoryScope.USER, MemoryScope.MIXTURE) and not user_id:
+            valid_files.append(filename)
+            continue
+
+        ns = _file_namespace(scope, agent_id=agent_id, user_id=user_id)
+
+        try:
+            item = await store.aget(ns, f"/{filename}")
+        except Exception:
+            logger.warning("读取 Store 文件失败: %s", filename, exc_info=True)
+            item = None
+
+        if item is not None:
+            valid_files.append(filename)
+        else:
+            logger.info("文件 '%s' 在 Store 中不存在，从 Agent.files 中移除", filename)
+            dirty = True
+
+    if dirty:
+        stmt = select(Agent).where(Agent.id == agent_id)
+        agent = (await db.execute(stmt)).scalar_one_or_none()
+        if agent is not None:
+            agent.files = valid_files
+            await db.flush()
+
+    return valid_files
+
+
 async def _agent_to_info(
     db: AsyncSession,
     agent: Agent,
@@ -178,6 +236,8 @@ async def _agent_to_info(
 ) -> AgentInfo:
     """Convert ORM Agent to AgentInfo response schema."""
     files = agent.files if isinstance(agent.files, list) else []
+    # 一致性校验：移除 Store 中已不存在的文件引用
+    files = await _sync_files_with_store(db, agent.id, files)
     files_by_scope = await _get_agent_files_by_scope(db, agent.id, files)
     return AgentInfo(
         id=agent.id,
@@ -301,6 +361,7 @@ async def create_agent(db: AsyncSession, req: AgentCreateRequest) -> AgentInfo:
     await db.flush()
 
     logger.info("Created agent '%s' (type=%s)", agent.name, agent.type)
+    await invalidate_graph()
     return await _agent_to_info(db, agent, [])
 
 
@@ -325,6 +386,7 @@ async def delete_agent(db: AsyncSession, agent_id: str) -> None:
     await db.delete(agent)
     _cleanup_agent_skills_dir(agent_id)
     logger.info("Deleted agent '%s' (type=%s)", agent.name, agent.type)
+    await invalidate_graph()
 
 
 async def toggle_agent_status(db: AsyncSession, agent_id: str) -> AgentInfo:
@@ -344,6 +406,7 @@ async def toggle_agent_status(db: AsyncSession, agent_id: str) -> AgentInfo:
     sub_ids = await _get_sub_agent_ids(db, agent_id)
     skills = await _get_agent_skill_briefs(db, agent_id)
     tool_names = await _get_agent_tool_names(db, agent_id)
+    await invalidate_graph()
     return await _agent_to_info(db, agent, sub_ids, skills, tool_names)
 
 
@@ -451,6 +514,14 @@ async def update_agent(db: AsyncSession, agent_id: str, req: AgentUpdateRequest)
     if dup is not None:
         raise HTTPException(status_code=409, detail=f"Agent name '{req.name}' already exists")
 
+    # 修改前创建版本快照（改进4）
+    current_tool_names = await _get_agent_tool_names(db, agent_id)
+    current_skill_ids = [s.id for s in await _get_agent_skill_briefs(db, agent_id)]
+    await _create_version_snapshot(
+        db, agent, current_tool_names, current_skill_ids,
+        change_summary=f"更新: {req.name}"
+    )
+
     agent.name = req.name
     agent.description = req.description
     agent.system_prompt = req.system_prompt
@@ -462,7 +533,40 @@ async def update_agent(db: AsyncSession, agent_id: str, req: AgentUpdateRequest)
     skills = await _get_agent_skill_briefs(db, agent_id)
     tool_names = await _get_agent_tool_names(db, agent_id)
     logger.info("Updated agent '%s'", agent.name)
+    await invalidate_graph()
     return await _agent_to_info(db, agent, sub_ids, skills, tool_names)
+
+
+async def _ensure_mcp_tool_record(db: AsyncSession, mcp_name: str) -> Tool:
+    """确保 MCP 工具在 tools 表中有对应记录（改进2）。"""
+    tool = (await db.execute(
+        select(Tool).where(Tool.name == f"mcp__{mcp_name}", Tool.tool_type == "mcp")
+    )).scalar_one_or_none()
+
+    if tool is not None:
+        return tool
+
+    # 从 mcp_tools 表读取元数据
+    mcp_tool = (await db.execute(
+        select(McpTool).where(McpTool.name == mcp_name)
+    )).scalar_one_or_none()
+    if mcp_tool is None:
+        raise HTTPException(status_code=404, detail=f"MCP 工具不存在: {mcp_name}")
+
+    tool = Tool(
+        name=f"mcp__{mcp_name}",
+        display_name=mcp_tool.name,
+        description=mcp_tool.description,
+        category="ai",
+        source="third_party",
+        status="enabled",
+        tool_type="mcp",
+        implementation=mcp_name,
+        params=mcp_tool.config_schema if isinstance(mcp_tool.config_schema, list) else [],
+    )
+    db.add(tool)
+    await db.flush()
+    return tool
 
 
 async def add_agent_config(
@@ -533,6 +637,7 @@ async def add_agent_config(
     sub_ids = await _get_sub_agent_ids(db, agent_id)
     skills = await _get_agent_skill_briefs(db, agent_id)
     tool_names = await _get_agent_tool_names(db, agent_id)
+    await invalidate_graph()
     return await _agent_to_info(db, agent, sub_ids, skills, tool_names)
 
 
@@ -586,6 +691,7 @@ async def remove_agent_config(
     sub_ids = await _get_sub_agent_ids(db, agent_id)
     skills = await _get_agent_skill_briefs(db, agent_id)
     tool_names = await _get_agent_tool_names(db, agent_id)
+    await invalidate_graph()
     return await _agent_to_info(db, agent, sub_ids, skills, tool_names)
 
 
@@ -640,6 +746,7 @@ async def update_agent_config(
     sub_ids = await _get_sub_agent_ids(db, agent_id)
     skills = await _get_agent_skill_briefs(db, agent_id)
     tool_names = await _get_agent_tool_names(db, agent_id)
+    await invalidate_graph()
     return await _agent_to_info(db, agent, sub_ids, skills, tool_names)
 
 
@@ -700,7 +807,10 @@ async def save_agent_file(
     user_id: str | None = None,
 ) -> AgentFileContent:
     """将文件内容直接写入 LangGraph Store（upsert）。"""
-    from agent.memory.file_data import create_agent_file_data, file_value_to_agent_file_content, file_value_to_content
+    from agent.memory.file_data import (
+        create_agent_file_data,
+        file_value_to_agent_file_content,
+    )
 
     stmt = select(Agent).where(Agent.id == agent_id)
     agent = (await db.execute(stmt)).scalar_one_or_none()
@@ -931,3 +1041,137 @@ async def get_agent_cron_jobs(db: AsyncSession, agent_id: str) -> list[CronJobBr
         )
         for cj in rows
     ]
+
+
+
+# ── Agent 版本管理（改进4）──────────────────────────────────────────────
+
+from db.models.agent_version import AgentVersion
+
+
+async def _create_version_snapshot(
+    db: AsyncSession,
+    agent: Agent,
+    tool_names: list[str],
+    skill_ids: list[str],
+    changed_by: str = "",
+    change_summary: str = "",
+) -> AgentVersion:
+    """在修改前创建当前配置的版本快照。"""
+    from sqlalchemy import func as sa_func
+
+    max_ver = (await db.execute(
+        select(sa_func.max(AgentVersion.version)).where(AgentVersion.agent_id == agent.id)
+    )).scalar() or 0
+
+    snapshot = {
+        "name": agent.name,
+        "type": agent.type,
+        "status": agent.status,
+        "description": agent.description,
+        "system_prompt": agent.system_prompt,
+        "files": agent.files if isinstance(agent.files, list) else [],
+        "provider_id": agent.provider_id,
+        "model_id": agent.model_id,
+        "tools": tool_names,
+        "skills": skill_ids,
+        "parent_id": agent.parent_id,
+    }
+
+    version = AgentVersion(
+        agent_id=agent.id,
+        version=max_ver + 1,
+        snapshot=snapshot,
+        changed_by=changed_by,
+        change_summary=change_summary,
+    )
+    db.add(version)
+    await db.flush()
+    return version
+
+
+async def list_agent_versions(db: AsyncSession, agent_id: str) -> list[AgentVersionBrief]:
+    """获取 Agent 的版本历史列表。"""
+    from api.agents.schemas import AgentVersionBrief
+
+    stmt = (
+        select(AgentVersion)
+        .where(AgentVersion.agent_id == agent_id)
+        .order_by(AgentVersion.version.desc())
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        AgentVersionBrief(
+            id=r.id,
+            agent_id=r.agent_id,
+            version=r.version,
+            change_summary=r.change_summary,
+            changed_by=r.changed_by,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+async def get_agent_version(db: AsyncSession, agent_id: str, version_id: str):
+    """获取某个版本快照的详细内容。"""
+    from api.agents.schemas import AgentVersionDetail
+
+    stmt = select(AgentVersion).where(
+        AgentVersion.agent_id == agent_id, AgentVersion.id == version_id
+    )
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="版本不存在")
+
+    return AgentVersionDetail(
+        id=row.id,
+        agent_id=row.agent_id,
+        version=row.version,
+        snapshot=row.snapshot,
+        change_summary=row.change_summary,
+        changed_by=row.changed_by,
+        created_at=row.created_at,
+    )
+
+
+async def rollback_agent_version(db: AsyncSession, agent_id: str, version_id: str) -> AgentInfo:
+    """将 Agent 配置回滚到指定版本。"""
+    stmt = select(AgentVersion).where(
+        AgentVersion.agent_id == agent_id, AgentVersion.id == version_id
+    )
+    version = (await db.execute(stmt)).scalar_one_or_none()
+    if version is None:
+        raise HTTPException(status_code=404, detail="版本不存在")
+
+    agent = (await db.execute(
+        select(Agent).where(Agent.id == agent_id)
+    )).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    snap = version.snapshot
+
+    # 回滚前先创建当前配置的快照
+    current_tool_names = await _get_agent_tool_names(db, agent_id)
+    current_skill_ids = [s.id for s in await _get_agent_skill_briefs(db, agent_id)]
+    await _create_version_snapshot(
+        db, agent, current_tool_names, current_skill_ids,
+        change_summary=f"回滚前自动快照（目标版本 v{version.version}）"
+    )
+
+    # 应用快照
+    agent.name = snap.get("name", agent.name)
+    agent.description = snap.get("description", "")
+    agent.system_prompt = snap.get("system_prompt", "")
+    agent.provider_id = snap.get("provider_id")
+    agent.model_id = snap.get("model_id")
+    agent.files = snap.get("files", [])
+
+    await db.flush()
+    await invalidate_graph()
+
+    sub_ids = await _get_sub_agent_ids(db, agent_id)
+    skills = await _get_agent_skill_briefs(db, agent_id)
+    tool_names = await _get_agent_tool_names(db, agent_id)
+    return await _agent_to_info(db, agent, sub_ids, skills, tool_names)

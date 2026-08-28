@@ -30,5 +30,19 @@ class Tool(Base):
     author: Mapped[str] = mapped_column(String(128), default="", comment="作者")
     tags: Mapped[list] = mapped_column(JSON, default=list, comment="标签数组")
     params: Mapped[list] = mapped_column(JSON, default=list, comment="参数定义数组 [{key, label, required, type}]")
+
+    # ── 改进1：DB 驱动工具注册表 ──────────────────────────────────────
+    # implementation: 内置函数工具存储 module_path:func_name，如 agent.tools.http_request:http_request
+    #                 MCP 工具存储 MCP 目录中的 name（对应 mcp_tools.name）
+    implementation: Mapped[str | None] = mapped_column(
+        String(256), nullable=True,
+        comment="工具实现路径: function 类型为 module_path:func_name; mcp 类型为 mcp_tool_name"
+    )
+    # tool_type: 区分内置函数工具、MCP 工具、第三方插件
+    tool_type: Mapped[str] = mapped_column(
+        String(32), default="function",
+        comment="工具类型: function(内置函数) | mcp(MCP工具) | plugin(第三方插件)"
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

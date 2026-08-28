@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
@@ -12,12 +11,12 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.knowledge_base.schemas import (
+    IndexConfigSchema,
     KBCreateRequest,
     KBListResponse,
     KBResponse,
     KBStatsResponse,
     KBUpdateRequest,
-    IndexConfigSchema,
 )
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
@@ -207,7 +206,7 @@ async def delete_kb(
     kb_id: str,
     user_id: str,
     vector_store: BaseVectorStore | None = None,
-    mediator: "KnowledgeBaseMediator | None" = None,
+    mediator: KnowledgeBaseMediator | None = None,
 ) -> None:
     """删除知识库——级联删除文档、实体、关系和向量数据。"""
     kb = await _get_kb_or_404(db, kb_id, user_id)
@@ -335,7 +334,6 @@ async def reindex_kb(
 
     # Reset all documents to queued
     from db.models.knowledge_base_document import KnowledgeBaseDocument
-    from sqlalchemy import update
 
     await db.execute(
         update(KnowledgeBaseDocument)

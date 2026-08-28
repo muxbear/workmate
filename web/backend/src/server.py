@@ -19,11 +19,11 @@ logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
 load_dotenv()
 
+from agent.graph import init_graph, shutdown_graph
 from api import router
 from api.deps import set_cache
 from core.cache import create_cache
 from db.engine import init_db
-from agent.graph import init_graph, shutdown_graph
 
 
 async def _init_knowledge_base(app: FastAPI) -> None:

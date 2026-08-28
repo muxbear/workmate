@@ -44,6 +44,8 @@ def _tool_to_info(tool: Tool, agent_ids: list[str] | None = None) -> ToolInfo:
         used_by_agents=agent_ids or [],
         tags=tool.tags or [],
         params=tool.params or [],
+        implementation=tool.implementation,
+        tool_type=tool.tool_type,
         created_at=tool.created_at,
         updated_at=tool.updated_at,
     )
@@ -135,6 +137,8 @@ async def create_tool(db: AsyncSession, req: ToolCreateRequest) -> ToolInfo:
         author="自定义",
         tags=req.tags or [],
         params=[p.model_dump() for p in req.params],
+        implementation=req.implementation,
+        tool_type=req.tool_type,
     )
     db.add(tool)
     await db.flush()
@@ -423,14 +427,36 @@ BUILTIN_TOOLS: list[dict] = [
     },
 ]
 
+# ── 内置工具实现路径映射 ──────────────────────────────────────────────────
+# tool_name → module_path:func_name
+BUILTIN_TOOL_IMPLEMENTATIONS: dict[str, str] = {
+    "execute_code": "agent.tools.execute_code:execute_code",
+    "shell_command": "agent.tools.shell_command:shell_command",
+    "http_request": "agent.tools.http_request:http_request",
+    "tavily_search": "agent.tools.tavily_search:tavily_search",
+    "web_scraper": "agent.tools.web_scraper:web_scraper",
+    "read_file": "agent.tools.file_ops:read_file",
+    "write_file": "agent.tools.file_ops:write_file",
+    "sql_query": "agent.tools.sql_query:sql_query",
+    "get_datetime": "agent.tools.get_datetime:get_datetime",
+    "kb_search": "agent.tools.kb_search:kb_search",
+    "list_knowledge_bases": "agent.tools.kb_search:list_knowledge_bases",
+    "image_generate": "agent.tools.image_generate:image_generate",
+    "text_embedding": "agent.tools.text_embedding:text_embedding",
+}
+
+
 async def seed_builtin_tools(db: AsyncSession) -> None:
     """填充内置工具，仅当工具表为空时执行，可重复调用。"""
     count = (await db.execute(select(func.count()).select_from(Tool))).scalar() or 0
     if count > 0:
         logger.info("工具表已有 %d 条记录，跳过种子数据", count)
+        # 即使已有记录，也补全 implementation / tool_type 字段
+        await _backfill_implementation_fields(db)
         return
 
     for t in BUILTIN_TOOLS:
+        impl = BUILTIN_TOOL_IMPLEMENTATIONS.get(t["name"])
         tool = Tool(
             name=t["name"],
             display_name=t["display_name"],
@@ -442,7 +468,28 @@ async def seed_builtin_tools(db: AsyncSession) -> None:
             author="ke-hermes",
             tags=t.get("tags", []),
             params=t.get("params", []),
+            implementation=impl,
+            tool_type="function" if impl else "function",
         )
         db.add(tool)
 
     logger.info("已填充 %d 个内置工具", len(BUILTIN_TOOLS))
+
+
+async def _backfill_implementation_fields(db: AsyncSession) -> None:
+    """为已有工具记录补全 implementation / tool_type 字段（迁移兼容）。"""
+    stmt = select(Tool).where(Tool.source == "builtin")
+    tools = (await db.execute(stmt)).scalars().all()
+
+    updated = 0
+    for tool in tools:
+        if tool.implementation is None:
+            impl = BUILTIN_TOOL_IMPLEMENTATIONS.get(tool.name)
+            if impl:
+                tool.implementation = impl
+                updated += 1
+        if not tool.tool_type:
+            tool.tool_type = "function"
+
+    if updated > 0:
+        logger.info("已为 %d 个内置工具补全 implementation 字段", updated)

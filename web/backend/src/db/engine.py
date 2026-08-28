@@ -78,6 +78,9 @@ async def _table_exists(conn, table_name: str) -> bool:
 
 async def init_db():
     from db.base import Base
+    from db.models.agent_version import (
+        AgentVersion,  # noqa: F401  ensure table is registered
+    )
     from db.models.cron_job import CronJob  # noqa: F401  ensure table is registered
     from db.models.data_scope import DataScope  # noqa: F401
     from db.models.oauth2_client import OAuth2Client  # noqa: F401
@@ -101,6 +104,16 @@ async def init_db():
                 logger.info("Adding attachment_ids column to conversations table")
                 col_type = "JSON" if settings.DATABASE_BACKEND == "sqlite" else "JSONB"
                 await conn.execute(text(f"ALTER TABLE conversations ADD COLUMN attachment_ids {col_type}"))
+
+        # 迁移（改进1）：为 tools 表添加 implementation / tool_type 列
+        if await _table_exists(conn, "tools"):
+            existing = await _get_existing_columns(conn, "tools")
+            if "implementation" not in existing:
+                logger.info("Adding implementation column to tools table")
+                await conn.execute(text("ALTER TABLE tools ADD COLUMN implementation VARCHAR(256)"))
+            if "tool_type" not in existing:
+                logger.info("Adding tool_type column to tools table")
+                await conn.execute(text("ALTER TABLE tools ADD COLUMN tool_type VARCHAR(32) DEFAULT 'function'"))
 
     # Seed built-in RBAC data
     from api.rbac.service import RbacService

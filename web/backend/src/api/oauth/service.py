@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.schemas import AuthResponse, AuthTokens, UserInfo
 from api.oauth.providers import get_oauth_provider
-from core.security import create_token_pair
 from core.cache import KeyValueCache
+from core.security import create_token_pair
 from db.models import Account, UserOAuth
 
 logger = logging.getLogger(__name__)

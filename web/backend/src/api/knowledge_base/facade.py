@@ -31,20 +31,23 @@ class KnowledgeBaseFacade:
 
     async def initialize(self, app: FastAPI) -> None:
         """初始化知识库子系统的所有组件并挂载到 app.state。"""
-        from core.rag.vector_store import ChromaVectorStore, MilvusVectorStore
-        from core.rag.vector_store_factory import VectorStoreFactory
-        from core.rag.loaders import create_default_loader_registry
-        from core.rag.splitters import create_chunk_registry
-        from core.rag.embedding import get_embedding_model
-        from api.knowledge_base.graph_service import GraphExtractionService
         from api.knowledge_base.doc_service import (
             DatabaseProgressObserver,
             IndexingPipeline,
             IndexingScheduler,
             LoggingProgressObserver,
         )
+        from api.knowledge_base.graph_service import GraphExtractionService
         from api.knowledge_base.mediator import KnowledgeBaseMediator
-        from api.knowledge_base.search_service import SearchOrchestrator, set_search_orchestrator
+        from api.knowledge_base.search_service import (
+            SearchOrchestrator,
+            set_search_orchestrator,
+        )
+        from core.rag.embedding import get_embedding_model
+        from core.rag.loaders import create_default_loader_registry
+        from core.rag.splitters import create_chunk_registry
+        from core.rag.vector_store import ChromaVectorStore, MilvusVectorStore
+        from core.rag.vector_store_factory import VectorStoreFactory
         from db.engine import async_session
 
         settings = self._settings
