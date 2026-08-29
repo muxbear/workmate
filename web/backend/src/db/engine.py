@@ -98,6 +98,13 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
         # 迁移：为现有 conversations 表添加 attachment_ids 列
+        # Migration: add parent_id to agents table
+        if await _table_exists(conn, 'agents'):
+            existing = await _get_existing_columns(conn, 'agents')
+            if 'parent_id' not in existing:
+                logger.info('Adding parent_id column to agents table')
+                await conn.execute(text('ALTER TABLE agents ADD COLUMN parent_id VARCHAR(36)'))
+            await conn.execute(text('CREATE INDEX IF NOT EXISTS ix_agents_parent_id ON agents (parent_id)'))
         if await _table_exists(conn, "conversations"):
             existing = await _get_existing_columns(conn, "conversations")
             if "attachment_ids" not in existing:
@@ -106,6 +113,13 @@ async def init_db():
                 await conn.execute(text(f"ALTER TABLE conversations ADD COLUMN attachment_ids {col_type}"))
 
         # 迁移（改进1）：为 tools 表添加 implementation / tool_type 列
+        # Migration: add parent_id to agents table
+        if await _table_exists(conn, 'agents'):
+            existing = await _get_existing_columns(conn, 'agents')
+            if 'parent_id' not in existing:
+                logger.info('Adding parent_id column to agents table')
+                await conn.execute(text('ALTER TABLE agents ADD COLUMN parent_id VARCHAR(36)'))
+            await conn.execute(text('CREATE INDEX IF NOT EXISTS ix_agents_parent_id ON agents (parent_id)'))
         if await _table_exists(conn, "tools"):
             existing = await _get_existing_columns(conn, "tools")
             if "implementation" not in existing:

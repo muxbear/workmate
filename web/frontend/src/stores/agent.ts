@@ -24,14 +24,14 @@ export const useAgentStore = defineStore('agent', () => {
     agents.value.find((a) => a.id === selectedAgentId.value) ?? null,
   )
 
-  const mainAgent = computed(() => agents.value.find((a) => a.type === 'main') ?? null)
+  const mainAgent = computed(() => agents.value.find((a) => !a.parentId) ?? null)
 
-  const subAgents = computed(() => agents.value.filter((a) => a.type === 'sub'))
+  const subAgents = computed(() => agents.value.filter((a) => !!a.parentId))
 
   const filteredAgents = computed(() => {
     if (!searchQuery.value) {
       // 无搜索时只返回主智能体（树根）
-      return agents.value.filter((a) => a.type === 'main')
+      return agents.value.filter((a) => !a.parentId)
     }
     // 搜索时展平，返回所有匹配项
     const q = searchQuery.value.toLowerCase()
@@ -57,10 +57,10 @@ export const useAgentStore = defineStore('agent', () => {
       agents.value = await agentApi.fetchAgents()
       // 默认选中主智能体
       if (!selectedAgentId.value && agents.value.length > 0) {
-        selectedAgentId.value = agents.value.find((a) => a.type === 'main')?.id ?? agents.value[0].id
+        selectedAgentId.value = agents.value.find((a) => !a.parentId)?.id ?? agents.value[0].id
       }
       // 默认展开主智能体（使其子智能体可见）
-      const mainId = agents.value.find((a) => a.type === 'main')?.id
+      const mainId = agents.value.find((a) => !a.parentId)?.id
       if (mainId && !expandedIds.value.has(mainId)) {
         expandedIds.value = new Set([...expandedIds.value, mainId])
       }
@@ -91,7 +91,7 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function expandAll() {
-    const ids = agents.value.filter((a) => a.subAgents && a.subAgents.length > 0).map((a) => a.id)
+    const ids = agents.value.filter((a) => agents.value.some((c) => c.parentId === a.id)).map((a) => a.id)
     expandedIds.value = new Set(ids)
   }
 
@@ -126,10 +126,7 @@ export const useAgentStore = defineStore('agent', () => {
       await agentApi.deleteAgent(id)
       agents.value = agents.value.filter((a) => a.id !== id)
       // 从主智能体 subAgents 中移除
-      const main = agents.value.find((a) => a.type === 'main')
-      if (main && main.subAgents) {
-        main.subAgents = main.subAgents.filter((sid) => sid !== id)
-      }
+      const main = agents.value.find((a) => !a.parentId)
       // 如果删除的是当前选中项，切换到主智能体
       if (selectedAgentId.value === id && main) {
         selectedAgentId.value = main.id

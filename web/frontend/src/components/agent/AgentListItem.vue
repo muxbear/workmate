@@ -43,14 +43,11 @@ const emit = defineEmits<{
 
 const isSelected = computed(() => props.selectedId === props.agent.id)
 const isExpanded = computed(() => props.expandedIds.has(props.agent.id))
-const hasChildren = computed(
-  () => props.agent.subAgents && props.agent.subAgents.length > 0,
+const childAgents = computed(() =>
+  props.agents.filter((a) => a.parentId === props.agent.id),
 )
 
-const childAgents = computed(() => {
-  if (!hasChildren.value) return []
-  return props.agents.filter((a) => props.agent.subAgents?.includes(a.id))
-})
+const hasChildren = computed(() => childAgents.value.length > 0)
 
 function getStatusColor(status: string): string {
   switch (status) {
@@ -97,7 +94,7 @@ function getStatusLabel(status: string): string {
             <Zap v-else :size="10" />
             {{ getStatusLabel(agent.status) }}
           </span>
-          <span v-if="agent.type === 'main'" class="type-badge type-badge--main">
+          <span v-if="!agent.parentId" class="type-badge type-badge--main">
             主智能体
           </span>
         </div>
@@ -117,7 +114,7 @@ function getStatusLabel(status: string): string {
           </span>
           <span v-if="hasChildren" class="stat-item stat-item--sub">
             <GitBranch :size="11" />
-            {{ agent.subAgents?.length ?? 0 }}
+            {{ childAgents.length }}
           </span>
           <span v-if="isSelected" class="editing-label">
             <Edit :size="10" />

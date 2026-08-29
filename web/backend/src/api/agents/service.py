@@ -351,7 +351,7 @@ async def create_agent(db: AsyncSession, req: AgentCreateRequest) -> AgentInfo:
     else:
         # Creating a main agent — only one in the system
         main_count = (await db.execute(
-            select(func.count()).select_from(Agent).where(Agent.type == "main")
+            select(func.count()).select_from(Agent).where(Agent.parent_id.is_(None))
         )).scalar() or 0
         if main_count > 0:
             raise HTTPException(status_code=409, detail="Main agent already exists")
@@ -374,7 +374,7 @@ async def delete_agent(db: AsyncSession, agent_id: str) -> None:
     if agent.undeletable:
         raise HTTPException(status_code=403, detail="Agent is undeletable")
 
-    if agent.type == "main":
+    if agent.parent_id is None:
         # Cascade-delete all sub-agents
         sub_stmt = select(Agent).where(Agent.parent_id == agent_id)
         sub_agents = (await db.execute(sub_stmt)).scalars().all()
@@ -593,7 +593,7 @@ async def add_agent_config(
             db.add(AgentTool(agent_id=agent_id, tool_id=tool.id))
     elif req.type == "subagent":
         # Sub-agents can only be added to main agents
-        if agent.type != "main":
+        if agent.parent_id is not None:
             raise HTTPException(status_code=400, detail="Only main agents can add sub-agents")
         sub_req = AgentCreateRequest(name=req.value, parent_id=agent_id)
         await create_agent(db, sub_req)

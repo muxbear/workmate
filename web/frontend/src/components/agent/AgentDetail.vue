@@ -257,7 +257,7 @@ function getStatusColor(status: string): string {
             {{ STATUS_LABELS[agent.status] ?? agent.status }}
           </span>
           <span
-            v-if="agent.type === 'main'"
+            v-if="!agent.parentId"
             class="type-badge type-badge--main"
           >
             <Sparkles :size="11" />

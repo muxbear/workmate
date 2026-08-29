@@ -7,45 +7,52 @@
 ## 一、整体架构与数据流
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Web 版（数据权威源）                    │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │ Agents   │───▶│ Agent 表     │    │ Expert       │  │
-│  │ 管理页面  │    │ (expert_     │    │ Profile JSON │  │
-│  │ (CRUD)   │    │  profile列)  │    │              │  │
-│  └──────────┘    └──────┬───────┘    └──────────────┘  │
-│                         │                                │
-│           ┌─────────────┼─────────────┐                  │
-│           ▼             ▼             ▼                  │
-│     /api/agents    /api/experts   OAuth2 Scope          │
-│    (现有CRUD)     (新增只读)     expert:read             │
-└─────────────────────┬───────────────────────────────────┘
-                      │ OAuth2 Bearer Token
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│                  桌面版（消费方 + 子智能体宿主）            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ ExpertSync   │─▶│ Expert Store  │─▶│ ExpertPage   │  │
-│  │ Service      │  │ (Pinia)       │  │ (展示/选择)   │  │
-│  └──────────────┘  └──────┬───────┘  └──────────────┘  │
-│                           │                              │
-│                    ┌──────▼───────┐                      │
-│                    │ NewTaskPage  │                      │
-│                    │ (输入框选专家) │                      │
-│                    └──────┬───────┘                      │
-│                           │ 用户提交问题                  │
-│                    ┌──────▼───────┐                      │
-│                    │ AgentManager │                      │
-│                    │ .setSubagents│                      │
-│                    │ →主智能体    │                      │
-│                    └──────────────┘                      │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      Web 版（数据权威源）                       │
+│  ┌─────────────┐      ┌───────────────────────────────┐      │
+│  │ ExpertView  │─────▶│  /api/experts（专家管理 CRUD）  │      │
+│  │ 专家管理页面  │      └──────────┬────────────────────┘      │
+│  └─────────────┘                 │                            │
+│                                  ▼                            │
+│  ┌────────────────────────────────────────────────────┐       │
+│  │ DB：agents + expert_profiles（1:1）                 │       │
+│  │     + agent_tools / agent_skills / agent_mcp_configs│       │
+│  └───────────────────────┬────────────────────────────┘       │
+│                          │                                    │
+│                          ▼                                    │
+│  ┌────────────────────────────────────────────────────┐       │
+│  │ /api/expert-sync（桌面版 / 移动版同步，只读）          │       │
+│  │   GET /list  GET /{id}  GET /featured              │       │
+│  │   依赖 require_scope("expert:read")                  │       │
+│  └────────────────────────────────────────────────────┘       │
+└──────────────────────────┬───────────────────────────────────┘
+                           │ OAuth2 Bearer Token（expert:read）
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│                  桌面版（消费方 + 子智能体宿主）                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+│  │ ExpertSync   │─▶│ Expert Store  │─▶│ ExpertPage   │        │
+│  │ Service      │  │ (Pinia)       │  │ (展示/选择)   │        │
+│  └──────────────┘  └──────┬───────┘  └──────────────┘        │
+│                           │                                    │
+│                    ┌──────▼───────┐                           │
+│                    │ NewTaskPage  │                           │
+│                    │ (输入框选专家) │                           │
+│                    └──────┬───────┘                           │
+│                           │ 用户提交问题                        │
+│                    ┌──────▼───────┐                           │
+│                    │ AgentManager │                           │
+│                    │ .setSubagents│                           │
+│                    │ →主智能体    │                           │
+│                    └──────────────┘                           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-专家数据流经四层：Web 数据库存储 → REST API → 桌面版同步服务 → Pinia Store → AgentManager 子智能体配置。
+Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据单独存储在 `expert_profiles` 表；Web 管理页面走 `/api/experts`，桌面版 / 移动版同步走 `/api/expert-sync`。
+
+专家数据流仍为四层：Web 数据库存储 → REST API → 桌面版同步服务 → Pinia Store → AgentManager 子智能体配置。
 
 ---
-
 ## 二、DeepAgents 文档要点
 
 本方案严格遵循 DeepAgents 官方文档的以下概念：
@@ -90,358 +97,131 @@
 
 - Profiles 是 DeepAgents 的预设配置包，封装了模型、工具、系统提示词、子智能体等组合，可实现一键切换智能体行为模式。
 - 每个 Profile 是一个 JSON/YAML 配置，包含 `name`、`model`、`tools`、`subagents`、`system_prompt` 等字段。
-- 专家本质就是一组"角色 Profile"：名称、领域描述、系统提示词、推荐工具、推荐模型。Web 版存储的 `expert_profile` JSON 列即为 Profile 序列化。
-- 桌面版同步专家后，将 `expert_profile` 转换为 DeepAgents 的 `SubAgent` 配置传入 `AgentBuilder.setSubagents()`。
+- 专家本质就是一组"角色 Profile"：名称、领域描述、系统提示词、推荐工具、推荐模型。Web 版通过 `expert_profiles` 表保存展示 Profile，通过 `agents` 及其关联表保存核心配置。
+- 桌面版同步专家后，将同步到的 `ExpertSyncItem`（或详情 `ExpertInfo`）转换为 DeepAgents 的 `SubAgent` 配置传入 `AgentBuilder.setSubagents()`。
 
 ---
 
-## 三、Web 后端：专家数据存储与 API 扩展（需求 3）
+## 三、Web 后端：专家数据模型与 API（已实现）
 
-### 3.1 存储方案：扩展 Agent 表
+### 3.1 存储模型
 
-专家在 Web 版中本质是"带有专家元数据的子智能体"，因此复用现有 `agents` 表，新增 `expert_profile` JSON 列存储专家专有配置。
+实际实现采用“1 个 Agent 记录 + 1 条 ExpertProfile 记录”，并未在 `agents` 表新增 `expert_profile` 列。
 
-**文件：`web/backend/src/db/models/agent.py`**
+- `agents` 继续承载核心子智能体配置：`name`、`type`、`status`、`description`、`system_prompt`、`provider_id`、`model_id`、`parent_id`、`files` 等。
+- 新增 `expert_profiles` 表，保存展示元数据：`title`、`category`、`tags`、`icon`、`color`、`initials`、`avatar_url`、`rating`、`usage_count`、`featured`、`scene`、`sort_order`、`is_published` 等。
+- `expert_profiles.agent_id` 为主键 + 外键，指向 `agents.id`，`ondelete="CASCADE"`，与 Agent 为 1:1。
+- 工具、技能、MCP 继续复用 `agent_tools`、`agent_skills`、`agent_mcp_configs` 关联表。
+- 专家判定：`agents.type = 'sub'` 且存在对应 `expert_profiles` 记录。
 
-```python
-# 在现有 Agent 类中新增字段
-class Agent(Base):
-    # ... 现有字段保持不变 ...
+模型文件：`web/backend/src/db/models/expert_profile.py`
 
-    expert_profile: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True, default=None,
-        comment="专家扩展配置 Profile（仅 type=sub 的专家智能体使用，普通子智能体为 NULL）"
-    )
-```
+### 3.2 Schema
 
-`expert_profile` JSON 结构定义：
+文件：`web/backend/src/api/experts/schemas.py`
 
-```json
-{
-  "title": "内容创作专家",
-  "category": "AI工具专家",
-  "tags": ["小红书", "品牌文案"],
-  "icon": "Zap",
-  "color": "linear-gradient(135deg,#f59e0b,#d97706)",
-  "rating": 4.9,
-  "users": "2.1k",
-  "recommended_tools": ["http_request", "tavily_search"],
-  "recommended_model": "deepseek:deepseek-v4-pro",
-  "prompt_template": "请以【{name}·{title}】的身份协助我完成以下任务：",
-  "is_expert": true,
-  "expertise_areas": ["小红书种草内容", "品牌故事撰写"]
-}
-```
+主要响应 / 请求模型：
 
-> 设计理由：专家区别于普通子智能体的核心是"面向用户展示的元数据"（标题、分类、标签、图标、评分等）。这些字段不属于 DeepAgents SubAgent 原生结构，因此用独立的 `expert_profile` JSON 列承载，与 Agent 表的 `system_prompt`、`tools`（通过 AgentTool 关联表）、`model` 等子智能体核心配置正交，互不干扰。
+- `ExpertInfo`：列表和详情共用的完整专家信息。
+- `ExpertListResponse`：`items` + `total` + `page` + `page_size`。
+- `ExpertCreateRequest`：创建时一次传入基础信息、展示信息、工具 / 技能 / MCP。
+- `ExpertUpdateRequest`：更新名称、头衔、描述、系统提示词、模型。
+- `ExpertProfileUpdateRequest`：部分更新展示元数据。
+- `ExpertConfigUpdateRequest`：批量更新系统提示词、模型、工具、技能、MCP。
+- `ExpertSyncItem` / `ExpertSyncListResponse`：桌面端 / 移动端同步用的精简结构。
+- `FeaturedScene` / `FeaturedSceneResponse`：精选场景响应。
 
-### 3.2 数据库迁移
+### 3.3 Web 管理 API
 
-**文件：`web/backend/src/db/utils.py`**（或 Alembic 迁移脚本）
+前缀：`/api/experts`，鉴权方式为 `Depends(get_current_user_id)`，给 Web 管理页面使用。
 
-```python
-# 迁移 SQL（SQLite ALTER TABLE）
-ALTER TABLE agents ADD COLUMN expert_profile TEXT DEFAULT NULL;
-```
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/experts` | 分页列表，支持 keyword、category、featured、status、sort |
+| GET | `/api/experts/categories` | 分类及数量统计 |
+| GET | `/api/experts/featured` | 精选场景 + 精选专家 |
+| GET | `/api/experts/{expert_id}` | 专家详情 |
+| POST | `/api/experts` | 创建专家 |
+| PUT | `/api/experts/{expert_id}` | 更新基础信息 |
+| PUT | `/api/experts/{expert_id}/profile` | 更新展示元数据 |
+| PUT | `/api/experts/{expert_id}/config` | 批量更新配置 |
+| DELETE | `/api/experts/{expert_id}` | 删除专家 |
+| PATCH | `/api/experts/{expert_id}/status` | 切换启用 / 停用 |
+| POST | `/api/experts/{expert_id}/clone` | 克隆专家 |
 
-对 PostgreSQL 同理使用 `JSON` 类型列。迁移在应用启动时自动执行（现有 `SqlMigrationRunner` 模式）。
+路由注册：`web/backend/src/api/experts/__init__.py`，并在 `web/backend/src/api/__init__.py` 中挂载。
 
-### 3.3 Schema 扩展
+### 3.4 同步 API
 
-**文件：`web/backend/src/api/agents/schemas.py`**
+前缀：`/api/expert-sync`，鉴权方式为 `Depends(require_scope("expert:read"))`，供桌面版 / 移动版拉取。
 
-```python
-class ExpertProfile(BaseModel):
-    """专家扩展配置（Profile）。"""
-    title: str = ""
-    category: str = ""
-    tags: list[str] = []
-    icon: str = "Zap"
-    color: str = ""
-    rating: float = 0.0
-    users: str = ""
-    recommended_tools: list[str] = []
-    recommended_model: str | None = None
-    prompt_template: str = ""
-    is_expert: bool = True
-    expertise_areas: list[str] = []
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/expert-sync/list` | 已发布且启用的专家精简列表 |
+| GET | `/api/expert-sync/{expert_id}` | 单个专家完整详情 |
+| GET | `/api/expert-sync/featured` | 精选场景 + 精选专家 |
 
+> 注意：当前 `sync_api.py` 中 `/{expert_id}` 声明在 `/featured` 之前。FastAPI/Starlette 按声明顺序匹配路径，若直接请求 `/api/expert-sync/featured`，会被 `/{expert_id}` 捕获；如需使用精选同步接口，应将 `/featured` 路由声明移到 `/{expert_id}` 之前。
 
-# 扩展现有 AgentCreateRequest
-class AgentCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
-    description: str = ""
-    system_prompt: str = ""
-    parent_id: str | None = None
-    provider_id: str | None = None
-    model_id: str | None = None
-    expert_profile: ExpertProfile | None = None  # 新增
+`sync_list` 只返回 `is_published=true` 且 `status='active'` 的专家，并按 `sort_order` 倒序。响应结构为 `{ items, total, synced_at }`，每个 item 是 `ExpertSyncItem`。
 
+### 3.5 Service 设计
 
-# 扩展现有 AgentUpdateRequest
-class AgentUpdateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
-    description: str = ""
-    system_prompt: str = ""
-    provider_id: str | None = None
-    model_id: str | None = None
-    expert_profile: ExpertProfile | None = None  # 新增
+文件：`web/backend/src/api/experts/service.py`
 
-
-# 扩展现有 AgentInfo（响应）
-class AgentInfo(BaseModel):
-    # ... 现有字段 ...
-    expert_profile: ExpertProfile | None = None  # 新增
-
-
-# 新增：专家列表专用响应（轻量，不含 files / tools 细节）
-class ExpertListItem(BaseModel):
-    """专家列表项（桌面版同步拉取用）。"""
-    id: str
-    name: str
-    description: str
-    system_prompt: str
-    status: str
-    provider_id: str | None = None
-    model_id: str | None = None
-    tools: list[str] = []
-    expert_profile: ExpertProfile
-
-    class Config:
-        from_attributes = True
-
-
-class ExpertListResponse(BaseModel):
-    """专家列表响应。"""
-    experts: list[ExpertListItem]
-```
-
-### 3.4 Service 层扩展
-
-**文件：`web/backend/src/api/agents/service.py`**
-
-在现有 `_agent_to_info()` 中补充 `expert_profile` 字段：
-
-```python
-async def _agent_to_info(db, agent, sub_agent_ids=None, skills=None, tool_names=None):
-    # ... 现有逻辑 ...
-    return AgentInfo(
-        # ... 现有字段 ...
-        expert_profile=agent.expert_profile,  # 新增
-    )
-```
-
-在 `create_agent()` 和 `update_agent()` 中持久化 `expert_profile`：
-
-```python
-async def create_agent(db, req: AgentCreateRequest) -> AgentInfo:
-    agent = Agent(
-        # ... 现有字段 ...
-        expert_profile=req.expert_profile.model_dump() if req.expert_profile else None,
-    )
-    # ... 其余逻辑不变 ...
-
-
-async def update_agent(db, agent_id, req: AgentUpdateRequest) -> AgentInfo:
-    agent.name = req.name
-    # ... 现有字段 ...
-    agent.expert_profile = req.expert_profile.model_dump() if req.expert_profile else None
-    # ... 其余逻辑不变 ...
-```
-
-新增专家列表查询函数（专供桌面版同步拉取）：
-
-```python
-async def list_experts(db: AsyncSession) -> ExpertListResponse:
-    """查询所有带 expert_profile 的活跃子智能体（即"专家"）。"""
-    stmt = (
-        select(Agent)
-        .where(Agent.type == "sub", Agent.status == "active")
-        .where(Agent.expert_profile.isnot(None))
-        .order_by(Agent.created_at)
-    )
-    rows = (await db.execute(stmt)).scalars().all()
-
-    experts = []
-    for agent in rows:
-        tool_names = await _get_agent_tool_names(db, agent.id)
-        profile_data = agent.expert_profile or {}
-        experts.append(ExpertListItem(
-            id=agent.id,
-            name=agent.name,
-            description=agent.description or "",
-            system_prompt=agent.system_prompt or "",
-            status=agent.status,
-            provider_id=agent.provider_id,
-            model_id=agent.model_id,
-            tools=tool_names,
-            expert_profile=ExpertProfile(**profile_data) if profile_data else ExpertProfile(),
-        ))
-    return ExpertListResponse(experts=experts)
-```
-
-### 3.5 专家只读 API（供桌面版拉取）
-
-**文件：`web/backend/src/api/agents/agents_api.py`**
-
-```python
-@router.get("/experts/list", response_model=ApiResponse[ExpertListResponse])
-@handle_errors
-async def expert_list(db: AsyncSession = Depends(get_db)):
-    """获取所有专家列表（桌面版同步拉取专用，只含 expert_profile 非空的活跃子智能体）。"""
-    result = await list_experts(db)
-    return ok(result)
-```
-
-> 注意：该接口与现有 `GET /api/agents` 不同——后者返回全部智能体含文件、技能等完整信息，数据量大；`/api/agents/experts/list` 只返回专家轻量信息，专供桌面版同步。
-
-### 3.6 专家管理复用现有 Agent CRUD
-
-Web 版对专家的管理（配置、删除、修改、查询）全部复用现有 `/api/agents` 接口：
-
-| 操作 | 现有接口 | 说明 |
-|------|---------|------|
-| 创建专家 | `POST /api/agents` | 传 `parent_id`（主智能体 ID）+ `expert_profile` |
-| 查询专家 | `GET /api/agents/{id}` | 返回含 `expert_profile` 的完整信息 |
-| 查询列表 | `GET /api/agents` | 前端过滤 `expert_profile != null` 的子智能体 |
-| 修改专家 | `PUT /api/agents/{id}` | 更新名称、描述、提示词、`expert_profile` |
-| 删除专家 | `DELETE /api/agents/{id}` | 级联删除关联的工具、技能 |
-| 状态切换 | `PATCH /api/agents/{id}/status` | 启用 / 停用专家（影响桌面版是否同步） |
-| 配置工具 | `POST /api/agents/{id}/config` | `type=tool`，为专家添加工具 |
-| 配置文件 | `POST /api/agents/{id}/config` | `type=file`，为专家添加记忆文件 |
-| 配置技能 | `POST /api/agents/{id}/skills` | 为专家关联技能包 |
-
-不需要额外新增管理端接口，只需在 Web 前端页面做专家专属的 UI 呈现。
+- `ExpertAssembler`：工厂式组装 `Agent + ExpertProfile + tools + skills + mcp_configs`，保证列表 / 详情 / 同步数据一致。
+- `SORT_STRATEGIES`：策略字典实现 rating / usage / recent / name 排序。
+- `list_experts`：JOIN `agents` + `expert_profiles`，先筛选再排序，最后内存分页。
+- `create_expert`：插入 `Agent`（type=sub，parent_id=主智能体，status=inactive）+ `ExpertProfile` + 关联表，并创建版本快照、失效图缓存。
+- `update_expert` / `update_expert_profile` / `update_expert_config`：更新对应字段；配置类更新采用“先快照 → 全量替换关联 → 提交”的事务模式。
+- `delete_expert`：删除 `ExpertProfile` 和 `Agent`，级联清理关联。
+- `toggle_expert_status`：切换 `Agent.status`。
+- `clone_expert`：复制 Agent + Profile + 工具 / 技能 / MCP 关联，新专家默认停用、非精选。
+- `get_featured` / `list_categories`：供精选场景和分类筛选使用。
 
 ---
 
-## 四、Web 前端：专家管理页面增强（需求 5）
+## 四、Web 前端：专家页面（已实现）
 
-### 4.1 专家管理入口
+### 4.1 入口与路由
 
-在 Web 版主页面左侧菜单"专家"页面中，提供完整的 CRUD 管理能力。
+- 路由：`web/frontend/src/router/index.ts` 中 `/experts` → `ExpertView.vue`。
+- 主页面组件：`web/frontend/src/views/ExpertView.vue`。
+- 卡片组件：`web/frontend/src/components/expert/ExpertCard.vue`。
+- 编辑抽屉：`web/frontend/src/components/expert/ExpertEditDialog.vue`。
 
-**现有文件：`web/frontend/src/views/AgentsView.vue`**（智能体管理页面）
+### 4.2 页面功能
 
-该页面已实现智能体的列表、创建、编辑、删除、状态切换等管理功能。专家管理复用此页面，扩展以下能力：
+`ExpertView.vue` 已实现：
 
-### 4.2 专家列表视图
+- 顶部标题 + 搜索框 + 刷新 + 新建专家。
+- 错误提示条（可重试）。
+- 精选场景区域，展示各场景及关联专家。
+- 分类筛选 chips，排序按钮（评分 / 使用量 / 最新 / 名称）。
+- 专家卡片网格，支持编辑、克隆、启用 / 停用、删除。
+- 分页条。
+- 新建 / 编辑统一使用右侧 `ExpertEditDialog`。
 
-在 `AgentsView.vue` 中新增"专家"筛选标签：
+### 4.3 编辑抽屉
 
-```vue
-<!-- 在现有列表筛选区域新增 -->
-<el-radio-group v-model="filterType">
-  <el-radio-button label="all">全部智能体</el-radio-button>
-  <el-radio-button label="expert">专家</el-radio-button>
-  <el-radio-button label="sub">普通子智能体</el-radio-button>
-</el-radio-group>
-```
+`ExpertEditDialog.vue` 使用 5 个 Tab：
 
-当 `filterType === 'expert'` 时，前端过滤 `agent.expert_profile != null` 的记录展示。
+1. 基本信息：名称、头衔、分类、标签、头像颜色、头像文字、描述、精选 / 精选场景、排序、发布状态。
+2. 模型与提示词：提供商、模型、系统提示词。
+3. 工具：内置工具和第三方工具多选。
+4. 技能：技能标签多选。
+5. MCP：MCP 工具 + command / args / transport / enabled 配置。
 
-### 4.3 专家创建 / 编辑表单
+编辑时拆分三个请求：基础信息、展示元数据、配置；创建时通过 `POST /api/experts` 一次提交。
 
-在创建 / 编辑弹窗中新增"专家配置"折叠面板：
+### 4.4 前端数据层
 
-```vue
-<el-collapse v-model="expertCollapse">
-  <el-collapse-item title="专家配置" name="expert">
-    <el-form-item label="专家标题">
-      <el-input v-model="form.expert_profile.title" placeholder="如：内容创作专家" />
-    </el-form-item>
-    <el-form-item label="专家分类">
-      <el-select v-model="form.expert_profile.category">
-        <el-option label="AI工具专家" value="AI工具专家" />
-        <el-option label="法律财税" value="法律财税" />
-        <el-option label="技术研发" value="技术研发" />
-        <el-option label="产品设计" value="产品设计" />
-        <el-option label="创业投资" value="创业投资" />
-        <el-option label="SPC" value="SPC" />
-      </el-select>
-    </el-form-item>
-    <el-form-item label="标签">
-      <el-select v-model="form.expert_profile.tags" multiple>
-        <!-- 标签输入 -->
-      </el-select>
-    </el-form-item>
-    <el-form-item label="图标颜色">
-      <el-color-picker v-model="form.expert_profile.color" />
-    </el-form-item>
-    <el-form-item label="提示词模板">
-      <el-input v-model="form.expert_profile.prompt_template" type="textarea"
-        placeholder="请以【{name}·{title}】的身份协助我完成以下任务：" />
-    </el-form-item>
-    <el-form-item label="专长领域">
-      <el-select v-model="form.expert_profile.expertise_areas" multiple>
-        <!-- 领域输入 -->
-      </el-select>
-    </el-form-item>
-  </el-collapse-item>
-</el-collapse>
-```
-
-### 4.4 专家详情页
-
-点击专家卡片进入详情页，展示：
-
-- 基本信息：名称、标题、分类、描述
-- 系统提示词（可编辑）
-- 已配置工具列表（添加 / 移除）
-- 已关联技能列表（添加 / 移除）
-- 记忆文件列表（AGENTS.md / SOUL.md 等，可编辑）
-- 专家 Profile 配置（评分、使用量、标签等）
-
-### 4.5 Web 前端 Store
-
-**文件：`web/frontend/src/stores/`** （新增 `expert.ts` 或扩展现有 agent store）
-
-```typescript
-// web/frontend/src/stores/expert.ts
-export const useExpertStore = defineStore('expert', () => {
-  const experts = ref<AgentInfo[]>([])
-  const loading = ref(false)
-
-  async function fetchExperts() {
-    loading.value = true
-    const res = await api.get('/api/agents')
-    experts.value = res.data.data.agents.filter(
-      (a: AgentInfo) => a.type === 'sub' && a.expert_profile
-    )
-    loading.value = false
-  }
-
-  async function createExpert(payload: AgentCreateRequest) {
-    const res = await api.post('/api/agents', {
-      ...payload,
-      parent_id: mainAgentId, // 绑定到主智能体
-      expert_profile: payload.expert_profile,
-    })
-    await fetchExperts()
-    return res.data.data
-  }
-
-  async function updateExpert(id: string, payload: AgentUpdateRequest) {
-    await api.put(`/api/agents/${id}`, payload)
-    await fetchExperts()
-  }
-
-  async function deleteExpert(id: string) {
-    await api.delete(`/api/agents/${id}`)
-    await fetchExperts()
-  }
-
-  async function toggleExpertStatus(id: string) {
-    await api.patch(`/api/agents/${id}/status`)
-    await fetchExperts()
-  }
-
-  return { experts, loading, fetchExperts, createExpert, updateExpert, deleteExpert, toggleExpertStatus }
-})
-```
+- API 封装：`web/frontend/src/services/expertApi.ts`，将后端 snake_case 转 camelCase，并封装 CRUD、分类、精选、同步相关请求。
+- 类型定义：`web/frontend/src/types/expert.ts`。
+- Store：`web/frontend/src/stores/expert.ts`，管理列表、分页、搜索、分类、排序、精选场景和 CRUD 动作。
+- 当前 Store 仍保留 mock 数据和 `useMock` 分支；`useMock = false` 时走真实 API。后端接口已实现，后续可清理 mock 逻辑。
 
 ---
-
 ## 五、桌面版：专家同步服务（需求 1）
 
 ### 5.1 同步服务设计
@@ -462,33 +242,28 @@ interface WebApiEnvelope<T> {
   message: string
 }
 
-interface WebExpertInfo {
+interface ExpertSyncItem {
   id: string
   name: string
-  description: string
+  title: string
+  desc: string
+  category: string
+  tags: string[]
+  color: string
+  initials: string
+  icon: string
+  avatar_url: string | null
+  rating: number
+  users: string
   system_prompt: string
-  status: string
-  provider_id: string | null
-  model_id: string | null
-  tools: string[]
-  expert_profile: {
-    title: string
-    category: string
-    tags: string[]
-    icon: string
-    color: string
-    rating: number
-    users: string
-    recommended_tools: string[]
-    recommended_model: string | null
-    prompt_template: string
-    is_expert: boolean
-    expertise_areas: string[]
-  }
+  scene: string | null
+  sort_order: number
 }
 
-interface ExpertListData {
-  experts: WebExpertInfo[]
+interface ExpertSyncListData {
+  items: ExpertSyncItem[]
+  total: number
+  synced_at: number
 }
 
 interface ExpertSyncServiceDeps {
@@ -504,28 +279,26 @@ const TOKEN_KEY_PREFIX = 'expert-sync:'
 const EXPERT_SCOPE = 'expert:read'
 
 /** 将 Web 专家数据映射为桌面版展示模型 */
-function mapExpert(item: WebExpertInfo): DesktopExpert {
-  const ep = item.expert_profile
+function mapExpert(item: ExpertSyncItem): DesktopExpert {
   return {
     id: item.id,
     name: item.name,
-    title: ep.title || item.description,
-    tags: ep.tags,
-    desc: item.description,
-    color: ep.color || 'linear-gradient(135deg,#0891b2,#0e7490)',
-    icon: ep.icon || 'Zap',
-    category: ep.category,
-    rating: ep.rating,
-    users: ep.users,
+    title: item.title || item.desc,
+    tags: item.tags,
+    desc: item.desc,
+    color: item.color || 'linear-gradient(135deg,#0891b2,#0e7490)',
+    icon: item.icon || 'Zap',
+    category: item.category,
+    rating: item.rating,
+    users: item.users,
     initials: item.name.charAt(0),
-    // 子智能体配置所需字段
     systemPrompt: item.system_prompt,
-    tools: item.tools,
-    providerId: item.provider_id,
-    modelId: item.model_id,
-    promptTemplate: ep.prompt_template,
-    expertiseAreas: ep.expertise_areas,
-    isExpert: ep.is_expert,
+    tools: [],
+    providerId: null,
+    modelId: null,
+    promptTemplate: '',
+    expertiseAreas: [],
+    isExpert: true,
   }
 }
 
@@ -533,7 +306,7 @@ function mapExpert(item: WebExpertInfo): DesktopExpert {
  * 专家同步服务：从 Web 版拉取专家数据
  *
  * 复用 SkillSyncService 的 OAuth2 授权流程（共享 token 或独立 token），
- * 通过 expert:read scope 调用 /api/agents/experts/list 拉取专家列表。
+ * 通过 expert:read scope 调用 /api/expert-sync/list 拉取专家精简列表。
  */
 export class ExpertSyncService {
   private readonly http: AxiosInstance
@@ -580,10 +353,10 @@ export class ExpertSyncService {
   /** 拉取并同步专家数据 */
   async sync(localUserId: string): Promise<{ experts: DesktopExpert[]; syncedAt: number }> {
     const accessToken = await this.oauth2.ensureValidAccessToken(this.tokenKey(localUserId))
-    const data = await this.request<ExpertListData>('get', '/api/agents/experts/list', undefined, {
+    const data = await this.request<ExpertSyncListData>('get', '/api/expert-sync/list', undefined, {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
-    this.cachedExperts = data.experts.map(mapExpert)
+    this.cachedExperts = data.items.map(mapExpert)
     this.lastSyncedAt = Date.now()
     return { experts: this.cachedExperts, syncedAt: this.lastSyncedAt }
   }
@@ -1133,130 +906,97 @@ setSubagentMode(mode: 'sync' | 'async'): this {
 
 ---
 
-## 八、OAuth2 Scope 扩展
+## 八、OAuth2 Scope 与鉴权（已实现）
 
-### 8.1 新增 expert:read scope
+### 8.1 scope 定义
 
-**文件：`web/backend/src/api/oauth2/scope_service.py`**
+文件：`web/backend/src/api/oauth2/scope_service.py`
 
-```python
-SCOPE_LABELS: dict[str, str] = {
-    "skill:read": "读取并同步技能列表",
-    "skill:write": "创建、修改、删除技能",
-    "user:read": "读取用户资料（昵称、头像）",
-    "agent:read": "读取智能体配置",
-    "expert:read": "读取并同步专家列表",  # 新增
-    "agent:write": "修改智能体配置",
-    "conversation:read": "读取会话",
-    "conversation:write": "创建和修改会话",
-    "workspace:read": "读取工作区",
-}
-```
+`SCOPE_LABELS` 已包含：
 
-### 8.2 OAuth2 客户端配置
+- `expert:read`：读取并同步专家列表。
 
-在 `oauth2_clients_seed.json` 中，`ke-work-desktop` 客户端的 `allowed_scopes` 新增 `expert:read`：
+### 8.2 OAuth2 客户端授权
 
-```json
-{
-  "client_id": "ke-work-desktop",
-  "allowed_scopes": [
-    "skill:read",
-    "user:read",
-    "expert:read"
-  ]
-}
-```
+文件：`web/backend/src/db/seeds/oauth2_clients_seed.json`
 
-### 8.3 授权端点 scope 校验
+- `ke-work-desktop` 的 `allowed_scopes` 已包含 `expert:read`，同时包含 `skill:read`、`user:read`、`agent:read`、`conversation:read`、`conversation:write`、`workspace:read`。
+- `workmate-mobile` 的 `allowed_scopes` 也包含 `expert:read`。
 
-现有 `authorize` 端点已通过 `validate_scope_subset()` 校验请求 scope 是否在客户端允许列表中。新增 `expert:read` 后，桌面版 `ExpertSyncService.authorize()` 请求 `expert:read` scope 即可通过校验。
+### 8.3 鉴权差异
 
-### 8.4 专家接口鉴权
+- Web 管理 API `/api/experts` 使用 `get_current_user_id`，只校验第一方 access token。
+- 同步 API `/api/expert-sync` 使用 `require_scope("expert:read")`。该依赖对含 `client_id` 的 OAuth2 客户端 token 校验 scope；对 Web 第一方 token（无 `client_id`）按登录态放行。
 
-`GET /api/agents/experts/list` 端点需要 `expert:read` scope 校验：
-
-```python
-@router.get("/experts/list", response_model=ApiResponse[ExpertListResponse])
-@handle_errors
-async def expert_list(
-    db: AsyncSession = Depends(get_db),
-    token_data: TokenData = Depends(require_scope("expert:read")),  # 新增 scope 校验
-):
-    result = await list_experts(db)
-    return ok(result)
-```
-
-> `require_scope` 依赖从现有 OAuth2 中间件中复用，校验 access_token 的 scope 声明中包含 `expert:read`。
+依赖定义：`web/backend/src/api/deps.py`。
 
 ---
-
 ## 九、测试方案
 
-### 9.1 Web 后端测试
+### 9.1 Web 后端测试（待补充）
 
 | 测试项 | 方法 | 预期 |
 |--------|------|------|
-| Agent 表新增 expert_profile 列 | 迁移后查询表结构 | 列存在且类型为 JSON/TEXT |
-| 创建带 expert_profile 的子智能体 | POST /api/agents 带 expert_profile | 返回 AgentInfo 含 expert_profile |
-| 查询专家列表 | GET /api/agents/experts/list | 只返回 expert_profile 非空的活跃子智能体 |
-| 更新专家 expert_profile | PUT /api/agents/{id} | expert_profile 字段更新 |
-| 删除专家 | DELETE /api/agents/{id} | 级联删除关联记录 |
-| expert:read scope 校验 | 无 token / 无效 scope 请求 | 返回 401/403 |
-| 子智能体构建 | create_subagents() | 包含 expert_profile 非空的子智能体 |
+| 专家表结构 | 启动后检查 `expert_profiles` 表 | 表存在，`agent_id` 外键 CASCADE |
+| 创建专家 | POST /api/experts | 同时写入 agents、expert_profiles、关联表 |
+| 专家列表筛选 | GET /api/experts?keyword=&category=&featured=&status=&sort= | 过滤、排序、分页正确 |
+| 更新展示元数据 | PUT /api/experts/{id}/profile | 仅更新传入字段 |
+| 批量更新配置 | PUT /api/experts/{id}/config | 工具 / 技能 / MCP 全量替换正确 |
+| 删除专家 | DELETE /api/experts/{id} | profile 与关联数据级联清理 |
+| 状态切换 | PATCH /api/experts/{id}/status | active / inactive 互切 |
+| 同步列表 | GET /api/expert-sync/list | 仅返回 is_published=true 且 active 的专家 |
+| scope 校验 | 无 token / 缺少 expert:read 请求同步 API | 返回 401 / 403 |
+| 版本快照 | 创建 / 更新专家 | agent_versions 生成快照 |
 
-### 9.2 Web 前端测试
-
-| 测试项 | 方法 | 预期 |
-|--------|------|------|
-| 专家筛选 | 切换 filterType 为 'expert' | 只显示 expert_profile 非空的智能体 |
-| 创建专家表单 | 填写专家配置后提交 | 成功创建，列表刷新 |
-| 编辑专家 | 修改 expert_profile 字段 | 更新成功 |
-| 删除专家 | 点击删除 | 确认后删除，列表刷新 |
-
-### 9.3 桌面版测试
+### 9.2 Web 前端测试（待补充）
 
 | 测试项 | 方法 | 预期 |
 |--------|------|------|
-| 专家同步授权 | 点击"同步专家"→ 浏览器授权 | 返回 authorized 状态 |
-| 专家同步拉取 | sync() | 返回 DesktopExpert 列表 |
-| 专家页面展示 | ExpertPage.vue | 展示同步的专家卡片 |
-| 专家搜索 / 筛选 | 输入关键词 / 切换分类 | 过滤结果正确 |
-| 选中专家 → 输入框 | NewTaskPage 点专家召唤 | 提示词插入输入框开头 |
-| 专家 → 子智能体注入 | setExperts() | AgentBuilder.subagents 非空 |
-| 提交问题 → 任务分配 | 发送消息 | 主智能体将子任务委派给专家子智能体 |
-| 离线缓存 | 断网后打开 ExpertPage | 显示上次同步的缓存数据 |
+| 专家页加载 | 挂载 ExpertView | 调用列表接口并渲染 |
+| 搜索 / 分类 / 排序 | 触发对应交互 | 请求参数与结果正确 |
+| 创建 / 编辑抽屉 | 打开 ExpertEditDialog | 表单回填 / 提交数据正确 |
+| 克隆 / 删除 / 停用 | 触发卡片操作 | 调用对应 API，列表刷新 |
+| Mock 清理 | 移除 mock 分支后回归 | 真实 API 路径稳定 |
+
+### 9.3 桌面版测试（待实现）
+
+| 测试项 | 方法 | 预期 |
+|--------|------|------|
+| 同步授权 | 点击同步专家 → 浏览器授权 | 返回 authorized |
+| 同步拉取 | ExpertSyncService.sync | 返回 /api/expert-sync/list 数据并映射 |
+| 专家页面展示 | ExpertPage | 展示同步专家卡片 |
+| 选中专家 → 输入框 | NewTaskPage | 提示词插入输入框 |
+| 专家 → 子智能体注入 | AgentManager.setExperts | AgentBuilder.subagents 非空 |
+| 离线缓存 | 断网打开页面 | 显示缓存数据 |
 
 ---
+## 十、实施状态与后续步骤
 
-## 十、实施步骤与优先级
-
-| 阶段 | 任务 | 优先级 | 依赖 |
-|------|------|--------|------|
-| P0 | Web 后端：Agent 表新增 expert_profile 列 + 迁移 | 高 | 无 |
-| P0 | Web 后端：Schema / Service 扩展 expert_profile | 高 | P0 迁移 |
-| P0 | Web 后端：新增 GET /api/agents/experts/list 端点 | 高 | Schema 扩展 |
-| P0 | Web 后端：OAuth2 新增 expert:read scope | 高 | 无 |
-| P1 | Web 前端：AgentsView 专家筛选 / 创建 / 编辑表单 | 中 | P0 后端 |
-| P1 | Web 前端：Expert store + 专家管理 UI | 中 | P1 前端 |
-| P1 | 桌面版：ExpertSyncService + IPC handlers | 中 | P0 后端 API |
-| P1 | 桌面版：Preload 类型声明 + IPC 暴露 | 中 | ExpertSyncService |
-| P1 | 桌面版：catalog store 改造（静态 → 动态） | 中 | Preload |
-| P2 | 桌面版：ExpertPage.vue 改造（同步 / 展示 / 搜索） | 中 | Store |
-| P2 | 桌面版：AgentManager.setExperts() + expertToSubAgent() | 中 | Store |
-| P2 | 桌面版：NewTaskPage 专家选择 → 子智能体注入 | 中 | AgentManager |
-| P3 | 桌面版：专家数据本地 SQLite 缓存 | 低 | ExpertSyncService |
-| P3 | 桌面版：动态子智能体 / 异步子智能体集成 | 低 | AgentManager |
+| 阶段 | 任务 | 状态 | 依赖 |
+|------|------|------|------|
+| Web 后端 | ExpertProfile 表 + 管理 / 同步 API | 已完成 | 无 |
+| Web 后端 | OAuth2 expert:read scope + 客户端配置 | 已完成 | 无 |
+| Web 前端 | ExpertView / ExpertCard / ExpertEditDialog | 已完成 | Web 后端 API |
+| Web 前端 | expertApi / expert store / types | 已完成，仍保留 mock 分支 | Web 后端 API |
+| 桌面版 | ExpertSyncService 对齐 `/api/expert-sync/list` | 待实现 | 同步 API |
+| 桌面版 | Preload / IPC 暴露 | 待实现 | ExpertSyncService |
+| 桌面版 | catalog store 静态 → 动态 | 待实现 | Preload |
+| 桌面版 | ExpertPage 改造 | 待实现 | Store |
+| 桌面版 | AgentManager.setExperts + expertToSubAgent | 待实现 | Store |
+| 桌面版 | NewTaskPage 专家注入 | 待实现 | AgentManager |
+| 测试 | Web 后端 / 前端 / 桌面端测试 | 待补充 | 对应模块 |
+| 清理 | 移除前端 mock 专家数据和 mock 分支 | 待处理 | Web 前端 |
 
 ---
-
 ## 十一、假设与约定
 
-1. 专家在 Web 版中是 `type=sub` 且 `expert_profile IS NOT NULL` 的 Agent 记录，与主智能体（`type=main`）通过 `parent_id` 关联。
-2. Web 版专家管理复用现有 `/api/agents` 全套 CRUD，不新建独立专家管理端点（只新增只读列表端点供桌面版同步）。
-3. 桌面版专家数据是 Web 版的缓存副本，桌面版不直接修改专家——修改在 Web 版进行，桌面版重新同步。
-4. 桌面版 `ExpertSyncService` 复用 `SkillSyncService` 的 OAuth2 授权架构，使用独立 token key 前缀避免冲突。
-5. 专家子智能体的工具和模型在桌面版中的解析需要对接本地工具注册表和 `ModelService`，这是后续迭代的接入点。
-6. `selectedExpertId` 从 `number` 改为 `string`（Web UUID），需要数据迁移兼容 localStorage 中的旧值。
-7. DeepAgents 的 `SubAgent` 接口在 TypeScript npm 包与 Python 包之间结构一致，本方案据此设计跨端对齐的转换逻辑。
-8. 动态子智能体和异步子智能体在初始版本中预留接口但不默认启用，待专家功能稳定后按需打开。
+1. 专家是 `agents.type='sub'` 且存在 `expert_profiles` 记录的 Agent；主智能体为 `agents.type='main'`，专家通过 `parent_id` 挂到主智能体。
+2. 专家核心配置（模型、系统提示词、工具、技能、MCP）复用 `agents` 及其关联表；`expert_profiles` 只存面向用户展示的门面数据。
+3. Web 管理端走独立 `/api/experts`，不是复用 `/api/agents` 的专家过滤；同步端走独立 `/api/expert-sync`。
+4. 桌面版只同步已发布且启用的专家（`is_published=true` 且 `status='active'`），按 `sort_order` 倒序。
+5. Web 第一方 token 访问 `/api/expert-sync` 时，`require_scope` 按登录态放行；OAuth2 客户端 token 必须包含 `expert:read`。
+6. 桌面版 `ExpertSyncService` 应消费 `/api/expert-sync/list` 的 `items` 字段，而不是早期方案中的 `/api/agents/experts/list` 与 `experts` 字段。
+7. 前端 `expertApi.ts` 负责 snake_case / camelCase 转换；当前 `stores/expert.ts` 中的 mock 分支仅用于无后端阶段，后续可删除。
+8. 专家工具和模型在桌面版中仍需对接本地工具注册表与 ModelService，这是后续迭代接入点。
+9. `selectedExpertId` 从 number 改为 string（Web UUID），需兼容 localStorage 旧值。
+10. 动态子智能体和异步子智能体在初始版本中预留接口但不默认启用，待专家功能稳定后按需打开。

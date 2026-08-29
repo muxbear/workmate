@@ -32,6 +32,10 @@ const statusColor = computed(() => {
   }
 })
 
+const toggleLabel = computed(() =>
+  props.expert.status === 'active' ? '\u505c\u7528' : '\u542f\u7528',
+)
+
 const usageText = computed(() => {
   const count = props.expert.usageCount
   if (count >= 10000) return (count / 1000).toFixed(1) + 'w'
@@ -82,30 +86,30 @@ const usageText = computed(() => {
         </span>
         <span class="stat-item">{{ categoryLabel }}</span>
       </div>
-      <div class="footer-actions">
-        <el-tooltip content="编辑" placement="top">
-          <el-button text size="small" @click.stop="emit('edit', expert)">
-            <Pencil :size="14" />
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="克隆" placement="top">
-          <el-button text size="small" @click.stop="emit('clone', expert)">
-            <Copy :size="14" />
-          </el-button>
-        </el-tooltip>
-        <el-tooltip :content="expert.status === 'active' ? '停用' : '启用'" placement="top">
-          <el-switch
-            :model-value="expert.status === 'active'"
-            size="small"
-            @change="emit('toggle', expert)"
-          />
-        </el-tooltip>
-        <el-tooltip content="删除" placement="top">
-          <el-button text size="small" class="delete-btn" @click.stop="emit('delete', expert)">
-            <Trash2 :size="14" />
-          </el-button>
-        </el-tooltip>
-      </div>
+    </div>
+    <div class="card-actions">
+      <el-tooltip content="编辑" placement="top">
+        <el-button text size="small" @click.stop="emit('edit', expert)">
+          <Pencil :size="14" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip content="克隆" placement="top">
+        <el-button text size="small" @click.stop="emit('clone', expert)">
+          <Copy :size="14" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip content="删除" placement="top">
+        <el-button text size="small" class="delete-btn" @click.stop="emit('delete', expert)">
+          <Trash2 :size="14" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :content="toggleLabel" placement="top">
+        <el-switch
+          :model-value="expert.status === 'active'"
+          size="small"
+          @change="emit('toggle', expert)"
+        />
+      </el-tooltip>
     </div>
   </div>
 </template>
@@ -241,9 +245,10 @@ const usageText = computed(() => {
   color: #f59e0b;
 }
 
-.footer-actions {
+.card-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
 }
 

@@ -493,15 +493,19 @@ export const useExpertStore = defineStore('expert', () => {
 
   async function toggleStatus(id: string): Promise<void> {
     if (useMock) {
-      const idx = MOCK_EXPERTS.findIndex((e) => e.id === id)
-      if (idx !== -1) {
-        MOCK_EXPERTS[idx].status = MOCK_EXPERTS[idx].status === 'active' ? 'inactive' : 'active'
+      const mockIdx = MOCK_EXPERTS.findIndex((e) => e.id === id)
+      if (mockIdx !== -1) {
+        MOCK_EXPERTS[mockIdx].status = MOCK_EXPERTS[mockIdx].status === 'active' ? 'inactive' : 'active'
       }
-      await fetchExperts()
+      const localIdx = experts.value.findIndex((e) => e.id === id)
+      if (localIdx !== -1) {
+        experts.value[localIdx].status = experts.value[localIdx].status === 'active' ? 'inactive' : 'active'
+      }
       return
     }
-    await expertApi.toggleExpertStatus(id)
-    await fetchExperts()
+    const updated = await expertApi.toggleExpertStatus(id)
+    const idx = experts.value.findIndex((e) => e.id === id)
+    if (idx !== -1) experts.value[idx] = updated
   }
 
   async function cloneExpert(id: string): Promise<void> {

@@ -228,7 +228,7 @@ async def _query_mcp_configs(db: AsyncSession, agent_id: str) -> list[McpConfigB
 
 
 async def _get_main_agent_id(db: AsyncSession) -> str:
-    stmt = select(Agent).where(Agent.type == "main")
+    stmt = select(Agent).where(Agent.parent_id.is_(None))
     agent = (await db.execute(stmt)).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail="主智能体不存在")
@@ -260,7 +260,7 @@ async def list_experts(
     stmt = (
         select(Agent, ExpertProfile)
         .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.type == "sub")
+        .where(Agent.parent_id.is_not(None))
     )
 
     if keyword:
@@ -323,7 +323,7 @@ async def create_expert(db: AsyncSession, req: ExpertCreateRequest) -> ExpertInf
 
     agent = Agent(
         name=req.name,
-        type="sub",
+        type="expert",
         status="inactive",
         description=req.description,
         parent_id=main_agent_id,
@@ -615,7 +615,7 @@ async def clone_expert(db: AsyncSession, expert_id: str) -> ExpertInfo:
 
     cloned_agent = Agent(
         name=new_name,
-        type="sub",
+        type="expert",
         status="inactive",
         description=src_agent.description,
         parent_id=src_agent.parent_id,

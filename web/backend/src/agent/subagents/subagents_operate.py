@@ -29,7 +29,7 @@ async def create_subagents() -> list[dict]:
 
         sub_agent_infos = [
             a for a in result.agents
-            if a.type == "sub" and a.status == "active"
+            if a.parent_id is not None and a.status == "active"
         ]
 
         if not sub_agent_infos:

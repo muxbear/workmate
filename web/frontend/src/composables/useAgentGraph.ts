@@ -20,43 +20,41 @@ export function useAgentGraph() {
 
   const hasAgents = computed(() => agentStore.agents.length > 0)
 
+  function childrenOf(parentId: string): Agent[] {
+    return agentStore.agents.filter((a) => a.parentId === parentId)
+  }
+
   function buildNodes(): Node[] {
     const nodes: Node[] = []
-    const main = agentStore.mainAgent
-    if (!main) return nodes
-
-    nodes.push({
-      id: main.id,
-      type: 'agent',
-      position: { x: 0, y: 0 },
-      data: { agent: main, isMain: true },
-      draggable: true,
-    })
-
-    for (const sub of agentStore.subAgents) {
+    for (const agent of agentStore.agents) {
       nodes.push({
-        id: sub.id,
+        id: agent.id,
         type: 'agent',
         position: { x: 0, y: 0 },
-        data: { agent: sub, isMain: false },
+        data: {
+          agent,
+          isMain: !agent.parentId,
+          childCount: childrenOf(agent.id).length,
+        },
         draggable: true,
       })
     }
-
     return nodes
   }
 
   function buildEdges(): Edge[] {
     const edges: Edge[] = []
-    const main = agentStore.mainAgent
-    if (!main) return edges
+    const agents = agentStore.agents
 
-    for (const sub of agentStore.subAgents) {
-      const isActive = sub.status === 'active'
+    for (const agent of agents) {
+      if (!agent.parentId) continue
+      const parent = agents.find((a) => a.id === agent.parentId)
+      if (!parent) continue
+      const isActive = agent.status === 'active'
       edges.push({
-        id: `${main.id}->${sub.id}`,
-        source: main.id,
-        target: sub.id,
+        id: parent.id + '->' + agent.id,
+        source: parent.id,
+        target: agent.id,
         type: 'agent',
         animated: isActive,
         markerEnd: {
@@ -65,7 +63,7 @@ export function useAgentGraph() {
           width: 20,
           height: 20,
         },
-        data: { status: sub.status },
+        data: { status: agent.status },
       })
     }
 
@@ -74,6 +72,7 @@ export function useAgentGraph() {
 
   function applyLayout() {
     const raw = buildNodes()
+    const edges = buildEdges()
     if (raw.length === 0) {
       graphNodes.value = []
       graphEdges.value = []
@@ -88,13 +87,8 @@ export function useAgentGraph() {
       g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT })
     }
 
-    const mainNode = raw.find((n) => (n.data as { isMain: boolean }).isMain)
-    const subNodes = raw.filter((n) => !(n.data as { isMain: boolean }).isMain)
-
-    for (const sub of subNodes) {
-      if (mainNode) {
-        g.setEdge(mainNode.id, sub.id)
-      }
+    for (const edge of edges) {
+      g.setEdge(edge.source, edge.target)
     }
 
     dagre.layout(g)
@@ -102,27 +96,25 @@ export function useAgentGraph() {
     const hasLayout = g.node(raw[0].id) != null
     if (!hasLayout) {
       graphNodes.value = raw
-      graphEdges.value = buildEdges()
+      graphEdges.value = edges
       return
     }
 
-    graphNodes.value = raw.map((node) => {
+    for (const node of raw) {
       const pos = g.node(node.id)
-      if (!pos) return node
-      return {
-        ...node,
-        position: {
-          x: pos.x - NODE_WIDTH / 2,
-          y: pos.y - NODE_HEIGHT / 2,
-        },
+      if (!pos) continue
+      node.position = {
+        x: pos.x - NODE_WIDTH / 2,
+        y: pos.y - NODE_HEIGHT / 2,
       }
-    })
+    }
 
-    graphEdges.value = buildEdges()
+    graphNodes.value = raw
+    graphEdges.value = edges
   }
 
   watch(
-    () => [agentStore.mainAgent, agentStore.subAgents],
+    () => agentStore.agents,
     () => applyLayout(),
     { deep: true, immediate: true },
   )

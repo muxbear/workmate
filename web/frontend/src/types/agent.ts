@@ -41,7 +41,7 @@ export interface FileBrief {
 export interface Agent {
   id: string
   name: string
-  type: 'main' | 'sub'
+  type: 'main' | 'sub' | 'expert'
   status: 'active' | 'inactive' | 'error'
   tools: string[]
   skills: SkillBrief[]

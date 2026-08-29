@@ -75,7 +75,7 @@ class AgentBuilder:
             raise
 
         main_agents = [
-            a for a in result.agents if a.type == "main" and a.status == "active"
+            a for a in result.agents if a.parent_id is None and a.status == "active"
         ]
         if not main_agents:
             raise RuntimeError("数据库中不存在活跃的主智能体")

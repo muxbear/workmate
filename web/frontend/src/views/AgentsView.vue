@@ -147,7 +147,7 @@ async function handleDelete(id: string) {
 
 function handleNewSubAgent() {
   // 如果当前选中的是子智能体，先切换到主智能体
-  if (agentStore.selectedAgent?.type === 'sub') {
+  if (agentStore.selectedAgent?.parentId) {
     const main = agentStore.mainAgent
     if (main) agentStore.selectAgent(main.id)
   }
@@ -303,7 +303,7 @@ onMounted(() => {
       :visible="dialogVisible"
       :type="dialogType"
       :agent-name="agentStore.selectedAgent.name"
-      :agent-type="agentStore.selectedAgent.type"
+      :agent-type="agentStore.selectedAgent?.parentId ? 'sub' : 'main'"
       :default-scope="dialogDefaultScope"
       @close="dialogVisible = false"
       @add="handleAddConfig"
@@ -335,7 +335,7 @@ onMounted(() => {
       :mode="agentFormMode"
       :agent="editingAgent"
       :agent-name="agentStore.selectedAgent?.name ?? ''"
-      :agent-type="agentStore.selectedAgent?.type ?? 'main'"
+      :agent-type="agentStore.selectedAgent?.parentId ? 'sub' : 'main'"
       @close="agentFormVisible = false"
       @submit="handleAgentFormSubmit"
     />

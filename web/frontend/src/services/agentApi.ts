@@ -45,8 +45,8 @@ function toAgent(raw: Record<string, unknown>): Agent {
   return {
     id: raw.id as string,
     name: raw.name as string,
-    type: (raw.type as string) || 'sub',
-    status: (raw.status as string) || 'inactive',
+    type: (raw.type as Agent['type']) || 'sub',
+    status: (raw.status as Agent['status']) || 'inactive',
     description: (raw.description as string) || '',
     tools: (raw.tools as string[]) || [],
     skills: (raw.skills as SkillBrief[]) || [],

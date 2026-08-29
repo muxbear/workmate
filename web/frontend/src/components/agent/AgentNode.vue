@@ -7,7 +7,7 @@ import type { Agent } from '@/types/agent'
 
 const props = defineProps<{
   id: string
-  data: { agent: Agent; isMain: boolean }
+  data: { agent: Agent; isMain: boolean; childCount?: number }
   selected: boolean
 }>()
 
@@ -63,7 +63,7 @@ function statusIconClass(status: string): string {
         </div>
         <div class="node-stat">
           <span class="node-stat-label">{{ isMain ? '子智能体' : '调用' }}</span>
-          <span class="node-stat-value">{{ isMain ? (agent.subAgents?.length ?? 0) : (agent.callCount ?? 0) }}</span>
+          <span class="node-stat-value">{{ isMain ? (data.childCount ?? 0) : (agent.callCount ?? 0) }}</span>
         </div>
       </div>
     </div>
