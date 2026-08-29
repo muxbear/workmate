@@ -71,6 +71,8 @@ export interface AgentAPI {
   getPathForFile(file: File): string
   /** AI 改写润色输入文本（主进程调 LLM，非流式）；data 为改写结果 */
   polishText(text: string): Promise<IpcResult<string>>
+  /** 设置当前选中的专家为子智能体；调用完成后才可发送消息 */
+  setExperts(experts: DesktopExpert[]): Promise<IpcResult<null>>
 }
 
 export interface AuthAPI {
@@ -385,6 +387,42 @@ export interface SkillSyncAPI {
   disconnect(): Promise<IpcResult<null>>
 }
 
+/** 桌面端专家列表项（Web ExpertSyncItem 映射后的结果） */
+export interface DesktopExpert {
+  id: string
+  name: string
+  title: string
+  tags: string[]
+  desc: string
+  color: string
+  icon: string
+  category: string
+  rating: number
+  users: string
+  initials: string
+  systemPrompt: string
+  tools: string[]
+  providerId: string | null
+  modelId: string | null
+  promptTemplate: string
+  expertiseAreas: string[]
+  isExpert: boolean
+}
+
+/** Web 专家同步状态 */
+export type ExpertSyncStatus = {
+  status: 'unauthorized' | 'authorized'
+  webUser: WebUser | null
+}
+
+export interface ExpertSyncAPI {
+  getStatus(): Promise<IpcResult<ExpertSyncStatus>>
+  authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
+  sync(): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number }>>
+  getCachedExperts(): Promise<IpcResult<DesktopExpert[]>>
+  disconnect(): Promise<IpcResult<null>>
+}
+
 /** 渲染层可见的完整 API 形状 */
 export interface KeWorkWindowApi
   extends AgentAPI,
@@ -395,8 +433,10 @@ export interface KeWorkWindowApi
     ConfigAPI,
     ModelAPI,
     BrowserAPI,
-    SkillSyncAPI,
-    RuntimeAPI {}
+    RuntimeAPI {
+  skillSync: SkillSyncAPI
+  expert: ExpertSyncAPI
+}
 
 declare global {
   interface Window {

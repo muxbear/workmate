@@ -133,7 +133,7 @@ const handleLogin = async (): Promise<void> => {
     loading.value = true
     try {
       const result = await window.api.loginBySms(smsMobile.value, smsCode.value)
-      if (!result.success) throw new Error(result.error)
+      if (!result.success || !result.data) throw new Error(result.error || '登录失败')
       userStore.setLogin(result.data)
       router.push('/home')
     } catch (err: unknown) {
@@ -157,7 +157,7 @@ const handleLogin = async (): Promise<void> => {
     loading.value = true
     try {
       const result = await window.api.loginByPassword(account.value, password.value)
-      if (!result.success) throw new Error(result.error)
+      if (!result.success || !result.data) throw new Error(result.error || '账号或密码错误')
       userStore.setLogin(result.data)
       router.push('/home')
     } catch (err: unknown) {
@@ -216,7 +216,7 @@ const handleWechatLogin = async (): Promise<void> => {
     }
 
     const response = await window.api.loginByWechat(result.code)
-    if (!response.success) throw new Error(response.error)
+    if (!response.success || !response.data) throw new Error(response.error || '微信登录失败')
     userStore.setLogin(response.data)
     router.push('/home')
   } catch (err: unknown) {
@@ -244,23 +244,25 @@ const handleOAuth2Login = async (): Promise<void> => {
   oauth2Loading.value = true
   try {
     const result = await window.api.loginByOAuth2()
-    if (!result.success) {
-      throw new Error(result.error)
+    const data = result.data
+    if (!result.success || !data) {
+      throw new Error(result.error || 'OAuth2 登录失败')
     }
-    if (result.data.status === 'needs-confirmation') {
-      const confirmed = window.confirm(result.data.message || '确认继续？')
+    if (data.status === 'needs-confirmation') {
+      const confirmed = window.confirm(data.message || '确认继续？')
       if (!confirmed) {
         oauth2Error.value = '已取消操作'
         return
       }
       const confirmResult = await window.api.confirmOAuth2Link(
-        result.data.action || 'switch-identity'
+        data.action || 'switch-identity'
       )
-      if (!confirmResult.success) {
-        throw new Error(confirmResult.error)
+      const confirmData = confirmResult.data
+      if (!confirmResult.success || !confirmData) {
+        throw new Error(confirmResult.error || 'OAuth2 确认失败')
       }
-      if (confirmResult.data.status !== 'logged-in') {
-        throw new Error(confirmResult.data.message || '登录失败')
+      if (confirmData.status !== 'logged-in') {
+        throw new Error(confirmData.message || '登录失败')
       }
     }
     recordAgreement()

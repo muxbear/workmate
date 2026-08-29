@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { experts, useCatalogStore } from '@store/catalog'
 
 const emit = defineEmits<{ summon: [] }>()
@@ -10,6 +10,7 @@ const catalog = useCatalogStore()
 const expertFilter = ref('全部')
 const sort = ref<'综合' | '最新'>('综合')
 const search = ref('')
+const syncStatus = ref<'idle' | 'syncing' | 'unauthorized'>('idle')
 
 const featuredScenes = [
   {
@@ -49,7 +50,7 @@ const featuredScenes = [
 const expertFilters = ['全部', 'SPC', 'AI工具专家', '产品设计', '技术研发', '创业投资', '法律财税']
 
 const filteredExperts = computed(() =>
-  experts.filter(
+  experts.value.filter(
     (e) =>
       (expertFilter.value === '全部' || e.category === expertFilter.value) &&
       (e.name.includes(search.value) ||
@@ -59,10 +60,50 @@ const filteredExperts = computed(() =>
 )
 
 /** 召唤专家：与“+ 菜单 → 专家 → 选择该专家”共用同一 catalog.setExpert 逻辑 */
-const summonExpert = (id: number): void => {
+const summonExpert = (id: string): void => {
   catalog.setExpert(id)
   emit('summon')
 }
+
+async function loadExperts() {
+  const cachedRes = await window.api.expert.getCachedExperts()
+  const cachedData = cachedRes.data
+  if (cachedRes.success && cachedData && cachedData.length > 0) {
+    catalog.setExperts(cachedData)
+  }
+
+  const statusRes = await window.api.expert.getStatus()
+  const statusData = statusRes.data
+  if (statusRes.success && statusData && statusData.status === 'authorized') {
+    syncStatus.value = 'syncing'
+    const syncRes = await window.api.expert.sync()
+    if (syncRes.success && syncRes.data) {
+      catalog.setExperts(syncRes.data.experts)
+    }
+    syncStatus.value = 'idle'
+  } else {
+    syncStatus.value = 'unauthorized'
+  }
+}
+
+async function handleSync() {
+  const statusRes = await window.api.expert.getStatus()
+  const statusData = statusRes.data
+  if (statusRes.success && statusData && statusData.status !== 'authorized') {
+    await window.api.expert.authorize()
+  }
+
+  syncStatus.value = 'syncing'
+  const res = await window.api.expert.sync()
+  if (res.success && res.data) {
+    catalog.setExperts(res.data.experts)
+  }
+  syncStatus.value = 'idle'
+}
+
+onMounted(() => {
+  void loadExperts()
+})
 </script>
 
 <template>
@@ -84,7 +125,7 @@ const summonExpert = (id: number): void => {
         </svg>
         <input v-model="search" type="text" placeholder="搜索专家" class="search-input" />
       </div>
-      <button class="sync-btn">
+      <button class="sync-btn" :disabled="syncStatus === 'syncing'" @click="handleSync">
         <svg
           width="12"
           height="12"

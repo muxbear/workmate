@@ -336,7 +336,8 @@ export const useExpertStore = defineStore('expert', () => {
   const page = ref(1)
   const pageSize = ref(20)
 
-  const featuredScenes = ref<FeaturedScene[]>(MOCK_SCENES)
+  const featuredScenes = ref<FeaturedScene[]>([])
+  const featuredExperts = ref<Expert[]>([])
 
   async function fetchExperts() {
     loading.value = true
@@ -363,11 +364,37 @@ export const useExpertStore = defineStore('expert', () => {
         experts.value = result.items
         total.value = result.total
       }
+
+      await fetchFeatured()
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '加载专家列表失败'
     } finally {
       loading.value = false
     }
+  }
+
+  async function fetchFeatured() {
+    if (useMock) {
+      featuredScenes.value = MOCK_SCENES
+      featuredExperts.value = MOCK_EXPERTS
+      return
+    }
+
+    try {
+      const result = await expertApi.fetchFeaturedExperts()
+      featuredScenes.value = result.scenes
+      featuredExperts.value = result.experts
+    } catch {
+      // 精选数据失败不影响专家列表主流程
+    }
+  }
+
+  function getFeaturedExpertName(id: string): string {
+    return (
+      featuredExperts.value.find((e) => e.id === id)?.name ||
+      experts.value.find((e) => e.id === id)?.name ||
+      id
+    )
   }
 
   async function getExpert(id: string): Promise<Expert | null> {
@@ -544,7 +571,10 @@ export const useExpertStore = defineStore('expert', () => {
     page,
     pageSize,
     featuredScenes,
+    featuredExperts,
     fetchExperts,
+    fetchFeatured,
+    getFeaturedExpertName,
     getExpert,
     createExpert,
     updateExpert,

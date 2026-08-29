@@ -28,6 +28,17 @@ async def expert_sync_list(
     return ok(result)
 
 
+@router.get("/featured", response_model=ApiResponse[dict])
+@handle_errors
+async def expert_sync_featured(
+    user_id: str = Depends(require_scope("expert:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取精选场景 + 精选专家（供桌面端同步）。."""
+    result = await get_featured(db)
+    return ok(result)
+
+
 @router.get("/{expert_id}", response_model=ApiResponse[ExpertInfo])
 @handle_errors
 async def expert_sync_detail(
@@ -37,15 +48,4 @@ async def expert_sync_detail(
 ):
     """获取单个专家的完整配置（供桌面端同步详情）。."""
     result = await sync_detail(db, expert_id)
-    return ok(result)
-
-
-@router.get("/featured", response_model=ApiResponse[dict])
-@handle_errors
-async def expert_sync_featured(
-    user_id: str = Depends(require_scope("expert:read")),
-    db: AsyncSession = Depends(get_db),
-):
-    """获取精选场景 + 精选专家（供桌面端同步）。."""
-    result = await get_featured(db)
     return ok(result)

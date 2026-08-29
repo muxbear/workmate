@@ -4,6 +4,23 @@
 
 ---
 
+## 方案现状与调研结论
+
+> 本次已对照仓库实际代码完成静态核对。总体结论：**方案方向可行，Web 端大部分已落地，但文档中的部分字段、接口和实现步骤与实际代码或当前 DeepAgents TypeScript 包不一致，需按本节修正后再进入编码。**
+
+核对要点：
+
+1. Web 后端已实际实现 `expert_profiles` 表、`/api/experts` 管理 API、`/api/expert-sync` 同步 API 和 `expert:read` scope。
+2. 当前创建专家时写入的是 `agents.type=expert`，不是文档原稿中的 `type=sub`。应统一为 `expert`。
+3. `/api/expert-sync/featured` 路由目前被 `/{expert_id}` 遮挡，若要启用精选同步接口，需要调整路由声明顺序。
+4. Web 前端专家列表和 CRUD 已接真实 API，但精选场景仍是 `MOCK_SCENES`，未调用 `fetchFeaturedExperts()`。
+5. 桌面版静态子智能体可用，但 TypeScript 的 `SubAgent` 使用 `systemPrompt`，不是 `prompt`；文档原示例会编译失败。
+6. 当前 `deepagents@1.11.1` 没有 `dynamicSubagents` / `subagentMode` 这两个直接配置项；动态/异步子智能体应按实际 API 重新设计。
+7. `AgentManager.setExperts()` 不能只调用 `builder.setSubagents()`，必须重建 `this.agent` 后才对后续消息生效。
+8. `catalog.ts` 静态专家改动态后，还需要同步修改 `PlusMenu.vue`，并兼容旧的 number 类型 localStorage 选择状态。
+
+---
+
 ## 一、整体架构与数据流
 
 ```
@@ -48,7 +65,7 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据单独存储在 `expert_profiles` 表；Web 管理页面走 `/api/experts`，桌面版 / 移动版同步走 `/api/expert-sync`。
+Web 版已落地：专家作为 `agents.type='expert'` 的记录，展示元数据单独存储在 `expert_profiles` 表；Web 管理页面走 `/api/experts`，桌面版 / 移动版同步走 `/api/expert-sync`。
 
 专家数据流仍为四层：Web 数据库存储 → REST API → 桌面版同步服务 → Pinia Store → AgentManager 子智能体配置。
 
@@ -61,7 +78,7 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 
 > 文档：https://docs.langchain.com/oss/python/deepagents/subagents
 
-- 子智能体通过 `create_deep_agent()` 的 `subagents=[...]` 参数声明，每个子智能体是一个 dict，包含 `name`、`description`、`tools`、`prompt`、`model`、`skills` 等字段。
+- 子智能体通过 `create_deep_agent()` 的 `subagents=[...]` 参数声明；Python 版使用 dict，桌面版 TypeScript 的 `SubAgent` 必填 `name`、`description`、`systemPrompt`，可选 `tools`、`model`、`skills` 等字段。注意 TypeScript 字段名是 `systemPrompt`，不是 `prompt`。
 - 主智能体在规划阶段根据子智能体的 `description` 自动决定是否委派任务。子智能体作为独立的图节点运行，拥有自己的 LLM 调用上下文。
 - 子智能体可以拥有独立的工具集和 skills 目录（`/skills/<agent_id>/`），与主智能体隔离。
 - 桌面版 `deepagents` npm 包中对应 `SubAgent` 接口，通过 `createDeepAgent({ subagents })` 传入。
@@ -71,7 +88,7 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 > 文档：https://docs.langchain.com/oss/python/deepagents/dynamic-subagents
 
 - 动态子智能体在运行时由主智能体自行创建，而非在编译期静态声明。
-- 通过 `dynamic_subagents=True`（或 `AgentBuilder` 链中设置）启用，主智能体获得 `create_subagent` 工具，可按需生成新的子智能体。
+- 当前 TypeScript 包没有 `dynamic_subagents=True` 这样的直接开关；动态委派由 DeepAgents 的 task tool 和已声明的 `subagents` 完成。若需临时扩展，应基于实际 `subagents` / `createSubAgentMiddleware` 设计，而不是新增 `dynamicSubagents` 布尔配置。
 - 适用于任务不确定、专家角色可能临时扩展的场景。本方案中桌面版主智能体默认使用静态子智能体（从同步的专家列表构建），同时保留动态子智能体能力供运行时扩展。
 
 ### 2.3 异步子智能体（Async Subagents）
@@ -79,9 +96,9 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 > 文档：https://docs.langchain.com/oss/python/deepagents/async-subagents
 
 - 异步子智能体允许子任务在后台执行，主智能体不必等待其完成即可继续推进。
-- 通过 `subagent_mode="async"` 配置，子智能体任务进入异步队列，完成后通过回调 / 事件流通知主智能体。
+- TypeScript 包中异步子智能体通过 `AsyncSubAgent` + `createAsyncSubAgentMiddleware` 实现，要求 `graphId` 和可选 `url`，指向远程 Agent Protocol server；没有 `subagentMode='async'` 这类简单开关。
 - 适用于耗时较长（如深度研究、大量文件处理）的专家任务，主智能体可并行处理多个子任务。
-- 本方案在桌面版 AgentManager 中预留 `asyncSubagents` 选项，当专家任务涉及重计算时启用异步模式。
+- 因此桌面版如需异步专家，需准备远程 Agent Protocol 服务，并注入 async middleware；不能仅靠本地开关实现。
 
 ### 2.4 解释器（Interpreters）
 
@@ -112,7 +129,7 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 - 新增 `expert_profiles` 表，保存展示元数据：`title`、`category`、`tags`、`icon`、`color`、`initials`、`avatar_url`、`rating`、`usage_count`、`featured`、`scene`、`sort_order`、`is_published` 等。
 - `expert_profiles.agent_id` 为主键 + 外键，指向 `agents.id`，`ondelete="CASCADE"`，与 Agent 为 1:1。
 - 工具、技能、MCP 继续复用 `agent_tools`、`agent_skills`、`agent_mcp_configs` 关联表。
-- 专家判定：`agents.type = 'sub'` 且存在对应 `expert_profiles` 记录。
+- 专家判定：`agents.type = 'expert'` 且存在对应 `expert_profiles` 记录。
 
 模型文件：`web/backend/src/db/models/expert_profile.py`
 
@@ -172,7 +189,7 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 - `ExpertAssembler`：工厂式组装 `Agent + ExpertProfile + tools + skills + mcp_configs`，保证列表 / 详情 / 同步数据一致。
 - `SORT_STRATEGIES`：策略字典实现 rating / usage / recent / name 排序。
 - `list_experts`：JOIN `agents` + `expert_profiles`，先筛选再排序，最后内存分页。
-- `create_expert`：插入 `Agent`（type=sub，parent_id=主智能体，status=inactive）+ `ExpertProfile` + 关联表，并创建版本快照、失效图缓存。
+- `create_expert`：插入 `Agent`（type=expert，parent_id=主智能体，status=inactive）+ `ExpertProfile` + 关联表，并创建版本快照、失效图缓存。
 - `update_expert` / `update_expert_profile` / `update_expert_config`：更新对应字段；配置类更新采用“先快照 → 全量替换关联 → 提交”的事务模式。
 - `delete_expert`：删除 `ExpertProfile` 和 `Agent`，级联清理关联。
 - `toggle_expert_status`：切换 `Agent.status`。
@@ -196,7 +213,7 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 
 - 顶部标题 + 搜索框 + 刷新 + 新建专家。
 - 错误提示条（可重试）。
-- 精选场景区域，展示各场景及关联专家。
+- 精选场景区域（当前为静态 `MOCK_SCENES`，需接 `/api/experts/featured` 才能真正展示后端数据）。
 - 分类筛选 chips，排序按钮（评分 / 使用量 / 最新 / 名称）。
 - 专家卡片网格，支持编辑、克隆、启用 / 停用、删除。
 - 分页条。
@@ -219,7 +236,7 @@ Web 版已落地：专家作为 `agents.type='sub'` 的记录，展示元数据�
 - API 封装：`web/frontend/src/services/expertApi.ts`，将后端 snake_case 转 camelCase，并封装 CRUD、分类、精选、同步相关请求。
 - 类型定义：`web/frontend/src/types/expert.ts`。
 - Store：`web/frontend/src/stores/expert.ts`，管理列表、分页、搜索、分类、排序、精选场景和 CRUD 动作。
-- 当前 Store 仍保留 mock 数据和 `useMock` 分支；`useMock = false` 时走真实 API。后端接口已实现，后续可清理 mock 逻辑。
+- 当前 Store 的列表/CRUD 已通过 `useMock = false` 走真实 API；但 `featuredScenes` 仍初始化为 `MOCK_SCENES`，`fetchFeaturedExperts()` 尚未被调用，需补接真实精选数据后清理 mock。
 
 ---
 ## 五、桌面版：专家同步服务（需求 1）
@@ -495,10 +512,17 @@ import { registerExpertSyncHandlers } from './ipc/expert-sync-handlers'
 // 在 app.whenReady() 中
 const expertSyncService = new ExpertSyncService({
   secureStorage,
-  openExternal: shell.openExternal,
+  openExternal: (url) =>
+    process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
+      ? openOAuthWindow(url)
+      : shell.openExternal(url),
+  apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
+  clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
 })
 registerExpertSyncHandlers(ipcMain, { expertSyncService, session })
 ```
+
+> 说明：`expert:read` 使用独立 token key，首次同步专家会触发一次单独的 OAuth2 授权；如果希望和技能同步共享登录态，需统一 scope 与 token key。
 
 ### 5.4 Preload 类型声明
 
@@ -602,6 +626,8 @@ function clearExpertItems(): void {
 // selectedExpertId 类型从 number 改为 string | null
 const selectedExpertId = ref<string | null>(loadPersisted().selectedExpertId)
 ```
+
+> 注意：实际还有 `PlusMenu.vue` 直接使用 `store.experts`，也需要同步改为 `experts.value` 和 string id。localStorage 中旧的 `selectedExpertId` / `recentExpertIds` 若为 number，需要迁移/忽略。
 
 ### 6.2 ExpertPage.vue 改造
 
@@ -736,12 +762,12 @@ function buildExpertPrompt(expert: Expert): string {
 
 ```typescript
 interface SubAgent {
-  name: string          // 子智能体名称（唯一标识）
-  description: string    // 描述（主智能体据此决定何时委派任务）
-  tools?: unknown[]      // 工具列表
-  prompt?: string        // 系统提示词
-  model?: string         // 模型标识
-  skills?: string[]      // skills 目录路径
+  name: string
+  description: string
+  systemPrompt: string
+  tools?: unknown[]
+  model?: string
+  skills?: string[]
 }
 ```
 
@@ -762,7 +788,7 @@ function expertToSubAgent(expert: DesktopExpert): SubAgent {
   return {
     name: expert.name,
     description,
-    prompt: expert.systemPrompt || undefined,
+    systemPrompt: expert.systemPrompt || '',
     // tools 和 model 在桌面版由本地工具注册表和模型服务解析，
     // 此处暂传空数组 / undefined，后续迭代中接入本地工具注册
     tools: [],
@@ -790,9 +816,9 @@ setExperts(experts: DesktopExpert[]): this {
 发送时（NewTaskPage.vue → agentStore.sendMessage）：
   5. agentStore 从 catalog 读取 selectedExpert
   6. 调用 IPC：window.api.agent.setExperts([selectedExpert])
-  7. 主进程 AgentManager.setExperts() → builder.setSubagents()
-  8. AgentManager 重新构建 agent（或热更新 subagents）
-  9. agent.streamEvents() 提交问题
+  7. 主进程 AgentManager.setExperts() 保存专家并调用 buildAgent() 重建 agent
+  8. 渲染层等待 setExperts() 返回成功
+  9. 再调用 sendAgentMessage() 提交问题
 
 主智能体运行时：
   10. 主智能体收到消息，prompt 开头是专家提示词
@@ -810,7 +836,7 @@ setExperts(experts: DesktopExpert[]): this {
 // 在 conversation-handlers.ts 或新建 agent-handlers.ts 中
 ipc.handle('agent:set-experts', async (_event, experts: DesktopExpert[]) => {
   try {
-    agentManager.setExperts(experts)
+    await agentManager.setExperts(experts)
     return ok(null)
   } catch (err) {
     return fail((err as Error).message)
@@ -848,18 +874,43 @@ agent: {
 本方案推荐策略 A，保留策略 B 作为配置选项。
 
 ```typescript
-// AgentManager 新增配置项
+// AgentManager 新增状态与重建逻辑
+private experts: DesktopExpert[] = []
 private expertMode: 'selected' | 'all' = 'selected'
+private currentMode: WorkMode = 'local'
 
 setExpertMode(mode: 'selected' | 'all'): this {
   this.expertMode = mode
   return this
 }
 
-// 在 buildAgent 中
+/** 设置专家并重建 agent；调用方必须 await 后再发送消息 */
+async setExperts(experts: DesktopExpert[]): Promise<void> {
+  this.experts = experts
+  if (!this.builder) throw new Error('AgentManager not initialized')
+  this.initPromise = this.buildAgent(this.currentMode)
+  await this.initPromise
+}
+
+// 在 buildAgent 中，在 this.agent = await this.builder.build() 前写入：
 if (this.expertMode === 'all' && this.experts.length > 0) {
-  const subagents = this.experts.map(expertToSubAgent)
-  this.builder.setSubagents(subagents)
+  this.builder.setSubagents(this.experts.map(expertToSubAgent))
+} else if (this.expertMode === 'selected' && this.experts.length > 0) {
+  this.builder.setSubagents(this.experts.map(expertToSubAgent))
+}
+
+// init()/switchMode() 中同步记录 currentMode
+async init(mode: WorkMode): Promise<void> {
+  this.currentMode = mode
+  this.initPromise = this.buildAgent(mode)
+  return this.initPromise
+}
+
+async switchMode(newMode: WorkMode): Promise<void> {
+  this.currentMode = newMode
+  if (!this.builder) throw new Error('AgentManager not initialized')
+  this.initPromise = this.buildAgent(newMode)
+  await this.initPromise
 }
 ```
 
@@ -876,33 +927,17 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 | 模型解析 | `resolve_model(provider_id, model_id)` | `ModelService` / `ModelFactory` |
 | Skills 路径 | `/skills/{agent_id}/` | `/skills/{expert_id}/`（本地或从 Web 同步） |
 
-桌面版与 Web 版使用同一个 `deepagents` 库（Web 用 Python 版，桌面版用 TypeScript npm 版），SubAgent 结构一致，确保专家配置在两端行为一致。
+桌面版与 Web 版分别使用 `deepagents` 的 TypeScript 版和 Python 版；两者字段命名存在差异，例如桌面版是 `systemPrompt`。转换时不要照搬 Python 版的 `prompt` / `system_prompt` 字段名。
 
 ### 7.8 动态子智能体与异步子智能体的集成点
 
 根据 DeepAgents 文档：
 
-**动态子智能体**：桌面版可在 `AgentBuilder` 中启用 `dynamicSubagents: true`，主智能体获得 `create_subagent` 工具。当同步的专家列表中没有匹配的专家时，主智能体可临时创建新子智能体。
+**动态子智能体**：当前 TypeScript 版不通过 `dynamicSubagents: true` 开启。主智能体已经通过 task tool 依据 `subagents[].description` 动态选择并委派；若需要更多自定义行为，应基于 `createSubAgentMiddleware` / `SubAgent` 设计，而不是新增不存在的布尔配置。
 
-```typescript
-// AgentBuilder.ts 新增
-setDynamicSubagents(enabled: boolean): this {
-  this.config.dynamicSubagents = enabled
-  return this
-}
-```
+**异步子智能体**：如需异步专家，应使用 `AsyncSubAgent` + `createAsyncSubAgentMiddleware`，每个异步子智能体需要指向远程 Agent Protocol server 的 `graphId` 和可选 `url`。这是一个独立中间件，不是本地 `subagentMode` 开关。
 
-**异步子智能体**：当专家任务耗时较长（如深度研究），可启用异步模式：
-
-```typescript
-// AgentBuilder.ts 新增
-setSubagentMode(mode: 'sync' | 'async'): this {
-  this.config.subagentMode = mode
-  return this
-}
-```
-
-两者均在桌面版中预留接口，后续按需启用。
+两者均标记为后续迭代，初始版本不启用。
 
 ---
 
@@ -966,7 +1001,7 @@ setSubagentMode(mode: 'sync' | 'async'): this {
 | 同步拉取 | ExpertSyncService.sync | 返回 /api/expert-sync/list 数据并映射 |
 | 专家页面展示 | ExpertPage | 展示同步专家卡片 |
 | 选中专家 → 输入框 | NewTaskPage | 提示词插入输入框 |
-| 专家 → 子智能体注入 | AgentManager.setExperts | AgentBuilder.subagents 非空 |
+| 专家 → 子智能体注入 | AgentManager.setExperts | setExperts 后重建 agent，ready() 返回的 agent 已包含 subagents |
 | 离线缓存 | 断网打开页面 | 显示缓存数据 |
 
 ---
@@ -985,18 +1020,22 @@ setSubagentMode(mode: 'sync' | 'async'): this {
 | 桌面版 | AgentManager.setExperts + expertToSubAgent | 待实现 | Store |
 | 桌面版 | NewTaskPage 专家注入 | 待实现 | AgentManager |
 | 测试 | Web 后端 / 前端 / 桌面端测试 | 待补充 | 对应模块 |
+| 修正 | 统一专家 type=expert / 修复 expert-sync featured 路由 | 待处理 | Web 后端 |
+| 修正 | Web 前端精选场景接真实 API，清理 MOCK_SCENES | 待处理 | Web 后端 API |
+| 修正 | 桌面 SubAgent 字段与 DeepAgents API 对齐 | 待处理 | 调研结论 |
+| 修正 | AgentManager.setExperts 重建 agent + PlusMenu/localStorage 兼容 | 待处理 | 调研结论 |
 | 清理 | 移除前端 mock 专家数据和 mock 分支 | 待处理 | Web 前端 |
 
 ---
 ## 十一、假设与约定
 
-1. 专家是 `agents.type='sub'` 且存在 `expert_profiles` 记录的 Agent；主智能体为 `agents.type='main'`，专家通过 `parent_id` 挂到主智能体。
+1. 专家是 `agents.type='expert'` 且存在 `expert_profiles` 记录的 Agent；主智能体为 `agents.type='main'`，专家通过 `parent_id` 挂到主智能体。
 2. 专家核心配置（模型、系统提示词、工具、技能、MCP）复用 `agents` 及其关联表；`expert_profiles` 只存面向用户展示的门面数据。
 3. Web 管理端走独立 `/api/experts`，不是复用 `/api/agents` 的专家过滤；同步端走独立 `/api/expert-sync`。
 4. 桌面版只同步已发布且启用的专家（`is_published=true` 且 `status='active'`），按 `sort_order` 倒序。
 5. Web 第一方 token 访问 `/api/expert-sync` 时，`require_scope` 按登录态放行；OAuth2 客户端 token 必须包含 `expert:read`。
 6. 桌面版 `ExpertSyncService` 应消费 `/api/expert-sync/list` 的 `items` 字段，而不是早期方案中的 `/api/agents/experts/list` 与 `experts` 字段。
 7. 前端 `expertApi.ts` 负责 snake_case / camelCase 转换；当前 `stores/expert.ts` 中的 mock 分支仅用于无后端阶段，后续可删除。
-8. 专家工具和模型在桌面版中仍需对接本地工具注册表与 ModelService，这是后续迭代接入点。
+8. 初版 `/api/expert-sync/list` 只提供 `system_prompt` 等精简字段，不含工具、模型和技能；因此初版桌面专家只具备角色提示词和委派描述。完整专家能力需额外拉取 `/api/expert-sync/{id}`，并接入本地工具注册表和 ModelService。
 9. `selectedExpertId` 从 number 改为 string（Web UUID），需兼容 localStorage 旧值。
-10. 动态子智能体和异步子智能体在初始版本中预留接口但不默认启用，待专家功能稳定后按需打开。
+10. 动态委派基于当前 TypeScript 版的 task tool + 静态 `subagents`；异步子智能体需使用 `AsyncSubAgent` + `createAsyncSubAgentMiddleware` 和远程 Agent Protocol server，不在初始版本启用。

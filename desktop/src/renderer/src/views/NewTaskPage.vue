@@ -931,7 +931,7 @@ const scrollChips = (dir: 'left' | 'right'): void => {
   el.scrollBy({ left: dir === 'right' ? 120 : -120, behavior: 'smooth' })
 }
 
-const sendMessage = (): void => {
+const sendMessage = async (): Promise<void> => {
   const el = getInputEl()
   const parts = el ? serializeInput(el) : [{ type: 'text' as const, text: taskInput.value }]
   const hasFile = parts.some((p) => p.type === 'file')
@@ -939,6 +939,22 @@ const sendMessage = (): void => {
   if (!hasFile && !text) return
   // 发送后进入对话态前收起模型下拉，避免 chat 工具栏复用时残留展开态
   modelOpen.value = false
+
+  // 先将选中专家注入主智能体；无专家时清空子智能体，避免沿用上一条会话的专家配置。
+  const selectedExpert = catalog.selectedExpert
+  const expertPayload = selectedExpert ? [JSON.parse(JSON.stringify(selectedExpert))] : []
+  try {
+    const expertRes = await window.api.setExperts(expertPayload)
+    if (!expertRes.success) {
+      showToast(expertRes.error || '设置专家失败')
+      return
+    }
+  } catch (err) {
+    console.error('[NewTaskPage] setExperts failed:', err)
+    showToast(err instanceof Error ? err.message : '设置专家失败')
+    return
+  }
+
   // 清空输入框（DOM + 快照 + 技能勾选 + 抑制挂载时提示词重插）
   if (el) el.textContent = ''
   taskInput.value = ''

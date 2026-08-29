@@ -11,16 +11,24 @@ export type Mode = 'default' | 'local' | 'knowledge'
 export type CatalogTab = 'expert' | 'skill' | 'connector'
 
 export interface Expert {
-  id: number
+  id: string
   name: string
   title: string
   tags: string[]
   desc: string
   color: string
-  initials: string
+  icon: string
   category: string
   rating: number
   users: string
+  initials: string
+  systemPrompt: string
+  tools: string[]
+  providerId: string | null
+  modelId: string | null
+  promptTemplate: string
+  expertiseAreas: string[]
+  isExpert: boolean
 }
 
 export interface SkillItem extends DesktopSkill {
@@ -39,104 +47,7 @@ export interface ConnectorItem {
 }
 
 /** 本地文件（专家/技能/连接器页数据同源，此处唯一声明，相关页面引用） */
-export const experts: Expert[] = [
-  {
-    id: 1,
-    name: '林晓雯',
-    title: '内容创作专家',
-    tags: ['小红书', '品牌文案'],
-    desc: '擅长小红书种草内容、品牌故事撰写，已服务超过 300+ 品牌方。',
-    color: 'linear-gradient(135deg,#f59e0b,#d97706)',
-    initials: '林',
-    category: 'AI工具专家',
-    rating: 4.9,
-    users: '2.1k'
-  },
-  {
-    id: 2,
-    name: '陈法鉴',
-    title: '法律顾问专家',
-    tags: ['合同审查', '公司法'],
-    desc: '10 年执业律师，专注商事合同审查与知识产权保护领域。',
-    color: 'linear-gradient(135deg,#6366f1,#4f46e5)',
-    initials: '陈',
-    category: '法律财税',
-    rating: 4.8,
-    users: '1.7k'
-  },
-  {
-    id: 3,
-    name: 'Kira Zhang',
-    title: '前端开发 & 设计',
-    tags: ['React', 'Figma', 'Tailwind'],
-    desc: '全栈设计工程师，专注 React 生态与 Design System 落地。',
-    color: 'linear-gradient(135deg,#0891b2,#0e7490)',
-    initials: 'K',
-    category: '技术研发',
-    rating: 4.9,
-    users: '3.4k'
-  },
-  {
-    id: 4,
-    name: '赵研究员',
-    title: '行业信息研究员',
-    tags: ['市场调研', '竞品分析'],
-    desc: '深度行业研究，覆盖消费、科技、新能源等十余个赛道。',
-    color: 'linear-gradient(135deg,#8b5cf6,#7c3aed)',
-    initials: '赵',
-    category: 'SPC',
-    rating: 4.7,
-    users: '980'
-  },
-  {
-    id: 5,
-    name: '美团工程师',
-    title: '美团前工程师',
-    tags: ['高并发', 'Go', '微服务'],
-    desc: '曾任美团基础架构组 P7，擅长高并发系统设计与性能调优。',
-    color: 'linear-gradient(135deg,#f97316,#ea580c)',
-    initials: '美',
-    category: '技术研发',
-    rating: 4.8,
-    users: '2.8k'
-  },
-  {
-    id: 6,
-    name: '周财税',
-    title: '财务合伙人',
-    tags: ['税务筹划', '财务报告'],
-    desc: 'CPA 注册会计师，专注中小企业税务筹划与融资前财务规划。',
-    color: 'linear-gradient(135deg,#10b981,#059669)',
-    initials: '周',
-    category: '法律财税',
-    rating: 4.6,
-    users: '1.2k'
-  },
-  {
-    id: 7,
-    name: '沈产品',
-    title: '资深产品经理',
-    tags: ['0→1', '用户研究', 'PRD'],
-    desc: '前字节跳动产品负责人，主导过多款 DAU 千万级产品。',
-    color: 'linear-gradient(135deg,#06b6d4,#0891b2)',
-    initials: '沈',
-    category: '产品设计',
-    rating: 4.9,
-    users: '4.1k'
-  },
-  {
-    id: 8,
-    name: '投研小组',
-    title: '创投分析团队',
-    tags: ['VC', '尽调', '估值'],
-    desc: '由 3 位前头部 VC 分析师组成，专注早期项目尽调与估值建模。',
-    color: 'linear-gradient(135deg,#ec4899,#db2777)',
-    initials: '投',
-    category: '创业投资',
-    rating: 4.7,
-    users: '760'
-  }
-]
+export const experts = ref<Expert[]>([])
 
 export const skillItems = ref<SkillItem[]>([])
 
@@ -203,9 +114,9 @@ const STORAGE_KEY = 'ke-work:task-selection'
 
 interface PersistedState {
   mode: Mode
-  selectedExpertId: number | null
+  selectedExpertId: string | null
   selectedExpertPrompt: string
-  recentExpertIds: number[]
+  recentExpertIds: string[]
 }
 
 const DEFAULT_STATE: PersistedState = {
@@ -244,14 +155,17 @@ function loadPersisted(): PersistedState {
     const d = data as Record<string, unknown>
     const out: PersistedState = { ...DEFAULT_STATE }
     if (d.mode === 'default' || d.mode === 'local' || d.mode === 'knowledge') out.mode = d.mode
-    if (typeof d.selectedExpertId === 'number' || d.selectedExpertId === null) {
-      out.selectedExpertId = d.selectedExpertId
+    if (typeof d.selectedExpertId === 'string' || typeof d.selectedExpertId === 'number') {
+      out.selectedExpertId = String(d.selectedExpertId)
+    } else if (d.selectedExpertId === null) {
+      out.selectedExpertId = null
     }
     if (typeof d.selectedExpertPrompt === 'string')
       out.selectedExpertPrompt = d.selectedExpertPrompt
     if (Array.isArray(d.recentExpertIds)) {
       out.recentExpertIds = d.recentExpertIds
-        .filter((n): n is number => typeof n === 'number' && Number.isInteger(n))
+        .filter((n): n is string | number => typeof n === 'string' || typeof n === 'number')
+        .map((n) => String(n))
         .slice(0, 5)
     }
     return out
@@ -262,7 +176,8 @@ function loadPersisted(): PersistedState {
 
 /** 专家使用提示词模板（插入输入框的可编辑文本，删除专家时按原文移除） */
 function buildExpertPrompt(expert: Expert): string {
-  return `请以【${expert.name}·${expert.title}】的身份协助我完成以下任务：`
+  const template = expert.promptTemplate || '请以【{name}·{title}】的身份协助我完成以下任务：'
+  return template.replace('{name}', expert.name).replace('{title}', expert.title)
 }
 
 export const useCatalogStore = defineStore('catalog', () => {
@@ -271,19 +186,19 @@ export const useCatalogStore = defineStore('catalog', () => {
   const pageTab = ref<CatalogTab>('expert')
   /** 任务模式（互斥）：default=默认 / local=本地文件 / knowledge=知识库 */
   const mode = ref<Mode>(loadPersisted().mode)
-  const selectedExpertId = ref<number | null>(loadPersisted().selectedExpertId)
+  const selectedExpertId = ref<string | null>(loadPersisted().selectedExpertId)
   /** 插入输入框的专家提示词原文（切换/删除专家时用于移除） */
   const selectedExpertPrompt = ref<string>(loadPersisted().selectedExpertPrompt)
   /** 已选技能 id（选择顺序即展示顺序；不持久化，随输入框会话状态） */
   const selectedSkillIds = ref<string[]>([])
   /** 最近使用专家 id（最近在前，上限 5） */
-  const recentExpertIds = ref<number[]>(loadPersisted().recentExpertIds)
+  const recentExpertIds = ref<string[]>(loadPersisted().recentExpertIds)
   /** 连接器定位目标（一次性：跳转后高亮对应授权连接卡片） */
   const focusConnectorId = ref<number | null>(null)
 
   // ====== 计算属性(Getters) ======
   const selectedExpert = computed(
-    () => experts.find((e) => e.id === selectedExpertId.value) ?? null
+    () => experts.value.find((e) => e.id === selectedExpertId.value) ?? null
   )
   const selectedSkills = computed(() =>
     selectedSkillIds.value
@@ -292,7 +207,7 @@ export const useCatalogStore = defineStore('catalog', () => {
   )
   const recentExperts = computed(() =>
     recentExpertIds.value
-      .map((id) => experts.find((e) => e.id === id))
+      .map((id) => experts.value.find((e) => e.id === id))
       .filter((e): e is Expert => !!e)
   )
   /** 已授权连接器（授权通过后才会出现在「+」菜单的连接器二级菜单） */
@@ -318,14 +233,14 @@ export const useCatalogStore = defineStore('catalog', () => {
   }
 
   /** 记录专家使用（去重置顶、上限 5） */
-  function recordExpertUse(id: number): void {
+  function recordExpertUse(id: string): void {
     recentExpertIds.value = [id, ...recentExpertIds.value.filter((x) => x !== id)].slice(0, 5)
     persist()
   }
 
   /** 选择专家（单选；生成提示词并记入最近使用） */
-  function setExpert(id: number): void {
-    const expert = experts.find((e) => e.id === id)
+  function setExpert(id: string): void {
+    const expert = experts.value.find((e) => e.id === id)
     if (!expert) return
     selectedExpertId.value = id
     selectedExpertPrompt.value = buildExpertPrompt(expert)
@@ -357,6 +272,16 @@ export const useCatalogStore = defineStore('catalog', () => {
   /** 用 Web 同步结果替换技能广场数据。 */
   function setSkills(skills: SkillItem[]): void {
     skillItems.value = skills
+  }
+
+  /** 用 Web 同步结果替换专家数据。 */
+  function setExperts(items: Expert[]): void {
+    experts.value = items
+  }
+
+  /** 清空服务器专家数据（断开连接或退出登录时使用）。 */
+  function clearExpertItems(): void {
+    experts.value = []
   }
 
   /** 清空服务器技能数据（断开连接或退出登录时使用）。 */
@@ -414,6 +339,8 @@ export const useCatalogStore = defineStore('catalog', () => {
     clearSkills,
     setSkills,
     clearSkillItems,
+    setExperts,
+    clearExpertItems,
     gotoTab,
     gotoConnector,
     authorizeConnector

@@ -11,6 +11,7 @@ import {
   useCatalogStore,
   experts,
   skillItems,
+  type Expert,
   type SkillItem
 } from '../../src/renderer/src/store/catalog'
 
@@ -27,6 +28,28 @@ function makeSkill(id: string, name = `skill-${id}`): SkillItem {
     enabled: true,
     isBuiltin: false,
     source: 'web'
+  }
+}
+function makeExpert(id: string, name = `expert-${id}`, title = `title-${id}`): Expert {
+  return {
+    id,
+    name,
+    title,
+    tags: [],
+    desc: 'desc',
+    color: 'linear-gradient(135deg,#0891b2,#0e7490)',
+    icon: 'Zap',
+    category: 'custom',
+    rating: 4.8,
+    users: '1k',
+    initials: name.charAt(0),
+    systemPrompt: '',
+    tools: [],
+    providerId: null,
+    modelId: null,
+    promptTemplate: '',
+    expertiseAreas: [],
+    isExpert: true
   }
 }
 
@@ -49,6 +72,14 @@ beforeEach(() => {
   storage.clear()
   setActivePinia(createPinia())
   skillItems.value = []
+  experts.value = [
+    makeExpert('1', '林晓雯', '内容创作专家'),
+    makeExpert('2', '陈法鉴', '法律顾问专家'),
+    makeExpert('3', 'Kira Zhang', '前端开发 & 设计'),
+    makeExpert('4', '赵研究员', '行业信息研究员'),
+    makeExpert('5', '美团工程师', '美团前工程师'),
+    makeExpert('6', '周财税', '财务合伙人')
+  ]
 })
 
 describe('catalog store: 模式 radio 互斥', () => {
@@ -72,37 +103,37 @@ describe('catalog store: 模式 radio 互斥', () => {
 describe('catalog store: 专家单选与最近使用', () => {
   it('选中专家生成提示词并记入最近使用', () => {
     const store = useCatalogStore()
-    store.setExpert(1)
-    expect(store.selectedExpertId).toBe(1)
+    store.setExpert('1')
+    expect(store.selectedExpertId).toBe('1')
     expect(store.selectedExpertPrompt).toContain('林晓雯')
     expect(store.selectedExpertPrompt).toContain('内容创作专家')
-    expect(store.recentExpertIds).toEqual([1])
+    expect(store.recentExpertIds).toEqual(['1'])
     // 单选：切换专家替换
-    store.setExpert(2)
-    expect(store.selectedExpertId).toBe(2)
+    store.setExpert('2')
+    expect(store.selectedExpertId).toBe('2')
     expect(store.selectedExpertPrompt).toContain('陈法鉴')
   })
 
   it('最近使用：去重置顶、上限 5', () => {
     const store = useCatalogStore()
-    store.setExpert(1)
-    store.setExpert(2)
-    store.setExpert(3)
-    expect(store.recentExpertIds).toEqual([3, 2, 1])
+    store.setExpert('1')
+    store.setExpert('2')
+    store.setExpert('3')
+    expect(store.recentExpertIds).toEqual(['3', '2', '1'])
     // 重复使用 1 → 置顶
-    store.setExpert(1)
-    expect(store.recentExpertIds).toEqual([1, 3, 2])
+    store.setExpert('1')
+    expect(store.recentExpertIds).toEqual(['1', '3', '2'])
     // 超过 5 个 → 截断
-    store.setExpert(4)
-    store.setExpert(5)
-    store.setExpert(6)
-    expect(store.recentExpertIds).toEqual([6, 5, 4, 1, 3])
+    store.setExpert('4')
+    store.setExpert('5')
+    store.setExpert('6')
+    expect(store.recentExpertIds).toEqual(['6', '5', '4', '1', '3'])
     expect(store.recentExpertIds.length).toBe(5)
   })
 
   it('clearExpert 清空 id 与提示词', () => {
     const store = useCatalogStore()
-    store.setExpert(1)
+    store.setExpert('1')
     store.clearExpert()
     expect(store.selectedExpertId).toBeNull()
     expect(store.selectedExpertPrompt).toBe('')
@@ -110,7 +141,7 @@ describe('catalog store: 专家单选与最近使用', () => {
 
   it('不存在的专家 id 无副作用', () => {
     const store = useCatalogStore()
-    store.setExpert(9999)
+    store.setExpert('9999')
     expect(store.selectedExpertId).toBeNull()
     expect(store.recentExpertIds).toEqual([])
   })
@@ -143,7 +174,7 @@ describe('catalog store: 持久化', () => {
   it('round-trip：重建 store 恢复 mode/专家/最近使用（技能不持久化）', () => {
     const store = useCatalogStore()
     store.setMode('local')
-    store.setExpert(3)
+    store.setExpert('3')
     store.setSkills([makeSkill('1'), makeSkill('2')])
     store.toggleSkill('1')
     store.toggleSkill('2')
@@ -151,9 +182,9 @@ describe('catalog store: 持久化', () => {
     setActivePinia(createPinia())
     const fresh = useCatalogStore()
     expect(fresh.mode).toBe('local')
-    expect(fresh.selectedExpertId).toBe(3)
+    expect(fresh.selectedExpertId).toBe('3')
     expect(fresh.selectedSkillIds).toEqual([])
-    expect(fresh.recentExpertIds).toEqual([3])
+    expect(fresh.recentExpertIds).toEqual(['3'])
     // 存储 JSON 不含技能字段
     const persisted = JSON.parse(storage.get(STORAGE_KEY) ?? '{}') as Record<string, unknown>
     expect(persisted).not.toHaveProperty('selectedSkillIds')
@@ -175,7 +206,7 @@ describe('catalog store: 持久化', () => {
         selectedExpertId: 'not-a-number',
         selectedExpertPrompt: 123,
         selectedSkillIds: ['a', 1, 2.5],
-        recentExpertIds: [2, 'x', 3, 4, 5, 6, 7]
+        recentExpertIds: ['2', 'x', '3', '4', '5', '6', '7']
       })
     )
     const store = useCatalogStore()
@@ -184,16 +215,16 @@ describe('catalog store: 持久化', () => {
     expect(store.selectedExpertPrompt).toBe('')
     // 技能字段不再解析：任何持久化数据下均为空
     expect(store.selectedSkillIds).toEqual([])
-    expect(store.recentExpertIds).toEqual([2, 3, 4, 5, 6]) // 去非法项 + 截断 5 之后是 [2,3,4,5,6]？→ slice(0,5) 后为 [2,3,4,5,6]
+    expect(store.recentExpertIds).toEqual(['2', '3', '4', '5', '6']) // 去非法项 + 截断 5
   })
 })
 
 describe('catalog store: 数据源', () => {
   it('专家/技能数据与页面共源（非空且含预期条目）', () => {
-    expect(experts.length).toBe(8)
+    expect(experts.value.length).toBe(6)
     expect(skillItems.value.length).toBe(0)
     const store = useCatalogStore()
-    expect(store.experts.length).toBe(8)
+    expect(store.experts.length).toBe(6)
     expect(store.experts[0].name).toBe('林晓雯')
     expect(store.skillItems.length).toBe(0)
     expect(store.connectorItems.length).toBe(7)

@@ -179,7 +179,12 @@ export async function fetchFeaturedExperts(): Promise<{
   const res = await instance.get('/experts/featured')
   const data = res.data.data as Record<string, unknown>
   return {
-    scenes: (data.scenes as FeaturedScene[]) || [],
+    scenes: ((data.scenes as Record<string, unknown>[]) || []).map((raw) => ({
+      id: raw.id as string,
+      label: raw.label as string,
+      color: raw.color as string,
+      expertIds: (raw.expert_ids as string[]) || [],
+    })),
     experts: ((data.experts as Record<string, unknown>[]) || []).map(toExpert),
   }
 }

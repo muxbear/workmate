@@ -15,7 +15,7 @@ import { randomBytes, randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { invokeSendMessage, toLangChainMessages, buildRegenerateInput } from './agent/service'
 import { expandFileParts, normalizeMessageInput } from './agent/file-parts'
-import type { MessagePart } from '../preload/index.d'
+import type { MessagePart, DesktopExpert } from '../preload/index.d'
 import { summarizeTitle } from './agent/title-service'
 import { polishText, POLISH_MAX_TEXT_CHARS } from './agent/polish-service'
 import { HumanMessage } from '@langchain/core/messages'
@@ -40,6 +40,7 @@ import { SettingsService, type ProxyMode, type ThemeName } from './settings/Sett
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
+import { registerExpertSyncHandlers } from './ipc/expert-sync-handlers'
 import { registerOAuth2Handlers } from './ipc/oauth2-handlers'
 import { BinaryManager } from './runtime/BinaryManager'
 import { registerRuntimeHandlers } from './ipc/runtime-handlers'
@@ -50,6 +51,7 @@ import { BrowserViewManager, BROWSER_PARTITION } from './browser/BrowserViewMana
 import { WorkspacePreviewServer } from './browser/WorkspacePreviewServer'
 import { registerBrowserHandlers } from './browser/browser-handlers'
 import { SkillSyncService } from './skills/SkillSyncService'
+import { ExpertSyncService } from './experts/ExpertSyncService'
 import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
 
 import icon from '../../resources/icon.png?asset'
@@ -253,6 +255,17 @@ app.whenReady().then(() => {
   })
   registerSkillSyncHandlers(ipcMain, { skillSyncService, session })
 
+  const expertSyncService = new ExpertSyncService({
+    secureStorage,
+    openExternal: (url) =>
+      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
+        ? openOAuthWindow(url)
+        : shell.openExternal(url),
+    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
+    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+  })
+  registerExpertSyncHandlers(ipcMain, { expertSyncService, session })
+
   const cleanupBrowserOnLogout = (): void => {
     for (const manager of browserManagers.values()) {
       manager.resetForLogout()
@@ -261,6 +274,7 @@ app.whenReady().then(() => {
     const localUserId = session.getCurrentUserId()
     if (localUserId) {
       void skillSyncService.disconnect(localUserId)
+      void expertSyncService.disconnect(localUserId)
     }
   }
 
@@ -528,6 +542,22 @@ app.whenReady().then(() => {
       }
     }
   )
+
+  // 设置当前选中的专家为子智能体；调用方需等待完成后再发送消息
+  ipcMain.handle('agent:set-experts', async (_event, experts: unknown) => {
+    try {
+      session.requireUserId()
+      if (!Array.isArray(experts)) {
+        return { success: false, error: '参数错误' }
+      }
+      await agentManager.setExperts(experts as DesktopExpert[])
+      return { success: true, data: null }
+    } catch (err) {
+      console.error('[main] set experts failed:', err)
+      const message = err instanceof Error ? err.message : String(err)
+      return { success: false, error: message || '设置专家失败' }
+    }
+  })
 
   // AI 改写润色（登录态；单次 LLM 请求，非流式；入参校验 + 长度上限主进程权威）
   ipcMain.handle('agent:polish', async (_event, text: unknown) => {

@@ -103,7 +103,7 @@ const onSelectMode = (m: Mode): void => {
 }
 
 /** 选择专家：单选 + 关闭菜单 */
-const onSelectExpert = (id: number): void => {
+const onSelectExpert = (id: string): void => {
   store.setExpert(id)
   emit('close')
 }

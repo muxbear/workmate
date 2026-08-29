@@ -1,4 +1,5 @@
-import type { DeepAgent } from 'deepagents'
+import type { DeepAgent, SubAgent } from 'deepagents'
+import type { DesktopExpert } from '../../preload/index.d'
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint'
 import type { WorkMode } from '../mode/work-mode'
 import type { ModelService } from '../model/ModelService'
@@ -7,12 +8,31 @@ import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
 import { resolveDefaultModel, type ChatModel } from './ModelFactory'
 
 /** 智能体生命周期管理（单例由调用方持有） */
+/** 将桌面版专家数据转换为 DeepAgents SubAgent 配置。 */
+function expertToSubAgent(expert: DesktopExpert): SubAgent {
+  const description = expert.isExpert
+    ? `${expert.title}。专长领域：${expert.expertiseAreas.join('、')}。` +
+      `适用场景：当任务涉及${expert.tags.join('、')}时，应委派给此专家处理。`
+    : expert.desc
+
+  return {
+    name: expert.name,
+    description,
+    systemPrompt: expert.systemPrompt || '',
+    tools: [],
+    skills: []
+  }
+}
+
 export class AgentManager {
   private agent: DeepAgent | null = null
   private builder: AgentBuilder | null = null
   private initPromise: Promise<void> | null = null
   private model: string | ChatModel = 'deepseek:deepseek-v4-pro'
   private skills: string[] = []
+  private experts: DesktopExpert[] = []
+  private expertMode: 'selected' | 'all' = 'selected'
+  private currentMode: WorkMode = 'local'
 
   constructor(
     private readonly defaultWorkspaceDir: string,
@@ -24,6 +44,7 @@ export class AgentManager {
 
   /** 应用启动时初始化智能体（保存 promise，供 ready() 复用） */
   async init(mode: WorkMode): Promise<void> {
+    this.currentMode = mode
     this.initPromise = this.buildAgent(mode)
     return this.initPromise
   }
@@ -45,6 +66,13 @@ export class AgentManager {
     // 自定义模型覆盖中间件：运行期按 configurable.model_override 切换模型（无需重建 agent）
     if (this.modelService) this.builder.setMiddleware([createModelOverrideMiddleware(this.modelService)])
     if (this.skills.length > 0) this.builder.setSkills(this.skills)
+
+    if (this.experts.length > 0 && (this.expertMode === 'selected' || this.expertMode === 'all')) {
+      this.builder.setSubagents(this.experts.map(expertToSubAgent))
+    } else {
+      this.builder.setSubagents([])
+    }
+
     this.agent = await this.builder.build()
   }
 
@@ -69,6 +97,7 @@ export class AgentManager {
    */
   async switchMode(newMode: WorkMode): Promise<void> {
     if (!this.builder) throw new Error('AgentManager not initialized')
+    this.currentMode = newMode
     this.initPromise = this.buildAgent(newMode)
     await this.initPromise
   }
@@ -83,5 +112,18 @@ export class AgentManager {
     this.skills = skills
     this.builder?.setSkills(skills)
     return this
+  }
+
+  setExpertMode(mode: 'selected' | 'all'): this {
+    this.expertMode = mode
+    return this
+  }
+
+  /** 设置专家并重建 agent；调用方必须 await 后再发送消息。 */
+  async setExperts(experts: DesktopExpert[]): Promise<void> {
+    this.experts = experts
+    if (!this.builder) throw new Error('AgentManager not initialized')
+    this.initPromise = this.buildAgent(this.currentMode)
+    await this.initPromise
   }
 }

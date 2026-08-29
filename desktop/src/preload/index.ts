@@ -1,5 +1,6 @@
 ﻿import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { DesktopExpert } from './index.d'
 
 // Custom APIs for renderer
 const api = {
@@ -17,6 +18,9 @@ const api = {
   },
   cancelAgentMessage(): void {
     ipcRenderer.send('agent:cancel')
+  },
+  setExperts(experts: DesktopExpert[]) {
+    return ipcRenderer.invoke('agent:set-experts', experts)
   },
   onAgentChunk(callback: (chunk: string) => void): () => void {
     const handler = (_event: Electron.IpcRendererEvent, chunk: string): void => {
@@ -303,6 +307,23 @@ const api = {
     },
     disconnect() {
       return ipcRenderer.invoke('skill-sync:disconnect')
+    }
+  },
+  expert: {
+    getStatus() {
+      return ipcRenderer.invoke('expert-sync:status')
+    },
+    authorize() {
+      return ipcRenderer.invoke('expert-sync:authorize')
+    },
+    sync() {
+      return ipcRenderer.invoke('expert-sync:sync')
+    },
+    getCachedExperts() {
+      return ipcRenderer.invoke('expert-sync:cached')
+    },
+    disconnect() {
+      return ipcRenderer.invoke('expert-sync:disconnect')
     }
   }
 }

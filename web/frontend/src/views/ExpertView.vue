@@ -214,7 +214,7 @@ onMounted(() => {
                 class="scene-item"
               >
                 <div class="scene-item-dot" :style="{ background: scene.color }" />
-                <span>{{ expertStore.experts.find(e => e.id === eid)?.name || eid }}</span>
+                <span>{{ expertStore.getFeaturedExpertName(eid) }}</span>
               </div>
             </template>
             <span v-else class="scene-empty-hint">暂无精选专家</span>
