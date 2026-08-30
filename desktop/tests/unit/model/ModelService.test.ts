@@ -135,7 +135,7 @@ describe('ModelService', () => {
     expect(reloaded.listProviders()).toHaveLength(SEED_PROVIDERS.length)
   })
 
-  it('MS-07: 缺失文件时提供商用内置种子（9 家含 其它）且立即落盘可见', () => {
+  it('MS-07: 缺失文件时写入内置提供商元数据（models 留空，9 家含 其它）且立即落盘可见', () => {
     expect(service.listProviders()).toHaveLength(SEED_PROVIDERS.length)
     const names = service.listProviders().map((p) => p.name)
     expect(names).toContain('深度求索')
@@ -147,11 +147,11 @@ describe('ModelService', () => {
     expect(names).toContain('腾讯')
     expect(names).toContain('字节')
     expect(names).toContain('其它')
-    // 中文名 + 英文名 + LOGO + 各家模型列表
+    // 中文名 + 英文名 + LOGO + 空模型列表（由用户配置）
     const deepseek = service.listProviders().find((p) => p.id === 'deepseek')!
     expect(deepseek.nameEn).toBe('DeepSeek')
     expect(deepseek.logo).toBe('deepseek')
-    expect(deepseek.models).toContain('deepseek-chat')
+    expect(deepseek.models).toEqual([])
     // 其它提供商无预设模型（自由输入）
     expect(service.listProviders().find((p) => p.id === 'custom')!.models).toEqual([])
     // 构造后文件即存在且含 providers 种子（磁盘文件即配置源，打开可见）
@@ -173,7 +173,7 @@ describe('ModelService', () => {
     expect(raw.providers).toHaveLength(SEED_PROVIDERS.length)
   })
 
-  it('MS-07d: 旧种子文件（无 models 字段）→ 各提供商模型数据自动补齐并落盘初始化', () => {
+  it('MS-07d: 旧种子文件（无 models 字段）→ 不自动补默认模型，保持用户配置为空', () => {
     // 模拟旧版本落盘的 providers（无 models 字段），models 空数组
     const legacyProviders = SEED_PROVIDERS.map(({ models: _m, ...rest }) => rest)
     writeFileSync(
@@ -182,16 +182,15 @@ describe('ModelService', () => {
       'utf-8'
     )
     const reloaded = new ModelService(baseDir)
-    // 每家提供商 models 已初始化（与种子一致）
+    // 每家提供商 models 保持为空（不写入内置默认模型）
     for (const seed of SEED_PROVIDERS) {
       const p = reloaded.listProviders().find((x) => x.id === seed.id)!
-      expect(p.models).toEqual(seed.models)
+      expect(p.models).toEqual([])
     }
-    // 已落盘（磁盘文件即初始化后的数据源）
+    // 文件中仍保持无 models 字段（用户配什么就写入什么）
     const raw = JSON.parse(readFileSync(join(baseDir, 'models.json'), 'utf-8'))
     const deepseek = raw.providers.find((p: { id: string }) => p.id === 'deepseek')
-    expect(deepseek.models).toContain('deepseek-chat')
-    expect(deepseek.models.length).toBeGreaterThan(1)
+    expect(deepseek.models).toBeUndefined()
   })
 
   it('MS-07e: 旧种子文件已手改 models（非空）→ 保留用户值不被覆盖', () => {

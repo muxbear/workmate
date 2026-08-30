@@ -75,10 +75,9 @@ export interface ModelFileData {
 }
 
 /**
- * 内置提供商种子数据（首启写入 ~/.ke-work/models.json，用户可手改）
+ * 内置提供商元数据（首启写入 ~/.ke-work/models.json，用户可手改）
  * - 端点均为 OpenAI 兼容 chat/completions 地址
- * - models 为各家 OpenAI 兼容 API 的主流模型标识（模型名称下拉数据源）；以官方文档为准可手改
- * 如有变更集中改这里
+ * - models 为用户配置的模型标识列表；内置种子不写入默认模型，用户配什么就写入什么
  */
 export const SEED_PROVIDERS: ProviderRecord[] = [
   {
@@ -88,7 +87,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'deepseek',
     defaultUrl: 'https://api.deepseek.com/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
+    models: []
   },
   {
     id: 'zhipu',
@@ -97,21 +96,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'zhipu',
     defaultUrl: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: [
-      'glm-4-plus',
-      'glm-4-air',
-      'glm-4-airx',
-      'glm-4-flash',
-      'glm-4-long',
-      'glm-4.5',
-      'glm-4.5-air',
-      'glm-5',
-      'glm-5.1',
-      'glm-z1-flash',
-      'glm-z1-airx',
-      'glm-4v-plus',
-      'glm-4v-flash'
-    ]
+    models: []
   },
   {
     id: 'moonshot',
@@ -120,16 +105,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'moonshot',
     defaultUrl: 'https://api.moonshot.cn/v1/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: [
-      'moonshot-v1-8k',
-      'moonshot-v1-32k',
-      'moonshot-v1-128k',
-      'moonshot-v1-auto',
-      'kimi-k2',
-      'kimi-k2-0711-preview',
-      'kimi-k2-thinking',
-      'kimi-k2.5'
-    ]
+    models: []
   },
   {
     id: 'minimax',
@@ -138,15 +114,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'minimax',
     defaultUrl: 'https://api.minimax.chat/v1/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: [
-      'abab6.5s-chat',
-      'abab6.5-chat',
-      'minimax-text-01',
-      'MiniMax-M1',
-      'MiniMax-M2',
-      'MiniMax-M2.5',
-      'MiniMax-M2.7'
-    ]
+    models: []
   },
   {
     id: 'xiaomi',
@@ -155,7 +123,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'xiaomi',
     defaultUrl: 'https://api.mimodel.com/v1/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: ['mimo-1.5b', 'mimo-7b', 'mimo-32k', 'mimo-vl-7b']
+    models: []
   },
   {
     id: 'aliyun',
@@ -164,27 +132,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'aliyun',
     defaultUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: [
-      'qwen-turbo',
-      'qwen-plus',
-      'qwen-max',
-      'qwen-long',
-      'qwen-flash',
-      'qwen3-turbo',
-      'qwen3-plus',
-      'qwen3-max',
-      'qwen-coder-turbo',
-      'qwen-coder-plus',
-      'qwen-coder-max',
-      'qwen3-coder-turbo',
-      'qwen3-coder-plus',
-      'qwen-math-plus',
-      'qwen-math-turbo',
-      'qwen-vl-plus',
-      'qwen-vl-max',
-      'qwen2.5-72b-instruct',
-      'qwen2.5-coder-32b-instruct'
-    ]
+    models: []
   },
   {
     id: 'tencent',
@@ -193,17 +141,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'tencent',
     defaultUrl: 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: [
-      'hunyuan-lite',
-      'hunyuan-standard',
-      'hunyuan-pro',
-      'hunyuan-turbo',
-      'hunyuan-turbo-latest',
-      'hunyuan-code',
-      'hunyuan-t1',
-      'hunyuan-t1-latest',
-      'hunyuan-vision'
-    ]
+    models: []
   },
   {
     id: 'bytedance',
@@ -212,19 +150,7 @@ export const SEED_PROVIDERS: ProviderRecord[] = [
     logo: 'bytedance',
     defaultUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
     plans: [{ type: 'Token Plan' }, { type: 'Coding Plan' }, { type: '自定义 API' }],
-    models: [
-      'doubao-lite-32k',
-      'doubao-lite-128k',
-      'doubao-pro-32k',
-      'doubao-pro-128k',
-      'doubao-1-5-pro-32k',
-      'doubao-1-5-pro-256k',
-      'doubao-1-5-lite-32k',
-      'doubao-1-5-vision-pro-32k',
-      'doubao-1-5-vision-lite-32k',
-      'doubao-seed-1-6',
-      'doubao-seed-1-6-vision'
-    ]
+    models: []
   },
   {
     id: 'custom',

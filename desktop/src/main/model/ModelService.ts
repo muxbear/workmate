@@ -22,7 +22,7 @@ const MODELS_FILE = 'models.json'
  * 自定义模型与提供商存储（机器级，与登录态无关，同 config:* 先例）
  *
  * - 单一文件 ~/.ke-work/models.json：{ version, providers, models }
- *   - providers：提供商下拉数据源，缺失/为空时用内置种子（用户可手改）
+ *   - providers：提供商下拉数据源，缺失/为空时用内置提供商元数据（models 留空，由用户配置）
  *   - models：用户自定义模型数组（apiKey 明文，本地文件可手改）
  * - 兼容：早期版本 models.json 为顶层数组（仅模型），加载时自动识别迁移
  * - 写入：.bak 备份 → 临时文件原子写 → rename 替换（对齐 SettingsStore）
@@ -139,7 +139,7 @@ export class ModelService {
   private load(): void {
     try {
       if (!existsSync(this.filePath)) {
-        // 缺失 → 空模型 + 种子提供商，立即落盘（磁盘文件即配置源，打开即可见/手改）
+        // 缺失 → 空模型 + 内置提供商元数据，立即落盘（models 留空，由用户配置）
         this.providers = seedProviders()
         this.persist()
         return
@@ -166,7 +166,7 @@ export class ModelService {
       const models = data['models']
       if (!Array.isArray(models)) throw new Error('invalid format: expected models array')
       this.models = models.filter(isModelRecord)
-      // 提供商：文件内已定义且合法则用文件值（用户手改优先），否则补种子并落盘
+      // 提供商：文件内已定义且合法则用文件值（用户手改优先），否则补内置提供商元数据并落盘
       const providers = data['providers']
       const filtered = Array.isArray(providers)
         ? providers.filter(isProviderRecord).map(normalizeProvider)
@@ -246,33 +246,17 @@ export class ModelService {
   }
 
   /**
-   * 应用文件中的提供商：旧种子文件（id 集合与种子一致）中 models 缺失/为空的提供商
-   * 以新种子初始化并落盘（models.json 各提供商模型数据初始化）；手改文件完全以文件值为准
+   * 应用文件中的提供商：完全以文件值为准，不使用内置默认模型补齐 models。
+   * providers[].models 是用户配置，用户配什么就写入什么。
    */
   private applyFileProviders(filtered: ProviderRecord[]): void {
-    const seedIds = new Set(SEED_PROVIDERS.map((p) => p.id))
-    const isLegacySeed =
-      filtered.length === seedIds.size && filtered.every((p) => seedIds.has(p.id))
-    if (isLegacySeed) {
-      let changed = false
-      this.providers = filtered.map((p) => {
-        const seed = SEED_PROVIDERS.find((s) => s.id === p.id)
-        if (seed && p.models.length === 0) {
-          changed = true
-          return { ...p, models: [...seed.models] }
-        }
-        return p
-      })
-      if (changed) this.persist()
-    } else {
-      this.providers = filtered
-    }
+    this.providers = filtered
   }
 }
 
 /** 种子提供商深拷贝 */
 function seedProviders(): ProviderRecord[] {
-  return SEED_PROVIDERS.map((p) => ({ ...p, plans: [...p.plans], models: [...p.models] }))
+  return SEED_PROVIDERS.map((p) => ({ ...p, plans: [...p.plans], models: [] }))
 }
 
 /** 结构宽松校验（手改文件容错）：字段类型不对的记录跳过而非整文件失败 */

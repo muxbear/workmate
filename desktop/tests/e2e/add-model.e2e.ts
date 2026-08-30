@@ -121,7 +121,7 @@ describe('E2E 添加自定义模型全流程', () => {
     expect(deepseek.name).toBe('深度求索')
     expect(deepseek.nameEn).toBe('DeepSeek')
     expect(deepseek.logo).toBe('deepseek')
-    expect(deepseek.models).toContain('deepseek-chat')
+    expect(deepseek.models).toEqual([])
     expect(raw.providers.map((p) => p.name)).toContain('智谱')
     expect(existsSync(join(dataHome, 'providers.json'))).toBe(false)
 
