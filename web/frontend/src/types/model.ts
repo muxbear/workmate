@@ -40,10 +40,13 @@ export interface Provider {
   logo: string
   status: ProviderStatus
   apiBase: string
+  responseUrl: string
+  anthropicUrl: string
   apiKey: string
   models: AIModel[]
   description: string
   website: string
+  sortOrder?: number
 }
 
 /** 模型类型元数据 */

@@ -128,6 +128,18 @@ async def init_db():
             if "tool_type" not in existing:
                 logger.info("Adding tool_type column to tools table")
                 await conn.execute(text("ALTER TABLE tools ADD COLUMN tool_type VARCHAR(32) DEFAULT 'function'"))
+        if await _table_exists(conn, "providers"):
+            existing = await _get_existing_columns(conn, "providers")
+            if "response_url" not in existing:
+                logger.info("Adding response_url column to providers table")
+                await conn.execute(text("ALTER TABLE providers ADD COLUMN response_url VARCHAR(512) DEFAULT ''"))
+            if "anthropic_url" not in existing:
+                logger.info("Adding anthropic_url column to providers table")
+                await conn.execute(text("ALTER TABLE providers ADD COLUMN anthropic_url VARCHAR(512) DEFAULT ''"))
+            if "sort_order" not in existing:
+                logger.info("Adding sort_order column to providers table")
+                await conn.execute(text("ALTER TABLE providers ADD COLUMN sort_order INTEGER DEFAULT 0"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_providers_sort_order ON providers (sort_order)"))
 
     # Seed built-in RBAC data
     from api.rbac.service import RbacService

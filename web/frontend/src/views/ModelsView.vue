@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Search, Edit3, Trash2, X, CheckCircle2, AlertCircle,
   Eye, EyeOff, Bot, Cpu, Zap, Settings2, Activity, MoreHorizontal,
+  GripVertical,
   Copy, Power, PowerOff,
 } from 'lucide-vue-next'
 import { useModelStore } from '@/stores/model'
@@ -23,23 +24,29 @@ const viewingModel = ref<AIModel | null>(null)
 const deleteTarget = ref<{ type: 'provider' | 'model'; id: string; name: string } | null>(null)
 
 /* ---- Provider form ---- */
-const providerForm = ref({ name: '', logo: '🤖', apiBase: '', apiKey: '', description: '', website: '' })
+const providerForm = ref({ name: '', logo: '🤖', apiBase: '', responseUrl: '', anthropicUrl: '', apiKey: '', description: '', website: '' })
 const showApiKey = ref(false)
 
 function openNewProvider() {
-  providerForm.value = { name: '', logo: '🤖', apiBase: '', apiKey: '', description: '', website: '' }
+  providerForm.value = { name: '', logo: '🤖', apiBase: '', responseUrl: '', anthropicUrl: '', apiKey: '', description: '', website: '' }
   showApiKey.value = false
   showNewProvider.value = true
 }
 
 function openEditProvider(p: Provider) {
-  providerForm.value = { name: p.name, logo: p.logo, apiBase: p.apiBase, apiKey: p.apiKey, description: p.description, website: p.website }
+  providerForm.value = { name: p.name, logo: p.logo, apiBase: p.apiBase, responseUrl: p.responseUrl, anthropicUrl: p.anthropicUrl, apiKey: p.apiKey, description: p.description, website: p.website }
   editingProvider.value = p
   showApiKey.value = false
 }
 
 async function handleSaveProvider() {
-  if (!providerForm.value.name.trim() || !providerForm.value.apiBase.trim()) return
+  const hasEndpoint = providerForm.value.apiBase.trim()
+    || providerForm.value.responseUrl.trim()
+    || providerForm.value.anthropicUrl.trim()
+  if (!providerForm.value.name.trim() || !hasEndpoint) {
+    ElMessage.warning('请至少填写一个协议地址')
+    return
+  }
   try {
     const data: Provider = {
       id: editingProvider.value?.id ?? `p${Date.now()}`,
@@ -156,6 +163,185 @@ function paramLabel(k: string): string {
   return k
 }
 
+/* ---- Provider reorder ---- */
+type ProviderDropPosition = 'before' | 'after'
+
+const draggedProviderId = ref<string | null>(null)
+const dragOverProviderId = ref<string | null>(null)
+const dropPosition = ref<ProviderDropPosition>('after')
+const pressingProviderId = ref<string | null>(null)
+const providerPressTimer = ref<number | null>(null)
+const providerPointerDragging = ref(false)
+const suppressProviderClick = ref(false)
+const dragGhost = ref<{ x: number; y: number; provider: Provider } | null>(null)
+const pressStartX = ref(0)
+const pressStartY = ref(0)
+const activePointerId = ref<number | null>(null)
+const pointerStartProviderId = ref<string | null>(null)
+
+function clearProviderPressTimer() {
+  if (providerPressTimer.value !== null) {
+    window.clearTimeout(providerPressTimer.value)
+    providerPressTimer.value = null
+  }
+}
+
+function resetProviderDragState() {
+  clearProviderPressTimer()
+  draggedProviderId.value = null
+  dragOverProviderId.value = null
+  dropPosition.value = 'after'
+  pressingProviderId.value = null
+  providerPointerDragging.value = false
+  dragGhost.value = null
+  activePointerId.value = null
+  pointerStartProviderId.value = null
+}
+
+function setProviderDropTarget(targetId: string, position: ProviderDropPosition) {
+  dragOverProviderId.value = targetId
+  dropPosition.value = position
+}
+
+function resolveProviderDropPosition(clientY: number, item: HTMLElement): ProviderDropPosition {
+  const rect = item.getBoundingClientRect()
+  return clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+}
+
+function beginProviderDrag(provider: Provider, x: number, y: number) {
+  clearProviderPressTimer()
+  pressingProviderId.value = null
+  providerPointerDragging.value = true
+  draggedProviderId.value = provider.id
+  dragGhost.value = { x, y, provider }
+}
+
+function updateProviderDropTarget(clientX: number, clientY: number) {
+  const element = document.elementFromPoint(clientX, clientY)
+  const item = element?.closest('.provider-item') as HTMLElement | null
+  const targetId = item?.dataset.providerId
+  if (!targetId || !item || targetId === draggedProviderId.value) {
+    dragOverProviderId.value = null
+    return
+  }
+  setProviderDropTarget(targetId, resolveProviderDropPosition(clientY, item))
+}
+
+function onProviderClick(p: Provider) {
+  if (suppressProviderClick.value) return
+  store.selectProvider(p.id)
+}
+
+function onProviderPointerDown(event: PointerEvent, p: Provider) {
+  if (store.providerSearch) return
+  const target = event.target as HTMLElement
+  if (target.closest('button, .provider-actions')) return
+
+  const item = event.currentTarget as HTMLElement
+  try {
+    item.setPointerCapture?.(event.pointerId)
+  } catch {
+    // Synthetic pointer events in tests may not have an active pointer.
+  }
+
+  activePointerId.value = event.pointerId
+  pointerStartProviderId.value = p.id
+  clearProviderPressTimer()
+  pressStartX.value = event.clientX
+  pressStartY.value = event.clientY
+
+  providerPressTimer.value = window.setTimeout(() => {
+    pressingProviderId.value = p.id
+
+    if (event.pointerType === 'touch') {
+      providerPressTimer.value = window.setTimeout(() => {
+        beginProviderDrag(p, event.clientX, event.clientY)
+      }, 220)
+    }
+  }, 140)
+}
+
+function onProviderPointerMove(event: PointerEvent) {
+  if (activePointerId.value !== event.pointerId) return
+
+  if (providerPointerDragging.value && draggedProviderId.value) {
+    event.preventDefault()
+    if (dragGhost.value) {
+      dragGhost.value = { ...dragGhost.value, x: event.clientX, y: event.clientY }
+    }
+    updateProviderDropTarget(event.clientX, event.clientY)
+    return
+  }
+
+  if (event.buttons & 1 && pointerStartProviderId.value) {
+    const deltaX = event.clientX - pressStartX.value
+    const deltaY = event.clientY - pressStartY.value
+    if (Math.hypot(deltaX, deltaY) > 5) {
+      const provider = store.providers.find((item) => item.id === pointerStartProviderId.value)
+      if (provider) {
+        beginProviderDrag(provider, event.clientX, event.clientY)
+        updateProviderDropTarget(event.clientX, event.clientY)
+        return
+      }
+    }
+  }
+
+  if (
+    Math.abs(event.clientX - pressStartX.value) > 8 ||
+    Math.abs(event.clientY - pressStartY.value) > 8
+  ) {
+    clearProviderPressTimer()
+    pressingProviderId.value = null
+  }
+}
+
+function onProviderPointerEnd() {
+  const targetId = dragOverProviderId.value
+  const wasDragging = providerPointerDragging.value
+
+  clearProviderPressTimer()
+
+  if (wasDragging && draggedProviderId.value && targetId) {
+    suppressProviderClick.value = true
+    window.setTimeout(() => {
+      suppressProviderClick.value = false
+    }, 0)
+    void onProviderDrop(targetId)
+    return
+  }
+
+  resetProviderDragState()
+}
+
+async function onProviderDrop(targetId: string) {
+  const sourceId = draggedProviderId.value
+  if (!sourceId || sourceId === targetId) {
+    resetProviderDragState()
+    return
+  }
+
+  const orderedIds = store.providers.map((p) => p.id)
+  const fromIndex = orderedIds.indexOf(sourceId)
+  const toIndex = orderedIds.indexOf(targetId)
+  if (fromIndex < 0 || toIndex < 0) {
+    resetProviderDragState()
+    return
+  }
+
+  const reorderedIds = [...orderedIds]
+  const [movedId] = reorderedIds.splice(fromIndex, 1)
+  reorderedIds.splice(toIndex, 0, movedId)
+
+  try {
+    await store.reorderProviders(reorderedIds)
+  } catch (err: unknown) {
+    ElMessage.error(err instanceof Error ? err.message : '移动提供商失败')
+    await store.fetchAll()
+  } finally {
+    resetProviderDragState()
+  }
+}
+
 /* ---- Dropdown handler ---- */
 async function handleModelCommand(command: string, m: AIModel) {
   const pid = store.selectedProvider?.id
@@ -248,26 +434,37 @@ onMounted(() => {
             class="search-input"
           />
         </div>
-        <div class="panel-left-list">
+        <TransitionGroup
+          name="provider-list"
+          tag="div"
+          class="panel-left-list"
+        >
           <div
             v-for="p in store.filteredProviders"
             :key="p.id"
+            :data-provider-id="p.id"
             class="provider-item"
-            :class="{ active: store.selectedProviderId === p.id }"
-            @click="store.selectProvider(p.id)"
+            :class="{
+              active: store.selectedProviderId === p.id,
+              dragging: draggedProviderId === p.id,
+              pressing: pressingProviderId === p.id,
+              'drop-before': dragOverProviderId === p.id && dropPosition === 'before',
+              'drop-after': dragOverProviderId === p.id && dropPosition === 'after',
+            }"
+            draggable="false"
+            @click="onProviderClick(p)"
+            @contextmenu.prevent
+            @pointerdown="onProviderPointerDown($event, p)"
+            @pointermove="onProviderPointerMove"
+            @pointerup="onProviderPointerEnd"
+            @pointercancel="onProviderPointerEnd"
           >
+            <GripVertical :size="14" class="provider-grip" />
             <span class="provider-logo">{{ p.logo }}</span>
             <div class="provider-info">
               <p class="provider-name">{{ p.name }}</p>
               <div class="provider-meta">
-                <span
-                  class="provider-dot"
-                  :style="{ background: PROVIDER_STATUS_META[p.status].dot }"
-                />
-                <span :style="{ color: PROVIDER_STATUS_META[p.status].color }">
-                  {{ PROVIDER_STATUS_META[p.status].label }}
-                </span>
-                <span class="provider-count">· {{ p.models.length }} 个模型</span>
+                <span class="provider-count">{{ p.models.length }} 个模型</span>
               </div>
             </div>
             <div class="provider-actions">
@@ -279,7 +476,7 @@ onMounted(() => {
               </button>
             </div>
           </div>
-        </div>
+        </TransitionGroup>
       </div>
 
       <!-- ── Right: Provider Detail ──────────────────────────────────────── -->
@@ -304,7 +501,9 @@ onMounted(() => {
               </div>
             </div>
             <div class="provider-header-extras">
-              <span class="provider-api-base">{{ store.selectedProvider.apiBase }}</span>
+              <span class="provider-api-base">
+                {{ store.selectedProvider.apiBase || store.selectedProvider.responseUrl || store.selectedProvider.anthropicUrl || '—' }}
+              </span>
               <button class="btn-secondary" @click="openEditProvider(store.selectedProvider)">
                 <Settings2 :size="14" />
                 配置
@@ -521,10 +720,21 @@ onMounted(() => {
       </div>
     </div>
 
+    <Teleport to="body">
+      <div
+        v-if="dragGhost"
+        class="provider-drag-ghost"
+        :style="{ left: `${dragGhost.x}px`, top: `${dragGhost.y}px` }"
+      >
+        <span class="provider-logo">{{ dragGhost.provider.logo }}</span>
+        <span class="provider-name">{{ dragGhost.provider.name }}</span>
+      </div>
+    </Teleport>
+
     <!-- ═══ Edit Provider Modal ═══ -->
     <Teleport to="body">
       <div v-if="showNewProvider || editingProvider" class="modal-overlay" @click.self="closeProviderModal">
-        <div class="modal-card">
+        <div class="modal-card modal-card--wide">
           <div class="modal-header">
             <div>
               <h2 class="modal-title">{{ editingProvider ? `编辑 ${editingProvider.name}` : '添加模型提供商' }}</h2>
@@ -547,8 +757,19 @@ onMounted(() => {
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">API Base URL *</label>
-              <input v-model="providerForm.apiBase" placeholder="https://api.example.com/v1" class="form-input form-input--mono" />
+              <label class="form-label">协议类型</label>
+            </div>
+            <div class="form-group">
+              <label class="form-label">OpenAI Chat Completion 协议</label>
+              <input v-model="providerForm.apiBase" placeholder="例如：https://open.bigmodel.cn/api/paas/v4" class="form-input form-input--mono" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">OpenAI Response 协议</label>
+              <input v-model="providerForm.responseUrl" placeholder="例如：https://open.bigmodel.cn/api/v1" class="form-input form-input--mono" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Anthropic Message 协议</label>
+              <input v-model="providerForm.anthropicUrl" placeholder="例如：https://open.bigmodel.cn/api/anthropic" class="form-input form-input--mono" />
             </div>
             <div class="form-group">
               <label class="form-label">API Key</label>
@@ -579,7 +800,7 @@ onMounted(() => {
             <button class="btn-cancel" @click="closeProviderModal">取消</button>
             <button
               class="btn-primary"
-              :disabled="!providerForm.name.trim() || !providerForm.apiBase.trim()"
+              :disabled="!providerForm.name.trim() || (!providerForm.apiBase.trim() && !providerForm.responseUrl.trim() && !providerForm.anthropicUrl.trim())"
               @click="handleSaveProvider"
             >
               {{ editingProvider ? '保存' : '添加' }}
@@ -908,7 +1129,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border-subtle);
-  background: rgba(0,0,0,0.1);
+  background: var(--color-bg-card);
 }
 
 .panel-left-search {
@@ -943,13 +1164,34 @@ onMounted(() => {
   overflow-y: auto;
 }
 
+.provider-list-move,
+.provider-list-enter-active,
+.provider-list-leave-active {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.provider-list-enter-from,
+.provider-list-leave-to {
+  opacity: 0;
+}
+
+.provider-list-leave-active {
+  position: absolute;
+}
+
 .provider-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 12px;
-  cursor: pointer;
-  transition: background 0.1s ease;
+  cursor: grab;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
 }
 
 .provider-item:hover { background: rgba(255,255,255,0.03); }
@@ -957,6 +1199,53 @@ onMounted(() => {
 .provider-item.active {
   background: rgba(79,70,229,0.12);
   border-right: 2px solid #4f46e5;
+}
+
+.provider-item.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+  user-select: none;
+}
+
+.provider-item.pressing,
+.provider-item.dragging {
+  touch-action: none;
+}
+
+.provider-item.pressing {
+  background: rgba(79, 70, 229, 0.10);
+  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.20), 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.provider-item.drop-before::before,
+.provider-item.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.65);
+  z-index: 2;
+}
+
+.provider-item.drop-before::before { top: -3px; }
+.provider-item.drop-after::after { bottom: -3px; }
+
+.provider-grip {
+  flex-shrink: 0;
+  color: var(--foreground-muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.provider-item:hover .provider-grip,
+.provider-item.pressing .provider-grip,
+.provider-item.dragging .provider-grip {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .provider-logo { font-size: 20px; flex-shrink: 0; }
@@ -1464,6 +1753,32 @@ onMounted(() => {
 .rank-no-agent {
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
+}
+
+.provider-drag-ghost {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--color-bg-card);
+  border: 1px solid rgba(79, 70, 229, 0.35);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+  transform: translate(-50%, -110%);
+}
+
+.provider-drag-ghost .provider-logo { font-size: 18px; }
+
+.provider-drag-ghost .provider-name {
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+  color: var(--foreground-primary);
 }
 
 /* ---- Modal ---- */

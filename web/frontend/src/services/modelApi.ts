@@ -43,10 +43,13 @@ function toProvider(raw: Record<string, unknown>): Provider {
     logo: raw.logo as string,
     status: raw.status as Provider['status'],
     apiBase: raw.api_base as string,
+    responseUrl: raw.response_url as string,
+    anthropicUrl: raw.anthropic_url as string,
     apiKey: raw.api_key as string,
     models: ((raw.models as Record<string, unknown>[]) ?? []).map(toModel),
     description: (raw.description as string) ?? '',
     website: (raw.website as string) ?? '',
+    sortOrder: raw.sort_order as number | undefined,
   }
 }
 
@@ -69,6 +72,8 @@ function toProviderPayload(data: Provider): Record<string, unknown> {
     name: data.name,
     logo: data.logo,
     api_base: data.apiBase,
+    response_url: data.responseUrl,
+    anthropic_url: data.anthropicUrl,
     api_key: data.apiKey,
     status: data.status,
     description: data.description,
@@ -97,6 +102,10 @@ export async function updateProvider(id: string, data: Provider): Promise<Provid
 
 export async function deleteProvider(id: string): Promise<void> {
   await instance.delete(`/providers/${id}`)
+}
+
+export async function reorderProviders(providerIds: string[]): Promise<void> {
+  await instance.patch('/providers/reorder', { provider_ids: providerIds })
 }
 
 export async function createModel(providerId: string, data: AIModel): Promise<AIModel> {

@@ -1,7 +1,7 @@
 """Request and response schemas for provider and model management."""
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 # ---- 模型参数 ----
 
@@ -75,10 +75,18 @@ class ProviderCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     logo: str = "🤖"
-    api_base: str = Field(min_length=1, max_length=512)
+    api_base: str = Field(default="", max_length=512)
+    response_url: str = Field(default="", max_length=512)
+    anthropic_url: str = Field(default="", max_length=512)
     api_key: str = ""
     description: str = ""
     website: str = ""
+
+    @model_validator(mode="after")
+    def _check_endpoint(self) -> "ProviderCreateRequest":
+        if not (self.api_base.strip() or self.response_url.strip() or self.anthropic_url.strip()):
+            raise ValueError("至少配置一个协议地址")
+        return self
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -86,14 +94,28 @@ class ProviderUpdateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     logo: str = "🤖"
-    api_base: str = Field(min_length=1, max_length=512)
+    api_base: str = Field(default="", max_length=512)
+    response_url: str = Field(default="", max_length=512)
+    anthropic_url: str = Field(default="", max_length=512)
     api_key: str = ""
     status: str = "unconfigured"
     description: str = ""
     website: str = ""
 
+    @model_validator(mode="after")
+    def _check_endpoint(self) -> "ProviderUpdateRequest":
+        if not (self.api_base.strip() or self.response_url.strip() or self.anthropic_url.strip()):
+            raise ValueError("至少配置一个协议地址")
+        return self
+
 
 # ---- 提供商响应 ----
+
+class ProviderReorderRequest(BaseModel):
+    """提供商排序请求体。"""
+
+    provider_ids: list[str] = Field(min_length=1)
+
 
 class ProviderResponse(BaseModel):
     """提供商响应体（含嵌套模型列表，与前端 Provider 接口对齐）。"""
@@ -103,6 +125,9 @@ class ProviderResponse(BaseModel):
     logo: str
     status: str
     api_base: str
+    response_url: str
+    anthropic_url: str
+    sort_order: int
     api_key: SecretStr
     description: str
     website: str

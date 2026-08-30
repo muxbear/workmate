@@ -3,7 +3,7 @@ import logging
 
 from fastapi import HTTPException
 from pydantic import SecretStr
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.providers.schemas import (
@@ -11,6 +11,7 @@ from api.providers.schemas import (
     ModelResponse,
     ModelUpdateRequest,
     ProviderCreateRequest,
+    ProviderReorderRequest,
     ProviderResponse,
     ProviderUpdateRequest,
 )
@@ -29,6 +30,9 @@ def _provider_to_response(p: Provider, models: list[AIModel]) -> ProviderRespons
         logo=p.logo,
         status=p.status,
         api_base=p.api_base,
+        response_url=p.response_url,
+        anthropic_url=p.anthropic_url,
+        sort_order=p.sort_order,
         api_key=SecretStr(decrypt_api_key(p.api_key)),
         description=p.description,
         website=p.website,
@@ -86,7 +90,7 @@ async def _get_model(db: AsyncSession, model_id: str, provider_id: str) -> AIMod
 async def list_providers(db: AsyncSession) -> list[ProviderResponse]:
     """List all providers with their nested models."""
     result = await db.execute(
-        select(Provider).order_by(Provider.created_at)
+        select(Provider).order_by(Provider.sort_order, Provider.created_at)
     )
     providers = result.scalars().all()
     responses: list[ProviderResponse] = []
@@ -103,13 +107,19 @@ async def create_provider(
     db: AsyncSession, req: ProviderCreateRequest, user_id: str
 ) -> ProviderResponse:
     """Create a new provider."""
+    max_sort_result = await db.execute(select(func.max(Provider.sort_order)))
+    next_sort_order = (max_sort_result.scalar() or 0) + 1
+
     provider = Provider(
         name=req.name,
         logo=req.logo,
-        api_base=req.api_base,
+        api_base=req.api_base or "",
+        response_url=req.response_url,
+        anthropic_url=req.anthropic_url,
         api_key=encrypt_api_key(req.api_key),
         description=req.description,
         website=req.website,
+        sort_order=next_sort_order,
         user_id=user_id,
     )
     db.add(provider)
@@ -126,6 +136,8 @@ async def update_provider(
     provider.name = req.name
     provider.logo = req.logo
     provider.api_base = req.api_base
+    provider.response_url = req.response_url
+    provider.anthropic_url = req.anthropic_url
     provider.api_key = encrypt_api_key(req.api_key)
     provider.status = req.status
     provider.description = req.description
@@ -146,6 +158,24 @@ async def delete_provider(db: AsyncSession, provider_id: str, user_id: str) -> N
         delete(AIModel).where(AIModel.provider_id == provider_id)
     )
     await db.delete(provider)
+    await db.commit()
+
+
+async def reorder_providers(
+    db: AsyncSession, req: ProviderReorderRequest, user_id: str
+) -> None:
+    """Persist the provider display order."""
+    if len(set(req.provider_ids)) != len(req.provider_ids):
+        raise HTTPException(status_code=400, detail="提供商 ID 不能重复")
+
+    result = await db.execute(select(Provider).where(Provider.id.in_(req.provider_ids)))
+    providers = list(result.scalars().all())
+    by_id = {p.id: p for p in providers}
+    if len(by_id) != len(req.provider_ids):
+        raise HTTPException(status_code=404, detail="部分提供商不存在")
+
+    for index, provider_id in enumerate(req.provider_ids):
+        by_id[provider_id].sort_order = index
     await db.commit()
 
 

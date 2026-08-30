@@ -8,6 +8,7 @@ from api.providers.schemas import (
     ModelResponse,
     ModelUpdateRequest,
     ProviderCreateRequest,
+    ProviderReorderRequest,
     ProviderResponse,
     ProviderUpdateRequest,
 )
@@ -18,6 +19,7 @@ from api.providers.service import (
     delete_model,
     delete_provider,
     list_providers,
+    reorder_providers,
     toggle_model_status,
     update_model,
     update_provider,
@@ -48,6 +50,18 @@ async def provider_create(
     """创建新的模型提供商。"""
     result = await create_provider(db, req, user_id)
     return ok(result)
+
+
+@router.patch("/reorder", response_model=ApiResponse[None])
+@handle_errors
+async def provider_reorder(
+    req: ProviderReorderRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """持久化模型提供商排序。"""
+    await reorder_providers(db, req, user_id)
+    return ok(None, "Provider order updated")
 
 
 @router.put("/{provider_id}", response_model=ApiResponse[ProviderResponse])

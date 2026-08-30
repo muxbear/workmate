@@ -172,6 +172,20 @@ export const useModelStore = defineStore('model', () => {
     }
   }
 
+  async function reorderProviders(orderedIds: string[]) {
+    const byId = new Map(providers.value.map((p) => [p.id, p]))
+    const next = orderedIds
+      .map((id) => byId.get(id))
+      .filter((p): p is Provider => Boolean(p))
+
+    if (next.length !== providers.value.length) {
+      throw new Error('提供商列表不一致，请刷新后重试')
+    }
+
+    await api.reorderProviders(orderedIds)
+    providers.value = next
+  }
+
   function setRightTab(tab: RightTab) {
     rightTab.value = tab
   }
@@ -181,7 +195,7 @@ export const useModelStore = defineStore('model', () => {
     providerSearch, modelSearch, modelTypeFilter, rightTab,
     selectedProvider, filteredProviders, filteredModels,
     totalModels, typeCounts, providerTypeCounts, providerStats,
-    fetchAll, selectProvider, saveProvider, deleteProvider,
+    fetchAll, selectProvider, saveProvider, deleteProvider, reorderProviders,
     saveModel, deleteModel, cloneModel, toggleModelStatus, setRightTab,
   }
 })
