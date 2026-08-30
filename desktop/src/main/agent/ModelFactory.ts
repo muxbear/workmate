@@ -1,9 +1,10 @@
 import { initChatModel } from 'langchain'
+import { ChatOpenAIResponses } from '@langchain/openai'
 import type { ModelService } from '../model/ModelService'
 import type { ModelRecord } from '../model/types'
 
 export type ChatModel = Awaited<ReturnType<typeof initChatModel>>
-export type ModelCredential = Pick<ModelRecord, 'id' | 'apiKey' | 'url'>
+export type ModelCredential = Pick<ModelRecord, 'id' | 'apiKey' | 'url' | 'protocol'>
 
 const DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com/chat/completions'
 
@@ -16,9 +17,30 @@ export function normalizeBaseUrl(url: string): string {
  * 这里刻意使用 modelProvider: 'openai'，避免走 @langchain/deepseek
  * 的 ChatDeepSeek 构造器，也就不会触发 DEEPSEEK_API_KEY 检查。
  */
+function normalizeProtocolBaseUrl(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url
+}
+
 export function createModelFromCredential(
   credential: ModelCredential
 ): Promise<ChatModel> {
+  const protocol = credential.protocol ?? 'openai-chat'
+  if (protocol === 'openai-response') {
+    return Promise.resolve(
+      new ChatOpenAIResponses({
+        model: credential.id,
+        apiKey: credential.apiKey,
+        configuration: { baseURL: normalizeProtocolBaseUrl(credential.url) }
+      })
+    ) as unknown as Promise<ChatModel>
+  }
+  if (protocol === 'anthropic') {
+    return initChatModel(credential.id, {
+      modelProvider: 'anthropic',
+      apiKey: credential.apiKey,
+      configuration: { baseURL: normalizeProtocolBaseUrl(credential.url) }
+    })
+  }
   return initChatModel(credential.id, {
     modelProvider: 'openai',
     apiKey: credential.apiKey,
@@ -51,7 +73,8 @@ export async function resolveDefaultModel(
     return createModelFromCredential({
       id: modelId,
       apiKey: envApiKey,
-      url: process.env.DEEPSEEK_BASE_URL || DEFAULT_DEEPSEEK_BASE_URL
+      url: process.env.DEEPSEEK_BASE_URL || DEFAULT_DEEPSEEK_BASE_URL,
+      protocol: 'openai-chat'
     })
   }
 

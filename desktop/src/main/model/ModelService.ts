@@ -13,6 +13,7 @@ import {
   type AddModelInput,
   type ModelFileData,
   type ModelRecord,
+  type ModelProtocol,
   type ProviderRecord
 } from './types'
 
@@ -47,17 +48,56 @@ export class ModelService {
 
   /** 全部提供商（深拷贝） */
   listProviders(): ProviderRecord[] {
-    return this.providers.map((p) => ({ ...p, plans: [...p.plans] }))
+    return this.providers.map((p) => ({
+      ...p,
+      urls: p.urls ? { ...p.urls } : undefined,
+      plans: [...p.plans]
+    }))
   }
 
   /**
    * 主进程内部用：按 id 取模型调用凭据（agent 模型覆盖中间件）；不存在返回 null
    * id 即 API 模型标识（如 deepseek-chat / gpt-4o），name 为显示名
    */
-  getCredential(id: string): Pick<ModelRecord, 'id' | 'name' | 'apiKey' | 'url'> | null {
+  getCredential(
+    id: string
+  ): Pick<ModelRecord, 'id' | 'name' | 'apiKey' | 'url' | 'protocol'> | null {
     const model = this.models.find((m) => m.id === id)
     if (!model) return null
-    return { id: model.id, name: model.name, apiKey: model.apiKey, url: model.url }
+    return {
+      id: model.id,
+      name: model.name,
+      apiKey: model.apiKey,
+      url: model.url,
+      protocol: model.protocol ?? 'openai-chat'
+    }
+  }
+
+  /** 全量应用同步快照（服务器提供商与模型），校验通过后原子落盘 */
+  applySyncSnapshot(snapshot: { providers: ProviderRecord[]; models: ModelRecord[] }): void {
+    const providers = snapshot.providers.filter(isProviderRecord).map(normalizeProvider)
+    const models = snapshot.models.filter(isModelRecord).map((m) => ({
+      ...m,
+      protocol: this.normalizeProtocol(m.protocol ?? 'openai-chat')
+    }))
+
+    for (const model of models) {
+      this.assertValid(model)
+    }
+
+    const seen = new Set<string>()
+    const uniqueModels = models.filter((m) => {
+      if (seen.has(m.id)) return false
+      seen.add(m.id)
+      return true
+    })
+    if (uniqueModels.length !== models.length) {
+      console.warn('[model] duplicate model ids in sync snapshot, keeping first occurrence')
+    }
+
+    this.providers = providers.length > 0 ? providers : seedProviders()
+    this.models = uniqueModels
+    this.persist()
   }
 
   /** 校验并添加模型；非法入参抛错（IPC handler 转 { success: false }） */
@@ -66,6 +106,7 @@ export class ModelService {
     const name = input.name.trim()
     const vendor = input.vendor.trim()
     const url = input.url.trim()
+    const protocol = this.normalizeProtocol(input.protocol ?? 'openai-chat')
     const apiKey = input.apiKey.trim()
     this.assertValid({ id, name, vendor, url, apiKey })
     if (this.models.some((m) => m.id === id)) throw new Error('已存在同名模型')
@@ -75,6 +116,7 @@ export class ModelService {
       name,
       vendor,
       url,
+      protocol,
       apiKey,
       supportsToolCall: true,
       supportsImages: false,
@@ -96,6 +138,7 @@ export class ModelService {
     const name = input.name.trim()
     const vendor = input.vendor.trim()
     const url = input.url.trim()
+    const protocol = this.normalizeProtocol(input.protocol ?? 'openai-chat')
     const apiKey = input.apiKey.trim()
     this.assertValid({ id: newId, name, vendor, url, apiKey })
     // 改名即改 id：新 id 不得与其他模型冲突（排除自身）
@@ -107,6 +150,7 @@ export class ModelService {
       name,
       vendor,
       url,
+      protocol,
       apiKey
     }
     this.models[index] = record
@@ -119,6 +163,14 @@ export class ModelService {
     const before = this.models.length
     this.models = this.models.filter((m) => m.id !== id)
     if (this.models.length !== before) this.persist()
+  }
+
+  /** 协议归一：非法值回退到 OpenAI Chat Completion */
+  private normalizeProtocol(protocol: string): ModelProtocol {
+    if (protocol === 'openai-chat' || protocol === 'openai-response' || protocol === 'anthropic') {
+      return protocol
+    }
+    return 'openai-chat'
   }
 
   /** 入参校验（id/name/vendor/apiKey/url；id 仅新建时唯一校验） */

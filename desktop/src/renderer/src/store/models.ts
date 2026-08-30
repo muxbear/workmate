@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 // 渲染层 window.api 类型（preload 的全局声明；node tsconfig 下需此处显式合并）
 import type { KeWorkWindowApi } from '../../../preload/index.d'
-import type { CustomModel, ModelProvider } from '../../../preload/index.d'
+import type { CustomModel, ModelProvider, ModelProtocol } from '../../../preload/index.d'
 
 declare global {
   interface Window {
@@ -37,6 +37,7 @@ export const useModelStore = defineStore('models', () => {
     name: string
     vendor: string
     url: string
+    protocol: ModelProtocol
     apiKey: string
   }): Promise<CustomModel> {
     const result = await window.api.addModel(input)
@@ -55,7 +56,7 @@ export const useModelStore = defineStore('models', () => {
   /** 更新模型：成功替换列表项；失败抛错 */
   async function update(
     id: string,
-    input: { id: string; name: string; vendor: string; url: string; apiKey: string }
+    input: { id: string; name: string; vendor: string; url: string; protocol: ModelProtocol; apiKey: string }
   ): Promise<CustomModel> {
     const result = await window.api.updateModel(id, input)
     if (!result.success || !result.data) throw new Error(result.error || '更新模型失败')

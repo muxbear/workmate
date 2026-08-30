@@ -41,6 +41,7 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
 import { registerExpertSyncHandlers } from './ipc/expert-sync-handlers'
+import { registerModelSyncHandlers } from './ipc/model-sync-handlers'
 import { registerOAuth2Handlers } from './ipc/oauth2-handlers'
 import { BinaryManager } from './runtime/BinaryManager'
 import { registerRuntimeHandlers } from './ipc/runtime-handlers'
@@ -52,6 +53,7 @@ import { WorkspacePreviewServer } from './browser/WorkspacePreviewServer'
 import { registerBrowserHandlers } from './browser/browser-handlers'
 import { SkillSyncService } from './skills/SkillSyncService'
 import { ExpertSyncService } from './experts/ExpertSyncService'
+import { ModelSyncService } from './models/ModelSyncService'
 import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
 
 import icon from '../../resources/icon.png?asset'
@@ -266,6 +268,18 @@ app.whenReady().then(() => {
   })
   registerExpertSyncHandlers(ipcMain, { expertSyncService, session })
 
+  const modelSyncService = new ModelSyncService({
+    secureStorage,
+    openExternal: (url) =>
+      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
+        ? openOAuthWindow(url)
+        : shell.openExternal(url),
+    modelService,
+    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
+    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+  })
+  registerModelSyncHandlers(ipcMain, { modelSyncService, session })
+
   const cleanupBrowserOnLogout = (): void => {
     for (const manager of browserManagers.values()) {
       manager.resetForLogout()
@@ -275,6 +289,7 @@ app.whenReady().then(() => {
     if (localUserId) {
       void skillSyncService.disconnect(localUserId)
       void expertSyncService.disconnect(localUserId)
+      void modelSyncService.disconnect(localUserId)
     }
   }
 

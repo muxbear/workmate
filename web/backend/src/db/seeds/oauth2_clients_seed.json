@@ -14,7 +14,8 @@
         "expert:read",
         "conversation:read",
         "conversation:write",
-        "workspace:read"
+        "workspace:read",
+        "model:read"
       ],
       "grant_types": ["authorization_code"],
       "enabled": true

@@ -271,7 +271,7 @@ const api = {
   listModels() {
     return ipcRenderer.invoke('model:list')
   },
-  addModel(input: { id: string; name: string; vendor: string; url: string; apiKey: string }) {
+  addModel(input: { id: string; name: string; vendor: string; url: string; protocol: string; apiKey: string }) {
     return ipcRenderer.invoke('model:add', input)
   },
   removeModel(id: string) {
@@ -279,7 +279,7 @@ const api = {
   },
   updateModel(
     id: string,
-    input: { id: string; name: string; vendor: string; url: string; apiKey: string }
+    input: { id: string; name: string; vendor: string; url: string; protocol: string; apiKey: string }
   ) {
     return ipcRenderer.invoke('model:update', id, input)
   },
@@ -324,6 +324,20 @@ const api = {
     },
     disconnect() {
       return ipcRenderer.invoke('expert-sync:disconnect')
+    }
+  },
+  modelSync: {
+    getStatus() {
+      return ipcRenderer.invoke('model-sync:status')
+    },
+    authorize() {
+      return ipcRenderer.invoke('model-sync:authorize')
+    },
+    sync() {
+      return ipcRenderer.invoke('model-sync:sync')
+    },
+    disconnect() {
+      return ipcRenderer.invoke('model-sync:disconnect')
     }
   }
 }

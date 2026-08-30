@@ -7,12 +7,39 @@ import AddModelModal from './AddModelModal.vue'
 const modelStore = useModelStore()
 
 const addOpen = ref(false)
+const syncing = ref(false)
+const syncError = ref('')
+const syncMessage = ref('')
 /** 正在编辑的模型（null = 新建模式） */
 const editingModel = ref<CustomModel | null>(null)
 
 onMounted(() => {
   void modelStore.load()
 })
+
+/** 从 Web 端同步模型提供商和模型；未授权时先拉起 OAuth2 授权 */
+const syncModels = async (): Promise<void> => {
+  if (syncing.value) return
+  syncing.value = true
+  syncError.value = ''
+  syncMessage.value = ''
+  try {
+    const statusRes = await window.api.modelSync.getStatus()
+    if (statusRes.success && statusRes.data && statusRes.data.status !== 'authorized') {
+      const authRes = await window.api.modelSync.authorize()
+      if (!authRes.success) throw new Error(authRes.error || '授权失败')
+    }
+    const res = await window.api.modelSync.sync()
+    if (!res.success) throw new Error(res.error || '同步失败')
+    await modelStore.load()
+    const count = res.data?.modelCount ?? 0
+    syncMessage.value = '已同步 ' + count + ' 个模型'
+  } catch (err) {
+    syncError.value = err instanceof Error ? err.message : '同步失败'
+  } finally {
+    syncing.value = false
+  }
+}
 
 /** 打开添加模型弹窗（新建模式） */
 const openAddModal = (): void => {
@@ -65,8 +92,28 @@ const removeModel = async (id: string): Promise<void> => {
         >
           ＋ 添加模型
         </button>
+        <button
+          class='m-add-btn'
+          :disabled='syncing'
+          title='从服务器同步模型提供商和模型'
+          @click='syncModels'
+        >
+          {{ syncing ? '同步中…' : '同步模型' }}
+        </button>
       </div>
     </section>
+    <p
+      v-if='syncError'
+      class='m-sync-error'
+    >
+      {{ syncError }}
+    </p>
+    <p
+      v-else-if='syncMessage'
+      class='m-sync-success'
+    >
+      {{ syncMessage }}
+    </p>
 
     <h2 class="m-section-title">
       已保存模型
@@ -297,5 +344,21 @@ const removeModel = async (id: string): Promise<void> => {
 .m-icon-btn--danger:hover {
   background: #fdeeee;
   color: #ce4545;
+}
+.m-add-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.m-sync-error {
+  margin: 12px 0 0;
+  font-size: 14px;
+  color: #ce4545;
+}
+
+.m-sync-success {
+  margin: 12px 0 0;
+  font-size: 14px;
+  color: #16855c;
 }
 </style>

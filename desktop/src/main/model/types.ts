@@ -11,6 +11,16 @@
  * 兼容：v1 早期版本 models.json 为顶层数组（仅模型），加载时自动识别迁移
  */
 
+/** 模型协议类型 */
+export type ModelProtocol = 'openai-chat' | 'openai-response' | 'anthropic'
+
+/** 提供商三个协议端点 */
+export interface ProviderUrls {
+  openaiChat: string
+  openaiResponse: string
+  anthropic: string
+}
+
 /** 用户自定义模型记录（models.json 元素，apiKey 明文存储，与 .env 现状一致） */
 export interface ModelRecord {
   /** 模型唯一标识（弹窗输入值即 API 模型标识，如 deepseek-v4-flash / gpt-4o） */
@@ -19,8 +29,10 @@ export interface ModelRecord {
   name: string
   /** 提供商名称（如 DeepSeek / 智谱） */
   vendor: string
-  /** OpenAI 兼容 chat/completions 端点 */
+  /** 当前模型使用的协议端点 */
   url: string
+  /** 模型协议，默认 OpenAI Chat Completion；兼容旧数据缺失时按 openai-chat 处理 */
+  protocol?: ModelProtocol
   apiKey: string
   supportsToolCall: boolean
   supportsImages: boolean
@@ -38,6 +50,7 @@ export interface AddModelInput {
   name: string
   vendor: string
   url: string
+  protocol?: ModelProtocol
   apiKey: string
 }
 
@@ -53,8 +66,10 @@ export interface ProviderRecord {
   nameEn?: string
   /** LOGO 标识（渲染层 ProviderLogo 组件按此渲染；如 deepseek=鲸鱼） */
   logo: string
-  /** 提供商默认端点（Token Plan / Coding Plan 共用；用户可在 json 中修改） */
+  /** 提供商默认端点（OpenAI Chat Completion 协议） */
   defaultUrl: string
+  /** 三种协议端点；兼容旧数据缺失时可仅提供 defaultUrl */
+  urls?: ProviderUrls
   /** 该提供商支持的提供方式；「自定义 API」与「其它」需用户填写端点 */
   plans: { type: ProviderPlanType }[]
   /** 该提供商可提供的模型列表（模型名称下拉数据源；可手改 json） */

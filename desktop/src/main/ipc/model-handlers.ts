@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron'
 import type { ModelService } from '../model/ModelService'
+import type { ModelProtocol } from '../model/types'
 
 export interface ModelHandlerDeps {
   modelService: ModelService
@@ -19,6 +20,7 @@ function toAddInput(input: unknown): {
   name: string
   vendor: string
   url: string
+  protocol: ModelProtocol
   apiKey: string
 } | null {
   if (typeof input !== 'object' || input === null) return null
@@ -28,11 +30,19 @@ function toAddInput(input: unknown): {
     typeof v.name !== 'string' ||
     typeof v.vendor !== 'string' ||
     typeof v.url !== 'string' ||
+    typeof v.protocol !== 'string' ||
     typeof v.apiKey !== 'string'
   ) {
     return null
   }
-  return { id: v.id, name: v.name, vendor: v.vendor, url: v.url, apiKey: v.apiKey }
+  return {
+    id: v.id,
+    name: v.name,
+    vendor: v.vendor,
+    url: v.url,
+    protocol: v.protocol as ModelProtocol,
+    apiKey: v.apiKey
+  }
 }
 
 /**

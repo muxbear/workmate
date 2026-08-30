@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useModelStore } from '@store/models'
-import type { CustomModel } from '../../../../../preload/index.d'
+import type { CustomModel, ModelProtocol } from '../../../../../preload/index.d'
 import ProviderLogo from './ProviderLogo.vue'
 
-/** 需要用户填写 API 地址的提供方式 */
-const CUSTOM_URL_PLANS = ['自定义 API', '其它']
+const PROTOCOL_OPTIONS: { value: ModelProtocol; label: string }[] = [
+  { value: 'openai-chat', label: 'OpenAI Chat Completion' },
+  { value: 'openai-response', label: 'OpenAI Response' },
+  { value: 'anthropic', label: 'Anthropic Message' }
+]
 
 const props = defineProps<{
   open: boolean
@@ -32,7 +35,7 @@ watch(
 // ── 表单状态 ──
 const providerId = ref('')
 const providerOpen = ref(false)
-const planType = ref('')
+const protocol = ref<ModelProtocol>('openai-chat')
 const apiUrl = ref('')
 const apiKey = ref('')
 const showApiKey = ref(false)
@@ -46,8 +49,14 @@ const currentProvider = computed(
   () => modelStore.providers.find((p) => p.id === providerId.value) ?? null
 )
 
-/** 提供方式是否需要用户填写 API 地址（Token/Coding Plan 用提供商默认端点） */
-const needCustomUrl = computed(() => CUSTOM_URL_PLANS.includes(planType.value))
+/** 当前协议对应的默认端点 */
+const protocolUrl = computed(() => {
+  const provider = currentProvider.value
+  if (!provider) return ''
+  if (protocol.value === 'openai-response') return provider.urls?.openaiResponse ?? ''
+  if (protocol.value === 'anthropic') return provider.urls?.anthropic ?? ''
+  return provider.urls?.openaiChat ?? provider.defaultUrl ?? ''
+})
 
 /** 模型名称候选：当前提供商可提供的模型（来自 models.json providers 数据，可手改） */
 const filteredCandidates = computed(() => {
@@ -64,26 +73,18 @@ const filteredCandidates = computed(() => {
 const resetForm = (): void => {
   const editing = props.editing
   if (editing) {
-    // 编辑模式：提供商按 vendor 匹配（找不到 → 其它 + 自定义 API）
     const provider = modelStore.providers.find((p) => p.name === editing.vendor)
     providerId.value = provider?.id ?? 'custom'
-    const plan = provider?.plans[0]
-    const usesDefault = provider !== undefined && editing.url === provider.defaultUrl
-    if (provider && plan && usesDefault) {
-      planType.value = plan.type
-      apiUrl.value = ''
-    } else {
-      planType.value = provider ? '自定义 API' : '其它'
-      apiUrl.value = editing.url
-    }
+    protocol.value = editing.protocol ?? 'openai-chat'
+    apiUrl.value = editing.url
     apiKey.value = editing.apiKey
     modelName.value = editing.id
     showApiKey.value = false
   } else {
     const first = modelStore.providers[0]
     providerId.value = first?.id ?? ''
-    planType.value = first?.plans[0]?.type ?? ''
-    apiUrl.value = ''
+    protocol.value = 'openai-chat'
+    apiUrl.value = first?.urls?.openaiChat ?? first?.defaultUrl ?? ''
     apiKey.value = ''
     modelName.value = ''
   }
@@ -92,7 +93,6 @@ const resetForm = (): void => {
   providerOpen.value = false
   error.value = ''
 }
-
 watch(
   () => props.open,
   (v) => {
@@ -119,16 +119,13 @@ const pickProvider = (id: string): void => {
 const onProviderChange = (): void => {
   const provider = currentProvider.value
   if (!provider) return
-  planType.value = provider.plans[0]?.type ?? ''
-  apiUrl.value = ''
+  protocol.value = 'openai-chat'
+  apiUrl.value = provider.urls?.openaiChat ?? provider.defaultUrl ?? ''
   pickerOpen.value = false
 }
 
-/** 切换提供方式：自定义方式清空端点，托管方式回填提供商默认端点 */
-const onPlanChange = (): void => {
-  const provider = currentProvider.value
-  if (!provider) return
-  apiUrl.value = needCustomUrl.value ? '' : (provider.defaultUrl ?? '')
+const onProtocolChange = (): void => {
+  apiUrl.value = protocolUrl.value
 }
 
 const toggleApiKey = (): void => {
@@ -165,7 +162,7 @@ const saveModel = async (): Promise<void> => {
     error.value = '请输入 API Key'
     return
   }
-  const url = needCustomUrl.value ? apiUrl.value.trim() : (provider.defaultUrl ?? '').trim()
+  const url = apiUrl.value.trim()
   if (!url) {
     error.value = '请输入 API 地址'
     return
@@ -177,6 +174,7 @@ const saveModel = async (): Promise<void> => {
       name,
       vendor: provider.name,
       url,
+      protocol: protocol.value,
       apiKey: apiKey.value.trim()
     }
     if (props.editing) {
@@ -209,7 +207,7 @@ const saveModel = async (): Promise<void> => {
             <h2 class="am-title">
               {{ editing ? '编辑模型' : '添加模型' }}
             </h2>
-            <span class="am-badge">仅支持 OpenAI 兼容协议 API</span>
+            <span class="am-badge">支持 OpenAI Chat / Response 与 Anthropic</span>
           </div>
           <button
             class="am-close"
@@ -321,49 +319,45 @@ const saveModel = async (): Promise<void> => {
             </div>
           </div>
 
-          <!-- 提供方式 -->
-          <div class="am-field">
-            <label class="am-label">提供方式</label>
-            <div class="am-select-wrap">
+          <div class='am-field'>
+            <label class='am-label'>模型协议</label>
+            <div class='am-select-wrap'>
               <select
-                v-model="planType"
-                class="am-select am-select--plain"
-                @change="onPlanChange"
+                v-model='protocol'
+                class='am-select am-select--plain'
+                @change='onProtocolChange'
               >
                 <option
-                  v-for="plan in currentProvider?.plans ?? []"
-                  :key="plan.type"
-                  :value="plan.type"
+                  v-for='option in PROTOCOL_OPTIONS'
+                  :key='option.value'
+                  :value='option.value'
                 >
-                  {{ plan.type }}
+                  {{ option.label }}
                 </option>
               </select>
               <svg
-                class="am-select-icon-right"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+                class='am-select-icon-right'
+                width='16'
+                height='16'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                stroke-width='2'
+                stroke-linecap='round'
+                stroke-linejoin='round'
               >
-                <polyline points="6 9 12 15 18 9" />
+                <polyline points='6 9 12 15 18 9' />
               </svg>
             </div>
           </div>
 
-          <!-- API 地址（自定义 API / 其它 时展开） -->
-          <div
-            v-if="needCustomUrl"
-            class="am-field"
-          >
-            <label class="am-label">API 地址</label>
+          <!-- API 地址 -->
+          <div class='am-field'>
+            <label class='am-label'>API 地址</label>
             <input
-              v-model="apiUrl"
-              class="am-input"
-              placeholder="https://api.example.com/v1/chat/completions"
+              v-model='apiUrl'
+              class='am-input'
+              placeholder='https://api.example.com/v1/chat/completions'
             >
           </div>
 

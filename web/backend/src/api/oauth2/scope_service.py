@@ -14,6 +14,7 @@ SCOPE_LABELS: dict[str, str] = {
     "conversation:read": "读取会话",
     "conversation:write": "创建和修改会话",
     "workspace:read": "读取工作区",
+    "model:read": "读取并同步模型提供商和模型",
 }
 
 

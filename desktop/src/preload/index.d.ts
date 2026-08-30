@@ -273,12 +273,23 @@ export interface ConfigAPI {
   openDataDir(): Promise<IpcResult<null>>
 }
 
+/** 模型协议类型 */
+export type ModelProtocol = 'openai-chat' | 'openai-response' | 'anthropic'
+
+/** 提供商三种协议端点 */
+export interface ModelProviderUrls {
+  openaiChat: string
+  openaiResponse: string
+  anthropic: string
+}
+
 /** 自定义模型记录（models.json 元素；id 即 API 模型标识，name 为显示名） */
 export interface CustomModel {
   id: string
   name: string
   vendor: string
   url: string
+  protocol?: ModelProtocol
   apiKey: string
   supportsToolCall: boolean
   supportsImages: boolean
@@ -296,6 +307,7 @@ export interface ModelProvider {
   /** LOGO 标识（ProviderLogo 组件按此渲染） */
   logo: string
   defaultUrl: string
+  urls?: ModelProviderUrls
   plans: { type: string }[]
   /** 该提供商可提供的模型列表（模型名称下拉数据源） */
   models: string[]
@@ -310,6 +322,7 @@ export interface ModelAPI {
     name: string
     vendor: string
     url: string
+    protocol: ModelProtocol
     apiKey: string
   }): Promise<IpcResult<CustomModel>>
   /** 移除自定义模型（幂等） */
@@ -317,7 +330,7 @@ export interface ModelAPI {
   /** 更新自定义模型（按 id 定位；id 本身不可改，其余字段可改） */
   updateModel(
     id: string,
-    input: { id: string; name: string; vendor: string; url: string; apiKey: string }
+    input: { id: string; name: string; vendor: string; url: string; protocol: ModelProtocol; apiKey: string }
   ): Promise<IpcResult<CustomModel>>
   /** 提供商列表（models.json 内 providers；缺失时主进程用内置种子） */
   listModelProviders(): Promise<IpcResult<ModelProvider[]>>
@@ -423,6 +436,26 @@ export interface ExpertSyncAPI {
   disconnect(): Promise<IpcResult<null>>
 }
 
+/** Web 模型同步状态 */
+export type ModelSyncStatus = {
+  status: 'unauthorized' | 'authorized'
+  webUser: WebUser | null
+}
+
+/** Web 模型同步结果 */
+export interface ModelSyncResult {
+  providerCount: number
+  modelCount: number
+  syncedAt: number
+}
+
+export interface ModelSyncAPI {
+  getStatus(): Promise<IpcResult<ModelSyncStatus>>
+  authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
+  sync(): Promise<IpcResult<ModelSyncResult>>
+  disconnect(): Promise<IpcResult<null>>
+}
+
 /** 渲染层可见的完整 API 形状 */
 export interface KeWorkWindowApi
   extends AgentAPI,
@@ -436,6 +469,7 @@ export interface KeWorkWindowApi
     RuntimeAPI {
   skillSync: SkillSyncAPI
   expert: ExpertSyncAPI
+  modelSync: ModelSyncAPI
 }
 
 declare global {
