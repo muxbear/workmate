@@ -53,6 +53,7 @@ const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const DEFAULT_CLIENT_ID = 'ke-work-desktop'
 const TOKEN_KEY_PREFIX = 'model-sync:'
 const MODEL_SCOPE = 'model:read'
+const MASKED_API_KEY = '**********'
 
 function mapProvider(item: WebSyncProvider): ProviderRecord {
   return {
@@ -146,7 +147,19 @@ export class ModelSyncService {
     })
 
     const providers = data.providers.map(mapProvider)
-    const models = data.models.map(mapModel)
+    const localKeyByVendor = new Map<string, string>()
+    for (const model of this.modelService.list()) {
+      if (!localKeyByVendor.has(model.vendor)) {
+        localKeyByVendor.set(model.vendor, model.apiKey)
+      }
+    }
+    const models = data.models.map((item) => {
+      const model = mapModel(item)
+      if (model.apiKey === MASKED_API_KEY) {
+        model.apiKey = localKeyByVendor.get(model.vendor) ?? model.apiKey
+      }
+      return model
+    })
     if (models.length === 0) {
       throw new Error('服务器没有可同步的模型，本地配置未变更')
     }

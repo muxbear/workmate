@@ -26,6 +26,10 @@ export interface Expert {
   tools: string[]
   providerId: string | null
   modelId: string | null
+  modelName?: string | null
+  modelType?: string | null
+  skills?: unknown[]
+  mcpConfigs?: unknown[]
   promptTemplate: string
   expertiseAreas: string[]
   isExpert: boolean
@@ -176,7 +180,7 @@ function loadPersisted(): PersistedState {
 
 /** 专家使用提示词模板（插入输入框的可编辑文本，删除专家时按原文移除） */
 function buildExpertPrompt(expert: Expert): string {
-  const template = expert.promptTemplate || '请以【{name}·{title}】的身份协助我完成以下任务：'
+  const template = expert.promptTemplate || '请先分析任务并拆分为子任务；对于适合【{name}·{title}】处理的子任务，请调用该专家处理；最后汇总结果。'
   return template.replace('{name}', expert.name).replace('{title}', expert.title)
 }
 

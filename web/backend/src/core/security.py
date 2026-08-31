@@ -179,6 +179,9 @@ def decode_token(token: str, expected_type: str = "access") -> dict:
 _fernet: Fernet | None = None
 _FERNET_KEY_FILE = ".fernet_key"
 
+# SecretStr 序列化时产生的掩码占位符；更新接口收到该值应视为“未修改”。
+MASKED_API_KEY = "**********"
+
 
 def _get_fernet() -> Fernet:
     global _fernet

@@ -25,6 +25,15 @@ interface ExpertSyncItem {
   system_prompt: string
   scene: string | null
   sort_order: number
+  provider_id: string | null
+  model_id: string | null
+  model_name: string | null
+  model_type: string | null
+  tools: Array<{ id: string; name: string; display_name: string; tool_type: string; category: string; icon?: string }>
+  skills: Array<{ id: string; name: string; description: string; category: string; icon: string; enabled: boolean }>
+  mcp_configs: Array<{ mcp_tool_id: string; mcp_tool_name: string; config: Record<string, unknown>; enabled: boolean }>
+  prompt_template: string
+  expertise_areas: string[]
 }
 
 interface ExpertSyncListData {
@@ -59,11 +68,15 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
     users: item.users,
     initials: item.initials || item.name.charAt(0),
     systemPrompt: item.system_prompt,
-    tools: [],
-    providerId: null,
-    modelId: null,
-    promptTemplate: '',
-    expertiseAreas: [],
+    tools: item.tools.map((tool) => tool.name),
+    skills: item.skills,
+    providerId: item.provider_id,
+    modelId: item.model_id,
+    modelName: item.model_name,
+    modelType: item.model_type,
+    mcpConfigs: item.mcp_configs,
+    promptTemplate: item.prompt_template,
+    expertiseAreas: item.expertise_areas,
     isExpert: true
   }
 }

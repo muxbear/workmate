@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "")
 
+    # ---- Image generation ----
+    IMAGE_GEN_API_KEY: str = os.getenv("IMAGE_GEN_API_KEY", "")
+    IMAGE_GEN_BASE_URL: str = os.getenv("IMAGE_GEN_BASE_URL", "")
+    IMAGE_GEN_MODEL: str = os.getenv("IMAGE_GEN_MODEL", "")
+
     # ---- Embeddings (DashScope) ----
     DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
     DASHSCOPE_EMBEDDING: str = os.getenv("DASHSCOPE_EMBEDDING", "")

@@ -94,7 +94,8 @@ const selectedProvider = computed(() =>
 /** 当前提供商下的模型列表 */
 const availableModels = computed(() => {
   if (!selectedProvider.value) return []
-  return selectedProvider.value.models.filter((m) => m.status === 'active' || m.status === 'beta')
+  const chatTypes = ['llm', 'vision', 'multimodal']
+  return selectedProvider.value.models.filter((m) => (m.status === 'active' || m.status === 'beta') && chatTypes.includes(m.type))
 })
 
 /** 提供商切换时清空模型选择 */

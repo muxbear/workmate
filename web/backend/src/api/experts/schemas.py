@@ -65,6 +65,10 @@ class ExpertInfo(BaseModel):
     system_prompt: str
     provider_id: str | None = None
     model_id: str | None = None
+    model_name: str | None = None
+    model_type: str | None = None
+    prompt_template: str = ""
+    expertise_areas: list[str] = []
     tools: list[ToolBrief] = []
     skills: list[ExpertSkillBrief] = []
     mcp_configs: list[McpConfigBrief] = []
@@ -163,7 +167,7 @@ class FeaturedSceneResponse(BaseModel):
 
 
 class ExpertSyncItem(BaseModel):
-    """同步用精简专家数据（适配桌面版 ExpertPage）。."""
+    """同步用专家数据（适配桌面版 ExpertPage）。."""
     id: str
     name: str
     title: str
@@ -179,6 +183,15 @@ class ExpertSyncItem(BaseModel):
     system_prompt: str
     scene: str | None = None
     sort_order: int
+    provider_id: str | None = None
+    model_id: str | None = None
+    model_name: str | None = None
+    model_type: str | None = None
+    tools: list[ToolBrief] = []
+    skills: list[ExpertSkillBrief] = []
+    mcp_configs: list[McpConfigBrief] = []
+    prompt_template: str = ""
+    expertise_areas: list[str] = []
 
 
 class ExpertSyncListResponse(BaseModel):

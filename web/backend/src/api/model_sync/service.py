@@ -19,7 +19,7 @@ from db.models.provider import Provider
 logger = logging.getLogger(__name__)
 
 MODELS_FILE_VERSION = 1
-SYNCABLE_MODEL_TYPES = {'llm', 'vision', 'multimodal'}
+SYNCABLE_MODEL_TYPES = {'llm', 'vision', 'multimodal', 'image-gen'}
 SKIPPED_MODEL_STATUSES = {'deprecated', 'inactive'}
 
 
@@ -28,7 +28,7 @@ def _supports_tool_call(model_type: str) -> bool:
 
 
 def _supports_images(model_type: str) -> bool:
-    return model_type in {'vision', 'multimodal'}
+    return model_type in {'vision', 'multimodal', 'image-gen'}
 
 
 async def build_model_sync_payload(db: AsyncSession) -> ModelSyncResponse:

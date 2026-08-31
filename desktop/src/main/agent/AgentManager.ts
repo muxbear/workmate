@@ -5,22 +5,35 @@ import type { WorkMode } from '../mode/work-mode'
 import type { ModelService } from '../model/ModelService'
 import { AgentBuilder } from './AgentBuilder'
 import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
-import { resolveDefaultModel, type ChatModel } from './ModelFactory'
+import { createModelFromCredential, resolveDefaultModel, type ChatModel } from './ModelFactory'
+import { buildExpertTools, buildExpertSkills } from './tools/DesktopToolRegistry'
 
 /** 智能体生命周期管理（单例由调用方持有） */
 /** 将桌面版专家数据转换为 DeepAgents SubAgent 配置。 */
-function expertToSubAgent(expert: DesktopExpert): SubAgent {
-  const description = expert.isExpert
-    ? `${expert.title}。专长领域：${expert.expertiseAreas.join('、')}。` +
-      `适用场景：当任务涉及${expert.tags.join('、')}时，应委派给此专家处理。`
-    : expert.desc
+function buildExpertDescription(expert: DesktopExpert): string {
+  const expertise = expert.expertiseAreas.length ? expert.expertiseAreas.join('、') : expert.desc || '无'
+  const tags = expert.tags.length ? expert.tags.join('、') : '通用任务'
+  const tools = expert.tools.length ? expert.tools.join('、') : '无专用工具'
+  return [expert.name + '：' + expert.title + '。', '专长领域：' + expertise + '。', '适用场景：当任务涉及' + tags + '时应优先委派。', '可用工具：' + tools].join('')
+}
 
+async function resolveExpertModel(expert: DesktopExpert, modelService?: ModelService) {
+  if (expert.modelType === 'image-gen') return undefined
+  if (!modelService) return undefined
+  const modelId = expert.modelName || expert.modelId || undefined
+  if (!modelId) return undefined
+  const credential = modelService.getCredential(modelId)
+  return credential ? await createModelFromCredential(credential) : undefined
+}
+
+async function expertToSubAgent(expert: DesktopExpert, modelService?: ModelService): Promise<SubAgent> {
   return {
     name: expert.name,
-    description,
+    description: buildExpertDescription(expert),
     systemPrompt: expert.systemPrompt || '',
-    tools: [],
-    skills: []
+    model: await resolveExpertModel(expert, modelService),
+    tools: buildExpertTools(expert.tools, modelService, expert.modelName),
+    skills: buildExpertSkills(expert.skills)
   }
 }
 
@@ -68,7 +81,7 @@ export class AgentManager {
     if (this.skills.length > 0) this.builder.setSkills(this.skills)
 
     if (this.experts.length > 0 && (this.expertMode === 'selected' || this.expertMode === 'all')) {
-      this.builder.setSubagents(this.experts.map(expertToSubAgent))
+      this.builder.setSubagents(await Promise.all(this.experts.map((expert) => expertToSubAgent(expert, this.modelService))))
     } else {
       this.builder.setSubagents([])
     }

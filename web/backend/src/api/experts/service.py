@@ -40,6 +40,7 @@ from db.models.agent import Agent
 from db.models.agent_mcp_config import AgentMcpConfig
 from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
+from db.models.ai_model import AIModel
 from db.models.expert_profile import ExpertProfile
 from db.models.mcp_tool import McpTool
 from db.models.skill import Skill
@@ -95,6 +96,16 @@ class ExpertAssembler:
         skills = await _query_skills(db, agent.id)
         mcp_configs = await _query_mcp_configs(db, agent.id)
 
+        model_name = None
+        model_type = None
+        if agent.model_id:
+            model = (await db.execute(
+                select(AIModel).where(AIModel.id == agent.model_id)
+            )).scalar_one_or_none()
+            if model is not None:
+                model_name = model.name
+                model_type = model.type
+
         return ExpertInfo(
             id=agent.id,
             name=agent.name,
@@ -116,6 +127,10 @@ class ExpertAssembler:
             system_prompt=agent.system_prompt or "",
             provider_id=agent.provider_id,
             model_id=agent.model_id,
+            model_name=model_name,
+            model_type=model_type,
+            prompt_template="",
+            expertise_areas=[],
             tools=tools,
             skills=skills,
             mcp_configs=mcp_configs,
@@ -143,6 +158,15 @@ class ExpertAssembler:
             system_prompt=expert.system_prompt,
             scene=expert.scene,
             sort_order=expert.sort_order,
+            provider_id=expert.provider_id,
+            model_id=expert.model_id,
+            model_name=expert.model_name,
+            model_type=expert.model_type,
+            tools=expert.tools,
+            skills=expert.skills,
+            mcp_configs=expert.mcp_configs,
+            prompt_template=expert.prompt_template,
+            expertise_areas=expert.expertise_areas,
         )
 
 

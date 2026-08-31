@@ -18,6 +18,11 @@
 6. 当前 `deepagents@1.11.1` 没有 `dynamicSubagents` / `subagentMode` 这两个直接配置项；动态/异步子智能体应按实际 API 重新设计。
 7. `AgentManager.setExperts()` 不能只调用 `builder.setSubagents()`，必须重建 `this.agent` 后才对后续消息生效。
 8. `catalog.ts` 静态专家改动态后，还需要同步修改 `PlusMenu.vue`，并兼容旧的 number 类型 localStorage 选择状态。
+9. 当前 `/api/expert-sync/list` 返回的 `ExpertSyncItem` 只包含展示字段，不包含模型、工具、技能、MCP 等执行配置，导致桌面端无法还原专家能力。
+10. 桌面端映射时把 tools 写死为空数组、providerId/modelId 写死为 null，配置再次丢失。
+11. AgentManager.expertToSubAgent 当前 tools 和 skills 为空且未设置 model，专家实际只是普通子智能体。
+12. Web 后端 image_generate 是 stub，model_sync 也不包含 image-gen 类型，桌面端拿不到 GLM-Image 凭据。
+13. 现有输入框提示词是身份扮演型，不利于主智能体拆任务、委派专家和汇总结果。
 
 ---
 
@@ -180,7 +185,7 @@ Web 版已落地：专家作为 `agents.type='expert'` 的记录，展示元数�
 
 > 注意：当前 `sync_api.py` 中 `/{expert_id}` 声明在 `/featured` 之前。FastAPI/Starlette 按声明顺序匹配路径，若直接请求 `/api/expert-sync/featured`，会被 `/{expert_id}` 捕获；如需使用精选同步接口，应将 `/featured` 路由声明移到 `/{expert_id}` 之前。
 
-`sync_list` 只返回 `is_published=true` 且 `status='active'` 的专家，并按 `sort_order` 倒序。响应结构为 `{ items, total, synced_at }`，每个 item 是 `ExpertSyncItem`。
+`sync_list` 只返回 `is_published=true` 且 `status='active'` 的专家，并按 `sort_order` 倒序。响应结构为 `{ items, total, synced_at }`，每个 item 是 `ExpertSyncItem`。本次升级后，ExpertSyncItem 必须包含 provider/model/tools/skills/mcp 等执行字段。
 
 ### 3.5 Service 设计
 
@@ -275,7 +280,20 @@ interface ExpertSyncItem {
   system_prompt: string
   scene: string | null
   sort_order: number
+  provider_id: string | null
+  model_id: string | null
+  model_name: string | null
+  model_type: string | null
+  tools: ExpertSyncToolBrief[]
+  skills: ExpertSyncSkillBrief[]
+  mcp_configs: ExpertSyncMcpBrief[]
+  prompt_template: string
+  expertise_areas: string[]
 }
+
+interface ExpertSyncToolBrief { id: string; name: string; display_name: string; tool_type: string; category: string; icon?: string }
+interface ExpertSyncSkillBrief { id: string; name: string; description: string; category: string; icon: string; enabled: boolean }
+interface ExpertSyncMcpBrief { mcp_tool_id: string; mcp_tool_name: string; config: Record<string, unknown>; enabled: boolean }
 
 interface ExpertSyncListData {
   items: ExpertSyncItem[]
@@ -308,13 +326,17 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
     category: item.category,
     rating: item.rating,
     users: item.users,
-    initials: item.name.charAt(0),
+    initials: item.initials || item.name.charAt(0),
     systemPrompt: item.system_prompt,
-    tools: [],
-    providerId: null,
-    modelId: null,
-    promptTemplate: '',
-    expertiseAreas: [],
+    tools: item.tools.map((t) => t.name),
+    skills: item.skills,
+    providerId: item.provider_id,
+    modelId: item.model_id,
+    modelName: item.model_name,
+    modelType: item.model_type,
+    mcpConfigs: item.mcp_configs,
+    promptTemplate: item.prompt_template,
+    expertiseAreas: item.expertise_areas,
     isExpert: true,
   }
 }
@@ -546,6 +568,10 @@ export interface DesktopExpert {
   tools: string[]
   providerId: string | null
   modelId: string | null
+  modelName: string | null
+  modelType: string | null
+  skills: unknown[]
+  mcpConfigs: unknown[]
   promptTemplate: string
   expertiseAreas: string[]
   isExpert: boolean
@@ -609,6 +635,10 @@ export interface Expert {
   tools: string[]
   providerId: string | null
   modelId: string | null
+  modelName: string | null
+  modelType: string | null
+  skills: unknown[]
+  mcpConfigs: unknown[]
   promptTemplate: string
   expertiseAreas: string[]
   isExpert: boolean
@@ -739,20 +769,23 @@ CREATE TABLE IF NOT EXISTS cached_experts (
 现有 `NewTaskPage.vue` 已实现专家选择逻辑：
 
 - `catalog.setExpert(id)` 将选中的专家写入 store
-- `syncExpertPromptToDom()` 将专家提示词插入到 contenteditable 输入框开头
-- `buildExpertPrompt()` 生成提示词模板：`请以【{name}·{title}】的身份协助我完成以下任务：`
+- 不再默认插入“请以某专家身份协助我”的提示词。
+- 如果需要插入提示，应插入任务编排提示：先拆解任务，适合该专家的子任务委派给专家，最后汇总。
 
-改进点：将专家提示词模板从静态函数改为使用同步的专家 `promptTemplate` 字段：
+改进点：将专家提示词模板从静态函数改为编排型模板：
 
 ```typescript
-// catalog.ts 中的 buildExpertPrompt 改进
+// catalog.ts 中的 buildExpertPrompt 调整为编排型提示
 function buildExpertPrompt(expert: Expert): string {
-  const template = expert.promptTemplate || '请以【{name}·{title}】的身份协助我完成以下任务：'
+  const template = expert.promptTemplate
+    || '请先分析任务并拆分为子任务；对于适合【{name}·{title}】处理的子任务，请调用该专家处理；最后汇总结果。'
   return template
     .replace('{name}', expert.name)
     .replace('{title}', expert.title)
 }
 ```
+
+> 主智能体本身已由 DeepAgents 的 `TASK_SYSTEM_PROMPT` 引导使用 task 工具委派子智能体。该输入框提示只是可选强化，不应把用户原始任务改写成“我以专家身份回答”。
 
 ### 7.3 专家 → SubAgent 配置转换
 
@@ -779,53 +812,64 @@ interface SubAgent {
 import type { SubAgent } from 'deepagents'
 
 /** 将桌面版专家数据转换为 DeepAgents SubAgent 配置 */
-function expertToSubAgent(expert: DesktopExpert): SubAgent {
-  const description = expert.isExpert
-    ? `${expert.title}。专长领域：${expert.expertiseAreas.join('、')}。`
-      + `适用场景：当任务涉及${expert.tags.join('、')}时，应委派给此专家处理。`
-    : expert.desc
+function buildExpertDescription(expert: DesktopExpert): string {
+  const expertise = (expert.expertiseAreas || []).join('、') || expert.desc || '无'
+  const tags = (expert.tags || []).join('、') || '通用任务'
+  const tools = (expert.tools || []).join('、') || '无专用工具'
+  return [expert.name + '：' + expert.title + '。', '专长领域：' + expertise + '。', '适用场景：' + tags + '，可用工具：' + tools].join('')
+}
 
+function resolveExpertModel(expert: DesktopExpert, modelService: ModelService) {
+  if (expert.modelType === 'image-gen') return undefined
+  const modelId = expert.modelName || expert.modelId || undefined
+  if (modelId === undefined) return undefined
+  const credential = modelService.getCredential(modelId)
+  return credential ? createModelFromCredential(credential) : undefined
+}
+
+function expertToSubAgent(expert: DesktopExpert, modelService: ModelService): SubAgent {
   return {
     name: expert.name,
-    description,
+    description: buildExpertDescription(expert),
     systemPrompt: expert.systemPrompt || '',
-    // tools 和 model 在桌面版由本地工具注册表和模型服务解析，
-    // 此处暂传空数组 / undefined，后续迭代中接入本地工具注册
-    tools: [],
-    skills: [],
+    model: resolveExpertModel(expert, modelService),
+    tools: buildExpertTools(expert.tools, modelService),
+    skills: buildExpertSkills(expert.skills)
   }
 }
 
-/** 设置选中的专家为主智能体的子智能体 */
-setExperts(experts: DesktopExpert[]): this {
-  const subagents = experts.map(expertToSubAgent)
-  this.builder?.setSubagents(subagents)
-  return this
+/** 设置选中的专家为主智能体的子智能体，并重建 agent */
+async setExperts(experts: DesktopExpert[]): Promise<void> {
+  this.experts = experts
+  if (this.builder === null) throw new Error('AgentManager not initialized')
+  this.initPromise = this.buildAgent(this.currentMode)
+  await this.initPromise
 }
 ```
+
+> 其中 `buildExpertDescription`、`resolveExpertModel`、`buildExpertTools`、`buildExpertSkills` 为新增的桌面端工具/模型解析函数；`buildExpertTools` 至少需要实现 `image_generate`，`resolveExpertModel` 对 image-gen 模型返回 undefined，避免把生成模型误当作对话模型。
 
 ### 7.4 提交消息时的专家注入流程
 
 ```
 用户在 NewTaskPage 输入框：
-  1. 通过「+ 菜单 → 专家」选择专家 → catalog.selectedExpertId / selectedExpertPrompt
-  2. 提示词自动插入输入框开头（现有逻辑）
-  3. 用户输入问题正文
-  4. 点击发送
+  1. 选择专家，展示专家 chip，但不把用户任务改写成“我以专家身份回答”。
+  2. 用户输入原始问题正文。
+  3. 点击发送。
 
-发送时（NewTaskPage.vue → agentStore.sendMessage）：
-  5. agentStore 从 catalog 读取 selectedExpert
-  6. 调用 IPC：window.api.agent.setExperts([selectedExpert])
-  7. 主进程 AgentManager.setExperts() 保存专家并调用 buildAgent() 重建 agent
-  8. 渲染层等待 setExperts() 返回成功
-  9. 再调用 sendAgentMessage() 提交问题
+发送时：
+  4. 渲染层读取 selectedExpert。
+  5. 调用 IPC agent:set-experts，把选中专家作为 SubAgent 注入主智能体。
+  6. 主进程重建 agent，等待成功后继续。
+  7. 调用 agent:send 提交用户原始问题。
 
 主智能体运行时：
-  10. 主智能体收到消息，prompt 开头是专家提示词
-  11. 主智能体进行任务拆分（planner）
-  12. 根据子智能体 description 匹配，将相关子任务委派给专家子智能体
-  13. 专家子智能体用自己的 system_prompt 和 tools 执行子任务
-  14. 结果返回主智能体汇总
+  8. 主智能体使用 DeepAgents 的 task 工具和 TASK_SYSTEM_PROMPT 进行任务拆分。
+  9. 依据每个 SubAgent 的 description 判断是否需要委派给专家。
+  10. 相关子任务委派给专家子智能体，其余子任务由主智能体/通用子智能体处理。
+  11. 专家子智能体使用自己的 systemPrompt、model、tools 执行子任务。
+  12. 专家把结构化结果（文本、图片路径/URL 等）返回给主智能体。
+  13. 主智能体汇总所有子任务结果，形成最终回复。
 ```
 
 ### 7.5 IPC 通道：设置专家子智能体
@@ -871,7 +915,7 @@ agent: {
 - 用户在输入框"选中"专家只是插入提示词引导，实际子智能体始终全部可用
 - 优点：主智能体可自由委派给任何专家；缺点：token 消耗大、模型上下文长
 
-本方案推荐策略 A，保留策略 B 作为配置选项。
+本方案推荐策略 A，保留策略 B 作为配置选项。当前 catalog 是单选专家；若后续升级为多专家协作，需要把 selectedExpertId 改为 selectedExpertIds: string[]，NewTaskPage 发送 setExperts(catalog.selectedExperts)，而不是只发送一个专家。
 
 ```typescript
 // AgentManager 新增状态与重建逻辑
@@ -926,6 +970,7 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 | 工具解析 | `tool_registry.get(name)` | 本地工具注册表（待实现） |
 | 模型解析 | `resolve_model(provider_id, model_id)` | `ModelService` / `ModelFactory` |
 | Skills 路径 | `/skills/{agent_id}/` | `/skills/{expert_id}/`（本地或从 Web 同步） |
+| 图片生成能力 | Web 后端实现 image_generate 真实 API | Desktop ImageGenerateTool + ImageGenerationService |
 
 桌面版与 Web 版分别使用 `deepagents` 的 TypeScript 版和 Python 版；两者字段命名存在差异，例如桌面版是 `systemPrompt`。转换时不要照搬 Python 版的 `prompt` / `system_prompt` 字段名。
 
@@ -938,6 +983,33 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 **异步子智能体**：如需异步专家，应使用 `AsyncSubAgent` + `createAsyncSubAgentMiddleware`，每个异步子智能体需要指向远程 Agent Protocol server 的 `graphId` 和可选 `url`。这是一个独立中间件，不是本地 `subagentMode` 开关。
 
 两者均标记为后续迭代，初始版本不启用。
+
+### 7.9 图片生成专家专项落地方案（本轮新增）
+
+针对图片生成专家暴露的问题，按以下顺序落地：
+
+1. 同步契约补全。
+   - Web ExpertSyncItem 增加 provider_id / model_id / model_name / model_type / tools / skills / mcp_configs / prompt_template / expertise_areas。
+   - ExpertAssembler.to_sync_item 从 ExpertInfo 原样填充，不再只返回展示字段。
+   - DesktopExpert 与 mapExpert 保留这些字段。
+
+2. 桌面专家执行链修复。
+   - expertToSubAgent 必须设置 model、tools、skills。
+   - image-gen 模型不作为子智能体对话模型，回退主智能体默认模型，同时注入 image_generate 工具。
+   - 建立 buildExpertDescription，使主智能体有足够信息判断是否委派。
+
+3. 图片生成能力落地。
+   - Web 后端替换 image_generate stub，按提供商调用真实图片生成 API。
+   - Desktop 新增 ImageGenerateTool 和 ImageGenerationService，支持智谱 GLM-Image / OpenAI Images / DashScope 等适配器。
+   - model_sync 允许同步 image-gen 模型，使桌面端能取得 GLM-Image 凭据。
+
+4. 编排与结果汇总。
+   - 输入框不再插入身份扮演型提示词，改为编排提示或保持原始用户问题。
+   - 主智能体依赖 DeepAgents task tool + TASK_SYSTEM_PROMPT 拆任务、委派、汇总。
+   - 图片生成结果统一返回 artifacts（图片路径/URL），桌面端 MessageContent 负责渲染。
+
+5. 多专家能力。
+   - 当前 catalog 单选专家，若需要多专家协作，升级 selectedExpertIds 并一次注入多个 SubAgent。
 
 ---
 
@@ -982,6 +1054,8 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 | 同步列表 | GET /api/expert-sync/list | 仅返回 is_published=true 且 active 的专家 |
 | scope 校验 | 无 token / 缺少 expert:read 请求同步 API | 返回 401 / 403 |
 | 版本快照 | 创建 / 更新专家 | agent_versions 生成快照 |
+| 同步完整配置 | GET /api/expert-sync/list | 返回 model/tools/skills/mcp，不再丢失执行配置 |
+| image_generate 工具 | 模拟专家调用图片生成工具 | 返回真实图片 URL/路径，不再是 not configured |
 
 ### 9.2 Web 前端测试（待补充）
 
@@ -1003,6 +1077,9 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 | 选中专家 → 输入框 | NewTaskPage | 提示词插入输入框 |
 | 专家 → 子智能体注入 | AgentManager.setExperts | setExperts 后重建 agent，ready() 返回的 agent 已包含 subagents |
 | 离线缓存 | 断网打开页面 | 显示缓存数据 |
+| 编排链路 | 输入复杂问题 | 主智能体拆解任务并委派专家，最终汇总 |
+| 图片生成 | 图片生成专家 + 生成小猫图片 | 子智能体调用 ImageGenerateTool，返回图片结果 |
+| 模型角色 | 图片生成专家 | image-gen 不作为子智能体对话模型，不产生 ChatOpenAI 误调用 |
 
 ---
 ## 十、实施状态与后续步骤
@@ -1025,6 +1102,7 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 | 修正 | 桌面 SubAgent 字段与 DeepAgents API 对齐 | 待处理 | 调研结论 |
 | 修正 | AgentManager.setExperts 重建 agent + PlusMenu/localStorage 兼容 | 待处理 | 调研结论 |
 | 清理 | 移除前端 mock 专家数据和 mock 分支 | 待处理 | Web 前端 |
+| 图片生成专家专项 | 同步契约、桌面专家执行链、图片生成工具、模型同步 | 待实施 | 本方案 7.9 |
 
 ---
 ## 十一、假设与约定
@@ -1036,6 +1114,6 @@ Web 版的 `create_subagents()` 函数（`web/backend/src/agent/subagents/subage
 5. Web 第一方 token 访问 `/api/expert-sync` 时，`require_scope` 按登录态放行；OAuth2 客户端 token 必须包含 `expert:read`。
 6. 桌面版 `ExpertSyncService` 应消费 `/api/expert-sync/list` 的 `items` 字段，而不是早期方案中的 `/api/agents/experts/list` 与 `experts` 字段。
 7. 前端 `expertApi.ts` 负责 snake_case / camelCase 转换；当前 `stores/expert.ts` 中的 mock 分支仅用于无后端阶段，后续可删除。
-8. 初版 `/api/expert-sync/list` 只提供 `system_prompt` 等精简字段，不含工具、模型和技能；因此初版桌面专家只具备角色提示词和委派描述。完整专家能力需额外拉取 `/api/expert-sync/{id}`，并接入本地工具注册表和 ModelService。
+8. 本次升级后 `/api/expert-sync/list` 应直接返回专家执行所需的 provider/model/tools/skills/mcp 字段；桌面端 mapExpert 必须原样保留，不再写死为空。
 9. `selectedExpertId` 从 number 改为 string（Web UUID），需兼容 localStorage 旧值。
 10. 动态委派基于当前 TypeScript 版的 task tool + 静态 `subagents`；异步子智能体需使用 `AsyncSubAgent` + `createAsyncSubAgentMiddleware` 和远程 Agent Protocol server，不在初始版本启用。

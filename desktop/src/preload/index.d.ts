@@ -417,6 +417,10 @@ export interface DesktopExpert {
   tools: string[]
   providerId: string | null
   modelId: string | null
+  modelName: string | null
+  modelType: string | null
+  skills: unknown[]
+  mcpConfigs: unknown[]
   promptTemplate: string
   expertiseAreas: string[]
   isExpert: boolean

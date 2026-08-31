@@ -15,7 +15,7 @@ from api.providers.schemas import (
     ProviderResponse,
     ProviderUpdateRequest,
 )
-from core.security import decrypt_api_key, encrypt_api_key
+from core.security import MASKED_API_KEY, decrypt_api_key, encrypt_api_key
 from db.models.ai_model import AIModel
 from db.models.provider import Provider
 
@@ -138,7 +138,9 @@ async def update_provider(
     provider.api_base = req.api_base
     provider.response_url = req.response_url
     provider.anthropic_url = req.anthropic_url
-    provider.api_key = encrypt_api_key(req.api_key)
+    provider.api_key = (
+        provider.api_key if req.api_key == MASKED_API_KEY else encrypt_api_key(req.api_key)
+    )
     provider.status = req.status
     provider.description = req.description
     provider.website = req.website
