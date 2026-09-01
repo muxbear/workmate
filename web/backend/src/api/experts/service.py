@@ -235,7 +235,14 @@ async def _query_skills(db: AsyncSession, agent_id: str) -> list[ExpertSkillBrie
 
 async def _query_mcp_configs(db: AsyncSession, agent_id: str) -> list[McpConfigBrief]:
     stmt = (
-        select(AgentMcpConfig, McpTool.name)
+        select(
+            AgentMcpConfig,
+            McpTool.name,
+            McpTool.transport,
+            McpTool.url,
+            McpTool.sse_url,
+            McpTool.streamable_http_url,
+        )
         .outerjoin(McpTool, McpTool.id == AgentMcpConfig.mcp_tool_id)
         .where(AgentMcpConfig.agent_id == agent_id)
     )
@@ -244,10 +251,14 @@ async def _query_mcp_configs(db: AsyncSession, agent_id: str) -> list[McpConfigB
         McpConfigBrief(
             mcp_tool_id=cfg.mcp_tool_id,
             mcp_tool_name=mcp_name or "",
+            transport=mcp_transport or "",
+            url=mcp_url or "",
+            sse_url=mcp_sse_url or "",
+            streamable_http_url=mcp_streamable_http_url or "",
             config=cfg.config if isinstance(cfg.config, dict) else {},
             enabled=cfg.enabled,
         )
-        for cfg, mcp_name in rows
+        for cfg, mcp_name, mcp_transport, mcp_url, mcp_sse_url, mcp_streamable_http_url in rows
     ]
 
 
@@ -383,6 +394,7 @@ async def create_expert(db: AsyncSession, req: ExpertCreateRequest) -> ExpertInf
     for skill_id in req.skill_ids:
         db.add(AgentSkill(agent_id=agent.id, skill_id=skill_id))
 
+    await _validate_mcp_configs(db, req.mcp_configs)
     for mcp_cfg in req.mcp_configs:
         db.add(AgentMcpConfig(
             agent_id=agent.id,
@@ -554,6 +566,18 @@ async def _replace_skill_links(db: AsyncSession, agent_id: str, skill_ids: list[
         db.add(AgentSkill(agent_id=agent_id, skill_id=skill_id))
 
 
+async def _validate_mcp_configs(db: AsyncSession, configs: list[McpConfigItem]) -> None:
+    seen: set[str] = set()
+    for item in configs:
+        if item.mcp_tool_id in seen:
+            raise HTTPException(status_code=409, detail=f'MCP 服务重复配置: {item.mcp_tool_id}')
+        seen.add(item.mcp_tool_id)
+        mcp_tool = (await db.execute(
+            select(McpTool).where(McpTool.id == item.mcp_tool_id)
+        )).scalar_one_or_none()
+        if mcp_tool is None:
+            raise HTTPException(status_code=404, detail=f'MCP 服务不存在: {item.mcp_tool_id}')
+
 async def _replace_mcp_configs(
     db: AsyncSession, agent_id: str, configs: list[McpConfigItem]
 ) -> None:
@@ -564,6 +588,7 @@ async def _replace_mcp_configs(
     for cfg in old:
         await db.delete(cfg)
 
+    await _validate_mcp_configs(db, configs)
     for item in configs:
         db.add(AgentMcpConfig(
             agent_id=agent_id,

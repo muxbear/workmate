@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Download, Star, Clock, Check, ExternalLink } from 'lucide-vue-next'
+import { ArrowLeft, Download, Star, Clock, Check } from 'lucide-vue-next'
 import { useMcpStore } from '@/stores/mcp'
-import { MCP_CATEGORY_LABELS } from '@/types/mcp'
 
 const route = useRoute()
 const router = useRouter()
@@ -11,9 +10,48 @@ const mcpStore = useMcpStore()
 
 const activeTab = ref('overview')
 
+const configTab = ref<'remote' | 'stdio'>('remote')
+const remoteTransport = ref('streamable_http')
+
+const remoteConfigSnippet = computed(() => {
+  const tool = mcpStore.currentTool
+  const fallbackUrl =
+    remoteTransport.value === 'streamable_http'
+      ? "http://127.0.0.1:8001/mcp/web-search-http/mcp"
+      : "http://127.0.0.1:8001/mcp/web-search/sse"
+  const url =
+    (remoteTransport.value === 'streamable_http'
+      ? tool?.streamable_http_url || tool?.url
+      : tool?.sse_url || tool?.url) || fallbackUrl
+
+  return [
+    '{',
+    '  "mcpServers": {',
+    '    "fetch": {',
+    `      "type": "${remoteTransport.value}",`,
+    `      "url": "${url}"`,
+    '    }',
+    '  }',
+    '}',
+  ].join('\n')
+})
+
+const stdioConfigSnippet = [
+  '{',
+  '  "mcpServers": {',
+  '    "fetch": {',
+  '      "args": [',
+  '        "mcp-server-fetch"',
+  '      ],',
+  '      "command": "uvx"',
+  '    }',
+  '  }',
+  '}',
+].join('\n')
+
 const tabs = [
   { key: 'overview', label: '概述' },
-  { key: 'config', label: '配置' },
+  { key: 'tools', label: '工具' },
   { key: 'usage', label: '使用说明' },
   { key: 'reviews', label: '评价' },
 ]
@@ -22,15 +60,6 @@ function goBack() {
   router.push({ name: 'mcp-square' })
 }
 
-function handleInstall() {
-  const tool = mcpStore.currentTool
-  if (!tool) return
-  if (tool.installed) {
-    mcpStore.uninstallTool(tool.id)
-  } else {
-    mcpStore.installTool(tool.id)
-  }
-}
 
 function formatInstallCount(count: number): string {
   if (count >= 1000) {
@@ -101,13 +130,6 @@ watch(
             </div>
           </div>
         </div>
-        <button
-          class="install-btn-lg"
-          :class="{ installed: mcpStore.currentTool.installed }"
-          @click="handleInstall"
-        >
-          {{ mcpStore.currentTool.installed ? '已安装' : '安装' }}
-        </button>
       </div>
 
       <!-- Tab Bar -->
@@ -146,37 +168,34 @@ watch(
 
           <div class="right-col">
             <div class="content-card">
-              <h3 class="card-title">信息</h3>
-              <div class="info-list">
-                <div class="info-row">
-                  <span class="info-label">版本</span>
-                  <span class="info-value">{{ mcpStore.currentTool.version }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">作者</span>
-                  <span class="info-value">{{ mcpStore.currentTool.author }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">许可证</span>
-                  <span class="info-value">{{ mcpStore.currentTool.license }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">仓库</span>
-                  <a class="info-value link" href="#">
-                    {{ mcpStore.currentTool.repository }}
-                    <ExternalLink :size="11" />
-                  </a>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">分类</span>
-                  <span class="info-value">
-                    {{ MCP_CATEGORY_LABELS[mcpStore.currentTool.category] || mcpStore.currentTool.category }}
-                  </span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">更新</span>
-                  <span class="info-value">{{ mcpStore.currentTool.updated_at }}</span>
-                </div>
+              <div class="config-tabs">
+                <button
+                  class="config-tab-btn"
+                  :class="{ active: configTab === 'remote' }"
+                  @click="configTab = 'remote'"
+                >
+                  Remote
+                </button>
+                <button
+                  class="config-tab-btn"
+                  :class="{ active: configTab === 'stdio' }"
+                  @click="configTab = 'stdio'"
+                >
+                  Stdio
+                </button>
+              </div>
+
+              <div v-if="configTab === 'remote'" class="config-panel">
+                <label class="config-field-label">传输类型</label>
+                <el-select v-model="remoteTransport" class="transport-select">
+                  <el-option label="Streamable HTTP" value="streamable_http" />
+                  <el-option label="SSE" value="sse" />
+                </el-select>
+                <pre class="config-code">{{ remoteConfigSnippet }}</pre>
+              </div>
+
+              <div v-else class="config-panel">
+                <pre class="config-code">{{ stdioConfigSnippet }}</pre>
               </div>
             </div>
 
@@ -195,43 +214,40 @@ watch(
           </div>
         </div>
 
-        <!-- Config Tab -->
-        <div v-if="activeTab === 'config'" class="content-card">
-          <h3 class="card-title">配置参数</h3>
-          <div v-if="mcpStore.currentTool.config_schema.length > 0" class="config-list">
+        <!-- Tools Tab -->
+        <div v-if="activeTab === 'tools'" class="content-card">
+          <h3 class="card-title">工具列表</h3>
+          <div v-if="mcpStore.currentTool.tools.length > 0" class="tool-list">
             <div
-              v-for="field in mcpStore.currentTool.config_schema"
-              :key="field.name"
-              class="config-row"
+              v-for="tool in mcpStore.currentTool.tools"
+              :key="tool.name"
+              class="tool-item"
             >
-              <div class="config-header">
-                <span class="config-name">{{ field.name }}</span>
-                <span v-if="field.required" class="required-badge">必填</span>
-                <span class="config-type">{{ field.type }}</span>
+              <div class="tool-item-icon">{{ tool.icon }}</div>
+              <div class="tool-item-body">
+                <div class="tool-item-name">{{ tool.name }}</div>
+                <p class="tool-item-desc">{{ tool.description }}</p>
               </div>
-              <p class="config-desc">{{ field.description }}</p>
             </div>
           </div>
-          <el-empty v-else description="暂无配置参数" />
+          <el-empty v-else description="暂无工具" />
         </div>
 
         <!-- Usage Tab -->
         <div v-if="activeTab === 'usage'" class="content-card">
           <h3 class="card-title">使用说明</h3>
-          <p class="card-desc">安装完成后，MCP 工具将自动在智能体会话中可用。你可以通过以下方式使用：</p>
-          <div class="info-list">
-            <div class="info-row">
-              <span class="info-label">安装方式</span>
-              <span class="info-value">一键安装</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">运行环境</span>
-              <span class="info-value">Docker 容器</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">自动启动</span>
-              <span class="info-value">是</span>
-            </div>
+          <p class="card-desc">MCP 服务通过标准 MCP 协议接入，支持 Remote 和 Stdio 两种连接方式。</p>
+
+          <div class="usage-section">
+            <h4 class="usage-title">Remote</h4>
+            <p class="usage-desc">在 MCP 客户端中选择 Streamable HTTP 或 SSE，并填写以下配置：</p>
+            <pre class="config-code">{{ remoteConfigSnippet }}</pre>
+          </div>
+
+          <div class="usage-section">
+            <h4 class="usage-title">Stdio</h4>
+            <p class="usage-desc">如果通过本地进程启动，请使用以下配置：</p>
+            <pre class="config-code">{{ stdioConfigSnippet }}</pre>
           </div>
         </div>
 
@@ -389,30 +405,8 @@ watch(
   color: #f59e0b;
 }
 
-.install-btn-lg {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 24px;
-  border-radius: 12px;
-  border: none;
-  background: var(--accent-primary);
-  color: #fff;
-  font-size: 16px;
-  font-weight: var(--font-weight-semibold);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-  flex-shrink: 0;
-}
 
-.install-btn-lg:hover {
-  background: #2563eb;
-}
 
-.install-btn-lg.installed {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-}
 
 /* Tab Bar */
 .tab-bar {
@@ -549,6 +543,88 @@ watch(
   text-decoration: underline;
 }
 
+/* Connection Config */
+.config-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 4px;
+  background: var(--surface-secondary);
+  border-radius: 10px;
+}
+
+.config-tab-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.config-tab-btn:hover {
+  color: var(--foreground-primary);
+}
+
+.config-tab-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-field-label {
+  font-size: var(--font-size-sm);
+  color: var(--foreground-secondary);
+}
+
+.transport-select {
+  width: 100%;
+}
+
+.config-code {
+  margin: 0;
+  padding: 16px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  color: var(--foreground-primary);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.usage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.usage-title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--foreground-primary);
+}
+
+.usage-desc {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--foreground-secondary);
+  line-height: 1.7;
+}
+
 /* Tags */
 .tags-row {
   display: flex;
@@ -564,52 +640,52 @@ watch(
   border-radius: 8px;
 }
 
-/* Config */
-.config-list {
+/* Tools */
+.tool-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
-.config-row {
+.tool-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   padding: 16px;
   background: var(--surface-secondary);
   border-radius: 10px;
 }
 
-.config-header {
+.tool-item-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.15);
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
-.config-name {
+.tool-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tool-item-name {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--foreground-primary);
-  font-family: 'JetBrains Mono', monospace;
 }
 
-.required-badge {
-  font-size: var(--font-size-xs);
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.config-type {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-  background: rgba(38, 51, 89, 0.3);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.config-desc {
+.tool-item-desc {
   font-size: var(--font-size-sm);
   color: var(--foreground-secondary);
+  line-height: 1.6;
   margin: 0;
 }
 </style>

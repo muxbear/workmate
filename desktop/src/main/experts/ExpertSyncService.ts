@@ -1,5 +1,10 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { DesktopExpert, ExpertSyncStatus, WebUser } from '../../preload/index.d'
+import type {
+  DesktopExpert,
+  DesktopMcpConfig,
+  ExpertSyncStatus,
+  WebUser
+} from '../../preload/index.d'
 import type { ISecureStorage } from '../security/secure-storage'
 import { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
 
@@ -29,9 +34,32 @@ interface ExpertSyncItem {
   model_id: string | null
   model_name: string | null
   model_type: string | null
-  tools: Array<{ id: string; name: string; display_name: string; tool_type: string; category: string; icon?: string }>
-  skills: Array<{ id: string; name: string; description: string; category: string; icon: string; enabled: boolean }>
-  mcp_configs: Array<{ mcp_tool_id: string; mcp_tool_name: string; config: Record<string, unknown>; enabled: boolean }>
+  tools: Array<{
+    id: string
+    name: string
+    display_name: string
+    tool_type: string
+    category: string
+    icon?: string
+  }>
+  skills: Array<{
+    id: string
+    name: string
+    description: string
+    category: string
+    icon: string
+    enabled: boolean
+  }>
+  mcp_configs: Array<{
+    mcp_tool_id: string
+    mcp_tool_name: string
+    transport: string
+    url: string
+    sse_url: string
+    streamable_http_url: string
+    config: Record<string, unknown>
+    enabled: boolean
+  }>
   prompt_template: string
   expertise_areas: string[]
 }
@@ -74,7 +102,16 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
     modelId: item.model_id,
     modelName: item.model_name,
     modelType: item.model_type,
-    mcpConfigs: item.mcp_configs,
+    mcpConfigs: item.mcp_configs.map((cfg): DesktopMcpConfig => ({
+      mcpToolId: cfg.mcp_tool_id,
+      mcpToolName: cfg.mcp_tool_name,
+      transport: cfg.transport,
+      url: cfg.url,
+      sseUrl: cfg.sse_url,
+      streamableHttpUrl: cfg.streamable_http_url,
+      config: cfg.config,
+      enabled: cfg.enabled
+    })),
     promptTemplate: item.prompt_template,
     expertiseAreas: item.expertise_areas,
     isExpert: true

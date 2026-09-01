@@ -141,6 +141,37 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE providers ADD COLUMN sort_order INTEGER DEFAULT 0"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_providers_sort_order ON providers (sort_order)"))
 
+        if await _table_exists(conn, 'mcp_tools'):
+            existing = await _get_existing_columns(conn, 'mcp_tools')
+            if 'transport' not in existing:
+                logger.info('Adding transport column to mcp_tools table')
+                await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN transport VARCHAR(32) DEFAULT 'stdio'"))
+            if 'url' not in existing:
+                logger.info('Adding url column to mcp_tools table')
+                await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN url VARCHAR(512) DEFAULT ''"))
+            if 'sse_url' not in existing:
+                logger.info('Adding sse_url column to mcp_tools table')
+                await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN sse_url VARCHAR(512) DEFAULT ''"))
+            if 'streamable_http_url' not in existing:
+                logger.info('Adding streamable_http_url column to mcp_tools table')
+                await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN streamable_http_url VARCHAR(512) DEFAULT ''"))
+            if 'command' not in existing:
+                logger.info('Adding command column to mcp_tools table')
+                await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN command VARCHAR(256) DEFAULT ''"))
+            if 'args' not in existing:
+                logger.info('Adding args column to mcp_tools table')
+                if settings.DATABASE_BACKEND == 'sqlite':
+                    await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN args JSON DEFAULT '[]'"))
+                else:
+                    await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN args JSONB DEFAULT '[]'::jsonb"))
+            if 'env' not in existing:
+                logger.info('Adding env column to mcp_tools table')
+                if settings.DATABASE_BACKEND == 'sqlite':
+                    await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN env JSON DEFAULT '{}'"))
+                else:
+                    await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN env JSONB DEFAULT '{}'::jsonb"))
+            await conn.execute(text("UPDATE mcp_tools SET transport='sse', url='http://127.0.0.1:8001/mcp/web-search/sse', sse_url='http://127.0.0.1:8001/mcp/web-search/sse', streamable_http_url='http://127.0.0.1:8001/mcp/web-search-http/mcp' WHERE name='联网搜索' AND (sse_url IS NULL OR sse_url='')"))
+
     # Seed built-in RBAC data
     from api.rbac.service import RbacService
 

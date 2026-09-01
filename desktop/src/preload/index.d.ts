@@ -400,6 +400,18 @@ export interface SkillSyncAPI {
   disconnect(): Promise<IpcResult<null>>
 }
 
+/** 桌面端专家绑定的 MCP 工具连接信息（用于注册 MCP 客户端） */
+export interface DesktopMcpConfig {
+  mcpToolId: string
+  mcpToolName: string
+  transport: string
+  url: string
+  sseUrl: string
+  streamableHttpUrl: string
+  config: Record<string, unknown>
+  enabled: boolean
+}
+
 /** 桌面端专家列表项（Web ExpertSyncItem 映射后的结果） */
 export interface DesktopExpert {
   id: string
@@ -420,7 +432,7 @@ export interface DesktopExpert {
   modelName: string | null
   modelType: string | null
   skills: unknown[]
-  mcpConfigs: unknown[]
+  mcpConfigs: DesktopMcpConfig[]
   promptTemplate: string
   expertiseAreas: string[]
   isExpert: boolean
@@ -462,7 +474,8 @@ export interface ModelSyncAPI {
 
 /** 渲染层可见的完整 API 形状 */
 export interface KeWorkWindowApi
-  extends AgentAPI,
+  extends
+    AgentAPI,
     AuthAPI,
     ConversationAPI,
     ModeAPI,

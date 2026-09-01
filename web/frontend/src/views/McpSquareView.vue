@@ -41,13 +41,6 @@ function handleToolClick(tool: McpTool) {
   router.push({ name: 'mcp-detail', params: { id: tool.id } })
 }
 
-function handleInstall(tool: McpTool) {
-  if (tool.installed) {
-    mcpStore.uninstallTool(tool.id)
-  } else {
-    mcpStore.installTool(tool.id)
-  }
-}
 
 onMounted(() => {
   mcpStore.fetchTools()
@@ -189,7 +182,6 @@ function handleCreate() {
           :key="tool.id"
           :tool="tool"
           @click="handleToolClick"
-          @install="handleInstall"
         />
       </div>
     </div>

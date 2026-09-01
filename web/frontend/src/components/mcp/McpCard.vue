@@ -6,7 +6,6 @@ import type { McpTool } from '@/types/mcp'
 const props = defineProps<{ tool: McpTool }>()
 
 const emit = defineEmits<{
-  (e: 'install', tool: McpTool): void
   (e: 'click', tool: McpTool): void
 }>()
 
@@ -17,9 +16,6 @@ const installCount = computed(() => {
   return String(props.tool.installs)
 })
 
-function handleInstall() {
-  emit('install', props.tool)
-}
 
 function handleClick() {
   emit('click', props.tool)
@@ -58,13 +54,6 @@ function handleClick() {
           {{ tool.rating }}
         </span>
       </div>
-      <button
-        class="install-btn"
-        :class="{ installed: tool.installed }"
-        @click.stop="handleInstall"
-      >
-        {{ tool.installed ? '已安装' : '安装' }}
-      </button>
     </div>
   </div>
 </template>
@@ -192,26 +181,6 @@ function handleClick() {
   color: #f59e0b;
 }
 
-.install-btn {
-  display: flex;
-  align-items: center;
-  padding: 6px 16px;
-  border-radius: 8px;
-  border: none;
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--accent-primary);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
 
-.install-btn:hover {
-  background: rgba(59, 130, 246, 0.25);
-}
 
-.install-btn.installed {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-}
 </style>

@@ -8,6 +8,13 @@ export interface McpTool {
   version: string
   license: string
   repository: string
+  transport: 'stdio' | 'sse' | 'streamable_http'
+  url: string
+  sse_url: string
+  streamable_http_url: string
+  command: string
+  args: string[]
+  env: Record<string, string>
   installs: number
   rating: number
   category: string
@@ -16,8 +23,16 @@ export interface McpTool {
   official: boolean
   installed: boolean
   config_schema: McpConfigField[]
+  tools: McpToolItem[]
   created_at: string
   updated_at: string
+}
+
+/** MCP 工具列表项 */
+export interface McpToolItem {
+  name: string
+  description: string
+  icon: string
 }
 
 /** MCP 配置字段 */

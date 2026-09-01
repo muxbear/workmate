@@ -41,6 +41,23 @@ class McpTool(Base):
     config_schema: Mapped[list] = mapped_column(
         JSON, default=list, comment="配置字段定义数组"
     )
+    transport: Mapped[str] = mapped_column(
+        String(32), default="stdio", comment="传输方式: stdio/sse/streamable_http"
+    )
+    url: Mapped[str] = mapped_column(
+        String(512), default="", comment="远程 MCP 地址"
+    )
+    sse_url: Mapped[str] = mapped_column(
+        String(512), default="", comment="SSE 地址"
+    )
+    streamable_http_url: Mapped[str] = mapped_column(
+        String(512), default="", comment="Streamable HTTP 地址"
+    )
+    command: Mapped[str] = mapped_column(
+        String(256), default="", comment="stdio 启动命令"
+    )
+    args: Mapped[list] = mapped_column(JSON, default=list, comment="stdio 启动参数")
+    env: Mapped[dict] = mapped_column(JSON, default=dict, comment="运行环境变量")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="创建时间"
     )

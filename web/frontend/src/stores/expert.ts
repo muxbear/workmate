@@ -510,12 +510,27 @@ export const useExpertStore = defineStore('expert', () => {
   async function deleteExpert(id: string): Promise<void> {
     if (useMock) {
       const idx = MOCK_EXPERTS.findIndex((e) => e.id === id)
-      if (idx !== -1) MOCK_EXPERTS.splice(idx, 1)
-      await fetchExperts()
+      if (idx !== -1) {
+        MOCK_EXPERTS.splice(idx, 1)
+        total.value = Math.max(0, total.value - 1)
+      }
+      await fetchFeatured()
       return
     }
+
     await expertApi.deleteExpert(id)
-    await fetchExperts()
+    const localIdx = experts.value.findIndex((e) => e.id === id)
+    if (localIdx !== -1) {
+      experts.value.splice(localIdx, 1)
+      total.value = Math.max(0, total.value - 1)
+    }
+
+    if (experts.value.length === 0 && page.value > 1) {
+      page.value -= 1
+      await fetchExperts()
+    } else {
+      await fetchFeatured()
+    }
   }
 
   async function toggleStatus(id: string): Promise<void> {

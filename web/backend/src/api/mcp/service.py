@@ -1,8 +1,7 @@
-"""MCP 广场业务逻辑：工具列表、安装、卸载与种子数据。"""
+"""MCP 广场业务逻辑：工具列表、安装、卸载。"""
 
-import json
 import logging
-import os
+import re
 import uuid
 
 from fastapi import HTTPException
@@ -16,17 +15,39 @@ from db.models.mcp_tool import McpTool
 
 logger = logging.getLogger(__name__)
 
-_SEED_PATH = os.path.normpath(
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..",
-        "..",
-        "db",
-        "seeds",
-        "mcp_tools_seed.json",
-    )
-)
 
+
+
+_MCP_TOOL_ICON = '🔧'
+
+
+def _is_chinese_text(text: str) -> bool:
+    return any('一' <= ch <= '鿿' for ch in text)
+
+
+def _feature_tool_name(feature: str) -> str:
+    if _is_chinese_text(feature):
+        return feature.split('（')[0].split('(')[0].strip() or feature
+
+    cleaned = feature.split('(')[0].strip()
+    if re.fullmatch('[a-z0-9_]+', cleaned):
+        return cleaned
+    parts = [part.strip() for part in cleaned.split(',') if part.strip()]
+    if parts:
+        cleaned = parts[0]
+    cleaned = cleaned.replace('/', ' ').replace('-', ' ')
+    words = [word for word in cleaned.split() if word]
+    if not words:
+        return feature
+    return ' '.join(words[:4]).title()
+
+
+def _mcp_tool_items(tool: McpTool) -> list[dict[str, str]]:
+    icon = tool.icon or _MCP_TOOL_ICON
+    return [
+        {'name': _feature_tool_name(feature), 'description': feature, 'icon': icon}
+        for feature in (tool.features or [])
+    ]
 
 def _tool_to_response(
     tool: McpTool,
@@ -43,6 +64,13 @@ def _tool_to_response(
         version=tool.version,
         license=tool.license,
         repository=tool.repository,
+        transport=tool.transport or 'stdio',
+        url=tool.url or '',
+        sse_url=tool.sse_url or '',
+        streamable_http_url=tool.streamable_http_url or '',
+        command=tool.command or '',
+        args=tool.args or [],
+        env=tool.env or {},
         installs=installs,
         rating=tool.rating,
         category=tool.category,
@@ -51,6 +79,7 @@ def _tool_to_response(
         official=tool.official,
         installed=installed,
         config_schema=tool.config_schema or [],
+        tools=_mcp_tool_items(tool),
         created_at=tool.created_at,
         updated_at=tool.updated_at,
     )
@@ -213,39 +242,3 @@ async def uninstall_mcp_tool(
     if installation is None:
         raise HTTPException(status_code=404, detail="工具未安装")
     await db.delete(installation)
-
-
-async def seed_mcp_tools(db: AsyncSession) -> None:
-    """从 JSON 文件填充 mcp_tools 表，仅当表为空时执行，可重复调用。"""
-    count = (await db.execute(select(func.count()).select_from(McpTool))).scalar() or 0
-    if count > 0:
-        logger.info("MCP 工具表已有 %d 条记录，跳过种子数据", count)
-        return
-
-    if not os.path.isfile(_SEED_PATH):
-        logger.warning("MCP 种子文件未找到: %s", _SEED_PATH)
-        return
-
-    with open(_SEED_PATH, encoding="utf-8") as f:
-        tools_data: list[dict] = json.load(f)
-
-    for td in tools_data:
-        db.add(
-            McpTool(
-                name=td["name"],
-                description=td.get("description", ""),
-                icon=td.get("icon", "🔧"),
-                author=td.get("author", ""),
-                version=td.get("version", "1.0.0"),
-                license=td.get("license", "MIT"),
-                repository=td.get("repository", ""),
-                rating=td.get("rating", 0.0),
-                category=td.get("category", "custom"),
-                tags=td.get("tags", []),
-                features=td.get("features", []),
-                official=td.get("official", False),
-                config_schema=td.get("config_schema", []),
-            )
-        )
-    await db.flush()
-    logger.info("已填充 %d 个 MCP 工具", len(tools_data))

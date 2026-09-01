@@ -213,7 +213,7 @@ function addMcpConfig() {
   formMcpConfigs.value.push({
     mcpToolId: '',
     mcpToolName: '',
-    config: { command: 'npx', args: [], transport: 'stdio', env: {} },
+    config: { transport: 'stdio', url: '', command: 'npx', args: [], env: {} },
     enabled: true,
   })
 }
@@ -224,8 +224,20 @@ function removeMcpConfig(idx: number) {
 
 function onMcpToolSelect(idx: number, mcpToolId: string) {
   const mcp = mcpTools.value.find((m) => m.id === mcpToolId)
-  if (mcp) {
-    formMcpConfigs.value[idx].mcpToolName = mcp.name
+  if (!mcp) return
+  const transport = mcp.transport || 'stdio'
+  const url = transport === 'sse'
+    ? mcp.sse_url || mcp.url
+    : transport === 'streamable_http'
+      ? mcp.streamable_http_url || mcp.url
+      : mcp.url || ''
+  formMcpConfigs.value[idx].mcpToolName = mcp.name
+  formMcpConfigs.value[idx].config = {
+    transport,
+    url,
+    command: mcp.command || '',
+    args: Array.isArray(mcp.args) ? [...mcp.args] : [],
+    env: { ...(mcp.env || {}) },
   }
 }
 
@@ -569,21 +581,6 @@ onMounted(() => {
                 </el-button>
               </div>
               <div class="mcp-card-body">
-                <el-input
-                  v-model="(cfg.config as Record<string, string>).command"
-                  size="small"
-                  placeholder="command (如 npx)"
-                >
-                  <template #prepend>command</template>
-                </el-input>
-                <el-input
-                  :model-value="Array.isArray(cfg.config.args) ? (cfg.config.args as string[]).join(' ') : ''"
-                  size="small"
-                  placeholder="args (空格分隔)"
-                  @update:model-value="(val: string) => { (cfg.config as Record<string, unknown>).args = val.split(' ').filter(Boolean) }"
-                >
-                  <template #prepend>args</template>
-                </el-input>
                 <el-select
                   :model-value="(cfg.config as Record<string, string>).transport || 'stdio'"
                   size="small"
@@ -593,7 +590,33 @@ onMounted(() => {
                   <template #prepend>transport</template>
                   <el-option label="stdio" value="stdio" />
                   <el-option label="sse" value="sse" />
+                  <el-option label="streamable_http" value="streamable_http" />
                 </el-select>
+                <el-input
+                  v-if="(cfg.config as Record<string, string>).transport !== 'stdio'"
+                  v-model="(cfg.config as Record<string, string>).url"
+                  size="small"
+                  placeholder="url"
+                >
+                  <template #prepend>url</template>
+                </el-input>
+                <template v-else>
+                  <el-input
+                    v-model="(cfg.config as Record<string, string>).command"
+                    size="small"
+                    placeholder="command (如 npx)"
+                  >
+                    <template #prepend>command</template>
+                  </el-input>
+                  <el-input
+                    :model-value="Array.isArray(cfg.config.args) ? (cfg.config.args as string[]).join(' ') : ''"
+                    size="small"
+                    placeholder="args (空格分隔)"
+                    @update:model-value="(val: string) => { (cfg.config as Record<string, unknown>).args = val.split(' ').filter(Boolean) }"
+                  >
+                    <template #prepend>args</template>
+                  </el-input>
+                </template>
               </div>
             </div>
           </div>

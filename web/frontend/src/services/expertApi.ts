@@ -11,6 +11,7 @@ import type {
   ExpertUpdateRequest,
   ExpertProfileUpdateRequest,
   ExpertConfigUpdateRequest,
+  McpConfigItem,
   ExpertListParams,
   ExpertListResponse,
   ExpertCategory,
@@ -83,6 +84,15 @@ function toExpert(raw: Record<string, unknown>): Expert {
   }
 }
 
+
+function toMcpConfigPayload(configs: McpConfigItem[]): Record<string, unknown>[] {
+  return configs.map((item) => ({
+    mcp_tool_id: item.mcpToolId,
+    config: item.config,
+    enabled: item.enabled,
+  }))
+}
+
 function toCreatePayload(data: ExpertCreateRequest): Record<string, unknown> {
   return {
     name: data.name,
@@ -98,7 +108,7 @@ function toCreatePayload(data: ExpertCreateRequest): Record<string, unknown> {
     model_id: data.modelId || null,
     tool_names: data.toolNames,
     skill_ids: data.skillIds,
-    mcp_configs: data.mcpConfigs,
+    mcp_configs: toMcpConfigPayload(data.mcpConfigs),
     featured: data.featured,
     scene: data.scene || null,
   }
@@ -138,7 +148,7 @@ function toConfigPayload(data: ExpertConfigUpdateRequest): Record<string, unknow
   if (data.modelId !== undefined) out.model_id = data.modelId || null
   if (data.toolNames !== undefined) out.tool_names = data.toolNames
   if (data.skillIds !== undefined) out.skill_ids = data.skillIds
-  if (data.mcpConfigs !== undefined) out.mcp_configs = data.mcpConfigs
+  if (data.mcpConfigs !== undefined) out.mcp_configs = toMcpConfigPayload(data.mcpConfigs)
   return out
 }
 

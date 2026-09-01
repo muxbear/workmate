@@ -39,6 +39,10 @@ class McpConfigBrief(BaseModel):
     """MCP 配置简要信息。."""
     mcp_tool_id: str
     mcp_tool_name: str
+    transport: str = ""
+    url: str = ""
+    sse_url: str = ""
+    streamable_http_url: str = ""
     config: dict
     enabled: bool
 

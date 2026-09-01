@@ -7,17 +7,33 @@ import { AgentBuilder } from './AgentBuilder'
 import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
 import { createModelFromCredential, resolveDefaultModel, type ChatModel } from './ModelFactory'
 import { buildExpertTools, buildExpertSkills } from './tools/DesktopToolRegistry'
+import { buildExpertMcpTools } from './tools/McpToolRegistry'
 
 /** 智能体生命周期管理（单例由调用方持有） */
 /** 将桌面版专家数据转换为 DeepAgents SubAgent 配置。 */
 function buildExpertDescription(expert: DesktopExpert): string {
-  const expertise = expert.expertiseAreas.length ? expert.expertiseAreas.join('、') : expert.desc || '无'
+  const expertise = expert.expertiseAreas.length
+    ? expert.expertiseAreas.join('、')
+    : expert.desc || '无'
   const tags = expert.tags.length ? expert.tags.join('、') : '通用任务'
   const tools = expert.tools.length ? expert.tools.join('、') : '无专用工具'
-  return [expert.name + '：' + expert.title + '。', '专长领域：' + expertise + '。', '适用场景：当任务涉及' + tags + '时应优先委派。', '可用工具：' + tools].join('')
+  const mcpToolNames = (expert.mcpConfigs ?? [])
+    .filter((cfg) => cfg.enabled && cfg.mcpToolName)
+    .map((cfg) => cfg.mcpToolName)
+  const toolText =
+    mcpToolNames.length > 0 ? tools + '（MCP 工具：' + mcpToolNames.join('、') + '）' : tools
+  return [
+    expert.name + '：' + expert.title + '。',
+    '专长领域：' + expertise + '。',
+    '适用场景：当任务涉及' + tags + '时应优先委派。',
+    '可用工具：' + toolText
+  ].join('')
 }
 
-async function resolveExpertModel(expert: DesktopExpert, modelService?: ModelService) {
+async function resolveExpertModel(
+  expert: DesktopExpert,
+  modelService?: ModelService
+): Promise<ChatModel | undefined> {
   if (expert.modelType === 'image-gen') return undefined
   if (!modelService) return undefined
   const modelId = expert.modelName || expert.modelId || undefined
@@ -26,13 +42,19 @@ async function resolveExpertModel(expert: DesktopExpert, modelService?: ModelSer
   return credential ? await createModelFromCredential(credential) : undefined
 }
 
-async function expertToSubAgent(expert: DesktopExpert, modelService?: ModelService): Promise<SubAgent> {
+async function expertToSubAgent(
+  expert: DesktopExpert,
+  modelService?: ModelService
+): Promise<SubAgent> {
   return {
     name: expert.name,
     description: buildExpertDescription(expert),
     systemPrompt: expert.systemPrompt || '',
     model: await resolveExpertModel(expert, modelService),
-    tools: buildExpertTools(expert.tools, modelService, expert.modelName),
+    tools: [
+      ...buildExpertTools(expert.tools, modelService, expert.modelName),
+      ...(await buildExpertMcpTools(expert.mcpConfigs))
+    ],
     skills: buildExpertSkills(expert.skills)
   }
 }
@@ -77,11 +99,14 @@ export class AgentManager {
 
     this.builder.setModel(model)
     // 自定义模型覆盖中间件：运行期按 configurable.model_override 切换模型（无需重建 agent）
-    if (this.modelService) this.builder.setMiddleware([createModelOverrideMiddleware(this.modelService)])
+    if (this.modelService)
+      this.builder.setMiddleware([createModelOverrideMiddleware(this.modelService)])
     if (this.skills.length > 0) this.builder.setSkills(this.skills)
 
     if (this.experts.length > 0 && (this.expertMode === 'selected' || this.expertMode === 'all')) {
-      this.builder.setSubagents(await Promise.all(this.experts.map((expert) => expertToSubAgent(expert, this.modelService))))
+      this.builder.setSubagents(
+        await Promise.all(this.experts.map((expert) => expertToSubAgent(expert, this.modelService)))
+      )
     } else {
       this.builder.setSubagents([])
     }
