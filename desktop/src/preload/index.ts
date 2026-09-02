@@ -168,6 +168,10 @@ const api = {
   readWorkspaceFileBytes(workspaceId: string, relPath: string) {
     return ipcRenderer.invoke('workspace:read-file-bytes', workspaceId, relPath)
   },
+  readWorkspaceImageBytes(workspaceId: string, relPath: string) {
+    return ipcRenderer.invoke('workspace:read-image-bytes', workspaceId, relPath)
+  },
+
   writeWorkspaceFile(workspaceId: string, relPath: string, bytes: Uint8Array | ArrayBuffer) {
     return ipcRenderer.invoke('workspace:write-file', workspaceId, relPath, bytes)
   },

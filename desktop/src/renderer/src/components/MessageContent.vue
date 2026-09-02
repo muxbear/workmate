@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { marked } from 'marked'
-import { extractRemoteImageUrls } from '../util/markdown-images'
+import {
+  extractRemoteImageUrls,
+  extractWorkspaceImagePaths,
+  normalizeWorkspaceImagePath
+} from '../util/markdown-images'
 
 /**
  * 消息内容渲染组件
@@ -16,10 +20,13 @@ import { extractRemoteImageUrls } from '../util/markdown-images'
 export interface MessageContentProps {
   content: string
   contentType?: 'markdown' | 'text' | 'html'
+  /** 会话绑定的工作空间 id；存在时把正文中的工作区相对图片读取为可显示地址 */
+  workspaceId?: string
 }
 
 const props = withDefaults(defineProps<MessageContentProps>(), {
-  contentType: 'markdown'
+  contentType: 'markdown',
+  workspaceId: undefined
 })
 
 /** 原始图片 URL → 本地 ke-img:// 地址（主进程 images:resolve 解析结果） */
@@ -28,6 +35,43 @@ const resolvingUrls = new Set<string>()
 
 /** 内容中出现的远程图片 URL（仅 http(s) 外链） */
 const remoteImageUrls = computed(() => extractRemoteImageUrls(props.content))
+
+/** 工作区相对图片路径 → blob 地址 */
+const workspaceImageMap = ref<Record<string, string>>({})
+const resolvingWorkspacePaths = new Set<string>()
+const workspaceImagePaths = computed(() =>
+  props.workspaceId ? extractWorkspaceImagePaths(props.content) : []
+)
+
+function mimeForImageExt(ext: string): string {
+  switch (ext.toLowerCase()) {
+    case 'png':
+      return 'image/png'
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg'
+    case 'gif':
+      return 'image/gif'
+    case 'webp':
+      return 'image/webp'
+    case 'bmp':
+      return 'image/bmp'
+    case 'svg':
+      return 'image/svg+xml'
+    case 'ico':
+      return 'image/x-icon'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
+let workspaceEpoch = 0
+
+function revokeWorkspaceBlobs(): void {
+  for (const url of Object.values(workspaceImageMap.value)) URL.revokeObjectURL(url)
+  workspaceImageMap.value = {}
+  resolvingWorkspacePaths.clear()
+}
 
 // 内容变化时逐批解析远程图片；解析完成后重渲染，<img> 指向 CSP 放行的本地缓存地址
 watch(
@@ -54,6 +98,52 @@ watch(
   { immediate: true }
 )
 
+// 内容含工作区相对图片时：逐批从工作区读取字节并生成 blob 地址（仅展示层替换，不改写消息原文）
+watch(
+  [workspaceImagePaths, () => props.workspaceId],
+  ([paths, workspaceId]) => {
+    if (!workspaceId) return
+    const epoch = workspaceEpoch
+    for (const relPath of paths) {
+      if (workspaceImageMap.value[relPath] || resolvingWorkspacePaths.has(relPath)) continue
+      resolvingWorkspacePaths.add(relPath)
+      window.api
+        .readWorkspaceImageBytes(workspaceId, relPath)
+        .then((res) => {
+          if (!res.success || !res.data) return
+          const rawBuffer = res.data.bytes.buffer.slice(
+            res.data.bytes.byteOffset,
+            res.data.bytes.byteOffset + res.data.bytes.byteLength
+          ) as ArrayBuffer
+          const blob = new Blob([rawBuffer], { type: mimeForImageExt(res.data.ext) })
+          const url = URL.createObjectURL(blob)
+          if (epoch !== workspaceEpoch) {
+            URL.revokeObjectURL(url)
+            return
+          }
+          workspaceImageMap.value = { ...workspaceImageMap.value, [relPath]: url }
+        })
+        .catch(() => {
+          // 读取失败保持原相对路径（裂图但不影响消息渲染）
+        })
+        .finally(() => {
+          resolvingWorkspacePaths.delete(relPath)
+        })
+    }
+  },
+  { immediate: true }
+)
+
+// 切换会话/工作空间时回收旧 blob，避免泄漏
+watch(
+  () => props.workspaceId,
+  () => {
+    workspaceEpoch += 1
+    revokeWorkspaceBlobs()
+  }
+)
+onBeforeUnmount(revokeWorkspaceBlobs)
+
 /** HTML 属性转义（marked 输出原样携带 URL，映射后需自行转义） */
 function escapeHtmlAttr(value: string): string {
   return value
@@ -68,10 +158,15 @@ const renderedHtml = computed(() => {
 
   switch (props.contentType) {
     case 'markdown': {
-      // 自定义 image renderer：外链替换为本地 ke-img:// 缓存地址
+      // 自定义 image renderer：外链替换为 ke-img://；工作区相对路径替换为 blob 地址
       const renderer = new marked.Renderer()
       renderer.image = ({ href, title, text }) => {
-        const src = imageSrcMap.value[href] ?? href
+        const normalized = normalizeWorkspaceImagePath(href)
+        const src =
+          imageSrcMap.value[href] ??
+          workspaceImageMap.value[normalized] ??
+          workspaceImageMap.value[href] ??
+          href
         const attrs = [`src="${escapeHtmlAttr(src)}"`, `alt="${escapeHtmlAttr(text)}"`]
         if (title) attrs.push(`title="${escapeHtmlAttr(title)}"`)
         return `<img ${attrs.join(' ')}>`

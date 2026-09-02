@@ -27,6 +27,7 @@ const CATALOG_NAV_TARGETS: Record<CatalogTab, CatalogNavTarget> = {
 const currentMessages = computed(() => agentStore.currentMessages)
 const isStreaming = computed(() => agentStore.isStreaming)
 const isThinking = computed(() => agentStore.isThinking)
+const currentWorkspaceId = computed(() => agentStore.currentConversation?.workspace?.id ?? undefined)
 
 // ── State ──
 const category = ref('work')
@@ -2114,13 +2115,13 @@ watch(
                   </button>
                   <Transition name="thinking-collapse">
                     <div v-show="!thinkingCollapsed[msg.id]" class="thinking-body">
-                      <MessageContent :content="msg.reasoning" content-type="markdown" />
+                      <MessageContent :content="msg.reasoning" content-type="markdown" :workspace-id="currentWorkspaceId" />
                     </div>
                   </Transition>
                 </div>
                 <!-- 消息内容：有内容时渲染，空内容+流式输出时显示加载动画 -->
                 <div v-if="msg.content" class="chat-bubble">
-                  <MessageContent :content="msg.content" content-type="markdown" />
+                  <MessageContent :content="msg.content" content-type="markdown" :workspace-id="currentWorkspaceId" />
                 </div>
                 <div
                   v-else-if="isLastAssistant(msg.id) && thinking"
@@ -2274,7 +2275,7 @@ watch(
             <template v-else>
               <div class="chat-bubble-wrapper chat-bubble-wrapper--user">
                 <div class="chat-bubble chat-bubble--user">
-                  <MessageContent :content="msg.content" content-type="markdown" />
+                  <MessageContent :content="msg.content" content-type="markdown" :workspace-id="currentWorkspaceId" />
                 </div>
               </div>
             </template>

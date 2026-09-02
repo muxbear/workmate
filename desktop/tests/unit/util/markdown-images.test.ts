@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { extractRemoteImageUrls } from '../../../src/renderer/src/util/markdown-images'
+import {
+  extractRemoteImageUrls,
+  extractWorkspaceImagePaths
+} from '../../../src/renderer/src/util/markdown-images'
 
 describe('extractRemoteImageUrls（Markdown/HTML 远程图片提取）', () => {
   it('提取 Markdown 图片外链并去重保序', () => {
@@ -20,5 +23,21 @@ describe('extractRemoteImageUrls（Markdown/HTML 远程图片提取）', () => {
     const html =
       '<p>hi</p><img src="https://x.com/a.png" alt="a"><img src="data:image/png;base64,y" />'
     expect(extractRemoteImageUrls(html)).toEqual(['https://x.com/a.png'])
+  })
+})
+
+describe('extractWorkspaceImagePaths（工作区相对图片提取）', () => {
+  it('提取相对路径并归一化 ./ 与查询参数', () => {
+    const md =
+      '![a](images/figure-1.png) 正文 ![b](./images/figure-2.png?x=1) ![c](data:image/png;base64,xx)'
+    expect(extractWorkspaceImagePaths(md)).toEqual([
+      'images/figure-1.png',
+      'images/figure-2.png'
+    ])
+  })
+
+  it('忽略 http(s) 远程图片与绝对路径引用', () => {
+    const md = '![x](https://x.com/a.png) ![y](/abs/a.png) ![z](blob:https://x/1)'
+    expect(extractWorkspaceImagePaths(md)).toEqual([])
   })
 })

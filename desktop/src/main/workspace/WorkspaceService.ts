@@ -20,6 +20,12 @@ export interface WorkspaceFileContent {
   truncated: boolean
 }
 
+/** 工作空间图片原始字节（聊天内嵌本地图片渲染用） */
+export interface WorkspaceImageBytes {
+  ext: string
+  bytes: Uint8Array
+}
+
 /** Word/PDF 预览时主进程返回给渲染层的原始文件字节。 */
 export interface WorkspaceFileBinary {
   name: string
@@ -37,6 +43,22 @@ const HIDDEN_NAMES = new Set([
   '.vscode',
   '.DS_Store'
 ])
+
+/** 聊天内嵌工作区图片的格式白名单 */
+const WORKSPACE_IMAGE_EXTS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'svg',
+  'ico'
+])
+
+/** 聊天内嵌工作区图片单文件大小上限（20MB） */
+const MAX_WORKSPACE_IMAGE_BYTES = 20 * 1024 * 1024
+
 /** 单层最多返回条目数 */
 const MAX_LIST_ITEMS = 200
 
@@ -279,6 +301,20 @@ export class WorkspaceService {
     }
 
     throw new Error('仅支持 doc/docx/pdf 文件的字节预览')
+  }
+
+  /** 读取工作空间内图片原始字节（路径校验与图片格式白名单由主进程执行） */
+  async readImageBytes(id: string, userId: string, relPath: string): Promise<WorkspaceImageBytes> {
+    const target = this.resolveFilePath(id, userId, relPath)
+    const ext = extname(target).toLowerCase().replace(/^\./, '')
+    if (!WORKSPACE_IMAGE_EXTS.has(ext)) {
+      throw new Error('仅支持读取工作区图片文件')
+    }
+    const buffer = await readFile(target)
+    if (buffer.byteLength > MAX_WORKSPACE_IMAGE_BYTES) {
+      throw new Error('图片文件过大，暂不支持预览')
+    }
+    return { ext, bytes: new Uint8Array(buffer) }
   }
 
   /**

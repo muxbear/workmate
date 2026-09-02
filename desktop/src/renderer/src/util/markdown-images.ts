@@ -18,3 +18,30 @@ export function extractRemoteImageUrls(content: string): string[] {
   }
   return [...urls]
 }
+
+/** 匹配 Markdown 图片语法中的相对路径引用（供工作区本地图片渲染使用） */
+const WORKSPACE_IMAGE_PATH_RE = /!\[[^\]]*\]\(([^)\s]+)\)/g
+
+/** 判断字符串是否为协议地址（http/data/blob/file 等） */
+const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
+
+/** 归一化工作区相对图片路径：去掉 ./ 前缀与锚点/查询参数 */
+export function normalizeWorkspaceImagePath(raw: string): string {
+  const path = raw.split('#')[0].split('?')[0].replace(/^\.\//, '').replace(/^\/+/, '')
+  return path
+}
+
+function isWorkspaceRelativePath(raw: string): boolean {
+  const value = raw.trim()
+  if (SCHEME_RE.test(value) || value.startsWith('/')) return false
+  return true
+}
+
+/** 提取文本中的工作区相对图片路径（去重、保序），供渲染前读取工作区图片 */
+export function extractWorkspaceImagePaths(content: string): string[] {
+  const paths = new Set<string>()
+  for (const match of content.matchAll(WORKSPACE_IMAGE_PATH_RE)) {
+    if (isWorkspaceRelativePath(match[1])) paths.add(normalizeWorkspaceImagePath(match[1]))
+  }
+  return [...paths]
+}

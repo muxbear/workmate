@@ -158,6 +158,12 @@ export interface WorkspaceFileContent {
   truncated: boolean
 }
 
+/** 工作空间图片原始字节（聊天内嵌本地图片渲染用） */
+export interface WorkspaceImageBytes {
+  ext: string
+  bytes: Uint8Array
+}
+
 /** 工作空间 Word/PDF 文件原始字节（doc 会被主进程转换为 docx 后返回）。 */
 export interface WorkspaceFileBinary {
   name: string
@@ -189,6 +195,12 @@ export interface WorkspaceAPI {
     workspaceId: string,
     relPath: string
   ): Promise<IpcResult<WorkspaceFileBinary>>
+  /** 读取工作空间下图片原始字节（供聊天内嵌本地图片渲染） */
+  readWorkspaceImageBytes(
+    workspaceId: string,
+    relPath: string
+  ): Promise<IpcResult<WorkspaceImageBytes>>
+
   /** 保存工作空间下 Word 文件字节 */
   writeWorkspaceFile(
     workspaceId: string,
