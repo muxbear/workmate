@@ -1920,7 +1920,7 @@ onMounted(() => {
 }
 
 .form-select option {
-  background: #1a1d2e;
+  background: var(--color-bg-input);
   color: var(--foreground-primary);
 }
 
