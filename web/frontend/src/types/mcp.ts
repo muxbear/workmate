@@ -58,6 +58,7 @@ export const MCP_CATEGORY_LABELS: Record<string, string> = {
   collaboration: '协作',
   container: '容器',
   custom: '自定义',
+  image_generation: '图像生成',
 }
 
 /** 分类筛选选项 */
@@ -70,6 +71,7 @@ export const MCP_CATEGORY_FILTERS = [
   { key: 'notification', label: '通知' },
   { key: 'database', label: '数据库' },
   { key: 'dev_tools', label: '开发工具' },
+  { key: 'image_generation', label: '图像生成' },
 ]
 
 /** 安装 MCP 请求 */

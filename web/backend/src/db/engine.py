@@ -171,6 +171,8 @@ async def init_db():
                 else:
                     await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN env JSONB DEFAULT '{}'::jsonb"))
             await conn.execute(text("UPDATE mcp_tools SET transport='sse', url='http://127.0.0.1:8001/mcp/web-search/sse', sse_url='http://127.0.0.1:8001/mcp/web-search/sse', streamable_http_url='http://127.0.0.1:8001/mcp/web-search-http/mcp' WHERE name='联网搜索' AND (sse_url IS NULL OR sse_url='')"))
+            await conn.execute(text("UPDATE mcp_tools SET transport='streamable_http', url='http://127.0.0.1:8001/mcp/image-gen/sse', sse_url='http://127.0.0.1:8001/mcp/image-gen/sse', streamable_http_url='http://127.0.0.1:8001/mcp/image-gen-http/mcp' WHERE name='AI 图像生成' AND (streamable_http_url IS NULL OR streamable_http_url='')"))
+
 
     # Seed built-in RBAC data
     from api.rbac.service import RbacService

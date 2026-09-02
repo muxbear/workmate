@@ -103,9 +103,11 @@ async def resolve_agent_tools(
     # 1. 加载内置工具注册表
     registry = await get_tool_registry(db)
 
-    # 2. 加载该 Agent 的 MCP 工具
+    # 2. 加载该 Agent 通过 agent_mcp_configs 配置的 MCP 工具
+    mcp_tools: list[Any] = []
     try:
         from agent.tools.mcp_loader import load_mcp_tools_for_agent
+
         mcp_tools = await load_mcp_tools_for_agent(db, agent_id)
         for mcp_tool in mcp_tools:
             registry[mcp_tool.name] = mcp_tool
@@ -114,7 +116,7 @@ async def resolve_agent_tools(
     except Exception:
         logger.warning("加载 MCP 工具失败", exc_info=True)
 
-    # 3. 按名称解析
+    # 3. 按 tool_names 解析内置工具
     resolved: list[Any] = []
     for name in tool_names:
         fn = registry.get(name)
@@ -122,5 +124,14 @@ async def resolve_agent_tools(
             resolved.append(fn)
         else:
             logger.warning("工具 '%s' 在注册表中未找到，已跳过", name)
+
+    # 4. 自动附加该 Agent 配置的 MCP 工具：AgentMcpConfig 即显式配置，
+    #    无需在 tool_names 中重复声明，避免配置了 MCP 服务但工具未加载。
+    resolved_names = {getattr(tool, "name", None) for tool in resolved}
+    for mcp_tool in mcp_tools:
+        tool_name = getattr(mcp_tool, "name", None)
+        if tool_name is not None and tool_name not in resolved_names:
+            resolved.append(mcp_tool)
+            resolved_names.add(tool_name)
 
     return resolved

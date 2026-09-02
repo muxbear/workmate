@@ -242,3 +242,97 @@ async def uninstall_mcp_tool(
     if installation is None:
         raise HTTPException(status_code=404, detail="工具未安装")
     await db.delete(installation)
+
+
+# ── MCP 广场内置服务种子数据 ───────────────────────────────────────────
+
+BUILTIN_MCP_TOOLS: list[dict] = [
+    {
+        "name": "联网搜索",
+        "description": "通过 DuckDuckGo / Tavily 实时检索互联网信息，返回标题、URL 与摘要。",
+        "icon": "🌐",
+        "author": "ke-hermes",
+        "version": "1.0.0",
+        "license": "MIT",
+        "repository": "",
+        "rating": 4.8,
+        "category": "search",
+        "tags": ["搜索", "联网", "tavily", "duckduckgo"],
+        "features": [
+            "实时互联网搜索，返回标题、链接与摘要",
+            "支持 Tavily 与 DuckDuckGo 双数据源自动切换",
+        ],
+        "official": True,
+        "transport": "streamable_http",
+        "url": "http://127.0.0.1:8001/mcp/web-search/sse",
+        "sse_url": "http://127.0.0.1:8001/mcp/web-search/sse",
+        "streamable_http_url": "http://127.0.0.1:8001/mcp/web-search-http/mcp",
+    },
+    {
+        "name": "AI 图像生成",
+        "description": "基于 wan2.7-image-pro 图像生成模型，提供文生图、文生组图、图生组图能力，可用于插画、海报、配图等场景。",
+        "icon": "🎨",
+        "author": "ke-hermes",
+        "version": "1.0.0",
+        "license": "MIT",
+        "repository": "",
+        "rating": 5.0,
+        "category": "image_generation",
+        "tags": ["图像生成", "文生图", "图生图", "wan2.7-image-pro"],
+        "features": [
+            "文生图：根据文本描述生成一张图片",
+            "文生组图：一次生成多张风格一致的图片",
+            "图生组图：参考图 + 提示词批量生成多张图片",
+        ],
+        "official": True,
+        "transport": "streamable_http",
+        "url": "http://127.0.0.1:8001/mcp/image-gen/sse",
+        "sse_url": "http://127.0.0.1:8001/mcp/image-gen/sse",
+        "streamable_http_url": "http://127.0.0.1:8001/mcp/image-gen-http/mcp",
+    },
+]
+
+
+async def seed_builtin_mcp_tools(db: AsyncSession) -> None:
+    """填充 MCP 广场内置服务，可重复调用：缺失时创建，已有记录仅补全空字段。."""
+    for item in BUILTIN_MCP_TOOLS:
+        row = (
+            await db.execute(select(McpTool).where(McpTool.name == item["name"]))
+        ).scalar_one_or_none()
+        if row is None:
+            db.add(
+                McpTool(
+                    id=str(uuid.uuid4()),
+                    name=item["name"],
+                    description=item["description"],
+                    icon=item["icon"],
+                    author=item["author"],
+                    version=item["version"],
+                    license=item["license"],
+                    repository=item.get("repository", ""),
+                    rating=item.get("rating", 0.0),
+                    category=item["category"],
+                    tags=item.get("tags", []),
+                    features=item.get("features", []),
+                    official=item.get("official", False),
+                    config_schema=item.get("config_schema", []),
+                    transport=item["transport"],
+                    url=item.get("url", ""),
+                    sse_url=item.get("sse_url", ""),
+                    streamable_http_url=item.get("streamable_http_url", ""),
+                    command=item.get("command", ""),
+                    args=item.get("args", []),
+                    env=item.get("env", {}),
+                )
+            )
+            logger.info("已创建内置 MCP 工具 '%s'", item["name"])
+        else:
+            if not row.url:
+                row.url = item.get("url", "")
+            if not row.sse_url:
+                row.sse_url = item.get("sse_url", "")
+            if not row.streamable_http_url:
+                row.streamable_http_url = item.get("streamable_http_url", "")
+            if not row.transport or row.transport == "stdio":
+                row.transport = item["transport"]
+    logger.info("MCP 广场内置服务种子数据检查完成（%d 条）", len(BUILTIN_MCP_TOOLS))

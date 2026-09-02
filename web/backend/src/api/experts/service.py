@@ -788,3 +788,149 @@ async def sync_list(db: AsyncSession) -> ExpertSyncListResponse:
 async def sync_detail(db: AsyncSession, expert_id: str) -> ExpertInfo:
     """获取单个专家的完整配置（供桌面端同步详情）。."""
     return await get_expert(db, expert_id)
+
+
+# ── 内置专家种子数据 ─────────────────────────────────────────────────
+
+BUILTIN_EXPERTS: list[dict] = [
+    {
+        "name": "文档写作专家",
+        "title": "文档写作专家",
+        "category": "content_creation",
+        "description": "根据写作要求撰写结构完整、内容充实的文章，并调用 AI 图像生成服务在合适位置插入配图，输出可直接使用的 Markdown 文章。",
+        "tags": ["文档写作", "文章撰写", "AI配图", "内容创作"],
+        "icon": "✍️",
+        "color": "linear-gradient(135deg,#f59e0b,#d97706)",
+        "initials": "文",
+        "featured": False,
+        "scene": None,
+        "sort_order": 0,
+        "is_published": True,
+        "model_name": "deepseek-v4-pro",
+        "mcp_tool_name": "AI 图像生成",
+        "system_prompt": (
+            "你是 WorkMate 的「文档写作专家」。你的任务是：根据用户提出的写作要求，"
+            "撰写一篇结构完整、内容充实、语言流畅的文章，并在文章中合适的位置配以恰当的插图。\n"
+            "\n"
+            "## 写作流程\n"
+            "1. 理解用户的写作要求（主题、体裁、受众、篇幅、风格等），如信息不足可先向用户确认关键信息。\n"
+            "2. 规划文章结构：拟定标题、引言、若干小节（带小标题）与结尾。\n"
+            "3. 分节撰写正文，语言生动准确、逻辑清晰，避免空话套话。\n"
+            "4. 在适合插图的位置（如封面、章节开头、概念说明处、总结处）调用图像生成工具生成配图，"
+            "并将图片以 Markdown 图片语法 ![](图片地址) 嵌入正文。\n"
+            "\n"
+            "## 图像生成工具使用规范\n"
+            "- 使用 AI 图像生成服务中的工具生成配图，可用工具：\n"
+            "  - text_to_image：生成单张图片，适合封面图或单一概念插图；\n"
+            "  - text_to_image_batch：一次生成多张风格一致的图片，适合组图或系列插图；\n"
+            "  - image_to_image_batch：基于参考图批量生成，用户提供参考图时使用。\n"
+            "- 配图数量：按文章篇幅决定，通常 1000 字以内配 1-3 张，更长文章适当增加，避免过度配图。\n"
+            "- 为每张配图编写高质量提示词（prompt），描述画面主体、风格、构图与氛围，"
+            "确保图片与所在章节内容高度相关。\n"
+            "- 调用后从返回结果的 images 列表取出图片 url，用 ![](url) 嵌入到对应段落之后。\n"
+            "- 若图片生成失败（返回 error），不要中断文章输出，继续完成写作并在该位置省略图片即可。\n"
+            "\n"
+            "## 输出要求\n"
+            "- 最终输出完整的 Markdown 文章，包含标题、正文层级与配图，可直接阅读、直接复制使用。"
+        ),
+    },
+]
+
+
+async def seed_builtin_experts(db: AsyncSession) -> None:
+    """填充内置专家（文档写作专家），可重复调用：不存在时创建并关联 MCP 服务。."""
+    main_agent_id = await _get_main_agent_id(db)
+
+    for item in BUILTIN_EXPERTS:
+        existing = (
+            await db.execute(select(Agent).where(Agent.name == item["name"]))
+        ).scalar_one_or_none()
+        if existing is not None:
+            logger.info("内置专家 '%s' 已存在，跳过", item["name"])
+            continue
+
+        provider_id = None
+        model_id = None
+        model_name = item.get("model_name")
+        if model_name:
+            model = (
+                await db.execute(
+                    select(AIModel).where(
+                        AIModel.name == model_name,
+                        AIModel.type.in_(("llm", "vision", "multimodal")),
+                    )
+                )
+            ).scalar_one_or_none()
+            if model is not None:
+                provider_id = model.provider_id
+                model_id = model.id
+            else:
+                logger.warning("内置专家默认模型 %s 未找到，使用默认 LLM", model_name)
+
+        agent = Agent(
+            name=item["name"],
+            type="expert",
+            status="active",
+            description=item["description"],
+            parent_id=main_agent_id,
+            system_prompt=item["system_prompt"],
+            provider_id=provider_id,
+            model_id=model_id,
+        )
+        db.add(agent)
+        await db.flush()
+
+        profile = ExpertProfile(
+            agent_id=agent.id,
+            title=item["title"],
+            category=item["category"],
+            tags=item.get("tags", []),
+            icon=item.get("icon", ""),
+            color=item.get("color", ""),
+            initials=item.get("initials", item["name"][:1]),
+            featured=item.get("featured", False),
+            scene=item.get("scene"),
+            sort_order=item.get("sort_order", 0),
+            is_published=item.get("is_published", True),
+        )
+        db.add(profile)
+
+        mcp_tool_name = item.get("mcp_tool_name")
+        if mcp_tool_name:
+            mcp_tool = (
+                await db.execute(select(McpTool).where(McpTool.name == mcp_tool_name))
+            ).scalar_one_or_none()
+            if mcp_tool is not None:
+                db.add(
+                    AgentMcpConfig(
+                        agent_id=agent.id,
+                        mcp_tool_id=mcp_tool.id,
+                        config={
+                            "transport": mcp_tool.transport or "streamable_http",
+                            "url": mcp_tool.streamable_http_url or mcp_tool.url or "",
+                            "command": "",
+                            "args": [],
+                            "env": {},
+                        },
+                        enabled=True,
+                    )
+                )
+                logger.info(
+                    "为内置专家 '%s' 关联 MCP 服务 '%s'",
+                    item["name"],
+                    mcp_tool_name,
+                )
+            else:
+                logger.warning(
+                    "内置专家关联的 MCP 服务 '%s' 未找到，跳过",
+                    mcp_tool_name,
+                )
+
+        await _create_agent_version_snapshot(
+            db,
+            agent,
+            [],
+            [],
+            change_summary="创建内置专家",
+        )
+        logger.info("已创建内置专家 '%s' (id=%s)", agent.name, agent.id)

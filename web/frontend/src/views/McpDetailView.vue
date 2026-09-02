@@ -27,7 +27,7 @@ const remoteConfigSnippet = computed(() => {
   return [
     '{',
     '  "mcpServers": {',
-    '    "fetch": {',
+    `    "${mcpStore.currentTool?.name || 'fetch'}": {`,
     `      "type": "${remoteTransport.value}",`,
     `      "url": "${url}"`,
     '    }',
@@ -36,18 +36,22 @@ const remoteConfigSnippet = computed(() => {
   ].join('\n')
 })
 
-const stdioConfigSnippet = [
-  '{',
-  '  "mcpServers": {',
-  '    "fetch": {',
-  '      "args": [',
-  '        "mcp-server-fetch"',
-  '      ],',
-  '      "command": "uvx"',
-  '    }',
-  '  }',
-  '}',
-].join('\n')
+const stdioConfigSnippet = computed(() => {
+  const tool = mcpStore.currentTool
+  const name = tool?.name || 'fetch'
+  const command = tool?.command || 'uvx'
+  const args = tool?.args?.length ? tool.args : ['mcp-server-fetch']
+  return [
+    '{',
+    '  "mcpServers": {',
+    `    "${name}": {`,
+    `      "args": ${JSON.stringify(args)},`,
+    `      "command": "${command}"`,
+    '    }',
+    '  }',
+    '}',
+  ].join('\n')
+})
 
 const tabs = [
   { key: 'overview', label: '概述' },
