@@ -5,6 +5,7 @@ import type { DesktopExpert } from './index.d'
 // Custom APIs for renderer
 const api = {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  openWebHome: () => ipcRenderer.invoke('web:open-home'),
   sendAgentMessage(
     conversationId: string,
     parts: ({ type: 'text'; text: string } | { type: 'file'; path: string })[] | string,

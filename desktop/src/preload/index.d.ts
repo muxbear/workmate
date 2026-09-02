@@ -45,6 +45,8 @@ export interface OAuth2StatusResponse {
 
 export interface AgentAPI {
   openExternal: (url: string) => Promise<void>
+  /** 打开系统浏览器跳转到 Web 版首页（地址由主进程 WORKMATE_WEB_FRONTEND_URL 配置） */
+  openWebHome(): Promise<void>
   openWeChatAuth: (
     authUrl: string,
     redirectUri: string

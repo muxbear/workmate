@@ -475,6 +475,12 @@ app.whenReady().then(() => {
     await shell.openExternal(url)
   })
 
+  // 打开 Web 版首页（前往管理中心入口；地址可用 WORKMATE_WEB_FRONTEND_URL 覆盖）
+  ipcMain.handle('web:open-home', async () => {
+    const webFrontendUrl = process.env.WORKMATE_WEB_FRONTEND_URL ?? 'http://localhost:5173'
+    await shell.openExternal(webFrontendUrl)
+  })
+
   // Agent message handler
   ipcMain.handle(
     'agent:send',
