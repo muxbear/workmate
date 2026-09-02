@@ -71,6 +71,8 @@ export interface AgentAPI {
   getPathForFile(file: File): string
   /** AI 改写润色输入文本（主进程调 LLM，非流式）；data 为改写结果 */
   polishText(text: string): Promise<IpcResult<string>>
+  /** 将远程图片 URL 解析为本地 ke-img:// 缓存地址（主进程下载并落盘；失败返回 error） */
+  resolveRemoteImage(url: string): Promise<IpcResult<{ url: string }>>
   /** 设置当前选中的专家为子智能体；调用完成后才可发送消息 */
   setExperts(experts: DesktopExpert[]): Promise<IpcResult<null>>
 }

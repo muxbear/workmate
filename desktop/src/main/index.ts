@@ -8,6 +8,8 @@ import {
   session as electronSession,
   powerSaveBlocker,
   nativeTheme,
+  net,
+  protocol,
   type IpcMainInvokeEvent
 } from 'electron'
 import { join } from 'path'
@@ -29,6 +31,8 @@ import { ElectronSafeStorage } from './security/secure-storage'
 import { registerAuthHandlers } from './ipc/auth-handlers'
 import { AgentManager } from './agent/AgentManager'
 import { ConversationStore } from './agent/ConversationStore'
+import { RemoteImageService, registerRemoteImageScheme } from './images/RemoteImageService'
+import { registerRemoteImageHandlers } from './ipc/image-handlers'
 import { registerConversationHandlers } from './ipc/conversation-handlers'
 import { registerFileHandlers } from './ipc/file-handlers'
 import { registerModeHandlers } from './ipc/mode-handlers'
@@ -59,6 +63,9 @@ import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
 import icon from '../../resources/icon.png?asset'
 
 import 'dotenv/config'
+
+// 远程图片缓存协议：特权 scheme 必须在 app ready 之前注册（渲染层 img-src 白名单含 ke-img:）
+registerRemoteImageScheme(protocol)
 
 // 测试/多实例隔离：允许通过环境变量覆盖 Electron 用户数据目录（localStorage 等）
 if (process.env.KE_WORK_USER_DATA) {
@@ -181,6 +188,13 @@ app.whenReady().then(() => {
   const dataDir = getDataDirectory()
   migrateLegacyConfigFiles(dataDir.getBaseDir())
 
+  // ── 远程图片缓存服务（ke-img:// 协议 + 落盘缓存；解决外链图片 CSP 拦截与 URL 过期）──
+  const remoteImageService = new RemoteImageService(
+    join(dataDir.getDir('cache'), 'remote-images'),
+    (url, init) => net.fetch(url, init)
+  )
+  remoteImageService.registerProtocol(protocol)
+
   // ── 初始化工作模式 ──
   const workModeStore = new WorkModeStore(dataDir.getBaseDir())
   const mode = workModeStore.getMode()
@@ -214,6 +228,12 @@ app.whenReady().then(() => {
   })
   const session = new SessionService(dataDir.getBaseDir())
   browserPreviewServer = new WorkspacePreviewServer()
+
+  // ── 注册远程图片 IPC（Markdown 图片外链 → 本地 ke-img:// 缓存地址）──
+  registerRemoteImageHandlers(ipcMain, {
+    remoteImageService,
+    requireUserId: () => session.requireUserId()
+  })
 
   // ── 初始化自定义模型服务（机器级配置；providers.json 首启种子写入，用户可手改）──
   const modelService = new ModelService(dataDir.getBaseDir())

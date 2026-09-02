@@ -84,6 +84,14 @@ const api = {
       data?: string
     }>
   },
+  /** 将远程图片 URL 解析为本地 ke-img:// 缓存地址（主进程下载并落盘；data.url 为本地协议地址） */
+  resolveRemoteImage(url: string) {
+    return ipcRenderer.invoke('images:resolve', url) as Promise<{
+      success: boolean
+      error?: string
+      data?: { url: string }
+    }>
+  },
   // ── 认证 API ──
   loginByPassword(account: string, password: string) {
     return ipcRenderer.invoke('auth:login-password', account, password)

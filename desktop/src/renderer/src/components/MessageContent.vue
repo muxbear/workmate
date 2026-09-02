@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { marked } from 'marked'
+import { extractRemoteImageUrls } from '../util/markdown-images'
 
 /**
  * 消息内容渲染组件
@@ -21,12 +22,62 @@ const props = withDefaults(defineProps<MessageContentProps>(), {
   contentType: 'markdown'
 })
 
+/** 原始图片 URL → 本地 ke-img:// 地址（主进程 images:resolve 解析结果） */
+const imageSrcMap = ref<Record<string, string>>({})
+const resolvingUrls = new Set<string>()
+
+/** 内容中出现的远程图片 URL（仅 http(s) 外链） */
+const remoteImageUrls = computed(() => extractRemoteImageUrls(props.content))
+
+// 内容变化时逐批解析远程图片；解析完成后重渲染，<img> 指向 CSP 放行的本地缓存地址
+watch(
+  remoteImageUrls,
+  (urls) => {
+    for (const url of urls) {
+      if (imageSrcMap.value[url] || resolvingUrls.has(url)) continue
+      resolvingUrls.add(url)
+      window.api
+        .resolveRemoteImage(url)
+        .then((res) => {
+          if (res.success && res.data?.url) {
+            imageSrcMap.value = { ...imageSrcMap.value, [url]: res.data.url }
+          }
+        })
+        .catch(() => {
+          // 解析失败保持原 URL（受 CSP 拦截显示裂图，但不影响整篇渲染）
+        })
+        .finally(() => {
+          resolvingUrls.delete(url)
+        })
+    }
+  },
+  { immediate: true }
+)
+
+/** HTML 属性转义（marked 输出原样携带 URL，映射后需自行转义） */
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 const renderedHtml = computed(() => {
   if (!props.content) return ''
 
   switch (props.contentType) {
-    case 'markdown':
-      return marked.parse(props.content, { async: false }) as string
+    case 'markdown': {
+      // 自定义 image renderer：外链替换为本地 ke-img:// 缓存地址
+      const renderer = new marked.Renderer()
+      renderer.image = ({ href, title, text }) => {
+        const src = imageSrcMap.value[href] ?? href
+        const attrs = [`src="${escapeHtmlAttr(src)}"`, `alt="${escapeHtmlAttr(text)}"`]
+        if (title) attrs.push(`title="${escapeHtmlAttr(title)}"`)
+        return `<img ${attrs.join(' ')}>`
+      }
+      return marked.parse(props.content, { async: false, renderer }) as string
+    }
     case 'html':
       // 预留：未来可在此处添加 XSS 过滤（如 DOMPurify.sanitize）
       return props.content
