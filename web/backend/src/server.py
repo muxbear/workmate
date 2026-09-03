@@ -80,6 +80,10 @@ async def lifespan(app: FastAPI):
     from core.security import _get_jwt_secret as init_jwt
     init_jwt()
 
+    # Initialize notification bus
+    from api.notification.service import init_notification_bus
+    init_notification_bus()
+
     # 初始化知识库子系统
     await _init_knowledge_base(app)
 

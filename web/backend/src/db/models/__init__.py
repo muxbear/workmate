@@ -14,6 +14,7 @@ from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
 from db.models.login_record import LoginRecord
+from db.models.notification import Notification
 from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
 from db.models.oauth2_client import OAuth2Client
@@ -45,6 +46,7 @@ __all__ = [
     "KnowledgeBaseDocument",
     "KnowledgeBaseEntity",
     "KnowledgeBaseRelation",
+    Notification,
     "LoginRecord",
     "McpInstallation",
     "McpTool",

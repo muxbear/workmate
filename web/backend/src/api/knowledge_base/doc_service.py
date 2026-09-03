@@ -34,6 +34,8 @@ from db.models.knowledge_base_document import KnowledgeBaseDocument
 if TYPE_CHECKING:
     from api.knowledge_base.mediator import KnowledgeBaseMediator
 
+from core.notification_bus import NotificationBus, NotificationEvent
+
 logger = logging.getLogger(__name__)
 
 # 各阶段的预估进度基线
@@ -205,6 +207,21 @@ class DatabaseProgressObserver(ProgressObserver):
                             status=new_status,
                         )
                     )
+
+                # 发布通知事件
+                    if ctx.status in ("indexed", "failed"):
+                        try:
+                            await NotificationBus.publish(NotificationEvent(
+                                user_id=ctx.kb_id,  # TODO: replace with actual user_id
+                                type="kb_indexed" if ctx.status == "indexed" else "kb_failed",
+                                title="文档索引完成" if ctx.status == "indexed" else "文档索引失败",
+                                content=f"文档 {ctx.doc_id} {'索引完成' if ctx.status == 'indexed' else '索引失败: ' + (ctx.error_message or '')}",
+                                level="success" if ctx.status == "indexed" else "error",
+                                link=f"/knowledge-base?kb_id={ctx.kb_id}",
+                                metadata={"doc_id": ctx.doc_id, "kb_id": ctx.kb_id},
+                            ))
+                        except Exception:
+                            logger.warning("发布通知事件失败", exc_info=True)
 
                 await db.commit()
         except Exception as e:

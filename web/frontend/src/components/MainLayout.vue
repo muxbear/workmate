@@ -1,14 +1,26 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
+import { useNotificationStore } from '@/stores/notification'
+import { useAuthStore } from '@/stores/auth'
 import SideMenu from './SideMenu.vue'
 import TopBar from './TopBar.vue'
 import { usePermissionStore } from '@/stores/permission'
+
+const notificationStore = useNotificationStore()
+const authStore = useAuthStore()
 
 onMounted(() => {
   const permStore = usePermissionStore()
   if (!permStore.loaded) {
     permStore.load()
   }
+  if (authStore.isAuthenticated) {
+    notificationStore.init()
+  }
+})
+
+onUnmounted(() => {
+  notificationStore.disconnectSSE()
 })
 </script>
 

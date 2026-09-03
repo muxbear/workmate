@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { AuthTokens, UserInfo } from '@/types/auth'
 import { authApi } from '@/services/authApi'
 import { clearTokensFromStorage } from '@/services/request'
+import { useNotificationStore } from '@/stores/notification'
 import { usePermissionStore } from '@/stores/permission'
 
 const TOKEN_STORAGE_KEY = 'auth_tokens'
@@ -92,6 +93,8 @@ export const useAuthStore = defineStore('auth', () => {
     clearTokensFromStorage()
     const permStore = usePermissionStore()
     permStore.reset()
+    const notifStore = useNotificationStore()
+    notifStore.disconnectSSE()
   }
 
   // ---- Token 刷新去重锁 ----

@@ -13,6 +13,8 @@ import {
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
+import { useNotificationStore } from '@/stores/notification'
+import NotificationPanel from './NotificationPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAuth } from '@/composables/useAuth'
 import { authApi } from '@/services/authApi'
@@ -20,6 +22,7 @@ import { usePasswordEncrypt } from '@/composables/usePasswordEncrypt'
 
 const route = useRoute()
 const uiStore = useUiStore()
+const notificationStore = useNotificationStore()
 const authStore = useAuthStore()
 const { logout } = useAuth()
 const { publicKey, fetchPublicKey, encrypt } = usePasswordEncrypt()
@@ -189,9 +192,17 @@ onUnmounted(() => {
           &times;
         </button>
       </div>
-      <button class="action-btn" title="通知">
-        <Bell :size="18" />
-      </button>
+      <el-popover trigger="click" placement="bottom-end" :width="380" popper-class="notification-popper">
+        <template #reference>
+          <button class="action-btn" title="通知">
+            <Bell :size="18" />
+            <span v-if="notificationStore.unreadCount > 0" class="badge">
+              {{ notificationStore.unreadCount > 99 ? '99+' : notificationStore.unreadCount }}
+            </span>
+          </button>
+        </template>
+        <NotificationPanel />
+      </el-popover>
 
       <!-- User menu -->
       <div class="user-menu-wrap">
@@ -400,6 +411,26 @@ onUnmounted(() => {
 
 .action-btn:hover {
   background: var(--surface-secondary);
+}
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--color-text-error, #f87171);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.action-btn {
+  position: relative;
 }
 
 /* User menu */
