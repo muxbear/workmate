@@ -19,7 +19,7 @@ const isWelcome = computed(() => chatStore.messages.length === 0)
         <div class="welcome-icon">
           <Sparkles :size="40" />
         </div>
-        <h1 class="welcome-title">Hermes 助手，有什么可以帮你？</h1>
+        <h1 class="welcome-title">Ke-Work 助手，有什么可以帮你？</h1>
         <p class="welcome-subtitle">输入消息开始对话，或从右侧历史记录中选择已有对话</p>
       </div>
       <div class="welcome-input">

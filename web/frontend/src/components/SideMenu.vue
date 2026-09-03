@@ -163,7 +163,7 @@ onUnmounted(() => {
 <template>
   <aside class="sidebar" :class="{ collapsed: uiStore.sidebarCollapsed }">
     <div class="side-top">
-      <span class="logo">ke-hermes</span>
+      <span class="logo">Ke-Work</span>
       <button class="collapse-btn" @click="uiStore.toggleSidebar">
         <PanelLeftClose v-if="!uiStore.sidebarCollapsed" :size="14" />
         <PanelLeftOpen v-else :size="14" />

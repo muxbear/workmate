@@ -12,7 +12,7 @@ const uiStore = useUiStore()
       <span class="header-avatar">
         <Sparkles :size="16" />
       </span>
-      <span class="header-title">Hermes 智能体</span>
+      <span class="header-title">Ke-Work 智能体</span>
     </div>
     <div class="header-right">
     </div>

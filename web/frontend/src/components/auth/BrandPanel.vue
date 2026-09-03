@@ -26,7 +26,7 @@ import FeatureGrid from './FeatureGrid.vue'
       </div>
 
       <!-- System name -->
-      <h1 class="brand-name">Ke-Hermes</h1>
+      <h1 class="brand-name">Ke-Work</h1>
 
       <!-- Tagline -->
       <p class="brand-tagline">自我进化，越用越强</p>
@@ -39,7 +39,7 @@ import FeatureGrid from './FeatureGrid.vue'
     <div class="brand-spacer" />
 
     <!-- Copyright -->
-    <footer class="brand-footer">2026 Ke-Hermes 版权所有</footer>
+    <footer class="brand-footer">2026 Ke-Work 版权所有</footer>
   </div>
 </template>
 

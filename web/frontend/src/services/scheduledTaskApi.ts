@@ -68,7 +68,7 @@ const runs: RunRecord[] = [
   { id: 'r1', taskId: 't3', taskName: '健康检查', status: 'success', startTime: '14:25:00', duration: '2.3s', output: '{"ok":true,"agents":4,"mcps":6,"latency":"128ms"}', trigger: 'scheduled' },
   { id: 'r2', taskId: 't6', taskName: '推送通知', status: 'success', startTime: '14:15:01', duration: '5.8s', output: '已发送 12 条通知，队列清空。', trigger: 'scheduled' },
   { id: 'r3', taskId: 't2', taskName: '数据同步', status: 'success', startTime: '14:00:03', duration: '51s', output: '同步完成，新增 342 条记录，更新 89 条。', trigger: 'scheduled' },
-  { id: 'r4', taskId: 't5', taskName: '日志清理', status: 'failed', startTime: '今天 04:00:01', duration: '8s', output: 'Error: 磁盘权限不足，无法删除 /var/log/hermes/archive/2026-04/', trigger: 'scheduled' },
+  { id: 'r4', taskId: 't5', taskName: '日志清理', status: 'failed', startTime: '今天 04:00:01', duration: '8s', output: 'Error: 磁盘权限不足，无法删除 /var/log/ke-work/archive/2026-04/', trigger: 'scheduled' },
   { id: 'r5', taskId: 't3', taskName: '健康检查', status: 'success', startTime: '14:20:00', duration: '1.9s', output: '{"ok":true,"agents":4,"mcps":6,"latency":"134ms"}', trigger: 'scheduled' },
   { id: 'r6', taskId: 't1', taskName: '每日报告生成', status: 'success', startTime: '今天 02:00:02', duration: '3m 08s', output: '报告生成完毕，已推送至 5 位管理员。', trigger: 'scheduled' },
   { id: 'r7', taskId: 't3', taskName: '健康检查', status: 'running', startTime: '14:28:00', duration: '—', output: '正在检测代理心跳…', trigger: 'scheduled' },

@@ -1,4 +1,4 @@
-# ke-hermes Frontend
+# Ke-Work Frontend
 
 Vue 3 前端应用，TypeScript + Element Plus。
 

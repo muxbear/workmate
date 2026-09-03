@@ -1,4 +1,4 @@
-# Ke-Hermes 详细设计说明书 — 登录模块（桌面版）v1.0.0
+# Ke-Work 详细设计说明书 — 登录模块（桌面版）v1.0.0
 
 | 版本    | 日期         | 作者  | 变更说明               |
 | ----- | ---------- | --- | ------------------ |
@@ -29,7 +29,7 @@
 
 ### 1.1 文档目的
 
-本文档为 Ke-Hermes 登录模块（桌面版）的详细设计说明书，基于《Ke-Hermes 需求说明书-登录模块（桌面版）-1.1.0》编写。文档定义了登录模块的技术架构、组件结构、数据流、接口契约和实现规范，供前端开发人员编码实现。
+本文档为 Ke-Work 登录模块（桌面版）的详细设计说明书，基于《Ke-Work 需求说明书-登录模块（桌面版）-1.1.0》编写。文档定义了登录模块的技术架构、组件结构、数据流、接口契约和实现规范，供前端开发人员编码实现。
 
 ### 1.2 技术选型
 
@@ -60,7 +60,7 @@
 
 ### 1.4 相关文档
 
-- [Ke-Hermes 需求说明书-登录模块（桌面版）-1.1.0](./Ke%20Hermes%20需求说明书-登录模块（桌面版）-1.1.0.md)
+- [Ke-Work 需求说明书-登录模块（桌面版）-1.1.0](./Ke-Work%20需求说明书-登录模块（桌面版）-1.1.0.md)
 
 ---
 
@@ -71,7 +71,7 @@
 项目使用 Vue 官方 `create-vue` 脚手架初始化，初始化时启用以下特性：
 
 ```bash
-npm create vue@latest ke-hermes-frontend -- \
+npm create vue@latest Ke-Work-frontend -- \
   --typescript \
   --jsx \
   --router \
@@ -172,7 +172,7 @@ frontend/
 │   │   │   ├── fonts.css          # 字体定义（Inter、Noto Sans SC）
 │   │   │   └── mixins.scss        # SCSS Mixins（响应式断点、暗色主题）
 │   │   ├── images/
-│   │   │   └── logo.svg           # Ke-Hermes Logo SVG
+│   │   │   └── logo.svg           # Ke-Work Logo SVG
 │   │   └── icons/                 # 自定义图标资源
 │   │
 │   └── locales/
@@ -335,7 +335,7 @@ App.vue
     ├── AuthLayout.vue                         [认证页根布局]
     │   ├── BrandPanel.vue                     [左侧品牌区 — 40%宽度]
     │   │   ├── <Logo />                       [Logo 96×96]
-    │   │   ├── <h1> Ke-Hermes </h1>           [系统名称 36px]
+    │   │   ├── <h1> Ke-Work </h1>           [系统名称 36px]
     │   │   ├── <p> 自我进化，越用越强 </p>        [定位文案 20px]
     │   │   ├── FeatureGrid.vue                [2×4 特性网格]
     │   │   │   └── FeatureItem.vue ×8         [单特性行: 图标 + 标题 + 描述]
@@ -1182,7 +1182,7 @@ function loadTokens(): AuthTokens | null {
 
 ```html
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.ke-hermes.com">
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.Ke-Work.com">
 ```
 
 部署时在 Nginx 配置严格的 HTTP 安全头：

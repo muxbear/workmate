@@ -1,4 +1,4 @@
-# Ke-Hermes 详细设计说明书 — v1.6.0
+# Ke-Work 详细设计说明书 — v1.6.0
 
 
 | 版本  | 日期       | 作者 | 变更说明                                                     |
@@ -88,7 +88,7 @@
 
 ### 1.1 文档目的
 
-本文档为 Ke-Hermes 前端（桌面版）的详细设计说明书 v1.6.0，基于实际代码库编写。文档覆盖八大核心模块：
+本文档为 Ke-Work 前端（桌面版）的详细设计说明书 v1.6.0，基于实际代码库编写。文档覆盖八大核心模块：
 
 - **Part A — 基础架构与登录模块**：TypeScript 技术栈、暗色主题、国际化、测试套件
 - **Part B — 聊天模块**：AppShell 三栏布局、SSE 流式对话（含 thread_id 上下文管理）、Markdown 渲染、TracePanel 追踪面板、状态管理、对话历史对接
@@ -147,8 +147,8 @@
 
 ### 1.4 相关文档
 
-- [Ke-Hermes 需求说明书-登录模块（桌面版）-1.1.0](./Ke%20Hermes%20需求说明书-登录模块（桌面版）-1.1.0.md)
-- [ke-hermes 前端需求文档（聊天模块）](./requirements.md)
+- [Ke-Work 需求说明书-登录模块（桌面版）-1.1.0](./Ke-Work%20需求说明书-登录模块（桌面版）-1.1.0.md)
+- [Ke-Work 前端需求文档（聊天模块）](./requirements.md)
 
 ---
 
@@ -426,10 +426,10 @@ beforeEach:
 AuthLayout.vue
 ├── BrandPanel.vue
 │   ├── Logo (Inline SVG, 96×96, 蓝紫渐变)
-│   ├── "Ke-Hermes" (36px/700)
+│   ├── "Ke-Work" (36px/700)
 │   ├── "自我进化，越用越强" (20px)
 │   ├── FeatureGrid.vue (2×4 网格, 8 特性)
-│   └── "2026 Ke-Hermes 版权所有" (12px)
+│   └── "2026 Ke-Work 版权所有" (12px)
 └── <RouterView />
     └── LoginView.vue
         └── LoginCard.vue (max-width 520px, glass-card)

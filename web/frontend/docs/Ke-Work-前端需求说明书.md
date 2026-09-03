@@ -1,4 +1,4 @@
-# Ke-Hermes 前端需求说明书 — v1.6.0
+# Ke-Work 前端需求说明书 — v1.6.0
 
 | 版本  | 日期       | 作者 | 变更说明                                                     |
 | ----- | ---------- | ---- | ------------------------------------------------------------ |
@@ -35,7 +35,7 @@
 
 ## 1. 项目概述
 
-Ke-Hermes 前端是通用智能体服务平台的 Web 交互界面，采用 Vue 3 + TypeScript + Vite + Element Plus 技术栈。提供智能体对话、智能体管理、模型管理、MCP 广场、技能管理、工具管理、知识库、定时任务、概览仪表盘等全套功能，支持普通回复和 SSE 流式 token 输出两种对话模式。整体采用暗色主题（`#060b1a` 底色），左右布局（SideMenu 侧边栏 + TopBar 顶栏 + 中央工作区）。
+Ke-Work 前端是通用智能体服务平台的 Web 交互界面，采用 Vue 3 + TypeScript + Vite + Element Plus 技术栈。提供智能体对话、智能体管理、模型管理、MCP 广场、技能管理、工具管理、知识库、定时任务、概览仪表盘等全套功能，支持普通回复和 SSE 流式 token 输出两种对话模式。整体采用暗色主题（`#060b1a` 底色），左右布局（SideMenu 侧边栏 + TopBar 顶栏 + 中央工作区）。
 
 **v1.6.0 实际实现覆盖：**
 
@@ -228,7 +228,7 @@ Ke-Hermes 前端是通用智能体服务平台的 Web 交互界面，采用 Vue 
 
 #### F2.5 对话头部
 
-- `ChatHeader.vue`：Agent 头像 + 标题 "Hermes 智能体" + 模型选择器（`el-select`）
+- `ChatHeader.vue`：Agent 头像 + 标题 "Ke-Work 智能体" + 模型选择器（`el-select`）
 - 模型列表从 `uiStore.selectedModel` 读取
 
 #### F2.6 对话历史
@@ -815,7 +815,7 @@ frontend/
 ├── tests/                               # 测试文件
 ├── docs/
 │   ├── requirements.md                  # 本文件
-│   └── Ke Hermes 详细设计说明书-1.2.0.md   # 详细设计说明书
+│   └── Ke-Work 详细设计说明书-1.2.0.md   # 详细设计说明书
 ├── index.html                           # HTML 入口
 ├── vite.config.ts                       # Vite 配置（含 proxy + ElementPlus 自动导入）
 ├── tsconfig.json                        # TypeScript 配置

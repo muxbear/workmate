@@ -56,7 +56,7 @@ export async function fetchSystemStats(): Promise<SystemStats> {
 
 export async function fetchUpdateLogs(): Promise<UpdateLogEntry[]> {
   return [
-    { tag: 'v0.0.1', date: '2026-06-08', title: 'ke-hermes 首个开发预览版上线', primary: true },
+    { tag: 'v0.0.1', date: '2026-06-08', title: 'Ke-Work 首个开发预览版上线', primary: true },
     { tag: 'Beta', date: '2026-05-22', title: '新增 DeepSeek 提供商与定时任务模块' },
     { tag: 'Beta', date: '2026-05-10', title: '工具中心支持工具包拖拽上传与自动解析' },
   ]
