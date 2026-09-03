@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.providers.schemas import (
     ModelCreateRequest,
+    ModelReorderRequest,
     ModelResponse,
     ModelUpdateRequest,
     ProviderCreateRequest,
@@ -55,6 +56,7 @@ def _model_to_response(m: AIModel) -> ModelResponse:
         description=m.description,
         release_date=m.release_date,
         params=m.params,
+        sort_order=m.sort_order,
         created_at=m.created_at,
         updated_at=m.updated_at,
     )
@@ -96,7 +98,7 @@ async def list_providers(db: AsyncSession) -> list[ProviderResponse]:
     responses: list[ProviderResponse] = []
     for p in providers:
         models_result = await db.execute(
-            select(AIModel).where(AIModel.provider_id == p.id).order_by(AIModel.created_at)
+            select(AIModel).where(AIModel.provider_id == p.id).order_by(AIModel.sort_order, AIModel.created_at)
         )
         models = list(models_result.scalars().all())
         responses.append(_provider_to_response(p, models))
@@ -188,6 +190,10 @@ async def create_model(
 ) -> ModelResponse:
     """Create a new model under a provider."""
     await _get_provider(db, provider_id)
+    max_sort_result = await db.execute(
+        select(func.max(AIModel.sort_order)).where(AIModel.provider_id == provider_id)
+    )
+    next_sort_order = (max_sort_result.scalar() or 0) + 1
     model = AIModel(
         provider_id=provider_id,
         name=req.name,
@@ -198,6 +204,7 @@ async def create_model(
         description=req.description,
         release_date=req.release_date,
         params=[p.model_dump() for p in req.params],
+        sort_order=next_sort_order,
     )
     db.add(model)
     await db.commit()
@@ -269,6 +276,29 @@ async def toggle_model_status(
     await db.commit()
     await db.refresh(model)
     return _model_to_response(model)
+
+async def reorder_models(
+    db: AsyncSession, provider_id: str, req: ModelReorderRequest, user_id: str
+) -> None:
+    """持久化指定提供商下的模型显示顺序。"""
+    await _get_provider(db, provider_id)
+    if len(set(req.model_ids)) != len(req.model_ids):
+        raise HTTPException(status_code=400, detail="模型 ID 不能重复")
+
+    result = await db.execute(
+        select(AIModel).where(
+            AIModel.provider_id == provider_id,
+            AIModel.id.in_(req.model_ids),
+        )
+    )
+    models = list(result.scalars().all())
+    by_id = {m.id: m for m in models}
+    if len(by_id) != len(req.model_ids):
+        raise HTTPException(status_code=404, detail="部分模型不存在")
+
+    for index, model_id in enumerate(req.model_ids):
+        by_id[model_id].sort_order = index
+    await db.commit()
 
 
 # ---- 已有明文密钥自动升级 ----

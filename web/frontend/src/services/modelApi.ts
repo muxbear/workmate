@@ -33,6 +33,7 @@ function toModel(raw: Record<string, unknown>): AIModel {
     params: ((raw.params as Record<string, unknown>[]) ?? []).map(toModelParam),
     description: (raw.description as string) ?? '',
     releaseDate: raw.release_date as string | undefined,
+    sortOrder: raw.sort_order as number | undefined,
   }
 }
 
@@ -113,7 +114,11 @@ export async function createModel(providerId: string, data: AIModel): Promise<AI
   return toModel(res.data.data as Record<string, unknown>)
 }
 
-export async function updateModel(providerId: string, modelId: string, data: AIModel): Promise<AIModel> {
+export async function updateModel(
+  providerId: string,
+  modelId: string,
+  data: AIModel,
+): Promise<AIModel> {
   const res = await instance.put(`/providers/${providerId}/models/${modelId}`, toModelPayload(data))
   return toModel(res.data.data as Record<string, unknown>)
 }
@@ -125,6 +130,10 @@ export async function deleteModel(providerId: string, modelId: string): Promise<
 export async function cloneModel(providerId: string, modelId: string): Promise<AIModel> {
   const res = await instance.post(`/providers/${providerId}/models/${modelId}/clone`)
   return toModel(res.data.data as Record<string, unknown>)
+}
+
+export async function reorderModels(providerId: string, modelIds: string[]): Promise<void> {
+  await instance.patch(`/providers/${providerId}/models/reorder`, { model_ids: modelIds })
 }
 
 export async function toggleModelStatus(providerId: string, modelId: string): Promise<AIModel> {

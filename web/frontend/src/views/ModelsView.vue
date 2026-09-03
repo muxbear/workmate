@@ -2,16 +2,29 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Plus, Search, Edit3, Trash2, X, CheckCircle2, AlertCircle,
-  Eye, EyeOff, Bot, Cpu, Zap, Settings2, Activity, MoreHorizontal,
+  Plus,
+  Search,
+  Edit3,
+  Trash2,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Eye,
+  EyeOff,
+  Bot,
+  Cpu,
+  Zap,
+  Settings2,
+  Activity,
+  MoreHorizontal,
   GripVertical,
-  Copy, Power, PowerOff,
+  Copy,
+  Power,
+  PowerOff,
 } from 'lucide-vue-next'
 import { useModelStore } from '@/stores/model'
 import type { Provider, AIModel, ModelType, ModelStatus, ModelParam } from '@/types/model'
-import {
-  MODEL_TYPE_META, MODEL_STATUS_META, PROVIDER_STATUS_META,
-} from '@/types/model'
+import { MODEL_TYPE_META, MODEL_STATUS_META, PROVIDER_STATUS_META } from '@/types/model'
 
 const store = useModelStore()
 
@@ -24,25 +37,53 @@ const viewingModel = ref<AIModel | null>(null)
 const deleteTarget = ref<{ type: 'provider' | 'model'; id: string; name: string } | null>(null)
 
 /* ---- Provider form ---- */
-const providerForm = ref({ name: '', logo: '🤖', apiBase: '', responseUrl: '', anthropicUrl: '', apiKey: '', description: '', website: '' })
+const providerForm = ref({
+  name: '',
+  logo: '🤖',
+  apiBase: '',
+  responseUrl: '',
+  anthropicUrl: '',
+  apiKey: '',
+  description: '',
+  website: '',
+})
 const showApiKey = ref(false)
 
 function openNewProvider() {
-  providerForm.value = { name: '', logo: '🤖', apiBase: '', responseUrl: '', anthropicUrl: '', apiKey: '', description: '', website: '' }
+  providerForm.value = {
+    name: '',
+    logo: '🤖',
+    apiBase: '',
+    responseUrl: '',
+    anthropicUrl: '',
+    apiKey: '',
+    description: '',
+    website: '',
+  }
   showApiKey.value = false
   showNewProvider.value = true
 }
 
 function openEditProvider(p: Provider) {
-  providerForm.value = { name: p.name, logo: p.logo, apiBase: p.apiBase, responseUrl: p.responseUrl, anthropicUrl: p.anthropicUrl, apiKey: p.apiKey, description: p.description, website: p.website }
+  providerForm.value = {
+    name: p.name,
+    logo: p.logo,
+    apiBase: p.apiBase,
+    responseUrl: p.responseUrl,
+    anthropicUrl: p.anthropicUrl,
+    apiKey: p.apiKey,
+    description: p.description,
+    website: p.website,
+  }
   editingProvider.value = p
   showApiKey.value = false
 }
 
 async function handleSaveProvider() {
-  const hasEndpoint = providerForm.value.apiBase.trim()
-    || providerForm.value.responseUrl.trim()
-    || providerForm.value.anthropicUrl.trim()
+  const hasEndpoint =
+    providerForm.value.apiBase.trim() ||
+    providerForm.value.responseUrl.trim() ||
+    providerForm.value.anthropicUrl.trim()
   if (!providerForm.value.name.trim() || !hasEndpoint) {
     ElMessage.warning('请至少填写一个协议地址')
     return
@@ -70,18 +111,42 @@ function closeProviderModal() {
 
 /* ---- Model form ---- */
 const modelForm = ref({
-  displayName: '', name: '', type: 'llm' as ModelType,
-  status: 'active' as ModelStatus, contextWindow: undefined as number | undefined,
-  description: '', params: [] as ModelParam[],
+  displayName: '',
+  name: '',
+  type: 'llm' as ModelType,
+  status: 'active' as ModelStatus,
+  contextWindow: undefined as number | undefined,
+  description: '',
+  params: [] as ModelParam[],
 })
 
 function openNewModel() {
   modelForm.value = {
-    displayName: '', name: '', type: 'llm', status: 'active',
-    contextWindow: undefined, description: '',
+    displayName: '',
+    name: '',
+    type: 'llm',
+    status: 'active',
+    contextWindow: undefined,
+    description: '',
     params: [
-      { key: 'temperature', label: 'Temperature', value: 0.7, min: 0, max: 2, step: 0.1, type: 'number' },
-      { key: 'max_tokens', label: 'Max Tokens', value: 4096, min: 1, max: 32768, step: 1, type: 'number' },
+      {
+        key: 'temperature',
+        label: 'Temperature',
+        value: 0.7,
+        min: 0,
+        max: 2,
+        step: 0.1,
+        type: 'number',
+      },
+      {
+        key: 'max_tokens',
+        label: 'Max Tokens',
+        value: 4096,
+        min: 1,
+        max: 32768,
+        step: 1,
+        type: 'number',
+      },
     ],
   }
   showNewModel.value = true
@@ -89,8 +154,12 @@ function openNewModel() {
 
 function openEditModel(m: AIModel) {
   modelForm.value = {
-    displayName: m.displayName, name: m.name, type: m.type,
-    status: m.status, contextWindow: m.contextWindow, description: m.description,
+    displayName: m.displayName,
+    name: m.name,
+    type: m.type,
+    status: m.status,
+    contextWindow: m.contextWindow,
+    description: m.description,
     params: m.params.map((p) => ({ ...p })),
   }
   editingModel.value = m
@@ -121,9 +190,7 @@ function closeModelModal() {
 }
 
 function updateParam(key: string, value: number | string) {
-  modelForm.value.params = modelForm.value.params.map((p) =>
-    p.key === key ? { ...p, value } : p,
-  )
+  modelForm.value.params = modelForm.value.params.map((p) => (p.key === key ? { ...p, value } : p))
 }
 
 /* ---- Delete ---- */
@@ -341,6 +408,185 @@ async function onProviderDrop(targetId: string) {
     resetProviderDragState()
   }
 }
+/* ---- Model reorder ---- */
+type ModelDropPosition = 'before' | 'after'
+
+const draggedModelId = ref<string | null>(null)
+const dragOverModelId = ref<string | null>(null)
+const dropPositionModel = ref<ModelDropPosition>('after')
+const pressingModelId = ref<string | null>(null)
+const modelPressTimer = ref<number | null>(null)
+const modelPointerDragging = ref(false)
+const suppressModelClick = ref(false)
+const modelDragGhost = ref<{ x: number; y: number; model: AIModel } | null>(null)
+const modelPressStartX = ref(0)
+const modelPressStartY = ref(0)
+const modelActivePointerId = ref<number | null>(null)
+const modelPointerStartId = ref<string | null>(null)
+function clearModelPressTimer() {
+  if (modelPressTimer.value !== null) {
+    window.clearTimeout(modelPressTimer.value)
+    modelPressTimer.value = null
+  }
+}
+
+function resetModelDragState() {
+  clearModelPressTimer()
+  draggedModelId.value = null
+  dragOverModelId.value = null
+  dropPositionModel.value = 'after'
+  pressingModelId.value = null
+  modelPointerDragging.value = false
+  modelDragGhost.value = null
+  modelActivePointerId.value = null
+  modelPointerStartId.value = null
+}
+
+function setModelDropTarget(targetId: string, position: ModelDropPosition) {
+  dragOverModelId.value = targetId
+  dropPositionModel.value = position
+}
+
+function resolveModelDropPosition(clientY: number, item: HTMLElement): ModelDropPosition {
+  const rect = item.getBoundingClientRect()
+  return clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+}
+
+function beginModelDrag(model: AIModel, x: number, y: number) {
+  clearModelPressTimer()
+  pressingModelId.value = null
+  modelPointerDragging.value = true
+  draggedModelId.value = model.id
+  modelDragGhost.value = { x, y, model }
+}
+
+function updateModelDropTarget(clientX: number, clientY: number) {
+  const element = document.elementFromPoint(clientX, clientY)
+  const item = element?.closest('.model-row') as HTMLElement | null
+  const targetId = item?.dataset.modelId
+  if (!targetId || !item || targetId === draggedModelId.value) {
+    dragOverModelId.value = null
+    return
+  }
+  setModelDropTarget(targetId, resolveModelDropPosition(clientY, item))
+}
+function onModelPointerDown(event: PointerEvent, m: AIModel) {
+  if (store.modelSearch || store.modelTypeFilter !== 'all') return
+  const target = event.target as HTMLElement
+  if (target.closest('button, .model-actions, .el-dropdown')) return
+
+  const item = event.currentTarget as HTMLElement
+  try {
+    item.setPointerCapture?.(event.pointerId)
+  } catch {
+    // Synthetic pointer events in tests may not have an active pointer.
+  }
+
+  modelActivePointerId.value = event.pointerId
+  modelPointerStartId.value = m.id
+  clearModelPressTimer()
+  modelPressStartX.value = event.clientX
+  modelPressStartY.value = event.clientY
+
+  modelPressTimer.value = window.setTimeout(() => {
+    pressingModelId.value = m.id
+
+    if (event.pointerType === 'touch') {
+      modelPressTimer.value = window.setTimeout(() => {
+        beginModelDrag(m, event.clientX, event.clientY)
+      }, 220)
+    }
+  }, 140)
+}
+
+function onModelPointerMove(event: PointerEvent) {
+  if (modelActivePointerId.value !== event.pointerId) return
+
+  if (modelPointerDragging.value && draggedModelId.value) {
+    event.preventDefault()
+    if (modelDragGhost.value) {
+      modelDragGhost.value = { ...modelDragGhost.value, x: event.clientX, y: event.clientY }
+    }
+    updateModelDropTarget(event.clientX, event.clientY)
+    return
+  }
+
+  if (event.buttons & 1 && modelPointerStartId.value) {
+    const deltaX = event.clientX - modelPressStartX.value
+    const deltaY = event.clientY - modelPressStartY.value
+    if (Math.hypot(deltaX, deltaY) > 5) {
+      const provider = store.selectedProvider
+      if (provider) {
+        const model = provider.models.find((item) => item.id === modelPointerStartId.value)
+        if (model) {
+          beginModelDrag(model, event.clientX, event.clientY)
+          updateModelDropTarget(event.clientX, event.clientY)
+          return
+        }
+      }
+    }
+  }
+
+  if (
+    Math.abs(event.clientX - modelPressStartX.value) > 8 ||
+    Math.abs(event.clientY - modelPressStartY.value) > 8
+  ) {
+    clearModelPressTimer()
+    pressingModelId.value = null
+  }
+}
+function onModelPointerEnd() {
+  const targetId = dragOverModelId.value
+  const wasDragging = modelPointerDragging.value
+
+  clearModelPressTimer()
+
+  if (wasDragging && draggedModelId.value && targetId) {
+    suppressModelClick.value = true
+    window.setTimeout(() => {
+      suppressModelClick.value = false
+    }, 0)
+    void onModelDrop(targetId)
+    return
+  }
+
+  resetModelDragState()
+}
+
+async function onModelDrop(targetId: string) {
+  const sourceId = draggedModelId.value
+  if (!sourceId || sourceId === targetId) {
+    resetModelDragState()
+    return
+  }
+
+  const provider = store.selectedProvider
+  if (!provider) {
+    resetModelDragState()
+    return
+  }
+
+  const orderedIds = provider.models.map((m) => m.id)
+  const fromIndex = orderedIds.indexOf(sourceId)
+  const toIndex = orderedIds.indexOf(targetId)
+  if (fromIndex < 0 || toIndex < 0) {
+    resetModelDragState()
+    return
+  }
+
+  const reorderedIds = [...orderedIds]
+  const [movedId] = reorderedIds.splice(fromIndex, 1)
+  reorderedIds.splice(toIndex, 0, movedId)
+
+  try {
+    await store.reorderModels(provider.id, reorderedIds)
+  } catch (err: unknown) {
+    ElMessage.error(err instanceof Error ? err.message : '\u79fb\u52a8\u6a21\u578b\u5931\u8d25')
+    await store.fetchAll()
+  } finally {
+    resetModelDragState()
+  }
+}
 
 /* ---- Dropdown handler ---- */
 async function handleModelCommand(command: string, m: AIModel) {
@@ -413,7 +659,15 @@ onMounted(() => {
         :key="type"
         class="stat-chip stat-chip--clickable"
         :class="{ active: store.modelTypeFilter === type }"
-        :style="store.modelTypeFilter === type ? { background: MODEL_TYPE_META[type].bg, borderColor: MODEL_TYPE_META[type].border, color: MODEL_TYPE_META[type].color } : {}"
+        :style="
+          store.modelTypeFilter === type
+            ? {
+                background: MODEL_TYPE_META[type].bg,
+                borderColor: MODEL_TYPE_META[type].border,
+                color: MODEL_TYPE_META[type].color,
+              }
+            : {}
+        "
         @click="store.modelTypeFilter = store.modelTypeFilter === type ? 'all' : type"
       >
         {{ MODEL_TYPE_META[type].emoji }} {{ MODEL_TYPE_META[type].label }}
@@ -434,11 +688,7 @@ onMounted(() => {
             class="search-input"
           />
         </div>
-        <TransitionGroup
-          name="provider-list"
-          tag="div"
-          class="panel-left-list"
-        >
+        <TransitionGroup name="provider-list" tag="div" class="panel-left-list">
           <div
             v-for="p in store.filteredProviders"
             :key="p.id"
@@ -471,7 +721,11 @@ onMounted(() => {
               <button class="action-btn" title="编辑" @click.stop="openEditProvider(p)">
                 <Edit3 :size="12" />
               </button>
-              <button class="action-btn action-btn--danger" title="删除" @click.stop="confirmDelete('provider', p.id, p.name)">
+              <button
+                class="action-btn action-btn--danger"
+                title="删除"
+                @click.stop="confirmDelete('provider', p.id, p.name)"
+              >
                 <Trash2 :size="12" />
               </button>
             </div>
@@ -493,7 +747,12 @@ onMounted(() => {
                     class="provider-status-dot"
                     :style="{ background: PROVIDER_STATUS_META[store.selectedProvider.status].dot }"
                   />
-                  <span :style="{ color: PROVIDER_STATUS_META[store.selectedProvider.status].color, fontSize: 'var(--font-size-xs)' }">
+                  <span
+                    :style="{
+                      color: PROVIDER_STATUS_META[store.selectedProvider.status].color,
+                      fontSize: 'var(--font-size-xs)',
+                    }"
+                  >
                     {{ PROVIDER_STATUS_META[store.selectedProvider.status].label }}
                   </span>
                 </div>
@@ -502,7 +761,12 @@ onMounted(() => {
             </div>
             <div class="provider-header-extras">
               <span class="provider-api-base">
-                {{ store.selectedProvider.apiBase || store.selectedProvider.responseUrl || store.selectedProvider.anthropicUrl || '—' }}
+                {{
+                  store.selectedProvider.apiBase ||
+                  store.selectedProvider.responseUrl ||
+                  store.selectedProvider.anthropicUrl ||
+                  '—'
+                }}
               </span>
               <button class="btn-secondary" @click="openEditProvider(store.selectedProvider)">
                 <Settings2 :size="14" />
@@ -558,7 +822,11 @@ onMounted(() => {
                   :key="type"
                   class="type-filter"
                   :class="{ active: store.modelTypeFilter === type }"
-                  :style="store.modelTypeFilter === type ? { background: MODEL_TYPE_META[type].bg, color: MODEL_TYPE_META[type].color } : {}"
+                  :style="
+                    store.modelTypeFilter === type
+                      ? { background: MODEL_TYPE_META[type].bg, color: MODEL_TYPE_META[type].color }
+                      : {}
+                  "
                   @click="store.modelTypeFilter = store.modelTypeFilter === type ? 'all' : type"
                 >
                   {{ MODEL_TYPE_META[type].emoji }} {{ MODEL_TYPE_META[type].label }}
@@ -572,6 +840,7 @@ onMounted(() => {
 
             <!-- Table header -->
             <div class="model-table-header">
+              <span class="col-grip"></span>
               <span class="col-name">模型</span>
               <span class="col-type">类型</span>
               <span class="col-ctx">上下文</span>
@@ -588,12 +857,26 @@ onMounted(() => {
             </div>
 
             <!-- Model rows -->
-            <div class="model-rows">
+            <TransitionGroup name="model-list" tag="div" class="model-rows">
               <div
                 v-for="m in store.filteredModels"
                 :key="m.id"
+                :data-model-id="m.id"
                 class="model-row"
+                :class="{
+                  dragging: draggedModelId === m.id,
+                  pressing: pressingModelId === m.id,
+                  'drop-before': dragOverModelId === m.id && dropPositionModel === 'before',
+                  'drop-after': dragOverModelId === m.id && dropPositionModel === 'after',
+                }"
+                draggable="false"
+                @contextmenu.prevent
+                @pointerdown="onModelPointerDown($event, m)"
+                @pointermove="onModelPointerMove"
+                @pointerup="onModelPointerEnd"
+                @pointercancel="onModelPointerEnd"
               >
+                <GripVertical :size="14" class="model-grip" />
                 <div class="model-name-cell">
                   <p class="model-display-name">{{ m.displayName }}</p>
                   <p class="model-id">{{ m.name }}</p>
@@ -626,7 +909,10 @@ onMounted(() => {
                   <button title="查看详情" class="action-btn" @click="viewingModel = m">
                     <Activity :size="14" />
                   </button>
-                  <el-dropdown trigger="click" @command="(cmd: string) => handleModelCommand(cmd, m)">
+                  <el-dropdown
+                    trigger="click"
+                    @command="(cmd: string) => handleModelCommand(cmd, m)"
+                  >
                     <button class="action-btn action-btn--more" @click.stop>
                       <MoreHorizontal :size="14" />
                     </button>
@@ -654,7 +940,7 @@ onMounted(() => {
                   </el-dropdown>
                 </div>
               </div>
-            </div>
+            </TransitionGroup>
           </template>
 
           <!-- ── Usage Tab ────────────────────────────────────────────────── -->
@@ -666,15 +952,21 @@ onMounted(() => {
               </div>
               <div class="usage-stat-card">
                 <p class="usage-stat-label">总调用次数</p>
-                <p class="usage-stat-value usage-stat-value--indigo">{{ store.providerStats.totalCalls }}</p>
+                <p class="usage-stat-value usage-stat-value--indigo">
+                  {{ store.providerStats.totalCalls }}
+                </p>
               </div>
               <div class="usage-stat-card">
                 <p class="usage-stat-label">正在使用</p>
-                <p class="usage-stat-value usage-stat-value--emerald">{{ store.providerStats.inUse }}</p>
+                <p class="usage-stat-value usage-stat-value--emerald">
+                  {{ store.providerStats.inUse }}
+                </p>
               </div>
               <div class="usage-stat-card">
                 <p class="usage-stat-label">已弃用</p>
-                <p class="usage-stat-value usage-stat-value--gray">{{ store.providerStats.deprecated }}</p>
+                <p class="usage-stat-value usage-stat-value--gray">
+                  {{ store.providerStats.deprecated }}
+                </p>
               </div>
             </div>
 
@@ -684,7 +976,9 @@ onMounted(() => {
               </div>
               <div class="usage-ranking-list">
                 <div
-                  v-for="(m, i) in [...store.selectedProvider.models].sort((a, b) => b.callCount - a.callCount)"
+                  v-for="(m, i) in [...store.selectedProvider.models].sort(
+                    (a, b) => b.callCount - a.callCount,
+                  )"
                   :key="m.id"
                   class="usage-rank-row"
                 >
@@ -701,7 +995,7 @@ onMounted(() => {
                       <div
                         class="rank-bar-fill"
                         :style="{
-                          width: `${(m.callCount / Math.max(...store.selectedProvider.models.map(x => x.callCount), 1)) * 100}%`,
+                          width: `${(m.callCount / Math.max(...store.selectedProvider.models.map((x) => x.callCount), 1)) * 100}%`,
                         }"
                       />
                     </div>
@@ -729,15 +1023,31 @@ onMounted(() => {
         <span class="provider-logo">{{ dragGhost.provider.logo }}</span>
         <span class="provider-name">{{ dragGhost.provider.name }}</span>
       </div>
+      <Teleport to="body">
+        <div
+          v-if="modelDragGhost"
+          class="model-drag-ghost"
+          :style="{ left: modelDragGhost.x + 'px', top: modelDragGhost.y + 'px' }"
+        >
+          <GripVertical :size="14" />
+          <span class="model-drag-ghost-name">{{ modelDragGhost.model.displayName }}</span>
+        </div>
+      </Teleport>
     </Teleport>
 
     <!-- ═══ Edit Provider Modal ═══ -->
     <Teleport to="body">
-      <div v-if="showNewProvider || editingProvider" class="modal-overlay" @click.self="closeProviderModal">
+      <div
+        v-if="showNewProvider || editingProvider"
+        class="modal-overlay"
+        @click.self="closeProviderModal"
+      >
         <div class="modal-card modal-card--wide">
           <div class="modal-header">
             <div>
-              <h2 class="modal-title">{{ editingProvider ? `编辑 ${editingProvider.name}` : '添加模型提供商' }}</h2>
+              <h2 class="modal-title">
+                {{ editingProvider ? `编辑 ${editingProvider.name}` : '添加模型提供商' }}
+              </h2>
               <p class="modal-desc">配置 API 接入信息</p>
             </div>
             <button class="modal-close" @click="closeProviderModal">
@@ -761,15 +1071,27 @@ onMounted(() => {
             </div>
             <div class="form-group">
               <label class="form-label">OpenAI Chat Completion 协议</label>
-              <input v-model="providerForm.apiBase" placeholder="例如：https://open.bigmodel.cn/api/paas/v4" class="form-input form-input--mono" />
+              <input
+                v-model="providerForm.apiBase"
+                placeholder="例如：https://open.bigmodel.cn/api/paas/v4"
+                class="form-input form-input--mono"
+              />
             </div>
             <div class="form-group">
               <label class="form-label">OpenAI Response 协议</label>
-              <input v-model="providerForm.responseUrl" placeholder="例如：https://open.bigmodel.cn/api/v1" class="form-input form-input--mono" />
+              <input
+                v-model="providerForm.responseUrl"
+                placeholder="例如：https://open.bigmodel.cn/api/v1"
+                class="form-input form-input--mono"
+              />
             </div>
             <div class="form-group">
               <label class="form-label">Anthropic Message 协议</label>
-              <input v-model="providerForm.anthropicUrl" placeholder="例如：https://open.bigmodel.cn/api/anthropic" class="form-input form-input--mono" />
+              <input
+                v-model="providerForm.anthropicUrl"
+                placeholder="例如：https://open.bigmodel.cn/api/anthropic"
+                class="form-input form-input--mono"
+              />
             </div>
             <div class="form-group">
               <label class="form-label">API Key</label>
@@ -788,7 +1110,12 @@ onMounted(() => {
             </div>
             <div class="form-group">
               <label class="form-label">描述</label>
-              <textarea v-model="providerForm.description" rows="2" placeholder="提供商简介…" class="form-textarea" />
+              <textarea
+                v-model="providerForm.description"
+                rows="2"
+                placeholder="提供商简介…"
+                class="form-textarea"
+              />
             </div>
             <div class="form-group">
               <label class="form-label">官网</label>
@@ -800,7 +1127,12 @@ onMounted(() => {
             <button class="btn-cancel" @click="closeProviderModal">取消</button>
             <button
               class="btn-primary"
-              :disabled="!providerForm.name.trim() || (!providerForm.apiBase.trim() && !providerForm.responseUrl.trim() && !providerForm.anthropicUrl.trim())"
+              :disabled="
+                !providerForm.name.trim() ||
+                (!providerForm.apiBase.trim() &&
+                  !providerForm.responseUrl.trim() &&
+                  !providerForm.anthropicUrl.trim())
+              "
               @click="handleSaveProvider"
             >
               {{ editingProvider ? '保存' : '添加' }}
@@ -816,7 +1148,9 @@ onMounted(() => {
         <div class="modal-card modal-card--wide">
           <div class="modal-header">
             <div>
-              <h2 class="modal-title">{{ editingModel ? `编辑 ${editingModel.displayName}` : '添加模型' }}</h2>
+              <h2 class="modal-title">
+                {{ editingModel ? `编辑 ${editingModel.displayName}` : '添加模型' }}
+              </h2>
               <p class="modal-desc">{{ store.selectedProvider?.name }}</p>
             </div>
             <button class="modal-close" @click="closeModelModal">
@@ -835,7 +1169,11 @@ onMounted(() => {
                 </div>
                 <div class="form-group">
                   <label class="form-label">模型 ID *</label>
-                  <input v-model="modelForm.name" placeholder="gpt-4o" class="form-input form-input--mono" />
+                  <input
+                    v-model="modelForm.name"
+                    placeholder="gpt-4o"
+                    class="form-input form-input--mono"
+                  />
                 </div>
               </div>
               <div class="form-row-3">
@@ -860,7 +1198,11 @@ onMounted(() => {
                   <input
                     type="number"
                     :value="modelForm.contextWindow"
-                    @input="modelForm.contextWindow = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : undefined"
+                    @input="
+                      modelForm.contextWindow = ($event.target as HTMLInputElement).value
+                        ? Number(($event.target as HTMLInputElement).value)
+                        : undefined
+                    "
                     placeholder="128000"
                     class="form-input"
                   />
@@ -868,7 +1210,12 @@ onMounted(() => {
               </div>
               <div class="form-group">
                 <label class="form-label">描述</label>
-                <textarea v-model="modelForm.description" rows="2" placeholder="模型简介…" class="form-textarea" />
+                <textarea
+                  v-model="modelForm.description"
+                  rows="2"
+                  placeholder="模型简介…"
+                  class="form-textarea"
+                />
               </div>
             </div>
 
@@ -942,7 +1289,8 @@ onMounted(() => {
                   borderColor: MODEL_TYPE_META[viewingModel.type].border,
                 }"
               >
-                {{ MODEL_TYPE_META[viewingModel.type].emoji }} {{ MODEL_TYPE_META[viewingModel.type].label }}
+                {{ MODEL_TYPE_META[viewingModel.type].emoji }}
+                {{ MODEL_TYPE_META[viewingModel.type].label }}
               </span>
             </div>
             <button class="modal-close" @click="viewingModel = null">
@@ -958,7 +1306,9 @@ onMounted(() => {
               </div>
               <div v-if="viewingModel.contextWindow" class="drawer-info-row">
                 <span class="drawer-label">上下文窗口</span>
-                <span class="drawer-value">{{ formatContext(viewingModel.contextWindow) }} tokens</span>
+                <span class="drawer-value"
+                  >{{ formatContext(viewingModel.contextWindow) }} tokens</span
+                >
               </div>
               <div class="drawer-info-row">
                 <span class="drawer-label">系统调用总次数</span>
@@ -969,7 +1319,6 @@ onMounted(() => {
                 <span class="drawer-value">{{ viewingModel.releaseDate ?? '—' }}</span>
               </div>
             </div>
-
 
             <div v-if="viewingModel.params.length > 0">
               <p class="drawer-section-title">默认参数</p>
@@ -1027,7 +1376,7 @@ onMounted(() => {
 .page-title {
   font-size: 28px;
   font-weight: 700;
-  background: linear-gradient(90deg, #818CF8, #A78BFA, #60A5FA);
+  background: linear-gradient(90deg, #818cf8, #a78bfa, #60a5fa);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1055,8 +1404,13 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.btn-primary:hover { background: #4338ca; }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary:hover {
+  background: #4338ca;
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .btn-secondary {
   display: flex;
@@ -1072,7 +1426,10 @@ onMounted(() => {
   transition: all 0.15s ease;
 }
 
-.btn-secondary:hover { background: rgba(255,255,255,0.06); color: var(--foreground-primary); }
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground-primary);
+}
 
 /* ---- Stats Row ---- */
 .stats-row {
@@ -1092,14 +1449,23 @@ onMounted(() => {
   padding: 6px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
 }
 
-.stat-chip-label { color: var(--foreground-muted); }
-.stat-chip-value { font-weight: 700; color: var(--foreground-primary); }
-.stat-divider { width: 1px; height: 20px; background: var(--border-subtle); }
+.stat-chip-label {
+  color: var(--foreground-muted);
+}
+.stat-chip-value {
+  font-weight: 700;
+  color: var(--foreground-primary);
+}
+.stat-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-subtle);
+}
 
 .stat-chip--clickable {
   cursor: pointer;
@@ -1107,7 +1473,7 @@ onMounted(() => {
 }
 
 .stat-chip--clickable:hover {
-  border-color: rgba(255,255,255,0.15);
+  border-color: rgba(255, 255, 255, 0.15);
   color: var(--foreground-primary);
 }
 
@@ -1150,14 +1516,18 @@ onMounted(() => {
   padding: 6px 12px 6px 30px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
 }
 
-.panel-left .search-input::placeholder { color: var(--foreground-muted); }
-.panel-left .search-input:focus { border-color: var(--color-accent); }
+.panel-left .search-input::placeholder {
+  color: var(--foreground-muted);
+}
+.panel-left .search-input:focus {
+  border-color: var(--color-accent);
+}
 
 .panel-left-list {
   flex: 1;
@@ -1167,7 +1537,9 @@ onMounted(() => {
 .provider-list-move,
 .provider-list-enter-active,
 .provider-list-leave-active {
-  transition: transform 0.2s ease, opacity 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
 }
 
 .provider-list-enter-from,
@@ -1191,13 +1563,18 @@ onMounted(() => {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
-  transition: background 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    opacity 0.12s ease;
 }
 
-.provider-item:hover { background: rgba(255,255,255,0.03); }
+.provider-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
 
 .provider-item.active {
-  background: rgba(79,70,229,0.12);
+  background: rgba(79, 70, 229, 0.12);
   border-right: 2px solid #4f46e5;
 }
 
@@ -1213,8 +1590,10 @@ onMounted(() => {
 }
 
 .provider-item.pressing {
-  background: rgba(79, 70, 229, 0.10);
-  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.20), 0 8px 18px rgba(0, 0, 0, 0.18);
+  background: rgba(79, 70, 229, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(79, 70, 229, 0.2),
+    0 8px 18px rgba(0, 0, 0, 0.18);
 }
 
 .provider-item.drop-before::before,
@@ -1230,15 +1609,21 @@ onMounted(() => {
   z-index: 2;
 }
 
-.provider-item.drop-before::before { top: -3px; }
-.provider-item.drop-after::after { bottom: -3px; }
+.provider-item.drop-before::before {
+  top: -3px;
+}
+.provider-item.drop-after::after {
+  bottom: -3px;
+}
 
 .provider-grip {
   flex-shrink: 0;
   color: var(--foreground-muted);
   opacity: 0;
   transform: translateX(-4px);
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
 }
 
 .provider-item:hover .provider-grip,
@@ -1248,7 +1633,10 @@ onMounted(() => {
   transform: translateX(0);
 }
 
-.provider-logo { font-size: 20px; flex-shrink: 0; }
+.provider-logo {
+  font-size: 20px;
+  flex-shrink: 0;
+}
 
 .provider-info {
   flex: 1;
@@ -1290,7 +1678,9 @@ onMounted(() => {
   transition: opacity 0.1s ease;
 }
 
-.provider-item:hover .provider-actions { opacity: 1; }
+.provider-item:hover .provider-actions {
+  opacity: 1;
+}
 
 .action-btn {
   width: 24px;
@@ -1305,8 +1695,14 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.action-btn:hover { background: rgba(255,255,255,0.08); color: var(--foreground-primary); }
-.action-btn--danger:hover { background: rgba(239,68,68,0.15); color: #f87171; }
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--foreground-primary);
+}
+.action-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
 
 .action-btn--more {
   width: 28px;
@@ -1345,7 +1741,9 @@ onMounted(() => {
   font-size: var(--font-size-sm);
 }
 
-.empty-big-icon { color: var(--border-medium); }
+.empty-big-icon {
+  color: var(--border-medium);
+}
 
 /* ---- Provider Header ---- */
 .provider-header {
@@ -1367,7 +1765,10 @@ onMounted(() => {
   min-width: 0;
 }
 
-.provider-header-logo { font-size: 32px; flex-shrink: 0; }
+.provider-header-logo {
+  font-size: 32px;
+  flex-shrink: 0;
+}
 
 .provider-header-name-row {
   display: flex;
@@ -1429,7 +1830,9 @@ onMounted(() => {
   transition: all 0.15s ease;
 }
 
-.provider-tab:hover { color: var(--foreground-secondary); }
+.provider-tab:hover {
+  color: var(--foreground-secondary);
+}
 
 .provider-tab.active {
   color: #a5b4fc;
@@ -1470,14 +1873,18 @@ onMounted(() => {
   padding: 6px 12px 6px 30px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
 }
 
-.search-wrap .search-input::placeholder { color: var(--foreground-muted); }
-.search-wrap .search-input:focus { border-color: var(--color-accent); }
+.search-wrap .search-input::placeholder {
+  color: var(--foreground-muted);
+}
+.search-wrap .search-input:focus {
+  border-color: var(--color-accent);
+}
 
 .type-filters {
   display: flex;
@@ -1488,17 +1895,20 @@ onMounted(() => {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--foreground-muted);
   font-size: var(--font-size-xs);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.type-filter:hover { background: rgba(255,255,255,0.1); color: var(--foreground-primary); }
+.type-filter:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--foreground-primary);
+}
 
 .type-filter.active {
-  background: rgba(79,70,229,0.6);
+  background: rgba(79, 70, 229, 0.6);
   color: #fff;
 }
 
@@ -1509,8 +1919,8 @@ onMounted(() => {
   margin-left: auto;
   padding: 6px 14px;
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(79,70,229,0.3);
-  background: rgba(79,70,229,0.1);
+  border: 1px solid rgba(79, 70, 229, 0.3);
+  background: rgba(79, 70, 229, 0.1);
   color: #a5b4fc;
   font-size: var(--font-size-xs);
   cursor: pointer;
@@ -1518,12 +1928,15 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.btn-add-model:hover { background: rgba(79,70,229,0.5); color: #fff; }
+.btn-add-model:hover {
+  background: rgba(79, 70, 229, 0.5);
+  color: #fff;
+}
 
 /* ---- Model Table Header ---- */
 .model-table-header {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
+  grid-template-columns: 28px 2fr 1fr 1fr 1fr 1fr auto;
   gap: 16px;
   padding: 8px 12px;
   font-size: var(--font-size-xs);
@@ -1539,17 +1952,83 @@ onMounted(() => {
 
 .model-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
+  grid-template-columns: 28px 2fr 1fr 1fr 1fr 1fr auto;
   gap: 16px;
   align-items: center;
   padding: 10px 12px;
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(38,51,89,0.15);
-  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(38, 51, 89, 0.15);
+  background: rgba(255, 255, 255, 0.02);
   transition: background 0.1s ease;
 }
 
-.model-row:hover { background: rgba(255,255,255,0.04); }
+.model-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.model-row.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+  user-select: none;
+}
+
+.model-row.pressing,
+.model-row.dragging {
+  touch-action: none;
+}
+
+.model-row.pressing {
+  background: rgba(79, 70, 229, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(79, 70, 229, 0.2),
+    0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.model-row.drop-before::before,
+.model-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.65);
+  z-index: 2;
+}
+
+.model-row.drop-before::before {
+  top: -3px;
+}
+.model-row.drop-after::after {
+  bottom: -3px;
+}
+
+.model-row {
+  position: relative;
+}
+
+.model-grip {
+  flex-shrink: 0;
+  color: var(--foreground-muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.model-row:hover .model-grip,
+.model-row.pressing .model-grip,
+.model-row.dragging .model-grip {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.model-list-move,
+.provider-list-move {
+  transition: transform 0.3s ease;
+}
 
 .model-display-name {
   font-size: var(--font-size-sm);
@@ -1623,9 +2102,19 @@ onMounted(() => {
   text-align: center;
 }
 
-.empty-icon { color: var(--border-medium); margin-bottom: 12px; }
-.empty-title { font-size: var(--font-size-md); color: var(--foreground-muted); }
-.empty-desc { margin-top: 4px; font-size: var(--font-size-xs); color: var(--foreground-muted); }
+.empty-icon {
+  color: var(--border-medium);
+  margin-bottom: 12px;
+}
+.empty-title {
+  font-size: var(--font-size-md);
+  color: var(--foreground-muted);
+}
+.empty-desc {
+  margin-top: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
 
 /* ---- Usage Tab ---- */
 .usage-stats {
@@ -1638,11 +2127,14 @@ onMounted(() => {
 .usage-stat-card {
   border-radius: var(--radius-xl);
   border: 1px solid var(--border-subtle);
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
   padding: 16px;
 }
 
-.usage-stat-label { font-size: var(--font-size-xs); color: var(--foreground-muted); }
+.usage-stat-label {
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
 
 .usage-stat-value {
   font-size: 28px;
@@ -1651,9 +2143,15 @@ onMounted(() => {
   margin-top: 4px;
 }
 
-.usage-stat-value--indigo { color: #a5b4fc; }
-.usage-stat-value--emerald { color: #6ee7b7; }
-.usage-stat-value--gray { color: #6b7280; }
+.usage-stat-value--indigo {
+  color: #a5b4fc;
+}
+.usage-stat-value--emerald {
+  color: #6ee7b7;
+}
+.usage-stat-value--gray {
+  color: #6b7280;
+}
 
 .usage-ranking {
   border-radius: var(--radius-xl);
@@ -1682,7 +2180,7 @@ onMounted(() => {
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(38,51,89,0.12);
+  border-bottom: 1px solid rgba(38, 51, 89, 0.12);
 }
 
 .rank-num {
@@ -1693,7 +2191,10 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.rank-emoji { font-size: 14px; flex-shrink: 0; }
+.rank-emoji {
+  font-size: 14px;
+  flex-shrink: 0;
+}
 
 .rank-info {
   flex: 1;
@@ -1720,7 +2221,7 @@ onMounted(() => {
 .rank-bar-track {
   height: 6px;
   border-radius: 3px;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
 
@@ -1740,8 +2241,8 @@ onMounted(() => {
 .rank-agent-tag {
   padding: 2px 8px;
   border-radius: var(--radius-sm);
-  background: rgba(79,70,229,0.1);
-  border: 1px solid rgba(79,70,229,0.2);
+  background: rgba(79, 70, 229, 0.1);
+  border: 1px solid rgba(79, 70, 229, 0.2);
   font-size: 10px;
   color: #a5b4fc;
   white-space: nowrap;
@@ -1770,7 +2271,9 @@ onMounted(() => {
   transform: translate(-50%, -110%);
 }
 
-.provider-drag-ghost .provider-logo { font-size: 18px; }
+.provider-drag-ghost .provider-logo {
+  font-size: 18px;
+}
 
 .provider-drag-ghost .provider-name {
   max-width: 180px;
@@ -1781,7 +2284,32 @@ onMounted(() => {
   color: var(--foreground-primary);
 }
 
-/* ---- Modal ---- */
+/* ---- Modal ----
+
+.model-drag-ghost {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--color-bg-card);
+  border: 1px solid rgba(79, 70, 229, 0.35);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+  transform: translate(-50%, -110%);
+}
+
+.model-drag-ghost-name {
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+  color: var(--foreground-primary);
+}
+ */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1789,7 +2317,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
 }
 
@@ -1802,11 +2330,15 @@ onMounted(() => {
   border: 1px solid var(--border-medium);
   background: var(--color-bg-card);
   padding: 24px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
-.modal-card--wide { max-width: 560px; }
-.modal-card--sm { max-width: 360px; }
+.modal-card--wide {
+  max-width: 560px;
+}
+.modal-card--sm {
+  max-width: 360px;
+}
 
 .modal-header {
   display: flex;
@@ -1836,7 +2368,10 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.modal-close:hover { background: rgba(255,255,255,0.08); color: var(--foreground-primary); }
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--foreground-primary);
+}
 
 .modal-body {
   display: flex;
@@ -1847,7 +2382,7 @@ onMounted(() => {
 .modal-section {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -1862,8 +2397,15 @@ onMounted(() => {
   letter-spacing: 1px;
 }
 
-.form-group { display: flex; flex-direction: column; gap: 4px; }
-.form-group--sm { width: 80px; flex-shrink: 0; }
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.form-group--sm {
+  width: 80px;
+  flex-shrink: 0;
+}
 
 .form-label {
   font-size: var(--font-size-xs);
@@ -1874,15 +2416,19 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
   transition: border-color 0.15s ease;
 }
 
-.form-input::placeholder { color: var(--foreground-muted); }
-.form-input:focus { border-color: var(--color-accent); }
+.form-input::placeholder {
+  color: var(--foreground-muted);
+}
+.form-input:focus {
+  border-color: var(--color-accent);
+}
 
 .form-input--mono {
   font-family: 'Courier New', monospace;
@@ -1898,21 +2444,25 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
   resize: none;
 }
 
-.form-textarea::placeholder { color: var(--foreground-muted); }
-.form-textarea:focus { border-color: var(--color-accent); }
+.form-textarea::placeholder {
+  color: var(--foreground-muted);
+}
+.form-textarea:focus {
+  border-color: var(--color-accent);
+}
 
 .form-select {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -1924,11 +2474,24 @@ onMounted(() => {
   color: var(--foreground-primary);
 }
 
-.form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
-.form-row-2 .form-group--sm + .form-group { flex: 1; }
-.form-row-2:has(.form-group--sm) { grid-template-columns: 80px 1fr; }
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.form-row-2 .form-group--sm + .form-group {
+  flex: 1;
+}
+.form-row-2:has(.form-group--sm) {
+  grid-template-columns: 80px 1fr;
+}
 
-.form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.form-row-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
 
 .input-with-btn {
   position: relative;
@@ -1950,7 +2513,9 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.input-btn:hover { color: var(--foreground-primary); }
+.input-btn:hover {
+  color: var(--foreground-primary);
+}
 
 .param-header {
   display: flex;
@@ -1986,7 +2551,10 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.btn-cancel:hover { background: rgba(255,255,255,0.06); color: var(--foreground-primary); }
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground-primary);
+}
 
 .btn-danger {
   padding: 8px 16px;
@@ -1998,7 +2566,9 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.btn-danger:hover { background: #b91c1c; }
+.btn-danger:hover {
+  background: #b91c1c;
+}
 
 .confirm-text {
   margin-top: 8px;
@@ -2019,7 +2589,7 @@ onMounted(() => {
   z-index: 999;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0,0,0,0.4);
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .drawer-panel {
@@ -2055,11 +2625,15 @@ onMounted(() => {
   font-size: var(--font-size-xs);
 }
 
-.drawer-body { display: flex; flex-direction: column; gap: 20px; }
+.drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 
 .drawer-info-card {
   border-radius: var(--radius-lg);
-  background: rgba(255,255,255,0.03);
+  background: rgba(255, 255, 255, 0.03);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -2072,7 +2646,10 @@ onMounted(() => {
   justify-content: space-between;
 }
 
-.drawer-label { font-size: var(--font-size-xs); color: var(--foreground-muted); }
+.drawer-label {
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
 
 .drawer-value {
   font-size: var(--font-size-sm);
@@ -2115,7 +2692,7 @@ onMounted(() => {
   padding: 10px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .drawer-agent-icon {
@@ -2125,7 +2702,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  background: rgba(79,70,229,0.2);
+  background: rgba(79, 70, 229, 0.2);
 }
 
 .drawer-agent-name {
@@ -2142,14 +2719,14 @@ onMounted(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10B981;
+  background: #10b981;
   margin-left: auto;
 }
 
 .drawer-params {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
   padding: 12px;
   display: flex;
   flex-direction: column;

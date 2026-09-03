@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user_id, get_db
 from api.providers.schemas import (
     ModelCreateRequest,
+    ModelReorderRequest,
     ModelResponse,
     ModelUpdateRequest,
     ProviderCreateRequest,
@@ -19,6 +20,7 @@ from api.providers.service import (
     delete_model,
     delete_provider,
     list_providers,
+    reorder_models,
     reorder_providers,
     toggle_model_status,
     update_model,
@@ -153,3 +155,16 @@ async def model_toggle_status(
     """切换模型的启用/禁用状态。"""
     result = await toggle_model_status(db, provider_id, model_id, user_id)
     return ok(result)
+
+
+@router.patch("/{provider_id}/models/reorder", response_model=ApiResponse[None])
+@handle_errors
+async def model_reorder(
+    provider_id: str,
+    req: ModelReorderRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """持久化指定提供商下的模型排序。"""
+    await reorder_models(db, provider_id, req, user_id)
+    return ok(None, "Model order updated")

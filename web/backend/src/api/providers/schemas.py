@@ -62,6 +62,7 @@ class ModelResponse(BaseModel):
     description: str
     release_date: str | None = None
     params: list[ModelParamSchema] = []
+    sort_order: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -115,6 +116,12 @@ class ProviderReorderRequest(BaseModel):
     """提供商排序请求体。"""
 
     provider_ids: list[str] = Field(min_length=1)
+
+
+class ModelReorderRequest(BaseModel):
+    """模型排序请求体。"""
+
+    model_ids: list[str] = Field(min_length=1)
 
 
 class ProviderResponse(BaseModel):

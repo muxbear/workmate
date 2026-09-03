@@ -141,6 +141,13 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE providers ADD COLUMN sort_order INTEGER DEFAULT 0"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_providers_sort_order ON providers (sort_order)"))
 
+        if await _table_exists(conn, 'ai_models'):
+            existing = await _get_existing_columns(conn, 'ai_models')
+            if "sort_order" not in existing:
+                logger.info("Adding sort_order column to ai_models table")
+                await conn.execute(text("ALTER TABLE ai_models ADD COLUMN sort_order INTEGER DEFAULT 0"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_models_sort_order ON ai_models (sort_order)"))
+
         if await _table_exists(conn, 'mcp_tools'):
             existing = await _get_existing_columns(conn, 'mcp_tools')
             if 'transport' not in existing:

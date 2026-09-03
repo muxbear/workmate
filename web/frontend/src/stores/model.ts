@@ -19,12 +19,15 @@ export const useModelStore = defineStore('model', () => {
   /* ---------- computed ---------- */
   const selectedProvider = computed<Provider | null>(() => {
     if (!selectedProviderId.value && providers.value.length > 0) return providers.value[0]
-    return providers.value.find((p) => p.id === selectedProviderId.value) ?? providers.value[0] ?? null
+    return (
+      providers.value.find((p) => p.id === selectedProviderId.value) ?? providers.value[0] ?? null
+    )
   })
 
   const filteredProviders = computed(() =>
-    providers.value.filter((p) =>
-      !providerSearch.value || p.name.toLowerCase().includes(providerSearch.value.toLowerCase()),
+    providers.value.filter(
+      (p) =>
+        !providerSearch.value || p.name.toLowerCase().includes(providerSearch.value.toLowerCase()),
     ),
   )
 
@@ -33,7 +36,8 @@ export const useModelStore = defineStore('model', () => {
     if (!p) return []
     return p.models.filter((m) => {
       const q = modelSearch.value.toLowerCase()
-      const matchSearch = !q || m.displayName.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)
+      const matchSearch =
+        !q || m.displayName.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)
       const matchType = modelTypeFilter.value === 'all' || m.type === modelTypeFilter.value
       return matchSearch && matchType
     })
@@ -43,7 +47,11 @@ export const useModelStore = defineStore('model', () => {
 
   const typeCounts = computed(() => {
     const map: Partial<Record<ModelType, number>> = {}
-    providers.value.forEach((p) => p.models.forEach((m) => { map[m.type] = (map[m.type] ?? 0) + 1 }))
+    providers.value.forEach((p) =>
+      p.models.forEach((m) => {
+        map[m.type] = (map[m.type] ?? 0) + 1
+      }),
+    )
     return map
   })
 
@@ -51,7 +59,9 @@ export const useModelStore = defineStore('model', () => {
     const p = selectedProvider.value
     if (!p) return {}
     const map: Partial<Record<ModelType, number>> = {}
-    p.models.forEach((m) => { map[m.type] = (map[m.type] ?? 0) + 1 })
+    p.models.forEach((m) => {
+      map[m.type] = (map[m.type] ?? 0) + 1
+    })
     return map
   })
 
@@ -174,9 +184,7 @@ export const useModelStore = defineStore('model', () => {
 
   async function reorderProviders(orderedIds: string[]) {
     const byId = new Map(providers.value.map((p) => [p.id, p]))
-    const next = orderedIds
-      .map((id) => byId.get(id))
-      .filter((p): p is Provider => Boolean(p))
+    const next = orderedIds.map((id) => byId.get(id)).filter((p): p is Provider => Boolean(p))
 
     if (next.length !== providers.value.length) {
       throw new Error('提供商列表不一致，请刷新后重试')
@@ -185,17 +193,51 @@ export const useModelStore = defineStore('model', () => {
     await api.reorderProviders(orderedIds)
     providers.value = next
   }
+  async function reorderModels(providerId: string, orderedModelIds: string[]) {
+    const pIdx = providers.value.findIndex((p) => p.id === providerId)
+    if (pIdx < 0) return
+    const provider = providers.value[pIdx]
+    const byId = new Map(provider.models.map((m) => [m.id, m]))
+    const next = orderedModelIds.map((id) => byId.get(id)).filter((m): m is AIModel => Boolean(m))
+
+    if (next.length !== provider.models.length) {
+      throw new Error('模型列表不一致，请刷新后重试')
+    }
+
+    await api.reorderModels(providerId, orderedModelIds)
+    providers.value[pIdx] = { ...provider, models: next }
+  }
 
   function setRightTab(tab: RightTab) {
     rightTab.value = tab
   }
 
   return {
-    providers, selectedProviderId, loading, error,
-    providerSearch, modelSearch, modelTypeFilter, rightTab,
-    selectedProvider, filteredProviders, filteredModels,
-    totalModels, typeCounts, providerTypeCounts, providerStats,
-    fetchAll, selectProvider, saveProvider, deleteProvider, reorderProviders,
-    saveModel, deleteModel, cloneModel, toggleModelStatus, setRightTab,
+    providers,
+    selectedProviderId,
+    loading,
+    error,
+    providerSearch,
+    modelSearch,
+    modelTypeFilter,
+    rightTab,
+    selectedProvider,
+    filteredProviders,
+    filteredModels,
+    totalModels,
+    typeCounts,
+    providerTypeCounts,
+    providerStats,
+    fetchAll,
+    selectProvider,
+    saveProvider,
+    deleteProvider,
+    reorderProviders,
+    saveModel,
+    deleteModel,
+    cloneModel,
+    toggleModelStatus,
+    reorderModels,
+    setRightTab,
   }
 })

@@ -29,5 +29,6 @@ class AIModel(Base):
     description: Mapped[str] = mapped_column(Text, default="", comment="描述")
     release_date: Mapped[str | None] = mapped_column(String(16), nullable=True, comment="发布日期（如 2024-05）")
     params: Mapped[list] = mapped_column(JSON, default=list, comment="默认参数列表")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True, comment="排序值")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, comment="创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow, comment="更新时间")
