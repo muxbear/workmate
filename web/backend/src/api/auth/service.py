@@ -9,6 +9,7 @@ from api.auth.schemas import (
     AccountLoginRequest,
     AuthResponse,
     AuthTokens,
+    ChangePasswordRequest,
     EmailRegisterRequest,
     LoginFailInfo,
     PhoneLoginRequest,
@@ -260,3 +261,36 @@ async def refresh_token_svc(
 
 async def get_fail_count_svc(account: str, store: KeyValueCache) -> LoginFailInfo:
     return await _get_fail_info(account, store)
+
+
+async def change_password(
+    req: ChangePasswordRequest,
+    user_id: str,
+    db: AsyncSession,
+) -> None:
+    result = await db.execute(select(Account).where(Account.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail='用户不存在')
+
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail='当前账户未设置密码')
+
+    try:
+        plain_old = decrypt_password(req.oldPassword)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail='密码解密失败')
+
+    if not verify_password(plain_old, user.password_hash):
+        raise HTTPException(status_code=400, detail='原始密码不正确')
+
+    try:
+        plain_new = decrypt_password(req.newPassword)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail='密码解密失败')
+
+    if plain_new == plain_old:
+        raise HTTPException(status_code=400, detail='新密码不能与原始密码相同')
+
+    user.password_hash = hash_password(plain_new)
+    await db.flush()

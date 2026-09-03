@@ -7,6 +7,7 @@ import type {
   EmailRegisterRequest,
   AuthResponse,
   SendEmailCodeRequest,
+  ChangePasswordRequest,
 } from '@/types/auth'
 
 export const authApi = {
@@ -33,6 +34,10 @@ export const authApi = {
   /** 退出登录 */
   logout: () => request.post<ApiResponse<null>>('/auth/logout'),
 
+  /** 修改密码 */
+  changePassword: (data: ChangePasswordRequest) =>
+    request.post<ApiResponse<null>>('/auth/change-password', data),
+
   /** 刷新 Token */
   refreshToken: (rt: string) =>
     request.post<ApiResponse<AuthResponse>>('/auth/refresh', { refreshToken: rt }),
@@ -44,6 +49,5 @@ export const authApi = {
     }),
 
   /** 获取 RSA 公钥 */
-  getPublicKey: () =>
-    request.get<ApiResponse<{ publicKey: string }>>('/auth/public-key'),
+  getPublicKey: () => request.get<ApiResponse<{ publicKey: string }>>('/auth/public-key'),
 }

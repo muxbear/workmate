@@ -67,3 +67,9 @@ export interface LoginFailInfo {
   failCount: number
   lockedUntil: number | null
 }
+
+/** 修改密码请求 */
+export interface ChangePasswordRequest {
+  oldPassword: string
+  newPassword: string
+}

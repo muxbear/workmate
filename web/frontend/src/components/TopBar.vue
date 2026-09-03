@@ -1,16 +1,37 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Search, Bell, CircleUser, LogOut, ChevronRight, Settings, Palette } from 'lucide-vue-next'
+import {
+  Search,
+  Bell,
+  CircleUser,
+  LogOut,
+  ChevronRight,
+  Settings,
+  Palette,
+  KeyRound,
+} from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useAuth } from '@/composables/useAuth'
+import { authApi } from '@/services/authApi'
+import { usePasswordEncrypt } from '@/composables/usePasswordEncrypt'
 
 const route = useRoute()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 const { logout } = useAuth()
+const { publicKey, fetchPublicKey, encrypt } = usePasswordEncrypt()
+
+// 修改密码弹窗状态
+const changePwdVisible = ref(false)
+const changePwdLoading = ref(false)
+const changePwdForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+})
 
 const userMenuOpen = ref(false)
 const searchFocused = ref(false)
@@ -48,6 +69,64 @@ function toggleUserMenu() {
 function handleSettings() {
   userMenuOpen.value = false
   ElMessage.info('设置页面开发中')
+}
+
+function openChangePassword() {
+  userMenuOpen.value = false
+  changePwdForm.oldPassword = ''
+  changePwdForm.newPassword = ''
+  changePwdForm.confirmPassword = ''
+  changePwdVisible.value = true
+}
+
+async function submitChangePassword() {
+  // 前端校验：先判断原始密码不为空
+  if (!changePwdForm.oldPassword) {
+    ElMessage.warning('请输入原始密码')
+    return
+  }
+  // 再判断新密码不为空
+  if (!changePwdForm.newPassword) {
+    ElMessage.warning('请输入新密码')
+    return
+  }
+  // 判断新密码与确认密码是否一致
+  if (changePwdForm.newPassword !== changePwdForm.confirmPassword) {
+    ElMessage.warning('两次输入的密码不一致')
+    return
+  }
+  // 新密码不能与原始密码相同
+  if (changePwdForm.newPassword === changePwdForm.oldPassword) {
+    ElMessage.warning('新密码不能与原始密码相同')
+    return
+  }
+
+  changePwdLoading.value = true
+  try {
+    // RSA 加密密码
+    await fetchPublicKey()
+    let encryptedOld = changePwdForm.oldPassword
+    let encryptedNew = changePwdForm.newPassword
+    if (publicKey.value) {
+      encryptedOld = encrypt(changePwdForm.oldPassword)
+      encryptedNew = encrypt(changePwdForm.newPassword)
+    }
+
+    await authApi.changePassword({
+      oldPassword: encryptedOld,
+      newPassword: encryptedNew,
+    })
+
+    ElMessage.success('密码修改成功，请重新登录')
+    changePwdVisible.value = false
+    // 修改成功后注销当前用户，跳转到登录页
+    await logout()
+  } catch (err: any) {
+    const msg = err?.message || err?.response?.data?.message || '密码修改失败'
+    ElMessage.error(msg)
+  } finally {
+    changePwdLoading.value = false
+  }
 }
 
 async function handleLogout() {
@@ -106,11 +185,7 @@ onUnmounted(() => {
           @focus="searchFocused = true"
           @blur="searchFocused = false"
         />
-        <button
-          v-if="uiStore.searchQuery"
-          class="search-clear"
-          @click="clearSearch"
-        >
+        <button v-if="uiStore.searchQuery" class="search-clear" @click="clearSearch">
           &times;
         </button>
       </div>
@@ -154,6 +229,11 @@ onUnmounted(() => {
               </button>
             </div>
             <div class="user-dropdown-divider" />
+            <button class="user-dropdown-item" @click="openChangePassword">
+              <KeyRound :size="14" />
+              <span>修改密码</span>
+            </button>
+            <div class="user-dropdown-divider" />
             <button class="user-dropdown-item logout" @click="handleLogout">
               <LogOut :size="14" />
               <span>退出登录</span>
@@ -163,6 +243,49 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+
+  <!-- 修改密码弹窗 -->
+  <el-dialog
+    v-model="changePwdVisible"
+    title="修改密码"
+    width="420px"
+    :close-on-click-modal="false"
+    append-to-body
+  >
+    <el-form label-width="90px" @submit.prevent="submitChangePassword">
+      <el-form-item label="原始密码">
+        <el-input
+          v-model="changePwdForm.oldPassword"
+          type="password"
+          placeholder="请输入原始密码"
+          show-password
+        />
+      </el-form-item>
+      <el-form-item label="新设密码">
+        <el-input
+          v-model="changePwdForm.newPassword"
+          type="password"
+          placeholder="请输入新密码"
+          show-password
+        />
+      </el-form-item>
+      <el-form-item label="确认密码">
+        <el-input
+          v-model="changePwdForm.confirmPassword"
+          type="password"
+          placeholder="请再次输入新密码"
+          show-password
+          @keyup.enter="submitChangePassword"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="changePwdVisible = false">取消</el-button>
+      <el-button type="primary" :loading="changePwdLoading" @click="submitChangePassword"
+        >确认</el-button
+      >
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -212,7 +335,9 @@ onUnmounted(() => {
   border-radius: var(--radius-full);
   background: var(--surface-secondary);
   border: 1px solid transparent;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
 }
 
 .search-box.focused {
@@ -438,7 +563,9 @@ onUnmounted(() => {
 /* Menu transition */
 .menu-enter-active,
 .menu-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
 .menu-enter-from,

@@ -113,8 +113,7 @@ const iconComponent = computed(() => getToolIcon(cm.value.icon))
 }
 
 .tool-card:hover {
-  border-color: rgba(59, 130, 246, 0.2);
-  background: rgba(15, 23, 46, 0.6);
+  border-color: rgba(59, 130, 246, 0.25);
 }
 
 .tool-card--dimmed {

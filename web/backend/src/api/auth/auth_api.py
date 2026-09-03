@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.schemas import (
     AccountLoginRequest,
     AuthResponse,
+    ChangePasswordRequest,
     EmailRegisterRequest,
     PhoneLoginRequest,
     RefreshRequest,
@@ -11,6 +12,7 @@ from api.auth.schemas import (
 )
 from api.auth.service import (
     account_login,
+    change_password,
     get_fail_count_svc,
     get_public_key_svc,
     phone_login,
@@ -18,7 +20,7 @@ from api.auth.service import (
     register_email,
     register_phone,
 )
-from api.deps import get_cache, get_client_ip, get_db
+from api.deps import get_cache, get_client_ip, get_current_user_id, get_db
 from core.cache import KeyValueCache
 from core.decorators import handle_errors
 from core.response import ApiResponse, ok
@@ -99,3 +101,13 @@ async def fail_count(
 ):
     info = await get_fail_count_svc(account, cache)
     return ok(info.model_dump())
+
+@router.post("/change-password")
+@handle_errors
+async def change_password_route(
+    req: ChangePasswordRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await change_password(req, user_id, db)
+    return ok(None)

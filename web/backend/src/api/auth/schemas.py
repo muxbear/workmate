@@ -58,3 +58,8 @@ class RefreshRequest(BaseModel):
 class LoginFailInfo(BaseModel):
     failCount: int
     lockedUntil: int | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    oldPassword: str
+    newPassword: str
