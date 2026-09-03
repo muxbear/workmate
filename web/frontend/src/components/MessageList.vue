@@ -42,7 +42,7 @@ watch(streamingBlocksLen, scrollToBottom)
 .message-list {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px;
+  padding: 16px 72px;
   display: flex;
   flex-direction: column;
   gap: 16px;

@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Sparkles, UserCircle, Brain, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import {
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Check,
+  Volume2,
+  Square,
+  RotateCcw,
+} from 'lucide-vue-next'
 import { marked } from 'marked'
 import { useChatStore } from '@/stores/chat'
 import TraceTree from './TraceTree.vue'
@@ -12,6 +21,34 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 const showReasoning = ref(false)
+const copied = ref(false)
+const isReading = ref(false)
+
+function handleCopy() {
+  navigator.clipboard.writeText(props.message.content)
+  copied.value = true
+  setTimeout(() => (copied.value = false), 2000)
+}
+
+function handleReadAloud() {
+  const synth = window.speechSynthesis
+  if (!synth) return
+  if (isReading.value) {
+    synth.cancel()
+    isReading.value = false
+    return
+  }
+  const utterance = new SpeechSynthesisUtterance(props.message.content)
+  utterance.lang = 'zh-CN'
+  utterance.onend = () => (isReading.value = false)
+  utterance.onerror = () => (isReading.value = false)
+  synth.speak(utterance)
+  isReading.value = true
+}
+
+function handleRegenerate() {
+  chatStore.regenerate(props.message.id)
+}
 
 const hasBlocks = computed(() => {
   return chatStore.traceEnabled && props.message.blocks && props.message.blocks.length > 0
@@ -35,25 +72,26 @@ function formatFileSize(bytes: number): string {
 
 function fileExtension(filename: string): string {
   const i = filename.lastIndexOf('.')
-  return i > 0 ? filename.slice(i + 1).toUpperCase().slice(0, 4) : 'FILE'
+  return i > 0
+    ? filename
+        .slice(i + 1)
+        .toUpperCase()
+        .slice(0, 4)
+    : 'FILE'
 }
 </script>
 
 <template>
   <div class="message-item" :class="[message.role, { streaming: message.streaming }]">
-    <div class="message-avatar">
-      <UserCircle v-if="message.role === 'user'" :size="32" />
-      <Sparkles v-else :size="32" />
-    </div>
     <div class="message-body">
       <div class="message-bubble">
         <!-- Trace mode: hierarchical card view -->
-        <TraceTree
-          v-if="hasBlocks"
-          :blocks="message.blocks!"
-        />
+        <TraceTree v-if="hasBlocks" :blocks="message.blocks!" />
         <!-- Normal mode: reasoning section -->
-        <div v-else-if="message.role === 'assistant' && message.reasoning" class="reasoning-section">
+        <div
+          v-else-if="message.role === 'assistant' && message.reasoning"
+          class="reasoning-section"
+        >
           <div class="reasoning-toggle" @click="showReasoning = !showReasoning">
             <Brain :size="12" />
             <span>思考过程</span>
@@ -71,7 +109,10 @@ function fileExtension(filename: string): string {
           v-html="renderedContent"
         ></div>
         <div v-if="message.role === 'user'">
-          <div v-if="message.attachments && message.attachments.length > 0" class="user-attachments">
+          <div
+            v-if="message.attachments && message.attachments.length > 0"
+            class="user-attachments"
+          >
             <div v-for="(att, i) in message.attachments" :key="i" class="user-att-item">
               <div class="user-att-icon">
                 <img v-if="isImage(att.mimeType)" :src="att.thumbnailUrl" alt="" />
@@ -91,8 +132,31 @@ function fileExtension(filename: string): string {
           <span class="dot" />
         </span>
       </div>
-      <div v-if="message.role === 'assistant' && !message.streaming" class="message-meta">
-        DeepSeek V4
+      <div v-if="message.role === 'assistant' && !message.streaming" class="message-actions">
+        <button class="action-btn" title="复制" @click="handleCopy">
+          <Check v-if="copied" :size="14" />
+          <Copy v-else :size="14" />
+          <span>{{ copied ? '已复制' : '复制' }}</span>
+        </button>
+        <button
+          class="action-btn"
+          :class="{ active: isReading }"
+          title="朗读"
+          @click="handleReadAloud"
+        >
+          <Square v-if="isReading" :size="14" />
+          <Volume2 v-else :size="14" />
+          <span>{{ isReading ? '停止' : '朗读' }}</span>
+        </button>
+        <button
+          class="action-btn"
+          title="重答"
+          :disabled="chatStore.loading"
+          @click="handleRegenerate"
+        >
+          <RotateCcw :size="14" />
+          <span>重答</span>
+        </button>
       </div>
     </div>
   </div>
@@ -109,38 +173,13 @@ function fileExtension(filename: string): string {
   justify-content: flex-end;
 }
 
-.message-item.user .message-avatar {
-  order: 1;
-}
-
-.message-item.user .message-body {
-  order: 0;
-}
-
-.message-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-full);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.message-item.assistant .message-avatar {
-  background: var(--accent-primary);
-  color: white;
-}
-
-.message-item.user .message-avatar {
-  background: var(--surface-secondary);
-  color: var(--foreground-secondary);
-}
-
 .message-body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.message-item.user .message-body {
   max-width: 70%;
 }
 
@@ -163,9 +202,39 @@ function fileExtension(filename: string): string {
   color: var(--foreground-primary);
 }
 
-.message-meta {
-  font-size: var(--font-size-xs);
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.message-actions .action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.message-actions .action-btn:hover:not(:disabled) {
+  background: var(--surface-secondary);
+  color: var(--foreground-primary);
+}
+
+.message-actions .action-btn.active {
+  color: var(--accent-primary);
+}
+
+.message-actions .action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .typing-indicator {

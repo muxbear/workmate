@@ -103,8 +103,7 @@ export const useChatStore = defineStore('chat', () => {
       onAgentEnd(data) {
         const block = activeBlocks.get(data.call_id)
         if (block && block.type === 'sub_agent') {
-          block.subAgent.status =
-            data.status === 'completed' ? 'completed' : 'failed'
+          block.subAgent.status = data.status === 'completed' ? 'completed' : 'failed'
         }
         agentBlocks.delete(data.agent_name)
         const entry = byId(assistantId)
@@ -424,6 +423,59 @@ export const useChatStore = defineStore('chat', () => {
     loading.value = false
   }
 
+  /** 重答：删除指定 AI 回复，用上一条用户消息重新请求 */
+  async function regenerate(assistantMsgId: number) {
+    if (loading.value) return
+
+    const assistantIdx = messages.value.findIndex((m) => m.id === assistantMsgId)
+    if (assistantIdx === -1) return
+
+    // 向前查找最近的用户消息
+    let userIdx = -1
+    for (let i = assistantIdx - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') {
+        userIdx = i
+        break
+      }
+    }
+    if (userIdx === -1) return
+
+    const userText = messages.value[userIdx].content
+
+    // 删除旧的 AI 回复
+    messages.value.splice(assistantIdx, 1)
+
+    loading.value = true
+    const newAssistantMsg = addMessage('assistant', '', true)
+
+    const callbacks = traceEnabled.value
+      ? buildTraceCallbacks(newAssistantMsg.id)
+      : buildNormalCallbacks(newAssistantMsg.id)
+
+    abortController = new AbortController()
+
+    try {
+      await sendStreamRequest(userText, {
+        threadId: threadId.value,
+        callbacks,
+        signal: abortController.signal,
+      })
+    } catch {
+      const entry = byId(newAssistantMsg.id)
+      if (entry) {
+        const sep = entry.msg.content ? '\n\n' : ''
+        messages.value[entry.idx] = {
+          ...entry.msg,
+          content: entry.msg.content + `${sep}抱歉，重答失败，请稍后重试。`,
+          streaming: false,
+        }
+      }
+      loading.value = false
+    } finally {
+      abortController = null
+    }
+  }
+
   return {
     messages,
     loading,
@@ -438,5 +490,6 @@ export const useChatStore = defineStore('chat', () => {
     uploadFile,
     removeAttachment,
     retryUpload,
+    regenerate,
   }
 })
