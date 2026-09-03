@@ -385,8 +385,8 @@ function setViewMode(mode: ViewMode) {
   width: 100%;
   height: 36px;
   padding: 0 12px 0 36px;
-  background: rgba(15, 23, 46, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-base);
@@ -409,8 +409,8 @@ function setViewMode(mode: ViewMode) {
   gap: 6px;
   height: 36px;
   padding: 0 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-base);
@@ -421,15 +421,15 @@ function setViewMode(mode: ViewMode) {
 }
 
 .filter-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--surface-secondary);
+  border-color: var(--border-medium);
 }
 
 .view-toggle {
   display: flex;
   align-items: center;
-  background: rgba(15, 23, 46, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 2px;
 }
@@ -473,7 +473,7 @@ function setViewMode(mode: ViewMode) {
   justify-content: center;
   gap: 8px;
   min-height: 280px;
-  border: 2px dashed rgba(255, 255, 255, 0.1);
+  border: 2px dashed var(--border-subtle);
   border-radius: var(--radius-card);
   cursor: pointer;
   transition: all 0.2s;
@@ -520,7 +520,7 @@ function setViewMode(mode: ViewMode) {
 }
 
 .kb-table thead {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-secondary);
 }
 
 .kb-table thead th {
@@ -540,7 +540,7 @@ function setViewMode(mode: ViewMode) {
 .kb-row {
   cursor: pointer;
   transition: background 0.15s;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .kb-row:last-child {
@@ -548,7 +548,7 @@ function setViewMode(mode: ViewMode) {
 }
 
 .kb-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-secondary);
 }
 
 .kb-table td {
@@ -704,7 +704,7 @@ function setViewMode(mode: ViewMode) {
 }
 
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 

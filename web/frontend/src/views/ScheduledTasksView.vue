@@ -641,7 +641,7 @@ onUnmounted(() => {
 
 .status-card--default {
   border-color: var(--border-subtle);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-card);
 }
 
 .status-card--indigo {
@@ -719,7 +719,7 @@ onUnmounted(() => {
 
 /* ---- Section Card ---- */
 .section-card {
-  background: rgba(20, 29, 56, 0.7);
+  background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   margin-bottom: 24px;
@@ -779,7 +779,7 @@ onUnmounted(() => {
   padding: 6px 12px 6px 30px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -797,7 +797,7 @@ onUnmounted(() => {
 .filter-tabs {
   display: flex;
   gap: 2px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-secondary);
   padding: 3px;
   border-radius: var(--radius-lg);
 }
@@ -847,7 +847,7 @@ onUnmounted(() => {
 }
 
 .task-row-wrap {
-  border-bottom: 1px solid rgba(38, 51, 89, 0.15);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .task-row {
@@ -860,7 +860,7 @@ onUnmounted(() => {
   transition: background 0.1s ease;
 }
 
-.task-row:hover { background: rgba(255, 255, 255, 0.02); }
+.task-row:hover { background: var(--surface-secondary); }
 
 .task-name-cell {
   display: flex;
@@ -928,7 +928,7 @@ onUnmounted(() => {
 .task-tag {
   padding: 1px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   font-size: 10px;
   color: var(--foreground-muted);
 }
@@ -981,7 +981,7 @@ onUnmounted(() => {
 .rate-bar-track {
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   overflow: hidden;
 }
 
@@ -1011,13 +1011,13 @@ onUnmounted(() => {
   transition: all 0.15s ease;
 }
 
-.action-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--foreground-primary); }
+.action-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 .action-btn--danger:hover { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 
 /* ---- Task Detail (expanded) ---- */
 .task-detail {
-  border-top: 1px solid rgba(38, 51, 89, 0.15);
-  background: rgba(0, 0, 0, 0.15);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
   padding: 14px 20px 14px 48px;
 }
 
@@ -1056,10 +1056,10 @@ onUnmounted(() => {
   padding: 12px 20px;
   cursor: pointer;
   transition: background 0.1s ease;
-  border-bottom: 1px solid rgba(38, 51, 89, 0.12);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.run-row:hover { background: rgba(255, 255, 255, 0.02); }
+.run-row:hover { background: var(--surface-secondary); }
 
 .run-name-cell { min-width: 0; }
 
@@ -1100,7 +1100,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.info-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--foreground-primary); }
+.info-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 
 /* ---- Empty State ---- */
 .empty-state {
@@ -1145,7 +1145,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-overlay);
   backdrop-filter: blur(4px);
 }
 
@@ -1187,7 +1187,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.modal-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--foreground-primary); }
+.modal-close:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 
 .modal-body {
   display: flex;
@@ -1210,7 +1210,7 @@ onUnmounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -1229,7 +1229,7 @@ onUnmounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -1244,7 +1244,7 @@ onUnmounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -1270,14 +1270,14 @@ onUnmounted(() => {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--foreground-muted);
   font-size: var(--font-size-xs);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.preset-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--foreground-primary); }
+.preset-btn:hover { background: var(--border-medium); color: var(--foreground-primary); }
 
 .preset-btn.active {
   background: #4f46e5;
@@ -1302,7 +1302,7 @@ onUnmounted(() => {
   transition: all 0.15s ease;
 }
 
-.btn-cancel:hover { background: rgba(255, 255, 255, 0.06); color: var(--foreground-primary); }
+.btn-cancel:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 
 /* ---- Drawer ---- */
 .drawer-overlay {
@@ -1311,7 +1311,7 @@ onUnmounted(() => {
   z-index: 999;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--color-overlay);
 }
 
 .drawer-panel {
@@ -1345,7 +1345,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.drawer-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--foreground-primary); }
+.drawer-close:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 
 .drawer-body {
   display: flex;
@@ -1355,7 +1355,7 @@ onUnmounted(() => {
 
 .drawer-info-card {
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-secondary);
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -1389,7 +1389,7 @@ onUnmounted(() => {
 
 .drawer-code {
   border-radius: var(--radius-lg);
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-secondary);
   border: 1px solid var(--border-subtle);
   padding: 12px;
 }

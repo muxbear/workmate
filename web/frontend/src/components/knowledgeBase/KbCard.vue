@@ -127,7 +127,7 @@ function metricFormat(val: number): string {
 
 .kb-card:hover {
   border-color: rgba(59, 130, 246, 0.4);
-  background: rgba(20, 29, 56, 0.8);
+  background: var(--surface-secondary);
 }
 
 .card-header {
