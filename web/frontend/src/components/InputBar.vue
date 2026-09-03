@@ -236,8 +236,8 @@ watch(() => chatStore.loading, (loading) => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #0d1429;
-  border: 1px solid rgba(59, 130, 246, 0.08);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   padding: 12px 0 8px;
 }
