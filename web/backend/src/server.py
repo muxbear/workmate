@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import sys
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 if sys.platform == "win32":
     # uvicorn 在 Windows 上硬编码了 ProactorEventLoop，绕过了事件循环策略。
@@ -12,7 +14,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
@@ -47,6 +49,9 @@ async def _init_knowledge_base(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 记录服务启动时间（供概览页健康检查使用）
+    app.state.started_at = datetime.now(UTC).replace(tzinfo=None)
+
     # 初始化数据库
     await init_db()
 
@@ -98,6 +103,22 @@ app = FastAPI(
     description="通用智能体服务",
     lifespan=lifespan,
 )
+
+# API 响应时间滑动窗口（供概览页系统健康监控使用）
+app.state.response_times = deque(maxlen=100)
+
+
+@app.middleware("http")
+async def timing_middleware(request: Request, call_next):
+    """记录 /api/ 请求的响应时间到滑动窗口."""
+    import time as _time
+    start = _time.time()
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        duration_ms = (_time.time() - start) * 1000
+        app.state.response_times.append(duration_ms)
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,

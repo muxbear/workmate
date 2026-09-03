@@ -7,26 +7,26 @@ export async function fetchNotifications(params?: {
   type?: string
   is_read?: boolean
 }) {
-  const res = await http.get('/api/notifications', { params })
+  const res = await http.get('/notifications', { params })
   return res.data.data as NotificationListResponse
 }
 
 export async function fetchUnreadCount() {
-  const res = await http.get('/api/notifications/unread_count')
+  const res = await http.get('/notifications/unread_count')
   return res.data.data.count as number
 }
 
 export async function markNotificationRead(id: string) {
-  const res = await http.patch('/api/notifications/' + id + '/read')
+  const res = await http.patch('/notifications/' + id + '/read')
   return res.data
 }
 
 export async function markAllNotificationsRead() {
-  const res = await http.post('/api/notifications/read_all')
+  const res = await http.post('/notifications/read_all')
   return res.data
 }
 
 export async function deleteNotification(id: string) {
-  const res = await http.delete('/api/notifications/' + id)
+  const res = await http.delete('/notifications/' + id)
   return res.data
 }

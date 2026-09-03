@@ -2,6 +2,26 @@
 import { ref, computed, onMounted, onUnmounted, watch, shallowRef } from 'vue'
 import * as echarts from 'echarts'
 import {
+  fetchResourceStats,
+  fetchSystemHealth,
+  fetchKpi,
+  fetchUsageTrend,
+  fetchProviderUsage,
+  fetchTopUsers,
+  type ResourceStats,
+  type SystemHealth,
+  type KpiData,
+  type TrendPoint,
+  type ProviderUsageItem,
+  type TopUser,
+  type SystemMetrics,
+  type TokenStats,
+  type SystemEventItem,
+  fetchSystemMetrics,
+  fetchTokenStats,
+  fetchEvents,
+} from '@/services/overviewApi'
+import {
   Users,
   Activity,
   BarChart3,
@@ -80,127 +100,268 @@ const period = ref<Period>('day')
 const currentTime = ref(new Date())
 let clockTimer: ReturnType<typeof setInterval> | null = null
 
+/* ---- API Data ---- */
+const resourceStats = ref<ResourceStats | null>(null)
+const systemHealth = ref<SystemHealth | null>(null)
+const statsLoading = ref(true)
+const healthLoading = ref(true)
+const kpiData = ref<KpiData | null>(null)
+const kpiLoading = ref(true)
+const trendData = ref<TrendPoint[]>([])
+const trendLoading = ref(false)
+const providerData = ref<ProviderUsageItem[]>([])
+const providerLoading = ref(true)
+const topUsersData = ref<TopUser[]>([])
+const topUsersLoading = ref(true)
+const metricsData = ref<SystemMetrics | null>(null)
+const metricsLoading = ref(true)
+const tokenData = ref<TokenStats | null>(null)
+const tokenLoading = ref(true)
+const eventsData = ref<SystemEventItem[]>([])
+const eventsLoading = ref(true)
+let eventPollTimer: ReturnType<typeof setInterval> | null = null
+
 const chartRef = shallowRef<HTMLDivElement | null>(null)
 const pieRef = shallowRef<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 let pieInstance: echarts.ECharts | null = null
 
-/* ---- Mock Data ---- */
-const dailyData = [
-  { time: '00:00', users: 12, requests: 45 },
-  { time: '02:00', users: 5, requests: 18 },
-  { time: '04:00', users: 3, requests: 10 },
-  { time: '06:00', users: 8, requests: 28 },
-  { time: '08:00', users: 34, requests: 124 },
-  { time: '10:00', users: 67, requests: 289 },
-  { time: '12:00', users: 82, requests: 341 },
-  { time: '14:00', users: 91, requests: 378 },
-  { time: '16:00', users: 76, requests: 312 },
-  { time: '18:00', users: 54, requests: 218 },
-  { time: '20:00', users: 39, requests: 156 },
-  { time: '22:00', users: 21, requests: 88 },
-]
+/* ---- Trend Data (API-driven) ---- */
 
-const monthlyData = [
-  { time: '1日', users: 420, requests: 1840 },
-  { time: '5日', users: 510, requests: 2210 },
-  { time: '10日', users: 680, requests: 2890 },
-  { time: '15日', users: 590, requests: 2540 },
-  { time: '20日', users: 730, requests: 3120 },
-  { time: '25日', users: 820, requests: 3560 },
-  { time: '30日', users: 760, requests: 3280 },
-]
+const _providerColors = ['#10B981', '#8B5CF6', '#3B82F6', '#F59E0B', '#EC4899', '#6366F1']
+const modelProviders = computed<ModelProvider[]>(() => {
+  if (!providerData.value.length) return []
+  return providerData.value.map((p, i) => ({
+    name: p.name,
+    models: p.models,
+    color: _providerColors[i % _providerColors.length],
+    icon: p.icon || '🤖',
+    usage: p.usage_pct,
+    popular: p.popular_model || '-',
+  }))
+})
 
-const yearlyData = [
-  { time: '1月', users: 3200, requests: 14200 },
-  { time: '2月', users: 3800, requests: 16800 },
-  { time: '3月', users: 4200, requests: 18400 },
-  { time: '4月', users: 5100, requests: 22400 },
-  { time: '5月', users: 6800, requests: 29800 },
-  { time: '6月', users: 7200, requests: 31200 },
-  { time: '7月', users: 6500, requests: 28400 },
-  { time: '8月', users: 7800, requests: 34100 },
-  { time: '9月', users: 8200, requests: 35800 },
-  { time: '10月', users: 9100, requests: 39800 },
-  { time: '11月', users: 10200, requests: 44500 },
-  { time: '12月', users: 11400, requests: 49800 },
-]
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
 
-const modelProviders: ModelProvider[] = [
-  { name: 'OpenAI', models: 8, color: '#10B981', icon: '🤖', usage: 42, popular: 'GPT-4o' },
-  { name: 'Anthropic', models: 5, color: '#8B5CF6', icon: '⚡', usage: 31, popular: 'Claude 3.5' },
-  { name: 'Google', models: 6, color: '#3B82F6', icon: '🌐', usage: 15, popular: 'Gemini 1.5' },
-  { name: 'Mistral', models: 4, color: '#F59E0B', icon: '💨', usage: 7, popular: 'Mistral Large' },
-  { name: 'Ollama', models: 12, color: '#EC4899', icon: '🦙', usage: 5, popular: 'Llama 3.1' },
-]
+const topUsers = computed<TopUser[]>(() => {
+  if (!topUsersData.value.length) return []
+  return topUsersData.value.map(u => ({
+    name: u.name,
+    role: u.role,
+    calls: u.calls,
+    tokens: formatTokens(u.tokens),
+    online: u.online,
+  }))
+})
 
-const topUsers: TopUser[] = [
-  { name: 'wangke', role: '管理员', calls: 1482, tokens: '2.8M', online: true },
-  { name: 'lihua', role: '开发者', calls: 934, tokens: '1.6M', online: true },
-  { name: 'zhangwei', role: '分析师', calls: 721, tokens: '1.2M', online: false },
-  { name: 'chenyan', role: '开发者', calls: 618, tokens: '0.9M', online: true },
-  { name: 'wuming', role: '测试员', calls: 389, tokens: '0.6M', online: false },
-]
+const _eventIconMap: Record<string, typeof Bot> = {
+  agent: Bot,
+  tool: Zap,
+  cron: Target,
+  model: RefreshCw,
+  mcp: Wrench,
+  system: MessageSquare,
+}
 
-const recentEvents: LogEvent[] = [
-  { time: '14:32:11', type: 'info', msg: 'Agent main-alpha 完成任务 #2841', icon: Bot },
-  { time: '14:31:58', type: 'success', msg: '技能 web-search 调用成功，耗时 1.2s', icon: Zap },
-  { time: '14:30:44', type: 'info', msg: '新会话建立：用户 user_4821', icon: MessageSquare },
-  { time: '14:29:03', type: 'warn', msg: '定时任务 report-gen 执行延迟 3.1s', icon: Target },
-  { time: '14:27:51', type: 'success', msg: '模型切换：GPT-4o → Claude 3.5 Sonnet', icon: RefreshCw },
-  { time: '14:25:30', type: 'info', msg: 'MCP 工具 file-reader 注册成功', icon: Wrench },
-  { time: '14:23:17', type: 'error', msg: 'Agent sub-beta 连接超时，已自动重试', icon: Activity },
-  { time: '14:21:05', type: 'success', msg: '定时任务 data-sync 执行完成', icon: Target },
-]
+const recentEvents = computed<LogEvent[]>(() => {
+  if (!eventsData.value.length) return []
+  return eventsData.value.map(ev => ({
+    time: ev.created_at ? new Date(ev.created_at).toLocaleTimeString('zh-CN', { hour12: false }) : '',
+    type: ev.type as EventType,
+    msg: ev.message,
+    icon: _eventIconMap[ev.category] || Activity,
+  }))
+})
 
-const systemMetrics: SystemMetric[] = [
-  { label: 'API 响应时间', value: '128ms', pct: 85, color: '#6366F1' },
-  { label: 'CPU 使用率', value: '34%', pct: 34, color: '#10B981' },
-  { label: '内存占用', value: '2.1GB / 8GB', pct: 26, color: '#8B5CF6' },
-  { label: '磁盘使用率', value: '48%', pct: 48, color: '#F59E0B' },
-  { label: '成功率', value: '99.2%', pct: 99, color: '#10B981' },
-]
+const systemMetrics = computed<SystemMetric[]>(() => {
+  const m = metricsData.value
+  if (!m) return []
+  return [
+    { label: 'API 响应时间', value: m.api_response_time.value, pct: m.api_response_time.pct, color: '#6366F1' },
+    { label: 'CPU 使用率', value: m.cpu_usage.value, pct: m.cpu_usage.pct, color: '#10B981' },
+    { label: '内存占用', value: m.memory_usage.value, pct: m.memory_usage.pct, color: '#8B5CF6' },
+    { label: '磁盘使用率', value: m.disk_usage.value, pct: m.disk_usage.pct, color: '#F59E0B' },
+    { label: '成功率', value: m.success_rate.value, pct: m.success_rate.pct, color: '#10B981' },
+  ]
+})
 
 /* ---- Computed ---- */
 const timeStr = computed(() =>
   currentTime.value.toLocaleTimeString('zh-CN', { hour12: false }),
 )
+
+const uptimeStr = computed(() => {
+  const sec = systemHealth.value?.uptime_seconds ?? 0
+  if (sec <= 0) return '--'
+  const days = Math.floor(sec / 86400)
+  const hours = Math.floor((sec % 86400) / 3600)
+  const minutes = Math.floor((sec % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+})
+
+const systemStatusText = computed(() => {
+  const s = systemHealth.value?.status
+  if (!s) return '检测中...'
+  if (s === 'ok') return '系统正常运行'
+  return '系统状态异常'
+})
+
+const systemStatusOk = computed(() => systemHealth.value?.status === 'ok')
+
+async function loadResourceStats() {
+  statsLoading.value = true
+  try {
+    resourceStats.value = await fetchResourceStats()
+  } catch (e) {
+    console.error('Failed to load resource stats:', e)
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+async function loadSystemHealth() {
+  healthLoading.value = true
+  try {
+    systemHealth.value = await fetchSystemHealth()
+  } catch (e) {
+    console.error('Failed to load system health:', e)
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+async function loadKpi() {
+  kpiLoading.value = true
+  try {
+    kpiData.value = await fetchKpi(period.value)
+  } catch (e) {
+    console.error('Failed to load KPI:', e)
+  } finally {
+    kpiLoading.value = false
+  }
+}
+
+async function loadTrendData() {
+  trendLoading.value = true
+  try {
+    trendData.value = await fetchUsageTrend(period.value)
+  } catch (e) {
+    console.error('Failed to load trend data:', e)
+  } finally {
+    trendLoading.value = false
+  }
+}
+
+async function loadProviderUsage() {
+  providerLoading.value = true
+  try {
+    providerData.value = await fetchProviderUsage()
+  } catch (e) {
+    console.error('Failed to load provider usage:', e)
+  } finally {
+    providerLoading.value = false
+  }
+}
+
+async function loadTopUsers() {
+  topUsersLoading.value = true
+  try {
+    topUsersData.value = await fetchTopUsers(5, period.value)
+  } catch (e) {
+    console.error('Failed to load top users:', e)
+  } finally {
+    topUsersLoading.value = false
+  }
+}
+
+async function loadSystemMetrics() {
+  metricsLoading.value = true
+  try {
+    metricsData.value = await fetchSystemMetrics()
+  } catch (e) {
+    console.error('Failed to load system metrics:', e)
+  } finally {
+    metricsLoading.value = false
+  }
+}
+
+async function loadTokenStats() {
+  tokenLoading.value = true
+  try {
+    tokenData.value = await fetchTokenStats(period.value)
+  } catch (e) {
+    console.error('Failed to load token stats:', e)
+  } finally {
+    tokenLoading.value = false
+  }
+}
+
+async function loadEvents() {
+  eventsLoading.value = true
+  try {
+    eventsData.value = await fetchEvents(20)
+  } catch (e) {
+    console.error('Failed to load events:', e)
+  } finally {
+    eventsLoading.value = false
+  }
+}
 const dateStr = computed(() =>
   currentTime.value.toLocaleDateString('zh-CN', {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
   }),
 )
 
-const statCards: StatCard[] = [
+const statCards = computed<StatCard[]>(() => [
   {
-    label: '注册用户总数', value: '1,284', sub: '本月新增 +128',
-    icon: Users, trend: 12, iconBg: 'indigo', borderColor: 'rgba(99,102,241,0.2)',
+    label: '注册用户总数',
+    value: kpiData.value ? kpiData.value.registered_users.toLocaleString() : '--',
+    sub: `本期新增 +${kpiData.value?.new_users_this_period ?? 0}`,
+    icon: Users, trend: 0, iconBg: 'indigo', borderColor: 'rgba(99,102,241,0.2)',
   },
   {
-    label: '今日活跃用户', value: '247', sub: '峰值 91 人 · 14:00',
-    icon: Activity, trend: 8, iconBg: 'purple', borderColor: 'rgba(139,92,246,0.2)',
+    label: '今日活跃用户',
+    value: kpiData.value ? String(kpiData.value.active_users) : '--',
+    sub: '',
+    icon: Activity, trend: kpiData.value?.trend.active_users ?? 0,
+    iconBg: 'purple', borderColor: 'rgba(139,92,246,0.2)',
   },
   {
-    label: '今日总请求数', value: '2,089', sub: '~382K tokens',
-    icon: BarChart3, trend: -3, iconBg: 'blue', borderColor: 'rgba(59,130,246,0.2)',
+    label: '今日总请求数',
+    value: kpiData.value ? kpiData.value.total_requests.toLocaleString() : '--',
+    sub: '',
+    icon: BarChart3, trend: kpiData.value?.trend.requests ?? 0,
+    iconBg: 'blue', borderColor: 'rgba(59,130,246,0.2)',
   },
   {
-    label: '系统运行时长', value: '19d 4h', sub: '上次重启 2026-05-09',
+    label: '系统运行时长',
+    value: uptimeStr.value,
+    sub: '上次重启 ' + (systemHealth.value?.started_at?.slice(0, 10) || '--'),
     icon: Server, iconBg: 'emerald', borderColor: 'rgba(16,185,129,0.2)',
   },
-]
+])
 
-const resourceItems: ResourceItem[] = [
-  { label: '总工具数', value: '63', icon: Wrench, color: '#F59E0B', borderColor: 'rgba(245,158,11,0.2)' },
-  { label: '活跃技能', value: '19 / 63', icon: Zap, color: '#8B5CF6', borderColor: 'rgba(139,92,246,0.2)' },
-  { label: '定时任务', value: '8', icon: Target, color: '#3B82F6', borderColor: 'rgba(59,130,246,0.2)' },
-  { label: '主代理', value: '4', icon: Bot, color: '#6366F1', borderColor: 'rgba(99,102,241,0.2)' },
-  { label: '子代理', value: '12', icon: Layers, color: '#EC4899', borderColor: 'rgba(236,72,153,0.2)' },
-  { label: 'MCP 服务', value: '6', icon: Globe, color: '#10B981', borderColor: 'rgba(16,185,129,0.2)' },
-]
+const resourceItems = computed<ResourceItem[]>(() => {
+  const s = resourceStats.value
+  if (!s) return []
+  return [
+    { label: '总工具数', value: String(s.tools.total), icon: Wrench, color: '#F59E0B', borderColor: 'rgba(245,158,11,0.2)' },
+    { label: '活跃技能', value: `${s.skills.enabled} / ${s.skills.total}`, icon: Zap, color: '#8B5CF6', borderColor: 'rgba(139,92,246,0.2)' },
+    { label: '定时任务', value: String(s.cron_jobs.enabled), icon: Target, color: '#3B82F6', borderColor: 'rgba(59,130,246,0.2)' },
+    { label: '主代理', value: String(s.agents.main), icon: Bot, color: '#6366F1', borderColor: 'rgba(99,102,241,0.2)' },
+    { label: '子代理', value: String(s.agents.sub), icon: Layers, color: '#EC4899', borderColor: 'rgba(236,72,153,0.2)' },
+    { label: 'MCP 服务', value: String(s.mcp_services.total), icon: Globe, color: '#10B981', borderColor: 'rgba(16,185,129,0.2)' },
+  ]
+})
 
 /* ---- Chart Options ---- */
-function makeAreaChartOptions(data: typeof dailyData): echarts.EChartsOption {
+function makeAreaChartOptions(data: TrendPoint[]): echarts.EChartsOption {
   return {
     grid: { top: 8, right: 16, left: 40, bottom: 8 },
     xAxis: {
@@ -254,7 +415,7 @@ function makeAreaChartOptions(data: typeof dailyData): echarts.EChartsOption {
 }
 
 function makePieChartOptions(): echarts.EChartsOption {
-  const pieData = modelProviders.map((p) => ({ name: p.name, value: p.usage }))
+  const pieData = modelProviders.value.map((p) => ({ name: p.name, value: p.usage }))
   return {
     series: [
       {
@@ -268,7 +429,7 @@ function makePieChartOptions(): echarts.EChartsOption {
           borderColor: '#111827',
           borderWidth: 3,
         },
-        color: modelProviders.map((p) => p.color),
+        color: modelProviders.value.map((p) => p.color),
       },
     ],
     tooltip: {
@@ -295,8 +456,8 @@ function initChart() {
 
 function updateChart() {
   if (!chartInstance) return
-  const data = period.value === 'day' ? dailyData : period.value === 'month' ? monthlyData : yearlyData
-  chartInstance.setOption(makeAreaChartOptions(data), true)
+  if (!trendData.value.length) return
+  chartInstance.setOption(makeAreaChartOptions(trendData.value as unknown as { time: string; users: number; requests: number }[]), true)
 }
 
 function handleResize() {
@@ -304,18 +465,34 @@ function handleResize() {
   pieInstance?.resize()
 }
 
-watch(period, () => updateChart())
+watch(period, async () => {
+  await loadTrendData()
+  updateChart()
+})
 
-onMounted(() => {
+onMounted(async () => {
   clockTimer = setInterval(() => {
     currentTime.value = new Date()
   }, 1000)
   initChart()
   window.addEventListener('resize', handleResize)
+  loadResourceStats()
+  loadSystemHealth()
+  loadKpi()
+  await loadTrendData()
+  updateChart()
+  loadProviderUsage()
+  loadTopUsers()
+  loadSystemMetrics()
+  loadTokenStats()
+  loadEvents()
+  // 每 10 秒轮询刷新事件日志
+  eventPollTimer = setInterval(() => loadEvents(), 10000)
 })
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
+  if (eventPollTimer) clearInterval(eventPollTimer)
   window.removeEventListener('resize', handleResize)
   chartInstance?.dispose()
   pieInstance?.dispose()
@@ -371,8 +548,8 @@ function eventDotColor(type: EventType): string {
         <p class="header-time">{{ timeStr }}</p>
         <p class="header-date">{{ dateStr }}</p>
         <div class="header-status">
-          <span class="status-dot" />
-          <span class="status-text">系统正常运行</span>
+          <span class="status-dot" :class="{ 'status-error': !systemStatusOk }" />
+          <span class="status-text" :class="{ 'status-error-text': !systemStatusOk }">{{ systemStatusText }}</span>
         </div>
       </div>
     </div>
@@ -405,7 +582,13 @@ function eventDotColor(type: EventType): string {
 
     <!-- ═══ Resource Cards ═══ -->
     <div class="resource-grid">
+      <div v-if="statsLoading" class="resource-card resource-loading" v-for="i in 6" :key="'r-skel-' + i">
+        <div class="skeleton-icon"></div>
+        <div class="skeleton-label"></div>
+        <div class="skeleton-value"></div>
+      </div>
       <div
+        v-else
         v-for="item in resourceItems"
         :key="item.label"
         class="resource-card"
@@ -474,15 +657,15 @@ function eventDotColor(type: EventType): string {
         </div>
         <div class="personnel-summary">
           <div class="summary-item">
-            <span class="summary-num">24</span>
+            <span class="summary-num">{{ kpiData?.personnel_summary?.total ?? 0 }}</span>
             <span class="summary-label">总成员</span>
           </div>
           <div class="summary-item">
-            <span class="summary-num online">8</span>
+            <span class="summary-num online">{{ kpiData?.personnel_summary?.online ?? 0 }}</span>
             <span class="summary-label">在线</span>
           </div>
           <div class="summary-item">
-            <span class="summary-num admin">5</span>
+            <span class="summary-num admin">{{ kpiData?.personnel_summary?.admins ?? 0 }}</span>
             <span class="summary-label">管理员</span>
           </div>
         </div>
@@ -538,11 +721,11 @@ function eventDotColor(type: EventType): string {
         <div class="token-bar">
           <div class="token-item">
             <span class="token-label">今日 Token 消耗</span>
-            <span class="token-value">382,400</span>
+            <span class="token-value">{{ formatLargeNum(tokenData?.today_total ?? 0) }}</span>
           </div>
           <div class="token-item">
-            <span class="token-label">月累计</span>
-            <span class="token-value accent">5.64M</span>
+            <span class="token-label">周期累计</span>
+            <span class="token-value accent">{{ formatLargeNum(tokenData?.period_total ?? 0) }}</span>
           </div>
           <div class="token-icon">
             <TrendingUp :size="18" />
@@ -680,6 +863,14 @@ function eventDotColor(type: EventType): string {
   color: #10B981;
 }
 
+.status-dot.status-error {
+  background: #EF4444;
+}
+
+.status-error-text {
+  color: #EF4444 !important;
+}
+
 /* ---- KPI Cards ---- */
 .stat-grid {
   display: grid;
@@ -747,6 +938,43 @@ function eventDotColor(type: EventType): string {
 
 .stat-trend.up { color: #10B981; }
 .stat-trend.down { color: #EF4444; }
+
+/* ---- Loading Skeletons ---- */
+.resource-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.06);
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-label {
+  width: 60px;
+  height: 12px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-value {
+  width: 40px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+  100% { opacity: 0.3; }
+}
 
 .stat-icon-wrap {
   width: 40px;

@@ -1,22 +1,23 @@
 from db.models.agent import Agent
+from db.models.agent_mcp_config import AgentMcpConfig
 from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
-from db.models.agent_mcp_config import AgentMcpConfig
-from db.models.expert_profile import ExpertProfile
 from db.models.ai_model import AIModel
 from db.models.chat_attachment import ChatAttachment
+from db.models.chat_usage import ChatUsage
 from db.models.conversation import Conversation
 from db.models.cron_job import CronJob
 from db.models.data_scope import DataScope
 from db.models.department import Department
+from db.models.expert_profile import ExpertProfile
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
 from db.models.login_record import LoginRecord
-from db.models.notification import Notification
 from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
+from db.models.notification import Notification
 from db.models.oauth2_client import OAuth2Client
 from db.models.oauth2_refresh_token import OAuth2RefreshToken
 from db.models.permission_resource import PermissionResource
@@ -25,6 +26,7 @@ from db.models.provider import Provider
 from db.models.role import Role
 from db.models.role_permission import RolePermission
 from db.models.skill import Skill
+from db.models.system_event import SystemEvent
 from db.models.tool import Tool
 from db.models.user import Account
 from db.models.user_oauth import UserOAuth
@@ -32,6 +34,7 @@ from db.models.user_role import UserRole
 
 __all__ = [
     "ChatAttachment",
+    "ChatUsage",
     "Agent",
     "AgentSkill",
     "AgentTool",
@@ -58,6 +61,7 @@ __all__ = [
     "Role",
     "RolePermission",
     "Skill",
+    "SystemEvent",
     "Tool",
     "Account",
     "UserOAuth",

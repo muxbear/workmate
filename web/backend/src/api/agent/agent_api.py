@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent import get_graph
 from agent.context.context import Context
+from api.agent.event_logger import log_event
+from api.agent.usage_tracker import record_chat_usage
 from api.conversation.conversation_api import create_conversation
 from api.deps import get_current_user_id
 from db import get_db
@@ -86,6 +88,8 @@ async def chat(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
+    import time
+    _start_time = time.time()
     is_new = not req.thread_id
     thread_id = req.thread_id or str(uuid7())
 
@@ -116,12 +120,16 @@ async def chat(
         )
     except BadRequestError as e:
         logger.warning("Model returned BadRequestError: %s", e)
+        await record_chat_usage(db, user_id, thread_id, _start_time, status="error")
+        await log_event(db, "error", "agent", f"对话被安全审核拦截 (thread_id={thread_id})")
         return ChatResponse(
             response="抱歉，您的请求被模型安全审核拦截，请尝试换一种表述方式。",
             thread_id=thread_id,
         )
     except Exception:
         logger.exception("Agent encountered an unhandled error")
+        await record_chat_usage(db, user_id, thread_id, _start_time, status="error")
+        await log_event(db, "error", "agent", f"对话处理异常 (thread_id={thread_id})")
         return ChatResponse(
             response="抱歉，服务处理您的请求时发生了错误，请稍后重试。",
             thread_id=thread_id,
@@ -141,6 +149,11 @@ async def chat(
             existing_conv.attachment_ids = merged
             await db.commit()
 
+    # 记录对话审计信息（Token 用量、耗时等）
+    await record_chat_usage(db, user_id, thread_id, _start_time, result=result)
+    # 记录系统事件
+    await log_event(db, "success", "agent", f"对话完成 (thread_id={thread_id})")
+
     final_message = result["messages"][-1]
     return ChatResponse(
         response=final_message.content,
@@ -154,6 +167,8 @@ async def chat_stream(
     request: Request,
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)):
+    import time
+    _start_time = time.time()
     is_new = not req.thread_id
     thread_id = req.thread_id or str(uuid7())
 
@@ -358,5 +373,10 @@ async def chat_stream(
                     await db.commit()
             except Exception:
                 logger.exception("Failed to merge attachment_ids")
+
+        # 记录对话审计信息（Token 用量、耗时等）
+        await record_chat_usage(db, user_id, thread_id, _start_time)
+        # 记录系统事件
+        await log_event(db, "success", "agent", f"流式对话完成 (thread_id={thread_id})")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

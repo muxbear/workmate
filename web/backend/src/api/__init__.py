@@ -22,6 +22,7 @@ from api.mcp import router as mcp_router
 from api.model_sync import router as model_sync_router
 from api.oauth import router as oauth_router
 from api.notification import router as notification_router
+from api.overview import router as overview_router
 from api.oauth2 import router as oauth2_router
 from api.personnel import router as personnel_router
 from api.providers import router as providers_router
@@ -57,5 +58,6 @@ router.include_router(graph_router)
 router.include_router(chunk_router)
 router.include_router(search_router)
 router.include_router(notification_router)
+router.include_router(overview_router)
 
 __all__ = ["router"]

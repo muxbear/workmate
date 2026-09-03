@@ -81,7 +81,11 @@ async def init_db():
     from db.models.agent_version import (
         AgentVersion,  # noqa: F401  ensure table is registered
     )
-    from db.models.cron_job import CronJob  # noqa: F401  ensure table is registered
+    from db.models.chat_usage import (
+        ChatUsage,  # noqa: F401  ensure table is registered
+    )
+    from db.models.cron_job import CronJob  # noqa: F401
+    from db.models.system_event import SystemEvent  # noqa: F401
     from db.models.data_scope import DataScope  # noqa: F401
     from db.models.oauth2_client import OAuth2Client  # noqa: F401
     from db.models.oauth2_refresh_token import OAuth2RefreshToken  # noqa: F401
