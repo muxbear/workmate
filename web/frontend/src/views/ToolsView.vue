@@ -34,7 +34,7 @@ const builtinCount = computed(() => toolStore.tools.filter((t) => t.source === '
 const thirdPartyCount = computed(() => toolStore.tools.filter((t) => t.source === 'third-party').length)
 
 const statCards = computed(() => [
-  { label: '工具总数', value: toolStore.tools.length, color: '#f2f5fa', bg: 'rgba(20,29,56,0.5)', border: 'rgba(38,51,89,0.25)' },
+  { label: '工具总数', value: toolStore.tools.length, color: '#6366f1', bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.18)' },
   { label: '内置工具', value: builtinCount.value, color: '#818cf8', bg: 'rgba(99,102,241,0.04)', border: 'rgba(99,102,241,0.15)' },
   { label: '第三方工具', value: thirdPartyCount.value, color: '#a78bfa', bg: 'rgba(168,85,247,0.04)', border: 'rgba(168,85,247,0.15)' },
   { label: '已启用', value: toolStore.enabledTools.length, color: '#34d399', bg: 'rgba(16,185,129,0.04)', border: 'rgba(16,185,129,0.15)' },
