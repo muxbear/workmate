@@ -117,6 +117,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/AccountManagementView.vue'),
         meta: { title: '账号管理', permKey: 'admin:accounts' },
       },
+      {
+        path: 'admin/announcements',
+        name: 'admin-announcements',
+        component: () => import('@/views/AnnouncementView.vue'),
+        meta: { title: '公告管理', permKey: 'admin:announcements' },
+      },
     ],
   },
   {

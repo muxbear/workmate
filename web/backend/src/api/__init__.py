@@ -4,6 +4,12 @@ from fastapi import APIRouter
 from api.accounts import router as accounts_router
 from api.agent import router as agent_router
 from api.agents import router as agents_router
+from api.announcements import (
+    admin_router as announcements_admin_router,
+)
+from api.announcements import (
+    router as announcements_router,
+)
 from api.attachment import router as attachment_router
 from api.auth import router as auth_router
 from api.captcha import router as captcha_router
@@ -20,10 +26,15 @@ from api.knowledge_base import (
 )
 from api.mcp import router as mcp_router
 from api.model_sync import router as model_sync_router
+from api.notification import (
+    admin_router as notification_admin_router,
+)
+from api.notification import (
+    router as notification_router,
+)
 from api.oauth import router as oauth_router
-from api.notification import router as notification_router
-from api.overview import router as overview_router
 from api.oauth2 import router as oauth2_router
+from api.overview import router as overview_router
 from api.personnel import router as personnel_router
 from api.providers import router as providers_router
 from api.rbac import router as rbac_router
@@ -36,6 +47,8 @@ router.include_router(accounts_router)
 router.include_router(agent_router)
 router.include_router(attachment_router)
 router.include_router(agents_router)
+router.include_router(announcements_router)
+router.include_router(announcements_admin_router)
 router.include_router(experts_router)
 router.include_router(auth_router)
 router.include_router(captcha_router)
@@ -58,6 +71,7 @@ router.include_router(graph_router)
 router.include_router(chunk_router)
 router.include_router(search_router)
 router.include_router(notification_router)
+router.include_router(notification_admin_router)
 router.include_router(overview_router)
 
 __all__ = ["router"]

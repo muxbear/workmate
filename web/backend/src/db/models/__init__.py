@@ -3,6 +3,7 @@ from db.models.agent_mcp_config import AgentMcpConfig
 from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
 from db.models.ai_model import AIModel
+from db.models.announcement import Announcement, AnnouncementRead
 from db.models.chat_attachment import ChatAttachment
 from db.models.chat_usage import ChatUsage
 from db.models.conversation import Conversation
@@ -38,6 +39,8 @@ __all__ = [
     "Agent",
     "AgentSkill",
     "AgentTool",
+    "Announcement",
+    "AnnouncementRead",
     "AgentMcpConfig",
     "ExpertProfile",
     "AIModel",

@@ -58,8 +58,10 @@ const breadcrumb = computed(() => {
     '/admin/users': { group: '管理', item: '人员管理' },
     '/admin/rbac': { group: '管理', item: '角色权限' },
     '/admin/resources': { group: '管理', item: '资源管理' },
+    '/admin/announcements': { group: '管理', item: '公告管理' },
   }
   const path = route.path
+  if (map[path]) return map[path]
   if (path.startsWith('/admin/')) return map['/admin']
   if (path.startsWith('/mcp/')) return map['/mcp']
   return map[path] ?? null

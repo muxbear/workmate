@@ -571,6 +571,9 @@ class RbacService:
             {"id": "m-admin-accounts", "parent": "g-admin", "type": "menu",
              "label": "账号管理", "perm_key": "admin:accounts", "path": "/admin/accounts",
              "icon": "KeyRound", "sort": 6},
+            {"id": "m-admin-announcements", "parent": "g-admin", "type": "menu",
+             "label": "公告管理", "perm_key": "admin:announcements",
+             "path": "/admin/announcements", "icon": "Megaphone", "sort": 7},
         ]
 
         for rd in resources_data:
@@ -691,6 +694,7 @@ class RbacService:
 
         # Sync expert menu (added after initial seed)
         await self._sync_expert_menu()
+        await self._sync_announcement_menu()
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -738,6 +742,53 @@ class RbacService:
 
         await self.db.flush()
         logger.info("Expert menu synced successfully.")
+
+    async def _sync_announcement_menu(self) -> None:
+        """Ensure the announcement management menu exists (added after initial seed)."""
+        result = await self.db.execute(
+            select(PermissionResource).where(
+                PermissionResource.id == "m-admin-announcements"
+            )
+        )
+        if result.scalar_one_or_none():
+            return  # Already exists
+
+        announcement_menu = PermissionResource(
+            id="m-admin-announcements",
+            parent_id="g-admin",
+            type="menu",
+            label="公告管理",
+            perm_key="admin:announcements",
+            path="/admin/announcements",
+            icon="Megaphone",
+            sort_order=7,
+            status="active",
+            is_builtin=True,
+            description="公告与通知管理",
+            btn_variant=None,
+            danger=False,
+        )
+        self.db.add(announcement_menu)
+        await self.db.flush()
+
+        # Grant the menu permission to roles that already have admin:accounts
+        rp_result = await self.db.execute(
+            select(RolePermission).where(RolePermission.perm_key == "admin:accounts")
+        )
+        for rp in rp_result.scalars().all():
+            dup = await self.db.execute(
+                select(RolePermission).where(
+                    RolePermission.role_id == rp.role_id,
+                    RolePermission.perm_key == "admin:announcements",
+                )
+            )
+            if not dup.scalar_one_or_none():
+                self.db.add(
+                    RolePermission(role_id=rp.role_id, perm_key="admin:announcements")
+                )
+
+        await self.db.flush()
+        logger.info("Announcement menu synced successfully.")
 
     async def _get_resource(self, resource_id: str) -> PermissionResource | None:
         result = await self.db.execute(

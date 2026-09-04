@@ -24,6 +24,7 @@ import {
   Search,
   X,
   Folder,
+  Megaphone,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useUiStore } from '@/stores/ui'
@@ -60,7 +61,7 @@ const searchInputRef = ref<HTMLInputElement | null>(null)
 const iconMap: Record<string, Component> = {
   MessageSquare, MessagesSquare, LayoutDashboard, Server, Database,
   Timer, BarChart3, Bot, Zap, Wrench, Network, CloudMoon,
-  FileText, Settings, Shield, Brain, Folder,
+  FileText, Settings, Shield, Brain, Folder, Megaphone,
 }
 
 function resolveIcon(name: string): Component {
