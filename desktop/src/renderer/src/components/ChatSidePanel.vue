@@ -307,7 +307,7 @@ const dragging = ref(false)
 /** 拖拽分割线：mousedown 后跟随鼠标，钳制 [240, min(600, 60% 窗口)]；全屏态禁用 */
 function startDrag(e: MouseEvent): void {
   if (props.fullscreen) return
-  // 文档 6:4 比例态下用户主动拖拽 → 退出比例态，改由像素宽度接管
+  // 文档 5:5 比例态下用户主动拖拽 → 退出比例态，改由像素宽度接管
   if (props.ratioMode) emit('ratio-exit')
   e.preventDefault()
   dragging.value = true
@@ -766,10 +766,10 @@ defineExpose({
   user-select: none;
 }
 
-/* 文档 6:4 比例态：覆盖像素宽度（inline style 由 !important 让位；用户拖拽即退出该态） */
+/* 文档 5:5 比例态：覆盖像素宽度（inline style 由 !important 让位；用户拖拽即退出该态） */
 .csp--ratio {
-  width: 40% !important;
-  flex: 0 0 40% !important;
+  width: 50% !important;
+  flex: 0 0 50% !important;
 }
 
 .csp--fullscreen {

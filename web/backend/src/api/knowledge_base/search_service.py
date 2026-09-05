@@ -198,6 +198,7 @@ class SearchOrchestrator:
     def __init__(self, vector_store, embedding_model) -> None:
         self._vector_store = vector_store
         self._embedding_model = embedding_model
+        self._embedding_cache: dict[tuple[str, str | None], object] = {}
         self._registry = create_search_registry()
 
     async def search(
@@ -218,8 +219,36 @@ class SearchOrchestrator:
         top_k = request.top_k
 
         # 向量化查询（纯 BM25 不需要，但为简化流程统一执行）
+        embedding_model = self._embedding_model
+        from sqlalchemy import select
+
+        from db.models.knowledge_base import KnowledgeBase
+
+        kb = (
+            await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+        ).scalar_one_or_none()
+        kb_config = kb.config if kb and isinstance(kb.config, dict) else {}
+        emb_model_name = kb_config.get("embedding_model")
+        if emb_model_name:
+            emb_provider_id = kb_config.get("embedding_provider_id")
+            cache_key = (emb_model_name, emb_provider_id)
+            cached = self._embedding_cache.get(cache_key)
+            if cached is None:
+                from api.knowledge_base.model_provider import load_embedding_model
+
+                try:
+                    cached = await load_embedding_model(
+                        db,
+                        model_name=emb_model_name,
+                        provider_id=emb_provider_id,
+                    )
+                    self._embedding_cache[cache_key] = cached
+                except RuntimeError:
+                    cached = self._embedding_model
+            embedding_model = cached
+
         try:
-            query_embedding = await self._embedding_model.aembed_query(request.query)
+            query_embedding = await embedding_model.aembed_query(request.query)
         except Exception:
             logger.exception("Query embedding failed")
             raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")

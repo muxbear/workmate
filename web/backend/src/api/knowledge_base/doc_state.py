@@ -157,8 +157,14 @@ class ExtractingState(DocState):
             )
             if enable_graph is not False:  # 默认开启
                 _logger.info("Running graph extraction for doc=%s", ctx.doc_id)
+                entity_model = (
+                    ctx.config.get("entity_model") or ctx.config.get("entityModel")
+                )
                 entities, relations = await pipeline.graph_service.extract_entities_and_relations(
-                    ctx.kb_id, ctx.doc_id, ctx.chunks,
+                    ctx.kb_id,
+                    ctx.doc_id,
+                    ctx.chunks,
+                    model_name=entity_model,
                 )
                 ctx.entities_count = len(entities)
                 ctx.relations_count = len(relations)

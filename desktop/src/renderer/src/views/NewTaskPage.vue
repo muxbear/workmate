@@ -564,7 +564,7 @@ const panelFullscreen = ref(false)
 
 // 右侧栏全屏切换：.chat-main 以 v-show 隐藏会重置 scrollTop，恢复后刷新滚动状态（防按钮/追滚读陈旧值）
 watch(panelFullscreen, () => {
-  // 全屏右侧栏时退出 6:4 比例态（全屏宽度 100%）
+  // 全屏右侧栏时退出 5:5 比例态（全屏宽度 100%）
   if (panelFullscreen.value) sideRatioMode.value = false
   nextTick(updateScrollState)
 })
@@ -580,7 +580,7 @@ const showToast = (text: string): void => {
   }, 1500)
 }
 
-// ── 文档右侧栏：6:4 比例态 + 产物流同步 ──
+// ── 文档右侧栏：5:5 比例态 + 产物流同步 ──
 const sidePanelRef = ref<InstanceType<typeof ChatSidePanel> | null>(null)
 const sideRatioMode = ref(false)
 const artifactTextLengths = new Map<string, number>()
@@ -3910,9 +3910,9 @@ watch(
   overflow: hidden;
 }
 
-/* 文档自动展开后左右 6:4（用户拖拽/收起/全屏时退出） */
+/* 文档自动展开后左右 5:5（用户拖拽/收起/全屏时退出） */
 .chat-area--doc-ratio .chat-main {
-  flex: 0 1 60%;
+  flex: 0 1 50%;
 }
 
 /* AI 回复下的生成文档文件链接条（live 与历史回显共用） */

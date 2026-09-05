@@ -295,7 +295,10 @@ async def rebuild_graph_for_kb(
             documents = loader_registry.load(doc.storage_path, doc.type)
             chunks = chunk_registry.split("recursive", documents)
             entities, relations = await extractor.extract_entities_and_relations(
-                kb_id, doc.id, chunks,
+                kb_id,
+                doc.id,
+                chunks,
+                model_name=(kb_config or {}).get("entity_model"),
             )
             total_entities += len(entities)
             total_relations += len(relations)
@@ -393,22 +396,21 @@ class GraphExtractionService:
         """初始化抽取服务，构建 few-shot 示例."""
         self._examples = _build_example_data()
 
-    def _build_model_config(self):
-        """构建连接 DeepSeek 的 ModelConfig（OpenAI 兼容模式）。.
+    def _build_model_config(self, model_name: str, api_base: str, api_key: str):
+        """构建连接指定 LLM 的 ModelConfig（OpenAI 兼容模式）。.
 
-        DeepSeek 不支持 response_format 参数，通过 format_type=YAML 阻止
-        OpenAI Provider 发送该参数。实际输出仍由 lx.extract 的 format_type
-        控制为 JSON。
+        OpenAI 兼容服务不支持 response_format 参数时，通过 format_type=YAML
+        阻止发送该参数。实际输出仍由 lx.extract 的 format_type 控制为 JSON。
         """
         from langextract.core.data import FormatType
         from langextract.factory import ModelConfig
 
         return ModelConfig(
-            model_id=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
+            model_id=model_name,
             provider="openai",
             provider_kwargs={
-                "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
-                "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                "api_key": api_key,
+                "base_url": api_base,
                 "format_type": FormatType.YAML,
             },
         )
@@ -418,6 +420,8 @@ class GraphExtractionService:
         kb_id: str,
         doc_id: str,
         chunks: list,
+        model_name: str | None = None,
+        provider_id: str | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """使用 LangExtract 从文档分片中抽取实体和关系。.
 
@@ -432,12 +436,20 @@ class GraphExtractionService:
         if not combined.strip():
             return [], []
 
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            logger.warning("DEEPSEEK_API_KEY not set, skipping graph extraction")
+        from api.knowledge_base.model_provider import load_llm_model
+        from db.engine import async_session
+        try:
+            async with async_session() as session:
+                llm_name, api_base, api_key = await load_llm_model(
+                    session,
+                    model_name=model_name,
+                    provider_id=provider_id,
+                )
+        except RuntimeError as exc:
+            logger.warning("知识库图谱抽取模型不可用，跳过: %s", exc)
             return [], []
 
-        config = self._build_model_config()
+        config = self._build_model_config(llm_name, api_base, api_key)
 
         try:
             result = await asyncio.to_thread(

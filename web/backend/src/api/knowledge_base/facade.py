@@ -39,11 +39,11 @@ class KnowledgeBaseFacade:
         )
         from api.knowledge_base.graph_service import GraphExtractionService
         from api.knowledge_base.mediator import KnowledgeBaseMediator
+        from api.knowledge_base.model_provider import load_embedding_model
         from api.knowledge_base.search_service import (
             SearchOrchestrator,
             set_search_orchestrator,
         )
-        from core.rag.embedding import get_embedding_model
         from core.rag.loaders import create_default_loader_registry
         from core.rag.splitters import create_chunk_registry
         from core.rag.vector_store import ChromaVectorStore, MilvusVectorStore
@@ -52,12 +52,9 @@ class KnowledgeBaseFacade:
 
         settings = self._settings
 
-        # 嵌入模型
-        embedding_model = get_embedding_model(
-            model_name=settings.DEFAULT_EMBEDDING_MODEL,
-            api_base=settings.DASHSCOPE_BASE_URL,
-            api_key=settings.DASHSCOPE_API_KEY,
-        )
+        # 嵌入模型——从“模型”页面配置的提供商中加载
+        async with async_session() as session:
+            embedding_model = await load_embedding_model(session)
 
         # 向量数据库 —— 工厂方法模式
         VectorStoreFactory.register("milvus", MilvusVectorStore)

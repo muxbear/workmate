@@ -68,7 +68,7 @@ async def resolve_model(
             ).scalar_one_or_none()
 
             if provider is None:
-                raise RuntimeError(f"提供商 {provider_id} 未找到，使用默认 LLM")
+                raise RuntimeError(f"提供商 {provider_id} 未找到")
 
             decrypted_key = decrypt_api_key(provider.api_key)
             if not decrypted_key:
@@ -85,7 +85,7 @@ async def resolve_model(
             ).scalar_one_or_none()
 
             if model is None:
-                raise RuntimeError(f"模型提供商 {provider_id} 未配置模型 {provider_id}")
+                raise RuntimeError(f"模型提供商 {provider_id} 未配置模型 {model_id}")
 
             return ChatOpenAI(
                 model=model.name,
@@ -93,5 +93,5 @@ async def resolve_model(
                 base_url=provider.api_base,
             )
         except Exception:
-            logger.exception("解析模型失败，使用默认 LLM")
+            logger.exception("解析模型失败")
             raise

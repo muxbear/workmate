@@ -17,7 +17,9 @@ from api.providers.schemas import (
     ProviderUpdateRequest,
 )
 from core.security import MASKED_API_KEY, decrypt_api_key, encrypt_api_key
+from db.models.agent import Agent
 from db.models.ai_model import AIModel
+from db.models.expert import Expert
 from db.models.provider import Provider
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,40 @@ async def _get_model(db: AsyncSession, model_id: str, provider_id: str) -> AIMod
     if model is None:
         raise HTTPException(status_code=404, detail="模型不存在")
     return model
+
+
+async def _detach_model_references(
+    db: AsyncSession,
+    provider_id: str,
+    model_id: str | None = None,
+) -> None:
+    """删除模型/提供商时同步置空 agents、experts 中的引用，避免启动构建图失败."""
+    agent_stmt = (
+        select(Agent).where(Agent.provider_id == provider_id)
+        if model_id is None
+        else select(Agent).where(
+            Agent.provider_id == provider_id,
+            Agent.model_id == model_id,
+        )
+    )
+    expert_stmt = (
+        select(Expert).where(Expert.provider_id == provider_id)
+        if model_id is None
+        else select(Expert).where(
+            Expert.provider_id == provider_id,
+            Expert.model_id == model_id,
+        )
+    )
+    agents = (await db.execute(agent_stmt)).scalars().all()
+    experts = (await db.execute(expert_stmt)).scalars().all()
+    for agent in agents:
+        if model_id is None:
+            agent.provider_id = None
+        agent.model_id = None
+    for expert in experts:
+        if model_id is None:
+            expert.provider_id = None
+        expert.model_id = None
 
 
 # ---- 提供商 CRUD ----
@@ -158,6 +194,7 @@ async def update_provider(
 async def delete_provider(db: AsyncSession, provider_id: str, user_id: str) -> None:
     """Delete a provider and cascade-delete all its models."""
     provider = await _get_provider(db, provider_id)
+    await _detach_model_references(db, provider_id)
     await db.execute(
         delete(AIModel).where(AIModel.provider_id == provider_id)
     )
@@ -238,6 +275,7 @@ async def delete_model(
     """Delete a model under a provider."""
     await _get_provider(db, provider_id)
     model = await _get_model(db, model_id, provider_id)
+    await _detach_model_references(db, provider_id, model_id)
     await db.delete(model)
     await db.commit()
 

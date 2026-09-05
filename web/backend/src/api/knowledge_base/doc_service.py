@@ -257,24 +257,37 @@ class IndexingPipeline:
         self.vector_store = vector_store
         self.graph_service = graph_service
         self._observers: list[ProgressObserver] = []
-        self._embedding_cache: dict[str, object] = {}
+        self._embedding_cache: dict[tuple[str, str | None], object] = {}
         self._chunk_registry_cache: dict[tuple, ChunkStrategyRegistry] = {}
 
     def attach(self, observer: ProgressObserver) -> None:
         self._observers.append(observer)
 
-    def _get_or_create_embedding(self, model_name: str | None):
+    async def _get_or_create_embedding(
+        self,
+        model_name: str | None,
+        provider_id: str | None = None,
+    ):
         """获取或创建 embedding model 实例（缓存避免重复创建）。"""
         if not model_name:
             return self.embedding_model
-        if model_name not in self._embedding_cache:
-            from core.rag.embedding import get_embedding_model
-            self._embedding_cache[model_name] = get_embedding_model(
-                model_name=model_name,
-                api_base=settings.DASHSCOPE_BASE_URL,
-                api_key=settings.DASHSCOPE_API_KEY,
-            )
-        return self._embedding_cache[model_name]
+        cache_key = (model_name, provider_id)
+        if cache_key not in self._embedding_cache:
+            from api.knowledge_base.model_provider import load_embedding_model
+            from db.engine import async_session
+            try:
+                async with async_session() as session:
+                    self._embedding_cache[cache_key] = await load_embedding_model(
+                        session,
+                        model_name=model_name,
+                        provider_id=provider_id,
+                    )
+            except RuntimeError:
+                logger.warning(
+                    "未找到知识库配置的 embedding 模型 %s，使用默认实例", model_name
+                )
+                self._embedding_cache[cache_key] = self.embedding_model
+        return self._embedding_cache[cache_key]
 
     def _get_or_create_chunk_registry(self, config: dict, emb_model):
         """获取或创建带自定义参数的分片注册表。"""
@@ -301,7 +314,9 @@ class IndexingPipeline:
 
         # 获取该文档使用的 embedding model 和 chunk registry
         emb_model_name = config.get("embedding_model")
-        emb_model = self._get_or_create_embedding(emb_model_name)
+        emb_model = await self._get_or_create_embedding(
+            emb_model_name, config.get("embedding_provider_id"),
+        )
         chunk_reg = self._get_or_create_chunk_registry(config, emb_model)
 
         ctx = IndexingContext(
