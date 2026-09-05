@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.agent_mcp_config import AgentMcpConfig
 from db.models.agent_tool import AgentTool
+from db.models.expert_mcp_config import ExpertMcpConfig
+from db.models.expert_tool import ExpertTool
 from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
 from db.models.tool import Tool
@@ -63,9 +65,10 @@ async def _get_mcp_config(
     db: AsyncSession,
     mcp_tool_name: str,
     agent_id: str | None = None,
+    expert_id: str | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """获取 MCP 配置：优先专家级(agent_mcp_configs) > 用户级(mcp_installations) > 默认运行配置."""
+    """获取 MCP 配置：优先实体级(agent/expert_mcp_configs) > 用户级(mcp_installations) > 默认运行配置."""
     mcp_tool = (await db.execute(
         select(McpTool).where(McpTool.name == mcp_tool_name)
     )).scalar_one_or_none()
@@ -84,6 +87,17 @@ async def _get_mcp_config(
         )).scalar_one_or_none()
         if agent_config is not None:
             return {**defaults, **agent_config.config}
+
+    if expert_id is not None:
+        expert_config = (await db.execute(
+            select(ExpertMcpConfig).where(
+                ExpertMcpConfig.expert_id == expert_id,
+                ExpertMcpConfig.mcp_tool_id == mcp_tool.id,
+                ExpertMcpConfig.enabled,
+            )
+        )).scalar_one_or_none()
+        if expert_config is not None:
+            return {**defaults, **expert_config.config}
 
     if user_id is None:
         return defaults
@@ -163,6 +177,50 @@ async def load_mcp_tools_for_agent(
 
     logger.info('为 Agent %s 加载了 %d 个 MCP 工具', agent_id, len(all_tools))
     return all_tools
+
+
+async def load_mcp_tools_for_expert(
+    db: AsyncSession,
+    expert_id: str,
+    user_id: str | None = None,
+) -> list[Any]:
+    """加载专家关联的 MCP 工具，返回适配后的 BaseTool 列表."""
+    all_tools: list[Any] = []
+    loaded_names: set[str] = set()
+
+    config_rows = (await db.execute(
+        select(ExpertMcpConfig, McpTool.name)
+        .join(McpTool, McpTool.id == ExpertMcpConfig.mcp_tool_id)
+        .where(
+            ExpertMcpConfig.expert_id == expert_id,
+            ExpertMcpConfig.enabled,
+        )
+    )).all()
+
+    for cfg, mcp_name in config_rows:
+        if not mcp_name or mcp_name in loaded_names:
+            continue
+        loaded_names.add(mcp_name)
+        config = await _get_mcp_config(db, mcp_name, expert_id=expert_id, user_id=user_id)
+        await _append_mcp_tools(all_tools, mcp_name, config)
+
+    legacy_stmt = (
+        select(Tool)
+        .join(ExpertTool, ExpertTool.tool_id == Tool.id)
+        .where(ExpertTool.expert_id == expert_id, Tool.tool_type == 'mcp')
+    )
+    legacy_rows = (await db.execute(legacy_stmt)).scalars().all()
+    for tool_row in legacy_rows:
+        mcp_name = tool_row.implementation
+        if not mcp_name or mcp_name in loaded_names:
+            continue
+        loaded_names.add(mcp_name)
+        config = await _get_mcp_config(db, mcp_name, expert_id=expert_id, user_id=user_id)
+        await _append_mcp_tools(all_tools, mcp_name, config)
+
+    logger.info('为 Expert %s 加载了 %d 个 MCP 工具', expert_id, len(all_tools))
+    return all_tools
+
 
 def _build_server_config(mcp_name: str, config: dict[str, Any]) -> dict[str, Any]:
     transport = config.get('transport', 'stdio')

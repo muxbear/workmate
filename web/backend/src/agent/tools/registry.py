@@ -82,20 +82,41 @@ async def get_tool_registry(db: AsyncSession) -> dict[str, Any]:
     logger.info("动态工具注册表加载完成：%d 个工具可用", len(registry))
     return registry
 
-
 async def resolve_agent_tools(
     db: AsyncSession,
     agent_id: str,
     tool_names: list[str],
 ) -> list[Any]:
-    """为指定 Agent 解析工具列表。
+    """为指定 Agent 解析工具列表。."""
+    from agent.tools.mcp_loader import load_mcp_tools_for_agent  # noqa: PLC0415
 
-    合并内置工具和 MCP 工具，按 tool_names 顺序返回。
+    return await _resolve_entity_tools(db, agent_id, tool_names, load_mcp_tools_for_agent)
+
+
+async def resolve_expert_tools(
+    db: AsyncSession,
+    expert_id: str,
+    tool_names: list[str],
+) -> list[Any]:
+    """为指定 Expert 解析工具列表。."""
+    from agent.tools.mcp_loader import load_mcp_tools_for_expert  # noqa: PLC0415
+
+    return await _resolve_entity_tools(db, expert_id, tool_names, load_mcp_tools_for_expert)
+
+
+async def _resolve_entity_tools(
+    db: AsyncSession,
+    entity_id: str,
+    tool_names: list[str],
+    mcp_loader: Any,
+) -> list[Any]:
+    """合并内置工具和 MCP 工具，按 tool_names 顺序返回。.
 
     Args:
         db: 数据库会话。
-        agent_id: Agent ID。
+        entity_id: Agent ID 或 Expert ID。
         tool_names: 工具名称列表。
+        mcp_loader: 加载 MCP 工具的可调用对象。
 
     Returns:
         可调用工具对象列表。
@@ -103,12 +124,10 @@ async def resolve_agent_tools(
     # 1. 加载内置工具注册表
     registry = await get_tool_registry(db)
 
-    # 2. 加载该 Agent 通过 agent_mcp_configs 配置的 MCP 工具
+    # 2. 加载该实体通过 *_mcp_configs 配置的 MCP 工具
     mcp_tools: list[Any] = []
     try:
-        from agent.tools.mcp_loader import load_mcp_tools_for_agent
-
-        mcp_tools = await load_mcp_tools_for_agent(db, agent_id)
+        mcp_tools = await mcp_loader(db, entity_id)
         for mcp_tool in mcp_tools:
             registry[mcp_tool.name] = mcp_tool
     except ImportError:
@@ -125,8 +144,7 @@ async def resolve_agent_tools(
         else:
             logger.warning("工具 '%s' 在注册表中未找到，已跳过", name)
 
-    # 4. 自动附加该 Agent 配置的 MCP 工具：AgentMcpConfig 即显式配置，
-    #    无需在 tool_names 中重复声明，避免配置了 MCP 服务但工具未加载。
+    # 4. 自动附加 MCP 工具：显式配置无需在 tool_names 中重复声明
     resolved_names = {getattr(tool, "name", None) for tool in resolved}
     for mcp_tool in mcp_tools:
         tool_name = getattr(mcp_tool, "name", None)

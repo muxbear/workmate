@@ -34,6 +34,7 @@ from db.models.agent import Agent
 from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
 from db.models.cron_job import CronJob
+from db.models.expert import Expert
 from db.models.mcp_tool import McpTool
 from db.models.skill import Skill
 from db.models.tool import Tool
@@ -50,6 +51,22 @@ DEFAULT_AGENT_FILES = [
 ]
 
 DEFAULT_AGENT_TOOLS = ["http_request"]
+
+
+async def _ensure_agent_name_available(
+    db: AsyncSession, name: str, agent_id: str | None = None,
+) -> None:
+    """校验智能体名称在 agents 与 experts 中均唯一。."""
+    stmt = select(Agent).where(Agent.name == name)
+    if agent_id is not None:
+        stmt = stmt.where(Agent.id != agent_id)
+    if (await db.execute(stmt)).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"Agent name '{name}' already exists")
+
+    expert_stmt = select(Expert).where(Expert.name == name)
+    if (await db.execute(expert_stmt)).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"专家名称 '{name}' 已被使用")
+
 
 
 async def _get_agent_files_by_scope(
@@ -325,11 +342,7 @@ async def get_agent(db: AsyncSession, agent_id: str) -> AgentInfo:
 async def create_agent(db: AsyncSession, req: AgentCreateRequest) -> AgentInfo:
     """Create a new agent (main or sub)."""
     # Check name uniqueness globally
-    existing = (await db.execute(
-        select(Agent).where(Agent.name == req.name)
-    )).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail=f"Agent name '{req.name}' already exists")
+    await _ensure_agent_name_available(db, req.name)
 
     agent = Agent(
         name=req.name,
@@ -422,13 +435,12 @@ async def clone_agent(db: AsyncSession, agent_id: str) -> AgentInfo:
     new_name = base_name
     counter = 2
     while True:
-        dup = (await db.execute(
-            select(Agent).where(Agent.name == new_name)
-        )).scalar_one_or_none()
-        if dup is None:
+        try:
+            await _ensure_agent_name_available(db, new_name)
             break
-        new_name = f"{base_name} {counter}"
-        counter += 1
+        except HTTPException:
+            new_name = f"{base_name} {counter}"
+            counter += 1
 
     cloned = Agent(
         name=new_name,
@@ -508,11 +520,7 @@ async def update_agent(db: AsyncSession, agent_id: str, req: AgentUpdateRequest)
         raise HTTPException(status_code=404, detail="Agent not found")
 
     # Check name uniqueness (exclude self)
-    dup = (await db.execute(
-        select(Agent).where(Agent.name == req.name, Agent.id != agent_id)
-    )).scalar_one_or_none()
-    if dup is not None:
-        raise HTTPException(status_code=409, detail=f"Agent name '{req.name}' already exists")
+    await _ensure_agent_name_available(db, req.name, agent_id=agent_id)
 
     # 修改前创建版本快照（改进4）
     current_tool_names = await _get_agent_tool_names(db, agent_id)

@@ -1,27 +1,29 @@
-"""专家管理业务逻辑层。.
+"""专家管理业务逻辑层（以 experts 表为主）。.
 
-设计模式运用：
-- 工厂模式（Factory）：ExpertAssembler 负责将 ORM 模型组装为 ExpertInfo 响应对象，
-  封装多表 JOIN 后的数据装配逻辑，避免在各 service 函数中重复组装。
-- 策略模式（Strategy）：排序逻辑通过 SortStrategy 字典注入，新增排序方式只需
-  添加一个排序函数和一条映射，无需修改 list_experts 主体。
-- 适配器模式（Adapter）：to_sync_item 将 ExpertInfo 适配为桌面端同步所需的
-  ExpertSyncItem，隔离内部数据结构与外部接口契约。
+设计说明：
+- 工厂模式（Factory）：ExpertAssembler 负责将 Expert ORM 模型组装为
+  ExpertInfo 响应对象，避免在各 service 函数中重复组装。
+- 策略模式（Strategy）：排序逻辑通过 SortStrategy 字典注入，新增排序只需
+  添加一个排序函数和一条映射。
+- 适配器模式（Adapter）：to_sync_item 将 ExpertInfo 适配为桌面端同步所需
+  的 ExpertSyncItem，隔离内部数据结构与外部接口契约。
+- 数据主表：专家 CRUD 与查询全部基于 experts 表（含 expert_tools、
+  expert_skills、expert_mcp_configs、expert_versions 关联数据），
+  不再读写 agents / expert_profiles。
 """
+
 from __future__ import annotations
 
 import logging
 import time
 from collections.abc import Callable
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.graph import invalidate_graph
-from api.agents.service import (
-    _create_version_snapshot as _create_agent_version_snapshot,
-)
 from api.experts.schemas import (
     ExpertConfigUpdateRequest,
     ExpertCreateRequest,
@@ -37,11 +39,12 @@ from api.experts.schemas import (
     ToolBrief,
 )
 from db.models.agent import Agent
-from db.models.agent_mcp_config import AgentMcpConfig
-from db.models.agent_skill import AgentSkill
-from db.models.agent_tool import AgentTool
 from db.models.ai_model import AIModel
-from db.models.expert_profile import ExpertProfile
+from db.models.expert import Expert
+from db.models.expert_mcp_config import ExpertMcpConfig
+from db.models.expert_skill import ExpertSkill
+from db.models.expert_tool import ExpertTool
+from db.models.expert_version import ExpertVersion
 from db.models.mcp_tool import McpTool
 from db.models.skill import Skill
 from db.models.tool import Tool
@@ -63,70 +66,73 @@ EXPERT_CATEGORIES: dict[str, str] = {
 }
 
 FEATURED_SCENES = [
-    {"id": "content", "label": "内容创作", "color": "linear-gradient(135deg,#f59e0b,#d97706)"},
-    {"id": "invest", "label": "投资分析", "color": "linear-gradient(135deg,#0891b2,#0e7490)"},
-    {"id": "legal", "label": "法律财税", "color": "linear-gradient(135deg,#6366f1,#4f46e5)"},
-    {"id": "sme", "label": "小微企业", "color": "linear-gradient(135deg,#10b981,#059669)"},
+    {
+        "id": "content",
+        "label": "内容创作",
+        "color": "linear-gradient(135deg,#f59e0b,#d97706)",
+    },
+    {
+        "id": "invest",
+        "label": "投资分析",
+        "color": "linear-gradient(135deg,#0891b2,#0e7490)",
+    },
+    {
+        "id": "legal",
+        "label": "法律财税",
+        "color": "linear-gradient(135deg,#6366f1,#4f46e5)",
+    },
+    {
+        "id": "sme",
+        "label": "小微企业",
+        "color": "linear-gradient(135deg,#10b981,#059669)",
+    },
 ]
 
 
 # ── 工厂模式：ExpertAssembler ─────────────────────────────────
 
-class ExpertAssembler:
-    """将 ORM 模型组装为 ExpertInfo 响应对象。.
 
-    封装 Agent + ExpertProfile + tools + skills + mcp_configs 的多表
-    装配逻辑，确保列表和详情返回一致的数据结构。
-    """
+class ExpertAssembler:
+    """将 Expert ORM 模型组装为 ExpertInfo 响应对象。."""
 
     @staticmethod
-    async def assemble(
-        db: AsyncSession,
-        agent: Agent,
-        profile: ExpertProfile | None = None,
-    ) -> ExpertInfo:
-        """从 Agent ORM 记录组装完整的 ExpertInfo。."""
-        if profile is None:
-            profile_stmt = select(ExpertProfile).where(ExpertProfile.agent_id == agent.id)
-            profile = (await db.execute(profile_stmt)).scalar_one_or_none()
-            if profile is None:
-                raise HTTPException(status_code=404, detail="专家 profile 不存在")
-
-        tools = await _query_tools(db, agent.id)
-        skills = await _query_skills(db, agent.id)
-        mcp_configs = await _query_mcp_configs(db, agent.id)
+    async def assemble(db: AsyncSession, expert: Expert) -> ExpertInfo:
+        """从 Expert 记录组装完整的 ExpertInfo。."""
+        tools = await _query_tools(db, expert.id)
+        skills = await _query_skills(db, expert.id)
+        mcp_configs = await _query_mcp_configs(db, expert.id)
 
         model_name = None
         model_type = None
-        if agent.model_id:
-            model = (await db.execute(
-                select(AIModel).where(AIModel.id == agent.model_id)
-            )).scalar_one_or_none()
+        if expert.model_id:
+            model = (
+                await db.execute(select(AIModel).where(AIModel.id == expert.model_id))
+            ).scalar_one_or_none()
             if model is not None:
                 model_name = model.name
                 model_type = model.type
 
         return ExpertInfo(
-            id=agent.id,
-            name=agent.name,
-            title=profile.title,
-            description=agent.description,
-            category=profile.category,
-            tags=profile.tags if isinstance(profile.tags, list) else [],
-            icon=profile.icon,
-            color=profile.color,
-            initials=profile.initials,
-            avatar_url=profile.avatar_url,
-            rating=profile.rating,
-            usage_count=profile.usage_count,
-            featured=profile.featured,
-            scene=profile.scene,
-            sort_order=profile.sort_order,
-            is_published=profile.is_published,
-            status=agent.status,
-            system_prompt=agent.system_prompt or "",
-            provider_id=agent.provider_id,
-            model_id=agent.model_id,
+            id=expert.id,
+            name=expert.name,
+            title=expert.title,
+            description=expert.description,
+            category=expert.category,
+            tags=expert.tags if isinstance(expert.tags, list) else [],
+            icon=expert.icon,
+            color=expert.color,
+            initials=expert.initials,
+            avatar_url=expert.avatar_url,
+            rating=expert.rating,
+            usage_count=expert.usage_count,
+            featured=expert.featured,
+            scene=expert.scene,
+            sort_order=expert.sort_order,
+            is_published=expert.is_published,
+            status=expert.status,
+            system_prompt=expert.system_prompt or "",
+            provider_id=expert.provider_id,
+            model_id=expert.model_id,
             model_name=model_name,
             model_type=model_type,
             prompt_template="",
@@ -134,9 +140,9 @@ class ExpertAssembler:
             tools=tools,
             skills=skills,
             mcp_configs=mcp_configs,
-            files=agent.files if isinstance(agent.files, list) else [],
-            created_at=agent.created_at,
-            updated_at=agent.updated_at,
+            files=expert.files if isinstance(expert.files, list) else [],
+            created_at=expert.created_at,
+            updated_at=expert.updated_at,
         )
 
     @staticmethod
@@ -172,23 +178,24 @@ class ExpertAssembler:
 
 # ── 策略模式：排序策略 ───────────────────────────────────────
 
-SortStrategy = Callable[[list[tuple[Agent, ExpertProfile]]], list[tuple[Agent, ExpertProfile]]]
+SortStrategy = Callable[[list[Expert]], list[Expert]]
 
 
-def _sort_by_rating(rows: list[tuple[Agent, ExpertProfile]]) -> list[tuple[Agent, ExpertProfile]]:
-    return sorted(rows, key=lambda r: (-r[1].rating, -r[1].sort_order))
+def _sort_by_rating(rows: list[Expert]) -> list[Expert]:
+    return sorted(rows, key=lambda r: (-r.rating, -r.sort_order))
 
 
-def _sort_by_usage(rows: list[tuple[Agent, ExpertProfile]]) -> list[tuple[Agent, ExpertProfile]]:
-    return sorted(rows, key=lambda r: (-r[1].usage_count, -r[1].sort_order))
+def _sort_by_usage(rows: list[Expert]) -> list[Expert]:
+    return sorted(rows, key=lambda r: (-r.usage_count, -r.sort_order))
 
 
-def _sort_by_recent(rows: list[tuple[Agent, ExpertProfile]]) -> list[tuple[Agent, ExpertProfile]]:
-    return sorted(rows, key=lambda r: r[0].updated_at, reverse=True)
+def _sort_by_recent(rows: list[Expert]) -> list[Expert]:
+    return sorted(rows, key=lambda r: r.updated_at, reverse=True)
 
 
-def _sort_by_name(rows: list[tuple[Agent, ExpertProfile]]) -> list[tuple[Agent, ExpertProfile]]:
-    return sorted(rows, key=lambda r: r[0].name)
+def _sort_by_name(rows: list[Expert]) -> list[Expert]:
+    return sorted(rows, key=lambda r: r.name)
+
 
 SORT_STRATEGIES: dict[str, SortStrategy] = {
     "rating": _sort_by_rating,
@@ -200,51 +207,60 @@ SORT_STRATEGIES: dict[str, SortStrategy] = {
 
 # ── 查询辅助 ─────────────────────────────────────────────────
 
-async def _query_tools(db: AsyncSession, agent_id: str) -> list[ToolBrief]:
+
+async def _query_tools(db: AsyncSession, expert_id: str) -> list[ToolBrief]:
     stmt = (
         select(Tool)
-        .join(AgentTool, AgentTool.tool_id == Tool.id)
-        .where(AgentTool.agent_id == agent_id)
+        .join(ExpertTool, ExpertTool.tool_id == Tool.id)
+        .where(ExpertTool.expert_id == expert_id)
         .order_by(Tool.name)
     )
     rows = (await db.execute(stmt)).scalars().all()
     return [
         ToolBrief(
-            id=t.id, name=t.name, display_name=t.display_name,
-            tool_type=t.tool_type, category=t.category, icon="",
+            id=t.id,
+            name=t.name,
+            display_name=t.display_name,
+            tool_type=t.tool_type,
+            category=t.category,
+            icon="",
         )
         for t in rows
     ]
 
 
-async def _query_skills(db: AsyncSession, agent_id: str) -> list[ExpertSkillBrief]:
+async def _query_skills(db: AsyncSession, expert_id: str) -> list[ExpertSkillBrief]:
     stmt = (
         select(Skill)
-        .join(AgentSkill, AgentSkill.skill_id == Skill.id)
-        .where(AgentSkill.agent_id == agent_id)
+        .join(ExpertSkill, ExpertSkill.skill_id == Skill.id)
+        .where(ExpertSkill.expert_id == expert_id)
     )
     rows = (await db.execute(stmt)).scalars().all()
     return [
         ExpertSkillBrief(
-            id=s.id, name=s.name, description=s.description,
-            category=s.category, icon=s.icon, enabled=s.enabled,
+            id=s.id,
+            name=s.name,
+            description=s.description,
+            category=s.category,
+            icon=s.icon,
+            enabled=s.enabled,
         )
         for s in rows
     ]
 
 
-async def _query_mcp_configs(db: AsyncSession, agent_id: str) -> list[McpConfigBrief]:
+async def _query_mcp_configs(db: AsyncSession, expert_id: str) -> list[McpConfigBrief]:
     stmt = (
         select(
-            AgentMcpConfig,
+            ExpertMcpConfig,
             McpTool.name,
             McpTool.transport,
             McpTool.url,
             McpTool.sse_url,
             McpTool.streamable_http_url,
         )
-        .outerjoin(McpTool, McpTool.id == AgentMcpConfig.mcp_tool_id)
-        .where(AgentMcpConfig.agent_id == agent_id)
+        .outerjoin(McpTool, McpTool.id == ExpertMcpConfig.mcp_tool_id)
+        .where(ExpertMcpConfig.expert_id == expert_id)
     )
     rows = (await db.execute(stmt)).all()
     return [
@@ -262,12 +278,32 @@ async def _query_mcp_configs(db: AsyncSession, agent_id: str) -> list[McpConfigB
     ]
 
 
-async def _get_main_agent_id(db: AsyncSession) -> str:
-    stmt = select(Agent).where(Agent.parent_id.is_(None))
-    agent = (await db.execute(stmt)).scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=404, detail="主智能体不存在")
-    return agent.id
+async def _get_expert_or_404(db: AsyncSession, expert_id: str) -> Expert:
+    """按 ID 获取专家，不存在时抛出 404。."""
+    stmt = select(Expert).where(Expert.id == expert_id)
+    expert = (await db.execute(stmt)).scalar_one_or_none()
+    if expert is None:
+        raise HTTPException(status_code=404, detail="专家不存在")
+    return expert
+
+
+async def _ensure_expert_name_available(
+    db: AsyncSession,
+    name: str,
+    expert_id: str | None = None,
+) -> None:
+    """校验专家名称在 experts 与 agents 中均唯一。."""
+    stmt = select(Expert).where(Expert.name == name)
+    if expert_id is not None:
+        stmt = stmt.where(Expert.id != expert_id)
+    if (await db.execute(stmt)).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"专家名称 '{name}' 已存在")
+
+    agent_stmt = select(Agent).where(Agent.name == name)
+    if expert_id is not None:
+        agent_stmt = agent_stmt.where(Agent.id != expert_id)
+    if (await db.execute(agent_stmt)).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"智能体名称 '{name}' 已被使用")
 
 
 def _format_usage_count(count: int) -> str:
@@ -278,7 +314,56 @@ def _format_usage_count(count: int) -> str:
     return str(count)
 
 
+# ── 专家版本快照 ─────────────────────────────────────────────
+
+
+async def _create_expert_version_snapshot(
+    db: AsyncSession,
+    expert: Expert,
+    tool_names: list[str],
+    skill_ids: list[str],
+    changed_by: str = "",
+    change_summary: str = "",
+) -> ExpertVersion:
+    """在修改前创建专家当前配置的版本快照。."""
+    max_ver = (
+        await db.execute(
+            select(func.max(ExpertVersion.version)).where(
+                ExpertVersion.expert_id == expert.id
+            )
+        )
+    ).scalar() or 0
+
+    snapshot = {
+        "name": expert.name,
+        "title": expert.title,
+        "category": expert.category,
+        "status": expert.status,
+        "description": expert.description,
+        "system_prompt": expert.system_prompt,
+        "files": expert.files if isinstance(expert.files, list) else [],
+        "provider_id": expert.provider_id,
+        "model_id": expert.model_id,
+        "featured": expert.featured,
+        "is_published": expert.is_published,
+        "tools": tool_names,
+        "skills": skill_ids,
+    }
+
+    version = ExpertVersion(
+        expert_id=expert.id,
+        version=int(max_ver) + 1,
+        snapshot=snapshot,
+        changed_by=changed_by,
+        change_summary=change_summary,
+    )
+    db.add(version)
+    await db.flush()
+    return version
+
+
 # ── CRUD ─────────────────────────────────────────────────────
+
 
 async def list_experts(
     db: AsyncSession,
@@ -292,202 +377,172 @@ async def list_experts(
     sort: str = "rating",
 ) -> ExpertListResponse:
     """分页列出专家，支持搜索、分类筛选、排序。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.parent_id.is_not(None))
-    )
+    stmt = select(Expert)
 
     if keyword:
         kw = f"%{keyword}%"
         stmt = stmt.where(
-            (Agent.name.ilike(kw))
-            | (ExpertProfile.title.ilike(kw))
-            | (Agent.description.ilike(kw))
+            (Expert.name.ilike(kw))
+            | (Expert.title.ilike(kw))
+            | (Expert.description.ilike(kw))
         )
 
     if category:
-        stmt = stmt.where(ExpertProfile.category == category)
+        stmt = stmt.where(Expert.category == category)
 
     if featured is not None:
-        stmt = stmt.where(ExpertProfile.featured == featured)
+        stmt = stmt.where(Expert.featured == featured)
 
     if status:
-        stmt = stmt.where(Agent.status == status)
+        stmt = stmt.where(Expert.status == status)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar() or 0
 
-    rows = list((await db.execute(stmt)).all())
+    rows = list((await db.execute(stmt)).scalars().all())
     strategy = SORT_STRATEGIES.get(sort, SORT_STRATEGIES["rating"])
     rows = strategy(rows)
 
     start = (page - 1) * page_size
     paged = rows[start : start + page_size]
 
-    items = [await ExpertAssembler.assemble(db, agent, profile) for agent, profile in paged]
+    items = [await ExpertAssembler.assemble(db, expert) for expert in paged]
 
     return ExpertListResponse(
-        items=items, total=total, page=page, page_size=page_size,
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
 async def get_expert(db: AsyncSession, expert_id: str) -> ExpertInfo:
     """获取单个专家详情。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    agent, profile = row
-    return await ExpertAssembler.assemble(db, agent, profile)
+    expert = await _get_expert_or_404(db, expert_id)
+    return await ExpertAssembler.assemble(db, expert)
 
 
 async def create_expert(db: AsyncSession, req: ExpertCreateRequest) -> ExpertInfo:
-    """创建专家：在 agents 表插入 sub 记录 + expert_profiles 展示元数据。."""
-    existing = (await db.execute(
-        select(Agent).where(Agent.name == req.name)
-    )).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail=f"专家名称 '{req.name}' 已存在")
+    """创建专家：在 experts 表写入主记录及工具/技能/MCP 关联。."""
+    await _ensure_expert_name_available(db, req.name)
 
-    main_agent_id = await _get_main_agent_id(db)
-
-    agent = Agent(
+    expert = Expert(
         name=req.name,
-        type="expert",
-        status="inactive",
-        description=req.description,
-        parent_id=main_agent_id,
-        system_prompt=req.system_prompt,
-        provider_id=req.provider_id,
-        model_id=req.model_id,
-    )
-    db.add(agent)
-    await db.flush()
-
-    profile = ExpertProfile(
-        agent_id=agent.id,
         title=req.title,
+        description=req.description,
         category=req.category,
-        tags=req.tags,
+        tags=list(req.tags),
         icon=req.icon,
         color=req.color,
         initials=req.initials,
+        status="inactive",
+        system_prompt=req.system_prompt,
+        provider_id=req.provider_id,
+        model_id=req.model_id,
         featured=req.featured,
-        scene=req.scene,
+        scene=req.scene or None,
     )
-    db.add(profile)
+    db.add(expert)
+    await db.flush()
 
     for tool_name in req.tool_names:
-        tool = (await db.execute(
-            select(Tool).where(Tool.name == tool_name)
-        )).scalar_one_or_none()
+        tool = (
+            await db.execute(select(Tool).where(Tool.name == tool_name))
+        ).scalar_one_or_none()
         if tool is not None:
-            db.add(AgentTool(agent_id=agent.id, tool_id=tool.id))
+            db.add(ExpertTool(expert_id=expert.id, tool_id=tool.id))
         else:
             logger.warning("创建专家时工具 '%s' 未找到，跳过", tool_name)
 
     for skill_id in req.skill_ids:
-        db.add(AgentSkill(agent_id=agent.id, skill_id=skill_id))
+        db.add(ExpertSkill(expert_id=expert.id, skill_id=skill_id))
 
     await _validate_mcp_configs(db, req.mcp_configs)
     for mcp_cfg in req.mcp_configs:
-        db.add(AgentMcpConfig(
-            agent_id=agent.id,
-            mcp_tool_id=mcp_cfg.mcp_tool_id,
-            config=mcp_cfg.config,
-            enabled=mcp_cfg.enabled,
-        ))
+        db.add(
+            ExpertMcpConfig(
+                expert_id=expert.id,
+                mcp_tool_id=mcp_cfg.mcp_tool_id,
+                config=mcp_cfg.config,
+                enabled=mcp_cfg.enabled,
+            )
+        )
 
     await db.flush()
-    await _create_agent_version_snapshot(db, agent, req.tool_names, req.skill_ids, change_summary="创建专家")
+    await _create_expert_version_snapshot(
+        db,
+        expert,
+        req.tool_names,
+        req.skill_ids,
+        change_summary="创建专家",
+    )
     await invalidate_graph()
 
-    logger.info("创建专家 '%s' (id=%s)", agent.name, agent.id)
-    return await ExpertAssembler.assemble(db, agent, profile)
+    logger.info("创建专家 '%s' (id=%s)", expert.name, expert.id)
+    return await ExpertAssembler.assemble(db, expert)
 
 
-async def update_expert(db: AsyncSession, expert_id: str, req: ExpertUpdateRequest) -> ExpertInfo:
+async def update_expert(
+    db: AsyncSession, expert_id: str, req: ExpertUpdateRequest
+) -> ExpertInfo:
     """更新专家基础信息（名称、头衔、描述、提示词、模型）。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    agent, profile = row
+    expert = await _get_expert_or_404(db, expert_id)
+    await _ensure_expert_name_available(db, req.name, expert_id=expert_id)
 
-    dup = (await db.execute(
-        select(Agent).where(Agent.name == req.name, Agent.id != expert_id)
-    )).scalar_one_or_none()
-    if dup is not None:
-        raise HTTPException(status_code=409, detail=f"专家名称 '{req.name}' 已存在")
-
-    current_tool_names = await _query_tools(db, expert_id)
+    current_tool_names = [t.name for t in await _query_tools(db, expert_id)]
     current_skill_ids = [s.id for s in await _query_skills(db, expert_id)]
-    await _create_agent_version_snapshot(
-        db, agent, [t.name for t in current_tool_names], current_skill_ids,
+    await _create_expert_version_snapshot(
+        db,
+        expert,
+        current_tool_names,
+        current_skill_ids,
         change_summary="更新专家基础信息",
     )
 
-    agent.name = req.name
-    agent.description = req.description
-    agent.system_prompt = req.system_prompt
-    agent.provider_id = req.provider_id
-    agent.model_id = req.model_id
-    profile.title = req.title
+    expert.name = req.name
+    expert.title = req.title
+    expert.description = req.description
+    expert.system_prompt = req.system_prompt
+    expert.provider_id = req.provider_id
+    expert.model_id = req.model_id
 
     await db.flush()
     await invalidate_graph()
 
-    return await ExpertAssembler.assemble(db, agent, profile)
+    return await ExpertAssembler.assemble(db, expert)
 
 
 async def update_expert_profile(
     db: AsyncSession, expert_id: str, req: ExpertProfileUpdateRequest
 ) -> ExpertInfo:
     """更新专家展示元数据（部分更新）。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    agent, profile = row
+    expert = await _get_expert_or_404(db, expert_id)
 
     if req.title is not None:
-        profile.title = req.title
+        expert.title = req.title
     if req.category is not None:
-        profile.category = req.category
+        expert.category = req.category
     if req.tags is not None:
-        profile.tags = req.tags
+        expert.tags = list(req.tags)
     if req.icon is not None:
-        profile.icon = req.icon
+        expert.icon = req.icon
     if req.color is not None:
-        profile.color = req.color
+        expert.color = req.color
     if req.initials is not None:
-        profile.initials = req.initials
+        expert.initials = req.initials
     if req.avatar_url is not None:
-        profile.avatar_url = req.avatar_url
+        expert.avatar_url = req.avatar_url
     if req.featured is not None:
-        profile.featured = req.featured
+        expert.featured = req.featured
     if req.scene is not None:
-        profile.scene = req.scene or None
+        expert.scene = req.scene or None
     if req.sort_order is not None:
-        profile.sort_order = req.sort_order
+        expert.sort_order = req.sort_order
     if req.is_published is not None:
-        profile.is_published = req.is_published
+        expert.is_published = req.is_published
 
     await db.flush()
-    return await ExpertAssembler.assemble(db, agent, profile)
+    return await ExpertAssembler.assemble(db, expert)
 
 
 async def update_expert_config(
@@ -497,29 +552,24 @@ async def update_expert_config(
 
     采用「先快照 → 全量替换关联 → 提交」事务模式。
     """
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    agent, profile = row
+    expert = await _get_expert_or_404(db, expert_id)
 
     current_tool_names = [t.name for t in await _query_tools(db, expert_id)]
     current_skill_ids = [s.id for s in await _query_skills(db, expert_id)]
-    await _create_agent_version_snapshot(
-        db, agent, current_tool_names, current_skill_ids,
+    await _create_expert_version_snapshot(
+        db,
+        expert,
+        current_tool_names,
+        current_skill_ids,
         change_summary="更新专家配置",
     )
 
     if req.system_prompt is not None:
-        agent.system_prompt = req.system_prompt
+        expert.system_prompt = req.system_prompt
     if req.provider_id is not None:
-        agent.provider_id = req.provider_id
+        expert.provider_id = req.provider_id
     if req.model_id is not None:
-        agent.model_id = req.model_id
+        expert.model_id = req.model_id
 
     if req.tool_names is not None:
         await _replace_tool_links(db, expert_id, req.tool_names)
@@ -533,205 +583,208 @@ async def update_expert_config(
     await db.flush()
     await invalidate_graph()
 
-    return await ExpertAssembler.assemble(db, agent, profile)
+    return await ExpertAssembler.assemble(db, expert)
 
 
-async def _replace_tool_links(db: AsyncSession, agent_id: str, tool_names: list[str]) -> None:
-    """全量替换 agent_tools 关联。."""
-    old = (await db.execute(
-        select(AgentTool).where(AgentTool.agent_id == agent_id)
-    )).scalars().all()
+async def _replace_tool_links(
+    db: AsyncSession, expert_id: str, tool_names: list[str]
+) -> None:
+    """全量替换 expert_tools 关联。."""
+    old = (
+        (await db.execute(select(ExpertTool).where(ExpertTool.expert_id == expert_id)))
+        .scalars()
+        .all()
+    )
     for link in old:
         await db.delete(link)
 
     for name in tool_names:
-        tool = (await db.execute(
-            select(Tool).where(Tool.name == name)
-        )).scalar_one_or_none()
+        tool = (
+            await db.execute(select(Tool).where(Tool.name == name))
+        ).scalar_one_or_none()
         if tool is not None:
-            db.add(AgentTool(agent_id=agent_id, tool_id=tool.id))
+            db.add(ExpertTool(expert_id=expert_id, tool_id=tool.id))
         else:
             logger.warning("工具 '%s' 未找到，跳过", name)
 
 
-async def _replace_skill_links(db: AsyncSession, agent_id: str, skill_ids: list[str]) -> None:
-    """全量替换 agent_skills 关联。."""
-    old = (await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id)
-    )).scalars().all()
+async def _replace_skill_links(
+    db: AsyncSession, expert_id: str, skill_ids: list[str]
+) -> None:
+    """全量替换 expert_skills 关联。."""
+    old = (
+        (
+            await db.execute(
+                select(ExpertSkill).where(ExpertSkill.expert_id == expert_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     for link in old:
         await db.delete(link)
 
     for skill_id in skill_ids:
-        db.add(AgentSkill(agent_id=agent_id, skill_id=skill_id))
+        db.add(ExpertSkill(expert_id=expert_id, skill_id=skill_id))
 
 
 async def _validate_mcp_configs(db: AsyncSession, configs: list[McpConfigItem]) -> None:
+    """校验 MCP 配置列表无重复且服务存在。."""
     seen: set[str] = set()
     for item in configs:
         if item.mcp_tool_id in seen:
-            raise HTTPException(status_code=409, detail=f'MCP 服务重复配置: {item.mcp_tool_id}')
+            raise HTTPException(
+                status_code=409, detail=f"MCP 服务重复配置: {item.mcp_tool_id}"
+            )
         seen.add(item.mcp_tool_id)
-        mcp_tool = (await db.execute(
-            select(McpTool).where(McpTool.id == item.mcp_tool_id)
-        )).scalar_one_or_none()
+        mcp_tool = (
+            await db.execute(select(McpTool).where(McpTool.id == item.mcp_tool_id))
+        ).scalar_one_or_none()
         if mcp_tool is None:
-            raise HTTPException(status_code=404, detail=f'MCP 服务不存在: {item.mcp_tool_id}')
+            raise HTTPException(
+                status_code=404, detail=f"MCP 服务不存在: {item.mcp_tool_id}"
+            )
+
 
 async def _replace_mcp_configs(
-    db: AsyncSession, agent_id: str, configs: list[McpConfigItem]
+    db: AsyncSession, expert_id: str, configs: list[McpConfigItem]
 ) -> None:
-    """全量替换 agent_mcp_configs。."""
-    old = (await db.execute(
-        select(AgentMcpConfig).where(AgentMcpConfig.agent_id == agent_id)
-    )).scalars().all()
+    """全量替换 expert_mcp_configs。."""
+    old = (
+        (
+            await db.execute(
+                select(ExpertMcpConfig).where(ExpertMcpConfig.expert_id == expert_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     for cfg in old:
         await db.delete(cfg)
 
     await _validate_mcp_configs(db, configs)
     for item in configs:
-        db.add(AgentMcpConfig(
-            agent_id=agent_id,
-            mcp_tool_id=item.mcp_tool_id,
-            config=item.config,
-            enabled=item.enabled,
-        ))
+        db.add(
+            ExpertMcpConfig(
+                expert_id=expert_id,
+                mcp_tool_id=item.mcp_tool_id,
+                config=item.config,
+                enabled=item.enabled,
+            )
+        )
 
 
 async def delete_expert(db: AsyncSession, expert_id: str) -> None:
-    """删除专家（级联删除 profile + 关联表）。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    agent, profile = row
-
-    if agent.undeletable:
+    """删除专家（级联删除关联工具/技能/MCP/版本数据）。."""
+    expert = await _get_expert_or_404(db, expert_id)
+    if expert.undeletable:
         raise HTTPException(status_code=403, detail="该专家不可删除")
 
-    await db.delete(profile)
-    await db.delete(agent)
+    await db.delete(expert)
     await db.flush()
     await invalidate_graph()
-    logger.info("删除专家 '%s' (id=%s)", agent.name, agent.id)
+    logger.info("删除专家 '%s' (id=%s)", expert.name, expert.id)
 
 
 async def toggle_expert_status(db: AsyncSession, expert_id: str) -> ExpertInfo:
     """切换专家启用/停用状态。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    agent, profile = row
-
-    agent.status = "inactive" if agent.status == "active" else "active"
+    expert = await _get_expert_or_404(db, expert_id)
+    expert.status = "inactive" if expert.status == "active" else "active"
     await db.flush()
     await invalidate_graph()
-    return await ExpertAssembler.assemble(db, agent, profile)
+    return await ExpertAssembler.assemble(db, expert)
 
 
 async def clone_expert(db: AsyncSession, expert_id: str) -> ExpertInfo:
-    """克隆专家：复制 Agent + ExpertProfile + 所有关联表。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(Agent.id == expert_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="专家不存在")
-    src_agent, src_profile = row
+    """克隆专家：复制 Expert 主记录与全部关联数据。."""
+    source = await _get_expert_or_404(db, expert_id)
 
-    base_name = f"{src_agent.name} (副本)"
+    base_name = f"{source.name} (副本)"
     new_name = base_name
     counter = 2
     while True:
-        dup = (await db.execute(
-            select(Agent).where(Agent.name == new_name)
-        )).scalar_one_or_none()
-        if dup is None:
+        try:
+            await _ensure_expert_name_available(db, new_name)
             break
-        new_name = f"{base_name} {counter}"
-        counter += 1
+        except HTTPException:
+            new_name = f"{base_name} {counter}"
+            counter += 1
 
-    cloned_agent = Agent(
+    cloned = Expert(
         name=new_name,
-        type="expert",
+        title=source.title,
+        description=source.description,
+        category=source.category,
+        tags=list(source.tags) if isinstance(source.tags, list) else [],
+        icon=source.icon,
+        color=source.color,
+        initials=source.initials,
+        avatar_url=source.avatar_url,
         status="inactive",
-        description=src_agent.description,
-        parent_id=src_agent.parent_id,
-        system_prompt=src_agent.system_prompt,
-        provider_id=src_agent.provider_id,
-        model_id=src_agent.model_id,
-        undeletable=False,
-    )
-    db.add(cloned_agent)
-    await db.flush()
-
-    cloned_profile = ExpertProfile(
-        agent_id=cloned_agent.id,
-        title=src_profile.title,
-        category=src_profile.category,
-        tags=list(src_profile.tags) if isinstance(src_profile.tags, list) else [],
-        icon=src_profile.icon,
-        color=src_profile.color,
-        initials=src_profile.initials,
-        avatar_url=src_profile.avatar_url,
+        system_prompt=source.system_prompt,
+        provider_id=source.provider_id,
+        model_id=source.model_id,
+        files=list(source.files) if isinstance(source.files, list) else [],
         featured=False,
         scene=None,
         sort_order=0,
         is_published=True,
+        undeletable=False,
     )
-    db.add(cloned_profile)
+    db.add(cloned)
+    await db.flush()
 
-    # 克隆工具关联
-    tool_links = (await db.execute(
-        select(AgentTool).where(AgentTool.agent_id == expert_id)
-    )).scalars().all()
-    for link in tool_links:
-        db.add(AgentTool(agent_id=cloned_agent.id, tool_id=link.tool_id))
+    tool_links = (
+        (await db.execute(select(ExpertTool).where(ExpertTool.expert_id == expert_id)))
+        .scalars()
+        .all()
+    )
+    for tool_link in tool_links:
+        db.add(ExpertTool(expert_id=cloned.id, tool_id=tool_link.tool_id))
 
-    # 克隆技能关联
-    skill_links = (await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == expert_id)
-    )).scalars().all()
-    for link in skill_links:
-        db.add(AgentSkill(agent_id=cloned_agent.id, skill_id=link.skill_id))
+    skill_links = (
+        (
+            await db.execute(
+                select(ExpertSkill).where(ExpertSkill.expert_id == expert_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for skill_link in skill_links:
+        db.add(ExpertSkill(expert_id=cloned.id, skill_id=skill_link.skill_id))
 
-    # 克隆 MCP 配置
-    mcp_configs = (await db.execute(
-        select(AgentMcpConfig).where(AgentMcpConfig.agent_id == expert_id)
-    )).scalars().all()
+    mcp_configs = (
+        (
+            await db.execute(
+                select(ExpertMcpConfig).where(ExpertMcpConfig.expert_id == expert_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     for cfg in mcp_configs:
-        db.add(AgentMcpConfig(
-            agent_id=cloned_agent.id,
-            mcp_tool_id=cfg.mcp_tool_id,
-            config=cfg.config,
-            enabled=cfg.enabled,
-        ))
+        db.add(
+            ExpertMcpConfig(
+                expert_id=cloned.id,
+                mcp_tool_id=cfg.mcp_tool_id,
+                config=cfg.config,
+                enabled=cfg.enabled,
+            )
+        )
 
     await db.flush()
     await invalidate_graph()
-    logger.info("克隆专家 '%s' -> '%s'", src_agent.name, cloned_agent.name)
-    return await ExpertAssembler.assemble(db, cloned_agent, cloned_profile)
+    logger.info("克隆专家 '%s' -> '%s'", source.name, cloned.name)
+    return await ExpertAssembler.assemble(db, cloned)
 
 
 # ── 分类与精选 ───────────────────────────────────────────────
 
-async def list_categories(db: AsyncSession) -> list[dict]:
+
+async def list_categories(db: AsyncSession) -> list[dict[str, Any]]:
     """获取所有分类及计数。."""
-    stmt = (
-        select(ExpertProfile.category, func.count())
-        .group_by(ExpertProfile.category)
-    )
+    stmt = select(Expert.category, func.count()).group_by(Expert.category)
     rows = (await db.execute(stmt)).all()
     return [
         {"key": key, "label": EXPERT_CATEGORIES.get(key, key), "count": count}
@@ -739,16 +792,11 @@ async def list_categories(db: AsyncSession) -> list[dict]:
     ]
 
 
-async def get_featured(db: AsyncSession) -> dict:
+async def get_featured(db: AsyncSession) -> dict[str, Any]:
     """获取精选场景 + 精选专家。."""
-    stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
-        .where(ExpertProfile.featured)
-        .order_by(ExpertProfile.sort_order.desc())
-    )
-    rows = (await db.execute(stmt)).all()
-    experts = [await ExpertAssembler.assemble(db, agent, profile) for agent, profile in rows]
+    stmt = select(Expert).where(Expert.featured).order_by(Expert.sort_order.desc())
+    rows = (await db.execute(stmt)).scalars().all()
+    experts = [await ExpertAssembler.assemble(db, expert) for expert in rows]
 
     scenes = [
         {
@@ -764,24 +812,26 @@ async def get_featured(db: AsyncSession) -> dict:
 
 # ── 同步 API ─────────────────────────────────────────────────
 
+
 async def sync_list(db: AsyncSession) -> ExpertSyncListResponse:
     """获取所有已发布专家的精简数据（供桌面端/移动端同步）。."""
     stmt = (
-        select(Agent, ExpertProfile)
-        .join(ExpertProfile, ExpertProfile.agent_id == Agent.id)
+        select(Expert)
         .where(
-            ExpertProfile.is_published,
-            Agent.status == "active",
+            Expert.is_published,
+            Expert.status == "active",
         )
-        .order_by(ExpertProfile.sort_order.desc())
+        .order_by(Expert.sort_order.desc())
     )
-    rows = (await db.execute(stmt)).all()
+    rows = (await db.execute(stmt)).scalars().all()
     items = [
-        await ExpertAssembler.to_sync_item(await ExpertAssembler.assemble(db, agent, profile))
-        for agent, profile in rows
+        await ExpertAssembler.to_sync_item(await ExpertAssembler.assemble(db, expert))
+        for expert in rows
     ]
     return ExpertSyncListResponse(
-        items=items, total=len(items), synced_at=int(time.time()),
+        items=items,
+        total=len(items),
+        synced_at=int(time.time()),
     )
 
 
@@ -790,9 +840,7 @@ async def sync_detail(db: AsyncSession, expert_id: str) -> ExpertInfo:
     return await get_expert(db, expert_id)
 
 
-# ── 内置专家种子数据 ─────────────────────────────────────────────────
-
-BUILTIN_EXPERTS: list[dict] = [
+BUILTIN_EXPERTS: list[dict[str, Any]] = [
     {
         "name": "文档写作专家",
         "title": "文档写作专家",
@@ -839,18 +887,24 @@ BUILTIN_EXPERTS: list[dict] = [
 - 若图片生成或落盘失败，不要中断文章输出，继续完成写作并在回复中明确标注该图未保存。""",
     },
 ]
+# ── 内置专家种子数据 ─────────────────────────────────────────────────
 
 
 async def seed_builtin_experts(db: AsyncSession) -> None:
     """填充内置专家（文档写作专家），可重复调用：不存在时创建并关联 MCP 服务。."""
-    main_agent_id = await _get_main_agent_id(db)
-
     for item in BUILTIN_EXPERTS:
         existing = (
-            await db.execute(select(Agent).where(Agent.name == item["name"]))
+            await db.execute(select(Expert).where(Expert.name == item["name"]))
         ).scalar_one_or_none()
         if existing is not None:
             logger.info("内置专家 '%s' 已存在，跳过", item["name"])
+            continue
+
+        agent_existing = (
+            await db.execute(select(Agent).where(Agent.name == item["name"]))
+        ).scalar_one_or_none()
+        if agent_existing is not None:
+            logger.warning("内置专家名称 '%s' 已被智能体占用，跳过", item["name"])
             continue
 
         provider_id = None
@@ -871,24 +925,12 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             else:
                 logger.warning("内置专家默认模型 %s 未找到，使用默认 LLM", model_name)
 
-        agent = Agent(
+        expert = Expert(
             name=item["name"],
-            type="expert",
-            status="active",
-            description=item["description"],
-            parent_id=main_agent_id,
-            system_prompt=item["system_prompt"],
-            provider_id=provider_id,
-            model_id=model_id,
-        )
-        db.add(agent)
-        await db.flush()
-
-        profile = ExpertProfile(
-            agent_id=agent.id,
             title=item["title"],
             category=item["category"],
-            tags=item.get("tags", []),
+            description=item["description"],
+            tags=list(item.get("tags", [])),
             icon=item.get("icon", ""),
             color=item.get("color", ""),
             initials=item.get("initials", item["name"][:1]),
@@ -896,8 +938,13 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             scene=item.get("scene"),
             sort_order=item.get("sort_order", 0),
             is_published=item.get("is_published", True),
+            status="active",
+            system_prompt=item["system_prompt"],
+            provider_id=provider_id,
+            model_id=model_id,
         )
-        db.add(profile)
+        db.add(expert)
+        await db.flush()
 
         mcp_tool_name = item.get("mcp_tool_name")
         if mcp_tool_name:
@@ -906,8 +953,8 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             ).scalar_one_or_none()
             if mcp_tool is not None:
                 db.add(
-                    AgentMcpConfig(
-                        agent_id=agent.id,
+                    ExpertMcpConfig(
+                        expert_id=expert.id,
                         mcp_tool_id=mcp_tool.id,
                         config={
                             "transport": mcp_tool.transport or "streamable_http",
@@ -930,11 +977,11 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
                     mcp_tool_name,
                 )
 
-        await _create_agent_version_snapshot(
+        await _create_expert_version_snapshot(
             db,
-            agent,
+            expert,
             [],
             [],
             change_summary="创建内置专家",
         )
-        logger.info("已创建内置专家 '%s' (id=%s)", agent.name, agent.id)
+        logger.info("已创建内置专家 '%s' (id=%s)", expert.name, expert.id)

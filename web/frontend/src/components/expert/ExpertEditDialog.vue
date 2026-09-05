@@ -293,7 +293,7 @@ function handleSave() {
 }
 
 const isEditing = computed(() => props.mode === 'edit')
-const drawerTitle = computed(() => isEditing.value ? `编辑专家 — ${props.expert?.name || ''}` : '新建专家')
+const dialogTitle = computed(() => isEditing.value ? `编辑专家 — ${props.expert?.name || ''}` : '新建专家')
 
 /* ---- 加载外部数据 ---- */
 onMounted(() => {
@@ -313,24 +313,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-drawer
+  <el-dialog
     :model-value="visible"
-    :title="drawerTitle"
-    direction="rtl"
-    size="640px"
+    :title="dialogTitle"
+    width="min(720px, 92vw)"
+    class="expert-edit-dialog"
     :close-on-click-modal="false"
     @close="emit('close')"
   >
-    <template #header>
-      <div class="drawer-header">
-        <span class="drawer-title">{{ drawerTitle }}</span>
-        <div class="drawer-actions">
-          <el-button @click="emit('close')">取消</el-button>
-          <el-button type="primary" @click="handleSave">保存</el-button>
-        </div>
-      </div>
-    </template>
-
+    <div class="dialog-body">
     <el-tabs v-model="activeTab" class="edit-tabs">
       <!-- 基本信息 -->
       <el-tab-pane label="基本信息" name="basic">
@@ -627,25 +618,27 @@ onMounted(() => {
         </div>
       </el-tab-pane>
     </el-tabs>
-  </el-drawer>
+    </div>
+    <template #footer>
+      <div class="dialog-actions">
+        <el-button @click="emit('close')">取消</el-button>
+        <el-button type="primary" @click="handleSave">保存</el-button>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
-.drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
+.dialog-body {
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
 }
 
-.drawer-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--foreground-primary);
-}
-
-.drawer-actions {
+.dialog-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
 }
 

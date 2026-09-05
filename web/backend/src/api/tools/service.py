@@ -12,6 +12,7 @@ from api.tools.schemas import (
     ToolUpdateRequest,
 )
 from db.models.agent_tool import AgentTool
+from db.models.expert_tool import ExpertTool
 from db.models.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -186,15 +187,23 @@ async def delete_tool(db: AsyncSession, tool_id: str) -> dict:
     if row.source == "builtin":
         raise HTTPException(status_code=403, detail="内置工具不可删除")
 
-    # 先显式删除工具与智能体的关联（配合 FK CASCADE 双重保障）
+    # 先显式删除工具与智能体/专家的关联（配合 FK CASCADE 双重保障）
     link_stmt = select(AgentTool).where(AgentTool.tool_id == tool_id)
     links = (await db.execute(link_stmt)).scalars().all()
     for link in links:
         await db.delete(link)
 
+    expert_link_stmt = select(ExpertTool).where(ExpertTool.tool_id == tool_id)
+    expert_links = (await db.execute(expert_link_stmt)).scalars().all()
+    for link in expert_links:
+        await db.delete(link)
+
     await db.delete(row)
     await db.flush()
-    logger.info("已删除工具 '%s' (id=%s)，共 %d 条智能体关联", row.name, tool_id, len(links))
+    logger.info(
+        "已删除工具 '%s' (id=%s)，共 %d 条智能体关联、%d 条专家关联",
+        row.name, tool_id, len(links), len(expert_links),
+    )
     return {"deleted": True, "id": tool_id}
 
 

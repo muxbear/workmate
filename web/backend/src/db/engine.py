@@ -76,6 +76,133 @@ async def _table_exists(conn, table_name: str) -> bool:
         return result.scalar()
 
 
+
+
+
+async def _migrate_experts_to_own_table(conn) -> None:
+    """将历史 agents + expert_profiles 中的专家数据迁移到独立的 experts 表。.
+
+    幂等设计：仅在存在历史 expert_profiles 表且存在尚未迁移记录时执行；
+    迁移完成后清理 agents 中的专家行及其旧关联数据，保证专家不再以 agent 身份存在。
+    """
+    if not await _table_exists(conn, "expert_profiles"):
+        return
+
+    logger.info("检测到历史 expert_profiles 表，开始将专家数据迁移到 experts 表")
+    profile_rows = (await conn.execute(text("SELECT agent_id FROM expert_profiles"))).fetchall()
+    legacy_expert_ids = [row[0] for row in profile_rows]
+    if not legacy_expert_ids:
+        return
+
+    # 1. 专家主记录：合并 agents + expert_profiles，保持 id 不变
+    await conn.execute(text(
+        """
+        INSERT INTO experts (
+            id, name, title, description, category, tags, icon, color, initials,
+            avatar_url, rating, usage_count, featured, scene, sort_order,
+            is_published, status, system_prompt, provider_id, model_id, files,
+            undeletable, created_at, updated_at
+        )
+        SELECT
+            a.id, a.name, p.title, COALESCE(a.description, ''), p.category,
+            COALESCE(p.tags, '[]'), p.icon, p.color, p.initials, p.avatar_url,
+            p.rating, p.usage_count, p.featured, p.scene, p.sort_order,
+            p.is_published, COALESCE(a.status, 'inactive'),
+            COALESCE(a.system_prompt, ''), a.provider_id, a.model_id,
+            COALESCE(a.files, '[]'), COALESCE(a.undeletable, FALSE),
+            a.created_at, a.updated_at
+        FROM expert_profiles p
+        JOIN agents a ON a.id = p.agent_id
+        WHERE NOT EXISTS (SELECT 1 FROM experts e WHERE e.id = p.agent_id)
+        """
+    ))
+
+    # 2. 专家关联数据：工具 / 技能 / MCP 配置 / 版本快照
+    await conn.execute(text(
+        """
+        INSERT INTO expert_tools (expert_id, tool_id, created_at)
+        SELECT agent_id, tool_id, created_at
+        FROM agent_tools
+        WHERE agent_id IN (SELECT id FROM experts)
+          AND NOT EXISTS (
+              SELECT 1 FROM expert_tools x
+              WHERE x.expert_id = agent_tools.agent_id
+                AND x.tool_id = agent_tools.tool_id
+          )
+        """
+    ))
+    await conn.execute(text(
+        """
+        INSERT INTO expert_skills (expert_id, skill_id, created_at)
+        SELECT agent_id, skill_id, created_at
+        FROM agent_skills
+        WHERE agent_id IN (SELECT id FROM experts)
+          AND NOT EXISTS (
+              SELECT 1 FROM expert_skills x
+              WHERE x.expert_id = agent_skills.agent_id
+                AND x.skill_id = agent_skills.skill_id
+          )
+        """
+    ))
+    await conn.execute(text(
+        """
+        INSERT INTO expert_mcp_configs (
+            id, expert_id, mcp_tool_id, config, enabled, created_at, updated_at
+        )
+        SELECT id, agent_id, mcp_tool_id, COALESCE(config, '{}'), enabled,
+               created_at, updated_at
+        FROM agent_mcp_configs
+        WHERE agent_id IN (SELECT id FROM experts)
+          AND NOT EXISTS (
+              SELECT 1 FROM expert_mcp_configs x
+              WHERE x.expert_id = agent_mcp_configs.agent_id
+                AND x.mcp_tool_id = agent_mcp_configs.mcp_tool_id
+          )
+        """
+    ))
+    await conn.execute(text(
+        """
+        INSERT INTO expert_versions (
+            id, expert_id, version, snapshot, changed_by, change_summary, created_at
+        )
+        SELECT id, agent_id, version, snapshot, changed_by, change_summary, created_at
+        FROM agent_versions
+        WHERE agent_id IN (SELECT id FROM experts)
+          AND NOT EXISTS (
+              SELECT 1 FROM expert_versions x WHERE x.id = agent_versions.id
+          )
+        """
+    ))
+
+    migrated = (await conn.execute(
+        text("SELECT COUNT(*) FROM experts")
+    )).scalar()
+    logger.info("专家数据迁移完成，experts 表新增/保留 %s 条记录", migrated)
+
+    # 3. 清理历史数据：先删除旧关联，再删除专家对应的 agent 行，
+    #    保证后续专家管理、主智能体子智能体加载均以 experts 表为准。
+    #    专家不再以 agent 身份存在，因此原挂在 agent 上的定时任务一并删除。
+    await conn.execute(
+        text("DELETE FROM cron_jobs WHERE agent_id IN (SELECT id FROM experts)")
+    )
+    await conn.execute(text(
+        "DELETE FROM agent_versions WHERE agent_id IN (SELECT id FROM experts)"
+    ))
+    await conn.execute(text(
+        "DELETE FROM agent_mcp_configs WHERE agent_id IN (SELECT id FROM experts)"
+    ))
+    await conn.execute(text(
+        "DELETE FROM agent_skills WHERE agent_id IN (SELECT id FROM experts)"
+    ))
+    await conn.execute(text(
+        "DELETE FROM agent_tools WHERE agent_id IN (SELECT id FROM experts)"
+    ))
+    await conn.execute(text("DELETE FROM expert_profiles"))
+    await conn.execute(text(
+        "DELETE FROM agents WHERE id IN (SELECT id FROM experts)"
+    ))
+
+
 async def init_db():
     from db.base import Base
     from db.models.agent_version import (
@@ -92,6 +219,11 @@ async def init_db():
     from db.models.permission_resource import PermissionResource  # noqa: F401
     from db.models.role import Role  # noqa: F401
     from db.models.role_permission import RolePermission  # noqa: F401
+    from db.models.expert import Expert  # noqa: F401
+    from db.models.expert_mcp_config import ExpertMcpConfig  # noqa: F401
+    from db.models.expert_skill import ExpertSkill  # noqa: F401
+    from db.models.expert_tool import ExpertTool  # noqa: F401
+    from db.models.expert_version import ExpertVersion  # noqa: F401
     from db.models.user_role import UserRole  # noqa: F401
 
     # 断言 async_engine 不为 None，类型检查器会据此收窄类型
@@ -100,6 +232,9 @@ async def init_db():
     logger.info("初始化数据库...")
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # 迁移：专家数据从 agents/expert_profiles 迁移到独立的 experts 表
+        await _migrate_experts_to_own_table(conn)
 
         # 迁移：为现有 conversations 表添加 attachment_ids 列
         # Migration: add parent_id to agents table

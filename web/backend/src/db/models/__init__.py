@@ -10,7 +10,11 @@ from db.models.conversation import Conversation
 from db.models.cron_job import CronJob
 from db.models.data_scope import DataScope
 from db.models.department import Department
-from db.models.expert_profile import ExpertProfile
+from db.models.expert import Expert
+from db.models.expert_mcp_config import ExpertMcpConfig
+from db.models.expert_skill import ExpertSkill
+from db.models.expert_tool import ExpertTool
+from db.models.expert_version import ExpertVersion
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
@@ -42,7 +46,11 @@ __all__ = [
     "Announcement",
     "AnnouncementRead",
     "AgentMcpConfig",
-    "ExpertProfile",
+    "Expert",
+    "ExpertMcpConfig",
+    "ExpertSkill",
+    "ExpertTool",
+    "ExpertVersion",
     "AIModel",
     "Conversation",
     "CronJob",
