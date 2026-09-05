@@ -27,7 +27,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     () => workspaces.value.find((w) => w.id === currentId.value) ?? null
   )
 
-  /** 默认工作空间（~/KeWork/DefaultWorkspace，机器级共享；未选择任何空间时的兜底） */
+  /** 默认工作空间（系统设置配置的目录，机器级共享；未选择任何空间时的兜底） */
   const defaultWorkspace = computed(
     () => workspaces.value.find((w) => w.source === 'default') ?? null
   )
@@ -84,7 +84,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     persistCurrentId()
   }
 
-  /** 新建工作空间（主进程在 ~/KeWork/ 下创建同名文件夹）；失败抛错（渲染层展示 error） */
+  /** 新建工作空间（主进程在默认工作空间目录下创建同名文件夹）；失败抛错（渲染层展示 error） */
   async function create(name: string): Promise<Workspace> {
     const result = await window.api.createWorkspace(name)
     if (!result.success || !result.data) {

@@ -995,7 +995,7 @@ const pickExternal = async (): Promise<void> => {
   await workspaceStore.selectExternal()
 }
 
-/** 使用默认工作空间（~/KeWork/DefaultWorkspace，未选择任何空间时的兜底目录） */
+/** 使用默认工作空间（系统设置配置的目录，未选择任何空间时的兜底） */
 const pickDefault = async (): Promise<void> => {
   wsMenuOpen.value = false
   await workspaceStore.useDefault()

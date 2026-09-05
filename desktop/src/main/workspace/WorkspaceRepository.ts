@@ -49,6 +49,14 @@ export class WorkspaceRepository {
     return rows.map(toWorkspaceRow)
   }
 
+  /** 全部工作空间记录（机器级，供默认空间迁移时定位位于旧目录内的记录） */
+  listAll(): WorkspaceRow[] {
+    const rows = this.db
+      .prepare(SELECT_WS + ' ORDER BY created_at ASC, rowid ASC')
+      .all() as WorkspaceRowDb[]
+    return rows.map(toWorkspaceRow)
+  }
+
   getById(id: string, userId: string): WorkspaceRow | undefined {
     const row = this.db.prepare(`${SELECT_WS} WHERE id = ? AND ${WS_SCOPE}`).get(id, userId) as
       | WorkspaceRowDb
@@ -72,7 +80,7 @@ export class WorkspaceRepository {
     return row ? toWorkspaceRow(row) : undefined
   }
 
-  /** 迁移默认空间路径（改基址后跟随新位置；id 不变，会话绑定不失效） */
+  /** 迁移工作空间路径（改默认空间目录后跟随新位置；id 不变，会话绑定不失效） */
   updatePath(id: string, path: string): void {
     this.db.prepare('UPDATE workspaces SET path = ? WHERE id = ?').run(path, id)
   }

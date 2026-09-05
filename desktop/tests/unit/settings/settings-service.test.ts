@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsStore } from '../../../src/main/settings/SettingsStore'
 import {
-  DEFAULT_WORKSPACE_BASE_DIR,
+  DEFAULT_WORKSPACE_DIR,
   SettingsService,
   type SettingsServiceDeps
 } from '../../../src/main/settings/SettingsService'
@@ -20,7 +20,7 @@ function createDeps(): SettingsServiceDeps {
     setLockScreen: vi.fn(),
     selectDir: vi.fn().mockResolvedValue(null),
     openPath: vi.fn().mockResolvedValue(undefined),
-    onWorkspaceBaseDirChange: vi.fn()
+    onDefaultWorkspaceDirChange: vi.fn().mockResolvedValue(undefined)
   }
 }
 
@@ -35,55 +35,66 @@ afterEach(() => {
 })
 
 describe('SettingsService', () => {
-  it('getAll：默认值合并 + meta（defaultWorkspaceDir 为空时 = ~/KeWork）', () => {
+  it('getAll：默认值合并 + meta（defaultWorkspaceDir 为空时 = ~/KeWork 目录本身）', () => {
     const service = new SettingsService(store, baseDir, deps)
     const { settings, meta } = service.getAll()
     expect(settings['ui.language']).toBe('zh-CN')
     expect(meta.dataBaseDir).toBe(baseDir)
-    expect(meta.workspaceBaseDir).toBe(DEFAULT_WORKSPACE_BASE_DIR)
+    expect(meta.defaultWorkspaceDir).toBe(DEFAULT_WORKSPACE_DIR)
   })
 
-  it('getAll：meta.workspaceBaseDir 反映已设置的默认工作空间路径', () => {
+  it('getAll：meta.defaultWorkspaceDir 反映已设置的默认工作空间路径', () => {
     store.set('workspace.defaultWorkspaceDir', 'D:\\KeWork')
     const service = new SettingsService(store, baseDir, deps)
-    expect(service.getAll().meta.workspaceBaseDir).toBe('D:\\KeWork')
+    expect(service.getAll().meta.defaultWorkspaceDir).toBe('D:\\KeWork')
   })
 
-  it('set：网络代理分发 applyProxy（manual + url）', () => {
+  it('set：网络代理分发 applyProxy（manual + url）', async () => {
     const service = new SettingsService(store, baseDir, deps)
-    service.set('network.proxyMode', 'manual')
-    service.set('network.proxyUrl', 'http://127.0.0.1:7890')
+    await service.set('network.proxyMode', 'manual')
+    await service.set('network.proxyUrl', 'http://127.0.0.1:7890')
     expect(deps.applyProxy).toHaveBeenLastCalledWith('manual', 'http://127.0.0.1:7890')
   })
 
-  it('set：锁屏远程分发 setLockScreen', () => {
+  it('set：锁屏远程分发 setLockScreen', async () => {
     const service = new SettingsService(store, baseDir, deps)
-    service.set('lockScreen.remoteLock', true)
+    await service.set('lockScreen.remoteLock', true)
     expect(deps.setLockScreen).toHaveBeenCalledWith(true)
-    service.set('lockScreen.remoteLock', false)
+    await service.set('lockScreen.remoteLock', false)
     expect(deps.setLockScreen).toHaveBeenCalledWith(false)
   })
 
-  it('set：主题分发 applyTheme', () => {
+  it('set：主题分发 applyTheme', async () => {
     const service = new SettingsService(store, baseDir, deps)
-    service.set('ui.theme', 'dark')
+    await service.set('ui.theme', 'dark')
     expect(deps.applyTheme).toHaveBeenLastCalledWith('dark')
-    service.set('ui.theme', 'light')
+    await service.set('ui.theme', 'light')
     expect(deps.applyTheme).toHaveBeenLastCalledWith('light')
   })
 
-  it('set：默认工作空间路径分发 onWorkspaceBaseDirChange（空值回默认基址）', () => {
+  it('set：默认工作空间路径先迁移成功再持久化（空值回退默认目录）', async () => {
     const service = new SettingsService(store, baseDir, deps)
-    service.set('workspace.defaultWorkspaceDir', 'D:\\KeWork2')
-    expect(deps.onWorkspaceBaseDirChange).toHaveBeenCalledWith('D:\\KeWork2')
-    service.set('workspace.defaultWorkspaceDir', '')
-    expect(deps.onWorkspaceBaseDirChange).toHaveBeenCalledWith(DEFAULT_WORKSPACE_BASE_DIR)
+    await service.set('workspace.defaultWorkspaceDir', 'D:\\KeWork2')
+    expect(deps.onDefaultWorkspaceDirChange).toHaveBeenCalledWith('D:\\KeWork2')
+    expect(store.get('workspace.defaultWorkspaceDir')).toBe('D:\\KeWork2')
+    await service.set('workspace.defaultWorkspaceDir', '')
+    expect(deps.onDefaultWorkspaceDirChange).toHaveBeenCalledWith(DEFAULT_WORKSPACE_DIR)
+    expect(store.get('workspace.defaultWorkspaceDir')).toBe('')
   })
 
-  it('set：白名单/校验拒绝（未知 key 与非法值抛错，不写库不分发）', () => {
+  it('set：默认空间路径迁移失败时不持久化新值', async () => {
+    deps.onDefaultWorkspaceDirChange = vi.fn().mockRejectedValue(new Error('迁移失败'))
     const service = new SettingsService(store, baseDir, deps)
-    expect(() => service.set('bogus', 1)).toThrow()
-    expect(() => service.set('ui.language', 'fr-FR')).toThrow()
+    await expect(service.set('workspace.defaultWorkspaceDir', 'D:\\NewDir')).rejects.toThrow(
+      '迁移失败'
+    )
+    expect(store.get('workspace.defaultWorkspaceDir')).toBe('')
+  })
+
+  it('set：白名单/校验拒绝（未知 key 与非法值抛错，不写库不分发）', async () => {
+    const service = new SettingsService(store, baseDir, deps)
+    await expect(service.set('bogus', 1)).rejects.toThrow()
+    await expect(service.set('ui.language', 'fr-FR')).rejects.toThrow()
     expect(deps.applyProxy).not.toHaveBeenCalled()
   })
 
@@ -93,12 +104,12 @@ describe('SettingsService', () => {
     expect(store.get('workspace.defaultWorkspaceDir')).toBe('')
   })
 
-  it('selectWorkspaceDir：选择绝对路径 → 持久化 + 基址变更分发', async () => {
+  it('selectWorkspaceDir：选择绝对路径 → 迁移成功 → 持久化', async () => {
     deps.selectDir = vi.fn().mockResolvedValue('D:\\MyWork')
     const service = new SettingsService(store, baseDir, deps)
     expect(await service.selectWorkspaceDir()).toBe('D:\\MyWork')
     expect(store.get('workspace.defaultWorkspaceDir')).toBe('D:\\MyWork')
-    expect(deps.onWorkspaceBaseDirChange).toHaveBeenCalledWith('D:\\MyWork')
+    expect(deps.onDefaultWorkspaceDirChange).toHaveBeenCalledWith('D:\\MyWork')
   })
 
   it('selectWorkspaceDir：相对路径拒绝', async () => {
@@ -112,7 +123,7 @@ describe('SettingsService', () => {
     const stats = await service.getStorageStats()
     expect(stats.baseDir).toBe(baseDir)
     expect(stats.usedBytes).toBeGreaterThanOrEqual(0)
-    expect(stats.diskTotal).toBeGreaterThan(0) // 真实磁盘容量
+    expect(stats.diskTotal).toBeGreaterThan(0)
     expect(stats.diskFree).toBeGreaterThan(0)
   })
 

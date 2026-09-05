@@ -36,7 +36,10 @@ describe('WorkspaceService', () => {
   beforeEach(() => {
     ds = new LocalDataSource(':memory:')
     repo = new WorkspaceRepository(ds.getDb())
-    baseDir = join(tmpdir(), `ke-work-ws-test-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
+    baseDir = join(
+      tmpdir(),
+      `ke-work-ws-test-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    )
     mkdirSync(baseDir, { recursive: true })
     service = new WorkspaceService(repo, baseDir)
   })
@@ -74,101 +77,129 @@ describe('WorkspaceService', () => {
       expect(service.sanitizeName(' a ')).toBe('a')
     })
 
-    it.each(['CON', 'con', 'PRN', 'AUX', 'NUL', 'COM1', 'lpt9'])(
-      '保留名（"%s"）拒绝',
-      (name) => {
-        expect(() => service.sanitizeName(name)).toThrow(/保留名/)
-      }
-    )
+    it.each(['CON', 'con', 'PRN', 'AUX', 'NUL', 'COM1', 'lpt9'])('保留名（"%s"）拒绝', (name) => {
+      expect(() => service.sanitizeName(name)).toThrow(/保留名/)
+    })
   })
 
   describe('list（用户隔离 + 默认空间）', () => {
-    it('恒含默认空间（记录与目录自动创建）', () => {
-      const rows = service.list('u1')
+    it('恒含默认空间（记录与目录自动创建）', async () => {
+      const rows = await service.list('u1')
       expect(rows.map((r) => r.name)).toContain('默认工作空间')
-      expect(existsSync(join(baseDir, 'DefaultWorkspace'))).toBe(true)
+      expect(existsSync(baseDir)).toBe(true)
     })
 
-    it('只返回当前用户的工作空间', () => {
+    it('只返回当前用户的工作空间', async () => {
       service.createWorkspace('u1项目', 'u1')
       service.createWorkspace('u2项目', 'u2')
-      const names = service.list('u1').map((r) => r.name)
-      expect(names).toHaveLength(2) // u1项目 + 默认空间
+      const names = (await service.list('u1')).map((r) => r.name)
+      expect(names).toHaveLength(2)
       expect(names).toContain('u1项目')
       expect(names).not.toContain('u2项目')
     })
   })
 
   describe('ensureDefaultWorkspace', () => {
-    it('创建默认目录并入库（source: default、name: 默认工作空间、user_id 为 null）', () => {
-      const ws = service.ensureDefaultWorkspace()
+    it('默认工作空间目录即配置路径本身（source: default、user_id 为 null）', async () => {
+      const ws = await service.ensureDefaultWorkspace()
       expect(ws.source).toBe('default')
       expect(ws.name).toBe('默认工作空间')
       expect(ws.userId).toBeNull()
-      expect(ws.path).toBe(join(baseDir, 'DefaultWorkspace'))
+      expect(ws.path).toBe(baseDir)
       expect(existsSync(ws.path)).toBe(true)
     })
 
-    it('重复调用幂等（返回同一条记录，不重复建目录）', () => {
-      const a = service.ensureDefaultWorkspace()
-      const b = service.ensureDefaultWorkspace()
+    it('重复调用幂等（返回同一条记录）', async () => {
+      const a = await service.ensureDefaultWorkspace()
+      const b = await service.ensureDefaultWorkspace()
       expect(a.id).toBe(b.id)
-      expect(service.list('u1')).toHaveLength(1)
+      expect(await service.list('u1')).toHaveLength(1)
     })
 
-    it('改基址后迁移默认空间路径（id 不变，不新建第二条默认记录）', () => {
-      const old = service.ensureDefaultWorkspace()
-      // 模拟系统设置修改"默认工作空间存储路径"（setBaseDir 只换基址，不迁移记录）
-      const newBase = join(baseDir, 'new-base')
-      service.setBaseDir(newBase)
-      const ws = service.ensureDefaultWorkspace()
-      // 迁移：保留原记录 id（会话绑定/checkpoint 引用不失效），路径跟随新基址
-      expect(ws.id).toBe(old.id)
-      expect(ws.path).toBe(join(newBase, 'DefaultWorkspace'))
+    it('记录存在但目录被删除时自动重建', async () => {
+      const ws = await service.ensureDefaultWorkspace()
+      rmSync(ws.path, { recursive: true, force: true })
+      const again = await service.ensureDefaultWorkspace()
+      expect(again.id).toBe(ws.id)
       expect(existsSync(ws.path)).toBe(true)
-      // 列表仍只有一条默认记录
-      const defaults = service.list('u1').filter((r) => r.source === 'default')
-      expect(defaults).toHaveLength(1)
     })
 
-    it('存量两条默认记录（历史 bug 遗留）时收敛为一条', () => {
-      const def = service.ensureDefaultWorkspace() // 当前基址记录
-      // 模拟历史遗留：改基址曾产生过的另一条默认记录（旧路径）
+    it('旧布局（配置值/DefaultWorkspace）自动迁移到配置路径本身', async () => {
+      const legacyDir = join(baseDir, 'DefaultWorkspace')
+      mkdirSync(legacyDir, { recursive: true })
+      writeFileSync(join(legacyDir, 'a.txt'), 'legacy')
+      const legacy = repo.create({
+        name: '默认工作空间',
+        path: legacyDir,
+        source: 'default',
+        userId: null
+      })
+      const ws = await service.ensureDefaultWorkspace()
+      expect(ws.id).toBe(legacy.id)
+      expect(ws.path).toBe(baseDir)
+      expect(existsSync(join(baseDir, 'a.txt'))).toBe(true)
+      expect(existsSync(legacyDir)).toBe(false)
+    })
+
+    it('存量两条默认记录时收敛为一条', async () => {
+      const def = await service.ensureDefaultWorkspace()
       const legacy = repo.create({
         name: '默认工作空间',
         path: join(baseDir, 'legacy', 'DefaultWorkspace'),
         source: 'default',
         userId: null
       })
-      const rows = service.list('u1')
+      const rows = await service.list('u1')
       const defaults = rows.filter((r) => r.source === 'default')
       expect(defaults).toHaveLength(1)
       expect(defaults[0].id).toBe(def.id)
       expect(rows.map((r) => r.id)).not.toContain(legacy.id)
     })
+
+    it('修改默认工作空间目录：迁移文件与嵌套工作空间并更新记录', async () => {
+      const oldWs = await service.ensureDefaultWorkspace()
+      writeFileSync(join(baseDir, 'a.txt'), 'a')
+      const created = service.createWorkspace('子空间', 'u1')
+      const migrateDir = join(
+        tmpdir(),
+        'ke-work-ws-migrate-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+      )
+      const moves = await service.changeDefaultWorkspaceDir(migrateDir)
+      expect(moves.map((m) => m.workspaceId)).toContain(oldWs.id)
+      const rows = await service.list('u1')
+      const def = rows.find((r) => r.source === 'default')
+      expect(def?.id).toBe(oldWs.id)
+      expect(def?.path).toBe(migrateDir)
+      expect(existsSync(join(migrateDir, 'a.txt'))).toBe(true)
+      expect(existsSync(join(migrateDir, '子空间'))).toBe(true)
+      expect(existsSync(join(baseDir, 'a.txt'))).toBe(false)
+      const resolvedCreated = service.resolveWorkspace(created.id, 'u1')
+      expect(resolvedCreated?.dir).toBe(join(migrateDir, '子空间'))
+      rmSync(migrateDir, { recursive: true, force: true })
+    })
   })
 
   describe('createWorkspace', () => {
-    it('创建目录并入库（目录落在基目录下，归属当前用户）', () => {
+    it('创建目录并入库（目录落在默认工作空间目录下，归属当前用户）', async () => {
       const ws = service.createWorkspace('测试项目', 'u1')
       expect(ws.source).toBe('created')
       expect(ws.userId).toBe('u1')
       expect(ws.path).toBe(join(baseDir, '测试项目'))
       expect(existsSync(ws.path)).toBe(true)
-      expect(service.list('u1')).toHaveLength(2) // 测试项目 + 默认空间
+      expect(await service.list('u1')).toHaveLength(2) // 测试项目 + 默认空间
     })
 
-    it('同名已存在拒绝（含 DefaultWorkspace 目录名）', () => {
+    it('同名已存在拒绝（默认空间不再是同名子目录）', async () => {
       service.createWorkspace('重复', 'u1')
       expect(() => service.createWorkspace('重复', 'u1')).toThrow(/已存在/)
-      // 默认空间目录已存在，用户无法创建同名空间
-      service.ensureDefaultWorkspace()
-      expect(() => service.createWorkspace('DefaultWorkspace', 'u1')).toThrow(/已存在/)
+      // 默认工作空间即配置目录本身，DefaultWorkspace 子目录不再占用默认空间目录
+      await service.ensureDefaultWorkspace()
+      expect(() => service.createWorkspace('DefaultWorkspace', 'u1')).not.toThrow()
     })
 
-    it('非法名透传 sanitize 错误', () => {
+    it('非法名透传 sanitize 错误', async () => {
       expect(() => service.createWorkspace('a/b', 'u1')).toThrow()
-      expect(service.list('u1')).toHaveLength(1) // 仅默认空间
+      expect(await service.list('u1')).toHaveLength(1) // 仅默认空间
     })
   })
 
@@ -178,7 +209,7 @@ describe('WorkspaceService', () => {
         selectDir: vi.fn().mockResolvedValue(null)
       })
       expect(await svc.selectExternalDir('u1')).toBeNull()
-      expect(service.list('u1')).toHaveLength(1) // 仅默认空间
+      expect(await service.list('u1')).toHaveLength(1) // 仅默认空间
     })
 
     it('选中目录入库（source: external）且不重复', async () => {
@@ -192,7 +223,7 @@ describe('WorkspaceService', () => {
       expect(a!.source).toBe('external')
       expect(a!.path).toBe(external)
       expect(b!.id).toBe(a!.id)
-      expect(service.list('u1')).toHaveLength(2) // 默认空间 + external
+      expect(await service.list('u1')).toHaveLength(2) // 默认空间 + external
     })
 
     it('他人已登记目录拒绝', async () => {
@@ -218,15 +249,15 @@ describe('WorkspaceService', () => {
   })
 
   describe('deleteWorkspace', () => {
-    it('删除本人记录（磁盘目录保留）', () => {
+    it('删除本人记录（磁盘目录保留）', async () => {
       const ws = service.createWorkspace('可删', 'u1')
       service.deleteWorkspace(ws.id, 'u1')
-      expect(service.list('u1').map((r) => r.id)).not.toContain(ws.id)
+      expect((await service.list('u1')).map((r) => r.id)).not.toContain(ws.id)
       expect(existsSync(ws.path)).toBe(true)
     })
 
-    it('默认空间不可删除', () => {
-      const def = service.ensureDefaultWorkspace()
+    it('默认空间不可删除', async () => {
+      const def = await service.ensureDefaultWorkspace()
       expect(() => service.deleteWorkspace(def.id, 'u1')).toThrow(/默认工作空间不可删除/)
     })
 
@@ -243,8 +274,8 @@ describe('WorkspaceService', () => {
       expect(resolved).toEqual({ id: ws.id, name: '解析', dir: ws.path })
     })
 
-    it('默认空间可解析（目录存在）', () => {
-      const def = service.ensureDefaultWorkspace()
+    it('默认空间可解析（目录存在）', async () => {
+      const def = await service.ensureDefaultWorkspace()
       const resolved = service.resolveWorkspace(def.id, 'u1')
       expect(resolved).toEqual({ id: def.id, name: '默认工作空间', dir: def.path })
     })
@@ -363,7 +394,9 @@ describe('WorkspaceService', () => {
     it('越界路径拒绝', async () => {
       const ws = service.createWorkspace('read-secure', 'u1')
       await expect(service.readFile(ws.id, 'u1', '../secret.txt')).rejects.toThrow(/越界/)
-      await expect(service.readFile(ws.id, 'u1', join(tmpdir(), 'secret.txt'))).rejects.toThrow(/越界/)
+      await expect(service.readFile(ws.id, 'u1', join(tmpdir(), 'secret.txt'))).rejects.toThrow(
+        /越界/
+      )
     })
 
     it('文件不存在 / 指向目录抛错', async () => {
@@ -383,22 +416,27 @@ describe('WorkspaceService', () => {
       expect(openPath).toHaveBeenCalledWith(ws.path)
     })
 
-    it('默认空间打开其基址（与设置"默认工作空间存储路径"配置值一致）', async () => {
+    it('默认空间打开配置路径本身（与设置值一致）', async () => {
       const openPath = vi.fn().mockResolvedValue(undefined)
       const svc = new WorkspaceService(repo, baseDir, { openPath })
-      const def = svc.ensureDefaultWorkspace()
+      const def = await svc.ensureDefaultWorkspace()
       await svc.openWorkspace(def.id, 'u1')
       expect(openPath).toHaveBeenCalledWith(baseDir)
     })
 
-    it('改基址后默认空间打开新基址（跟随设置配置值）', async () => {
+    it('修改默认空间目录后打开新目录（跟随设置配置值）', async () => {
       const openPath = vi.fn().mockResolvedValue(undefined)
       const svc = new WorkspaceService(repo, baseDir, { openPath })
-      svc.ensureDefaultWorkspace()
-      const newBase = join(baseDir, 'new-base')
-      svc.setBaseDir(newBase)
-      await svc.openWorkspace(svc.ensureDefaultWorkspace().id, 'u1')
-      expect(openPath).toHaveBeenCalledWith(newBase)
+      await svc.ensureDefaultWorkspace()
+      const newDir = join(
+        tmpdir(),
+        'ke-work-ws-open-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+      )
+      await svc.changeDefaultWorkspaceDir(newDir)
+      const def = await svc.ensureDefaultWorkspace()
+      await svc.openWorkspace(def.id, 'u1')
+      expect(openPath).toHaveBeenCalledWith(newDir)
+      rmSync(newDir, { recursive: true, force: true })
     })
 
     it('id 不存在抛错', async () => {

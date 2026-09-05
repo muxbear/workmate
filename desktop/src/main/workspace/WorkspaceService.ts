@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { readFile } from 'fs/promises'
-import { basename, extname, isAbsolute, join, resolve, sep } from 'path'
+import { cp, mkdir, readFile, readdir, rename, rm } from 'fs/promises'
+import { basename, extname, isAbsolute, join, parse, relative, resolve, sep } from 'path'
 import { homedir } from 'os'
 import type { WorkspaceRepository } from './WorkspaceRepository'
 import type { WorkspaceRow } from './types'
@@ -64,7 +64,6 @@ const MAX_LIST_ITEMS = 200
 
 /** 默认工作空间：未选择任何空间时的兜底目录（记录机器级共享，user_id 恒为 NULL） */
 const DEFAULT_WS_NAME = '默认工作空间'
-const DEFAULT_WS_DIR = 'DefaultWorkspace'
 
 /** 工作空间名称规则（Windows 目录名约束的超集，跨平台一致） */
 const NAME_MAX_LEN = 50
@@ -76,88 +75,182 @@ const EDGE_DOTS_SPACES = /^[.\s]|[.\s]$/
 const RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i
 
 /** 工作空间外部依赖（可注入以便纯 node 单测） */
+export interface WorkspacePathMove {
+  workspaceId: string
+  from: string
+  to: string
+}
+
 export interface WorkspaceServiceDeps {
   /** 打开系统目录选择窗口，返回所选目录绝对路径；取消返回 null */
   selectDir?: () => Promise<string | null>
   /** 在系统资源管理器中打开目录 */
   openPath?: (p: string) => Promise<void>
+  onWorkspaceMigrated?: (moves: WorkspacePathMove[]) => void
 }
 
 /**
  * 工作空间业务服务
  *
- * 工作空间 = 任务的工作文件夹，存放在系统家目录的 KeWork/ 下（external 来源除外）。
+ * 工作空间 = 任务的工作文件夹；默认工作空间即系统设置“默认工作空间存储路径”配置的目录本身（external 来源除外）。
  * 所有目录创建/校验集中在主进程，渲染层只传 id/name，防路径注入。
  */
 export class WorkspaceService {
-  private keWorkBaseDir: string
+  private defaultWorkspaceDir: string
 
   constructor(
     private readonly repo: WorkspaceRepository,
-    keWorkBaseDir: string = join(homedir(), 'KeWork'),
+    defaultWorkspaceDir: string = join(homedir(), 'KeWork'),
     private readonly deps: WorkspaceServiceDeps = {},
     private readonly wordConversionService: WordConversionService = new WordConversionService()
   ) {
-    this.keWorkBaseDir = keWorkBaseDir
+    this.defaultWorkspaceDir = defaultWorkspaceDir
+  }
+
+  /** 当前生效的默认工作空间目录（= 系统设置“默认工作空间存储路径”配置值） */
+  getDefaultWorkspaceDir(): string {
+    return this.defaultWorkspaceDir
   }
 
   /**
-   * 修改工作空间基址（系统设置"默认工作空间存储路径"更改后调用）。
-   * 不迁移已有 workspaces 表记录与磁盘目录——仅影响新建工作空间的落点，
-   * 符合"修改后不影响已有数据"文案承诺。
+   * 修改默认工作空间目录（系统设置“默认工作空间存储路径”更改后调用）。
+   * 迁移旧目录全部内容到新目录，并同步 workspaces 记录与 onWorkspaceMigrated 回调。
    */
-  setBaseDir(dir: string): void {
-    this.keWorkBaseDir = dir
-    console.log(`[workspace] base dir changed to: ${dir}`)
+  async changeDefaultWorkspaceDir(nextDir: string): Promise<WorkspacePathMove[]> {
+    if (typeof nextDir !== 'string' || !nextDir.trim() || !isAbsolute(nextDir)) {
+      throw new Error('默认工作空间路径必须为绝对路径')
+    }
+    await this.ensureDefaultWorkspace()
+    const fromDir = resolve(this.defaultWorkspaceDir)
+    const toDir = resolve(nextDir.trim())
+    if (fromDir === toDir) return []
+    return this.relocateDefaultWorkspace(fromDir, toDir)
   }
-
-  /** 当前生效的工作空间基址（供设置页/装配读取真实值） */
-  getBaseDir(): string {
-    return this.keWorkBaseDir
-  }
-
   /**
-   * 当前用户的工作空间（含机器级共享的默认空间；默认空间记录/目录不存在时自动创建）
+   * 当前用户的工作空间（含机器级共享的默认空间；记录/目录缺失时自动创建/重建）
    */
-  list(userId: string): WorkspaceRow[] {
-    this.ensureDefaultWorkspace()
+  async list(userId: string): Promise<WorkspaceRow[]> {
+    await this.ensureDefaultWorkspace()
     return this.repo.listForUser(userId)
   }
 
   /**
-   * 默认工作空间：<基址>/DefaultWorkspace，机器级唯一（记录 user_id 为 NULL，所有用户共享）
-   * - 当前基址下已存在记录 → 收敛历史遗留的多余默认记录后返回
-   * - 存在旧基址留下的默认记录（改过"存储路径"）→ 迁移其 path 跟随新基址（id 不变，绑定不失效）
-   * - 完全不存在 → 创建目录并入库
+   * 确保默认工作空间存在：
+   * - 目录即系统设置「默认工作空间存储路径」配置值本身（不再创建 DefaultWorkspace 子目录）；
+   * - 记录缺失 → 创建目录并入库（机器级唯一，user_id 为 NULL）；
+   * - 记录指向其他目录（历史基址语义或改动过存储路径）→ 迁移目录内容并更新记录（id 不变，绑定不失效）。
    */
-  ensureDefaultWorkspace(): WorkspaceRow {
-    const dir = join(this.keWorkBaseDir, DEFAULT_WS_DIR)
+  async ensureDefaultWorkspace(): Promise<WorkspaceRow> {
+    const dir = this.defaultWorkspaceDir
+    if (!isAbsolute(dir)) throw new Error('默认工作空间路径必须为绝对路径')
     const existing = this.repo.findByPath(dir)
     if (existing) {
-      // 改基址曾产生的重复默认记录（仅删记录，磁盘目录保留）
+      if (existing.source !== 'default') {
+        throw new Error('默认工作空间路径已被其他工作空间占用')
+      }
+      // 记录存在但目录被删除/移动时自动重建，避免记录在、目录丢导致的解析失败
+      await mkdir(dir, { recursive: true })
       this.repo.removeOtherDefaults(existing.id)
       return existing
     }
     const otherDefault = this.repo.findDefaultSource()
     if (otherDefault) {
-      console.log(`[workspace] migrate default workspace: ${otherDefault.path} -> ${dir}`)
-      mkdirSync(dir, { recursive: true })
-      this.repo.updatePath(otherDefault.id, dir)
-      this.repo.removeOtherDefaults(otherDefault.id)
+      console.log('[workspace] migrate default workspace: ' + otherDefault.path + ' -> ' + dir)
+      await this.relocateDefaultWorkspace(otherDefault.path, dir)
       return { ...otherDefault, path: dir }
     }
-    mkdirSync(dir, { recursive: true })
-    console.log(`[workspace] created default directory: ${dir}`)
+    await mkdir(dir, { recursive: true })
+    console.log('[workspace] created default workspace directory: ' + dir)
     return this.repo.create({ name: DEFAULT_WS_NAME, path: dir, source: 'default', userId: null })
   }
 
   /**
-   * 新建工作空间：校验名字 → 在家目录 KeWork/ 下创建同名文件夹 → 入库
+   * 迁移默认工作空间目录：把 fromDir 下全部内容移动到 toDir，
+   * 并同步更新 workspaces 中位于 fromDir 内（含默认空间本身）的记录路径。
+   * 目录缺失时仅更新记录；目标目录已含同名条目时拒绝迁移，避免误覆盖。
+   */
+  private async relocateDefaultWorkspace(
+    fromDir: string,
+    toDir: string
+  ): Promise<WorkspacePathMove[]> {
+    const from = resolve(fromDir)
+    const to = resolve(toDir)
+    this.assertSafeMigrationPath(from, '当前默认工作空间')
+    this.assertSafeMigrationPath(to, '新默认工作空间')
+    if (from === to) return []
+    if (to.startsWith(from + sep)) {
+      throw new Error('新目录不能位于当前默认工作空间目录内部')
+    }
+    const targetOccupied = this.repo.findByPath(to)
+    const defaultRow = this.repo.findDefaultSource()
+    if (
+      targetOccupied &&
+      targetOccupied.source !== 'default' &&
+      (!defaultRow || targetOccupied.id !== defaultRow.id)
+    ) {
+      throw new Error('目标目录已被其他工作空间占用')
+    }
+    const affected = this.repo.listAll().filter(
+      (row) => row.path === from || row.path.startsWith(from + sep)
+    )
+    await mkdir(to, { recursive: true })
+    if (existsSync(from)) {
+      await this.moveDirectoryContents(from, to)
+    }
+    const moves: WorkspacePathMove[] = affected.map((row) => {
+      const next = row.path === from ? to : join(to, relative(from, row.path))
+      this.repo.updatePath(row.id, next)
+      return { workspaceId: row.id, from: row.path, to: next }
+    })
+    const currentDefault = this.repo.findDefaultSource()
+    if (currentDefault) this.repo.removeOtherDefaults(currentDefault.id)
+    this.defaultWorkspaceDir = to
+    console.log('[workspace] default workspace moved to: ' + to)
+    this.deps.onWorkspaceMigrated?.(moves)
+    return moves
+  }
+
+  /** 逐项把 src 子项迁移到 dst；跨盘/占用时降级为复制后删除 */
+  private async moveDirectoryContents(src: string, dst: string): Promise<void> {
+    const existing = new Set(await readdir(dst))
+    const entries = await readdir(src, { withFileTypes: true })
+    const overlap = entries.filter((entry) => existing.has(entry.name))
+    if (overlap.length > 0) {
+      throw new Error('目标目录已存在同名文件或目录：' + overlap[0].name)
+    }
+    for (const entry of entries) {
+      const from = join(src, entry.name)
+      const to = join(dst, entry.name)
+      try {
+        await rename(from, to)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code !== 'EXDEV' && code !== 'EPERM' && code !== 'EACCES') throw err
+        await cp(from, to, { recursive: true, force: true })
+        await rm(from, { recursive: true, force: true })
+      }
+    }
+    try {
+      await rm(src, { recursive: false, force: true })
+    } catch {
+      // 目录仍被占用或非空时保留原目录，不影响迁移结果
+    }
+  }
+
+  /** 安全校验：默认工作空间不允许是磁盘根目录或用户主目录 */
+  private assertSafeMigrationPath(dir: string, label: string): void {
+    const root = parse(dir).root
+    if (dir === root || dir === homedir()) {
+      throw new Error(label + '不能设置为磁盘根目录或用户主目录')
+    }
+  }
+  /**
+   * 新建工作空间：校验名字 → 在默认工作空间目录下创建同名子目录 → 入库
    * @throws 名字非法 / 目录已存在时抛错（渲染层展示 message）
    */
   createWorkspace(name: string, userId: string): WorkspaceRow {
     const safe = this.sanitizeName(name)
-    const dir = join(this.keWorkBaseDir, safe)
+    const dir = join(this.defaultWorkspaceDir, safe)
     if (existsSync(dir)) {
       throw new Error(`工作空间已存在：${safe}`)
     }
@@ -214,9 +307,7 @@ export class WorkspaceService {
   async openWorkspace(id: string, userId: string): Promise<void> {
     const ws = this.repo.getById(id, userId)
     if (!ws) throw new Error('工作空间不存在')
-    // 默认空间打开其基址（设置"默认工作空间存储路径"配置值，两处保持一致）；
-    // 普通空间打开各自目录
-    const target = ws.source === 'default' ? this.keWorkBaseDir : ws.path
+    const target = ws.path
     if (!existsSync(target)) throw new Error('工作空间目录不存在')
     if (!this.deps.openPath) throw new Error('打开目录功能不可用')
     await this.deps.openPath(target)

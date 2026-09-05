@@ -178,7 +178,7 @@ export interface WorkspaceAPI {
   createWorkspace(name: string): Promise<IpcResult<Workspace>>
   /** 打开系统目录选择窗口；用户取消时 data 为 null */
   selectWorkspaceDir(): Promise<IpcResult<Workspace | null>>
-  /** 使用默认工作空间：~/KeWork/DefaultWorkspace（未选择任何空间时的兜底） */
+  /** 使用默认工作空间（系统设置配置的目录；未选择任何空间时的兜底） */
   useDefaultWorkspace(): Promise<IpcResult<Workspace>>
   openWorkspace(id: string): Promise<IpcResult<null>>
   /** 打开默认工作目录（~/.ke-work/workspace，未绑定空间的会话使用） */
@@ -224,7 +224,7 @@ export interface StorageStats {
 /** 系统设置快照（config:get-all；settings 为扁平 key 映射，meta 供 UI 显示真实值） */
 export interface SettingsSnapshot {
   settings: Record<string, unknown>
-  meta: { dataBaseDir: string; workspaceBaseDir: string }
+  meta: { dataBaseDir: string; defaultWorkspaceDir: string }
 }
 
 /** 内置运行时类型标识 */

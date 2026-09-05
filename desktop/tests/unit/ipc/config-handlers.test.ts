@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { registerConfigHandlers } from '../../../src/main/ipc/config-handlers'
 import type { SettingsService } from '../../../src/main/settings/SettingsService'
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function createFakeIpcMain() {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   return {
@@ -15,9 +16,15 @@ function createFakeIpcMain() {
   }
 }
 
-function createSettingsServiceMock(overrides: Partial<Record<keyof SettingsService, unknown>> = {}) {
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function createSettingsServiceMock(
+  overrides: Partial<Record<keyof SettingsService, unknown>> = {}
+) {
   return {
-    getAll: vi.fn(() => ({ settings: {}, meta: { dataBaseDir: '/tmp', workspaceBaseDir: 'C:\\KeWork' } })),
+    getAll: vi.fn(() => ({
+      settings: {},
+      meta: { dataBaseDir: '/tmp', defaultWorkspaceDir: 'C:\\KeWork' }
+    })),
     set: vi.fn(),
     getStorageStats: vi.fn(async () => ({
       baseDir: '/tmp',

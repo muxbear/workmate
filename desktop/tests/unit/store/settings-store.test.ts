@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useSettingsStore } from '../../../src/renderer/src/store/settings'
 
 /** 内存版 window.api（仅设置相关通道） */
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function createMockWindowApi() {
   const store = new Map<string, unknown>([
     ['ui.language', 'zh-CN'],
@@ -14,13 +15,14 @@ function createMockWindowApi() {
       success: true,
       data: {
         settings: Object.fromEntries(store),
-        meta: { dataBaseDir: 'C:\\Users\\t\\.ke-work', workspaceBaseDir: 'C:\\Users\\t\\KeWork' }
+        meta: { dataBaseDir: 'C:\\Users\\t\\.ke-work', defaultWorkspaceDir: 'C:\\Users\\t\\KeWork' }
       }
     })),
     setSetting: vi.fn(async (key: string, value: unknown) => {
       store.set(key, value)
       return { success: true, data: null }
     }),
+    listWorkspaces: vi.fn(async () => ({ success: true, data: [] })),
     getStorageStats: vi.fn(async () => ({
       success: true,
       data: { baseDir: '/tmp', usedBytes: 1024, diskTotal: 1024 * 1024, diskFree: 512 * 1024 }
@@ -37,6 +39,11 @@ describe('useSettingsStore（渲染层系统设置）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mock = createMockWindowApi()
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn()
+    }
     ;(globalThis as Record<string, unknown>).window = { api: mock.api }
     mock.api.setZoomFactor.mockClear()
   })
@@ -51,7 +58,7 @@ describe('useSettingsStore（渲染层系统设置）', () => {
     await s.load()
     expect(s.language).toBe('zh-CN')
     expect(s.fontSize).toBe(17)
-    expect(s.meta?.workspaceBaseDir).toBe('C:\\Users\\t\\KeWork')
+    expect(s.meta?.defaultWorkspaceDir).toBe('C:\\Users\\t\\KeWork')
     expect(s.loaded).toBe(true)
     expect(mock.api.setZoomFactor).toHaveBeenCalledWith(1) // 17/17
   })
@@ -113,7 +120,7 @@ describe('useSettingsStore（渲染层系统设置）', () => {
     await s.load()
     await s.changeWorkspaceDir()
     expect(s.defaultWorkspaceDir).toBe('D:\\MyWork')
-    expect(s.meta?.workspaceBaseDir).toBe('D:\\MyWork')
+    expect(s.meta?.defaultWorkspaceDir).toBe('D:\\MyWork')
   })
 
   it('changeWorkspaceDir：取消（null）不更新', async () => {

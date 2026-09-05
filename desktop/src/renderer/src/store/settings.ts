@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useWorkspaceStore } from './workspace'
 
 /** 系统设置存储 key（与主进程 settings/schema.ts 对齐；嵌套路径扁平化） */
 export type SettingsKey =
@@ -33,7 +34,7 @@ export const THEME_OPTIONS: Array<{ value: ThemeName; label: string }> = [
 
 interface SettingsMeta {
   dataBaseDir: string
-  workspaceBaseDir: string
+  defaultWorkspaceDir: string
 }
 
 interface StorageStats {
@@ -215,7 +216,8 @@ export const useSettingsStore = defineStore('settings', () => {
     if (!result.success) throw new Error(result.error ?? '选择目录失败')
     if (result.data) {
       defaultWorkspaceDir.value = result.data
-      if (meta.value) meta.value.workspaceBaseDir = result.data
+      if (meta.value) meta.value.defaultWorkspaceDir = result.data
+      await useWorkspaceStore().load()
     }
   }
 

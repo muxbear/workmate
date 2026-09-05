@@ -32,7 +32,7 @@ export function registerConfigHandlers(ipc: IpcMain, deps: ConfigHandlerDeps): v
   ipc.handle('config:set', async (_event, key?: unknown, value?: unknown) => {
     if (typeof key !== 'string' || !key) return fail('参数错误')
     try {
-      settingsService.set(key, value)
+      await settingsService.set(key, value)
       return ok(null)
     } catch (err) {
       return fail((err as Error).message)

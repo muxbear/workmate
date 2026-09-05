@@ -389,16 +389,22 @@ app.whenReady().then(() => {
     setLockScreen,
     selectDir,
     openPath,
-    onWorkspaceBaseDirChange: (dir) => workspaceService.setBaseDir(dir)
+    onDefaultWorkspaceDirChange: async (dir) => {
+      await workspaceService.changeDefaultWorkspaceDir(dir)
+    }
   })
   const initialSettings = settingsService.getAll()
 
   // ── 工作空间服务（按登录用户隔离；目录创建/校验集中在主进程）──
-  // 工作空间目录基址默认用户家目录 KeWork/（与 ~/.ke-work 应用数据目录不同）；可由系统设置更改
+  // 默认工作空间目录默认 ~/KeWork（与 ~/.ke-work 应用数据目录不同）；可由系统设置更改
   workspaceService = new WorkspaceService(
     dataSourceFactory.createWorkspaceRepository(),
-    initialSettings.meta.workspaceBaseDir,
-    { selectDir, openPath }
+    initialSettings.meta.defaultWorkspaceDir,
+    {
+      selectDir,
+      openPath,
+      onWorkspaceMigrated: (moves) => conversationStore.syncWorkspaceDirs(moves)
+    }
   )
   registerWorkspaceHandlers(ipcMain, { workspaceService, conversationStore, session })
   registerBrowserHandlers(ipcMain, {

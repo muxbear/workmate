@@ -29,7 +29,7 @@ export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDe
   ipc.handle('workspace:list', async () => {
     try {
       const userId = session.requireUserId()
-      return ok(workspaceService.list(userId))
+      return ok(await workspaceService.list(userId))
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -58,7 +58,7 @@ export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDe
   ipc.handle('workspace:default', async () => {
     try {
       session.requireUserId()
-      return ok(workspaceService.ensureDefaultWorkspace())
+      return ok(await workspaceService.ensureDefaultWorkspace())
     } catch (err) {
       return fail((err as Error).message)
     }

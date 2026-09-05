@@ -326,11 +326,11 @@ onMounted(() => {
         /KeWork 默认工作空间存储路径
       </h3>
       <p class="s-desc s-desc--mt">
-        新建任务、工作空间时将自动存放在该路径下；修改后不影响已有数据。
+        该路径即默认工作空间目录，新建任务生成的文件将直接保存在其中；修改路径后，旧目录中的内容会自动迁移到新目录。
       </p>
       <div class="s-path-row">
         <input
-          :value="settingsStore.meta?.workspaceBaseDir ?? ''"
+          :value="settingsStore.meta?.defaultWorkspaceDir ?? ''"
           readonly
           class="s-input s-input--flex"
         >
