@@ -17,8 +17,35 @@ export interface ConversationSummary {
   workspace?: ConversationWorkspace | null
 }
 
-/** 会话内消息（供 UI 展示） */
+/** 会话内 AI 轮次展示元信息（辅助表 conversation_turn_meta；实时补写，回显恢复） */
+export interface ConversationTurnMeta {
+  model?: string
+  createdAt?: number
+  durationMs?: number
+}
+
+/** 会话内文档产物（辅助表 conversation_doc_artifacts；消息区链接 + 右侧栏打开） */
+export interface ConversationDocArtifact {
+  name: string
+  relPath: string
+  ext: string
+  workspaceId: string | null
+}
+
+/** 会话内消息（供 UI 展示：按轮折叠后的 user/assistant 消息，样式与实时一致） */
 export interface ConversationMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  reasoning?: string
+  /** 该轮 AI 生成/涉及的文档文件清单 */
+  files?: ConversationDocArtifact[]
+  /** AI 轮次展示元信息（模型/开始时间/耗时） */
+  meta?: ConversationTurnMeta
+}
+
+/** 会话内原始 checkpoint 消息（供 agent:send 图输入重建；含 tool/system 与工具关联字段） */
+export interface RawConversationMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
@@ -26,6 +53,10 @@ export interface ConversationMessage {
   reasoning?: string
   /** 原始内容块（content 为数组时原样保留，供图输入透传；string 旧数据无此字段） */
   rawContent?: unknown
+  /** ToolMessage 对应的工具调用 id（重建模型输入时使用） */
+  toolCallId?: string
+  /** ToolMessage 的工具名 */
+  toolName?: string
 }
 
 // 标记格式的权威来源是 file-parts.expandFilePart，改动需同步
@@ -129,9 +160,7 @@ export class ConversationStore {
   }
 
   /** 读取用户全部会话的工作空间绑定（conversation_workspaces 表，按用户隔离） */
-  private loadWorkspaceBindings(
-    userId: string
-  ): Map<string, ConversationWorkspace> {
+  private loadWorkspaceBindings(userId: string): Map<string, ConversationWorkspace> {
     const map = new Map<string, ConversationWorkspace>()
     if (!this.getDb) return map
     try {
@@ -203,8 +232,7 @@ export class ConversationStore {
   /** 从 checkpoint metadata 宽容读取工作空间绑定（旧会话无该字段返回 null） */
   private readWorkspace(tuple: CheckpointTuple): ConversationWorkspace | null {
     const ws = (tuple.metadata as Record<string, unknown> | undefined)?.workspace as
-      | { id?: unknown; name?: unknown; dir?: unknown }
-      | undefined
+      { id?: unknown; name?: unknown; dir?: unknown } | undefined
     if (!ws || typeof ws.id !== 'string' || !ws.id) return null
     return {
       id: ws.id,
@@ -216,8 +244,7 @@ export class ConversationStore {
   /** 从 checkpoint 派生会话标题（兜底）：首条 user 消息解析（string 或新版 blocks 数组）后截断 */
   private deriveTitle(tuple: CheckpointTuple): string {
     const messages = tuple.checkpoint.channel_values?.messages as
-      | Array<{ role?: string; content?: unknown }>
-      | undefined
+      Array<{ role?: string; content?: unknown }> | undefined
     const firstUser = messages?.find((m) => m.role === 'user' || m.role === 'human')
     const parsed = firstUser ? parseBlocks(firstUser.content) : { content: '' }
     const content = parsed.content.trim()
@@ -333,20 +360,44 @@ export class ConversationStore {
     return this.readWorkspace(tuple)
   }
 
-  /** 读取会话内消息（越权校验：thread_id 由 userId 合成） */
-  async getMessages(userId: string, conversationId: string): Promise<ConversationMessage[]> {
+  /** 读取最新 checkpoint 的 messages 原始对象（不做展示折叠；越权校验：thread_id 由 userId 合成） */
+  private async readCheckpointMessages(
+    userId: string,
+    conversationId: string
+  ): Promise<
+    Array<{
+      id?: string
+      getType?: () => string
+      role?: string
+      content?: unknown
+      tool_call_id?: unknown
+      name?: unknown
+    }>
+  > {
     const checkpointer = this.getCheckpointer()
-    const threadId = this.buildThreadId(userId, conversationId)
-    const tuple = await checkpointer.getTuple({ configurable: { thread_id: threadId } })
+    const tuple = await checkpointer.getTuple({
+      configurable: { thread_id: this.buildThreadId(userId, conversationId) }
+    })
     if (!tuple) return []
-
     const messages = tuple.checkpoint.channel_values?.messages
     if (!Array.isArray(messages)) return []
+    return messages as Array<{
+      id?: string
+      getType?: () => string
+      role?: string
+      content?: unknown
+      tool_call_id?: unknown
+      name?: unknown
+    }>
+  }
 
+  /** 读取会话原始消息（agent:send 重建图输入用；保留 tool/system 与工具调用关联，不折叠） */
+  async getRawMessages(userId: string, conversationId: string): Promise<RawConversationMessage[]> {
+    const messages = await this.readCheckpointMessages(userId, conversationId)
     return messages
-      .map((msg: { id?: string; getType?: () => string; role?: string; content?: unknown }) => {
+      .map((msg) => {
         const rawRole = typeof msg.getType === 'function' ? msg.getType() : msg.role
-        let role: ConversationMessage['role']
+        let role: RawConversationMessage['role']
         switch (rawRole) {
           case 'human':
             role = 'user'
@@ -363,11 +414,8 @@ export class ConversationStore {
           default:
             return null
         }
-        // checkpoint 中 AI 消息 content 为消息块数组（新版架构），解析为 markdown 正文 + 思考
         const parsed = parseBlocks(msg.content)
-        // 显式标注 ConversationMessage：msg.content 收窄为 object 后 rawContent 推断为 object，
-        // 与接口的 unknown 不一致会破坏下方 filter 类型谓词
-        const out: ConversationMessage = {
+        const out: RawConversationMessage = {
           id: msg.id ?? '',
           role,
           content: parsed.content,
@@ -375,9 +423,198 @@ export class ConversationStore {
           // content 为数组时原样保留原始块（图输入透传用）；string/非数组对象旧数据不设该字段
           ...(Array.isArray(msg.content) ? { rawContent: msg.content } : {})
         }
+        if (role === 'tool') {
+          if (typeof msg.tool_call_id === 'string' && msg.tool_call_id) {
+            out.toolCallId = msg.tool_call_id
+          }
+          if (typeof msg.name === 'string' && msg.name) {
+            out.toolName = msg.name
+          }
+        }
         return out
       })
-      .filter((m): m is ConversationMessage => m !== null)
+      .filter((m): m is RawConversationMessage => m !== null)
+  }
+
+  /** 读取会话内展示消息（conversation:get 回显用）：按 user 消息为界折叠为一问一答，
+   *  tool/system 不渲染，并挂接本地辅助表里的轮次元信息与文档产物（与实时展示一致） */
+  async getMessages(userId: string, conversationId: string): Promise<ConversationMessage[]> {
+    const raw = await this.getRawMessages(userId, conversationId)
+    if (raw.length === 0) return []
+
+    // 辅助表：轮次元信息 + 文档产物（旧会话无记录则静默缺省）
+    const metaByTurn = new Map<number, ConversationTurnMeta>()
+    const artifactsByTurn = new Map<number, ConversationDocArtifact[]>()
+    if (this.getDb) {
+      try {
+        const db = this.getDb()
+        const metaRows = db
+          .prepare(
+            'SELECT turn_index, model, created_at_ms, duration_ms FROM conversation_turn_meta WHERE user_id = ? AND conversation_id = ?'
+          )
+          .all(userId, conversationId) as Array<{
+          turn_index: number
+          model: string | null
+          created_at_ms: number | null
+          duration_ms: number | null
+        }>
+        for (const row of metaRows) {
+          const meta: ConversationTurnMeta = {}
+          if (row.model) meta.model = row.model
+          if (row.created_at_ms !== null && row.created_at_ms !== undefined)
+            meta.createdAt = row.created_at_ms
+          if (row.duration_ms !== null && row.duration_ms !== undefined)
+            meta.durationMs = row.duration_ms
+          metaByTurn.set(row.turn_index, meta)
+        }
+        const artifactRows = db
+          .prepare(
+            'SELECT turn_index, name, rel_path, ext, workspace_id FROM conversation_doc_artifacts WHERE user_id = ? AND conversation_id = ? ORDER BY turn_index, id'
+          )
+          .all(userId, conversationId) as Array<{
+          turn_index: number
+          name: string
+          rel_path: string
+          ext: string
+          workspace_id: string | null
+        }>
+        for (const row of artifactRows) {
+          const list = artifactsByTurn.get(row.turn_index) ?? []
+          list.push({
+            name: row.name,
+            relPath: row.rel_path,
+            ext: row.ext,
+            workspaceId: row.workspace_id
+          })
+          artifactsByTurn.set(row.turn_index, list)
+        }
+      } catch (err) {
+        console.error('[ConversationStore] load turn meta/artifacts failed:', err)
+      }
+    }
+
+    // 折叠：每个 user 消息与其后的所有 AI 消息合并为一个 assistant 展示消息
+    interface TurnAccumulator {
+      user: RawConversationMessage | null
+      assistantId: string | null
+      contents: string[]
+      reasonings: string[]
+      turnIndex: number
+    }
+    const turns: TurnAccumulator[] = []
+    let turnIndex = 0
+    let current: TurnAccumulator | null = null
+    for (const msg of raw) {
+      if (msg.role === 'user') {
+        turnIndex += 1
+        current = { user: msg, assistantId: null, contents: [], reasonings: [], turnIndex }
+        turns.push(current)
+      } else if (msg.role === 'assistant') {
+        if (!current) {
+          // 异常形态：AI 消息先于任何 user 消息（如 agent 主动开场），按独立轮次展示
+          turnIndex += 1
+          current = { user: null, assistantId: null, contents: [], reasonings: [], turnIndex }
+          turns.push(current)
+        }
+        current.assistantId = msg.id
+        if (msg.content) current.contents.push(msg.content)
+        if (msg.reasoning) current.reasonings.push(msg.reasoning)
+      }
+      // tool/system 消息不参与展示（实时流也不渲染）
+    }
+
+    const out: ConversationMessage[] = []
+    for (const turn of turns) {
+      if (turn.user) {
+        out.push({ id: turn.user.id, role: 'user', content: turn.user.content })
+      }
+      if (turn.assistantId === null) continue
+      const content = turn.contents.join('')
+      const reasoning = turn.reasonings.length ? turn.reasonings.join('') : undefined
+      const message: ConversationMessage = { id: turn.assistantId, role: 'assistant', content }
+      if (reasoning) message.reasoning = reasoning
+      const meta = metaByTurn.get(turn.turnIndex)
+      if (meta) message.meta = meta
+      const files = artifactsByTurn.get(turn.turnIndex)
+      if (files && files.length > 0) message.files = files
+      out.push(message)
+    }
+    return out
+  }
+
+  /** 保存某 AI 轮次展示元信息（实时发送结束补写；同轮重发时覆盖） */
+  saveTurnMeta(
+    userId: string,
+    conversationId: string,
+    turnIndex: number,
+    meta: ConversationTurnMeta
+  ): void {
+    if (!this.getDb) throw new Error('会话元信息不可用')
+    this.getDb()
+      .prepare(
+        'INSERT INTO conversation_turn_meta (user_id, conversation_id, turn_index, model, created_at_ms, duration_ms, updated_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(user_id, conversation_id, turn_index) DO UPDATE SET ' +
+          'model = excluded.model, created_at_ms = excluded.created_at_ms, duration_ms = excluded.duration_ms, updated_at = excluded.updated_at'
+      )
+      .run(
+        userId,
+        conversationId,
+        turnIndex,
+        meta.model ?? null,
+        meta.createdAt ?? null,
+        meta.durationMs ?? null,
+        Date.now()
+      )
+  }
+
+  /** 覆盖保存某 AI 轮次的文档产物清单（重新生成后以新结果替换旧记录） */
+  saveTurnArtifacts(
+    userId: string,
+    conversationId: string,
+    turnIndex: number,
+    artifacts: ConversationDocArtifact[]
+  ): void {
+    if (!this.getDb) return
+    const db = this.getDb()
+    const remove = db.prepare(
+      'DELETE FROM conversation_doc_artifacts WHERE user_id = ? AND conversation_id = ? AND turn_index = ?'
+    )
+    const insert = db.prepare(
+      'INSERT INTO conversation_doc_artifacts (user_id, conversation_id, turn_index, name, rel_path, ext, workspace_id, created_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    const now = Date.now()
+    db.transaction(() => {
+      remove.run(userId, conversationId, turnIndex)
+      for (const artifact of artifacts) {
+        insert.run(
+          userId,
+          conversationId,
+          turnIndex,
+          artifact.name,
+          artifact.relPath,
+          artifact.ext,
+          artifact.workspaceId,
+          now
+        )
+      }
+    })()
+  }
+
+  /** 删除某轮次起（含）的元信息与文档产物（regenerate 截断旧回复时清理） */
+  deleteTurnDataFrom(userId: string, conversationId: string, fromTurnIndex: number): void {
+    if (!this.getDb) return
+    this.getDb()
+      .prepare(
+        'DELETE FROM conversation_turn_meta WHERE user_id = ? AND conversation_id = ? AND turn_index >= ?'
+      )
+      .run(userId, conversationId, fromTurnIndex)
+    this.getDb()
+      .prepare(
+        'DELETE FROM conversation_doc_artifacts WHERE user_id = ? AND conversation_id = ? AND turn_index >= ?'
+      )
+      .run(userId, conversationId, fromTurnIndex)
   }
 
   /** 删除会话（删 checkpoint + 自定义标题/工作空间绑定记录；store 长期记忆按用户命名空间，不随会话删除） */
@@ -390,6 +627,12 @@ export class ConversationStore {
         .run(userId, conversationId)
       this.getDb()
         .prepare('DELETE FROM conversation_workspaces WHERE user_id = ? AND conversation_id = ?')
+        .run(userId, conversationId)
+      this.getDb()
+        .prepare('DELETE FROM conversation_turn_meta WHERE user_id = ? AND conversation_id = ?')
+        .run(userId, conversationId)
+      this.getDb()
+        .prepare('DELETE FROM conversation_doc_artifacts WHERE user_id = ? AND conversation_id = ?')
         .run(userId, conversationId)
     }
   }

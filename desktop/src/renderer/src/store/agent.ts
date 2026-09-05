@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 // 渲染层 window.api 类型（preload 的全局声明；node tsconfig 下需此处显式合并）
-import type { KeWorkWindowApi, MessagePart } from '../../../preload/index.d'
+import type { KeWorkWindowApi, MessagePart, DocArtifactFile } from '../../../preload/index.d'
+import type { ConversationMessage } from '../../../preload/index.d'
 import { useWorkspaceStore } from './workspace'
 
 declare global {
@@ -15,12 +16,27 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool'
   content: string
   reasoning?: string
-  /** 消息创建时刻（渲染层本地记录；历史重开无该字段） */
+  /** 消息创建时刻（渲染层本地记录；历史回显从辅助表恢复） */
   createdAt?: number
   /** 流式生成耗时 ms（assistant 完成时写入） */
   durationMs?: number
   /** 生成所用模型（发送时快照当前选择） */
   model?: string
+  /** 该轮 AI 生成/涉及的文档文件（实时由产物流事件填充，历史回显从辅助表恢复） */
+  files?: DocArtifactFile[]
+}
+
+/** 右侧栏正在流式展示的文档产物状态（NewTaskPage 驱动 ChatSidePanel） */
+export interface LiveDocArtifact {
+  artifactId: string
+  name: string
+  relPath: string
+  workspaceId?: string | null
+  ext: string
+  preview: string
+  phase: 'streaming' | 'done' | 'error'
+  text: string
+  error?: string
 }
 
 export interface Conversation {
@@ -71,6 +87,10 @@ export const useAgentStore = defineStore('agent', () => {
   const isStreaming = ref<boolean>(false)
   const isThinking = ref<boolean>(false)
   const loaded = ref<boolean>(false)
+  // 右侧栏流式文档：当前 live 产物 + 递增版本号（NewTaskPage 监听驱动 ChatSidePanel）
+  const liveArtifact = ref<LiveDocArtifact | null>(null)
+  const artifactVersion = ref(0)
+  const artifactConversationId = ref<string | null>(null)
 
   // ====== 计算属性(Getters) ======
   const currentConversation = computed(
@@ -130,6 +150,8 @@ export const useAgentStore = defineStore('agent', () => {
   function resetNewTask(): void {
     currentConversationId.value = null
     selectedMessages.value = []
+    liveArtifact.value = null
+    artifactVersion.value += 1
   }
 
   /**
@@ -147,9 +169,25 @@ export const useAgentStore = defineStore('agent', () => {
   async function selectConversation(id: string): Promise<void> {
     currentConversationId.value = id
     selectedMessages.value = []
+    liveArtifact.value = null
+    artifactConversationId.value = null
+    artifactVersion.value += 1
     const result = await window.api.getConversation(id)
     if (result.success && result.data) {
-      selectedMessages.value = (result.data as { messages: Message[] }).messages
+      const messages = (result.data as { messages: ConversationMessage[] }).messages
+      // 历史回显：主进程已按轮折叠并挂接 meta/files，映射为渲染层 Message 展示字段
+      selectedMessages.value = messages.map((m) => ({
+        id: m.id,
+        role: (m.role === 'user' || m.role === 'assistant'
+          ? m.role
+          : 'assistant') as Message['role'],
+        content: m.content,
+        ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+        ...(m.meta?.model ? { model: m.meta.model } : {}),
+        ...(m.meta?.createdAt ? { createdAt: m.meta.createdAt } : {}),
+        ...(m.meta?.durationMs ? { durationMs: m.meta.durationMs } : {}),
+        ...(m.files && m.files.length > 0 ? { files: m.files } : {})
+      }))
     }
   }
 
@@ -203,7 +241,12 @@ export const useAgentStore = defineStore('agent', () => {
     conv: Conversation,
     assistantMsg: Message,
     parts: MessagePart[] | string,
-    opts: { mode: 'append' | 'regenerate'; customModelId?: string }
+    opts: {
+      mode: 'append' | 'regenerate'
+      customModelId?: string
+      model?: string
+      turnIndex?: number
+    }
   ): Promise<void> {
     const startedAt = Date.now()
 
@@ -228,6 +271,63 @@ export const useAgentStore = defineStore('agent', () => {
       const msg = getAssistantMsg()
       if (msg) {
         msg.content += chunk
+      }
+    })
+
+    // 文档产物流：start 挂到当前 assistant 消息 files 并开启右侧栏流式文档；chunk/end 推进活动文档
+    const unlistenArtifactStart = window.api.onAgentArtifactStart((meta) => {
+      if (currentConversationId.value !== conv.id) return
+      if (artifactConversationId.value !== conv.id) return
+      const msg = getAssistantMsg()
+      if (!msg) return
+      const file: DocArtifactFile = {
+        name: meta.name,
+        relPath: meta.relPath,
+        ext: meta.ext,
+        workspaceId: meta.workspaceId
+      }
+      if (!msg.files) msg.files = []
+      if (!msg.files.some((f) => f.relPath === file.relPath && f.ext === file.ext)) {
+        msg.files.push(file)
+      }
+      liveArtifact.value = {
+        artifactId: meta.artifactId,
+        name: meta.name,
+        relPath: meta.relPath,
+        workspaceId: meta.workspaceId,
+        ext: meta.ext,
+        preview: meta.preview,
+        phase: 'streaming',
+        text: ''
+      }
+      artifactVersion.value += 1
+    })
+    const unlistenArtifactChunk = window.api.onAgentArtifactChunk((data) => {
+      if (currentConversationId.value !== conv.id) return
+      if (artifactConversationId.value !== conv.id) return
+      const current = liveArtifact.value
+      if (current && current.artifactId === data.artifactId) {
+        current.text += data.text
+        artifactVersion.value += 1
+      }
+    })
+    const unlistenArtifactEnd = window.api.onAgentArtifactEnd((data) => {
+      if (currentConversationId.value !== conv.id) return
+      if (artifactConversationId.value !== conv.id) return
+      const current = liveArtifact.value
+      if (current && current.artifactId === data.artifactId) {
+        current.phase = 'done'
+        artifactVersion.value += 1
+      }
+    })
+    const unlistenArtifactError = window.api.onAgentArtifactError((data) => {
+      if (currentConversationId.value !== conv.id) return
+      if (artifactConversationId.value !== conv.id) return
+      const current = liveArtifact.value
+      if (current && current.artifactId === data.artifactId) {
+        current.phase = 'error'
+        current.error = data.error
+        artifactVersion.value += 1
       }
     })
 
@@ -257,7 +357,10 @@ export const useAgentStore = defineStore('agent', () => {
         useWorkspaceStore().currentId ?? undefined,
         {
           regenerate: opts.mode === 'regenerate',
-          customModelId: opts.customModelId
+          customModelId: opts.customModelId,
+          model: opts.model,
+          turnIndex: opts.turnIndex,
+          createdAt: startedAt
         }
       )
       if (!result.success) {
@@ -278,12 +381,28 @@ export const useAgentStore = defineStore('agent', () => {
       unlistenThinking()
       unlistenThinkingDone()
       unlistenChunk()
+      unlistenArtifactStart()
+      unlistenArtifactChunk()
+      unlistenArtifactEnd()
+      unlistenArtifactError()
       isThinking.value = false
       isStreaming.value = false
       conv.updateAt = Date.now()
       const msg = getAssistantMsg()
       if (msg) {
         msg.durationMs = Date.now() - startedAt
+      }
+      // 历史回显一致性：把模型/开始时间/耗时按轮次持久化（主进程写 conversation_turn_meta）
+      if (opts.turnIndex !== undefined) {
+        void window.api
+          .saveTurnMeta(conv.id, opts.turnIndex, {
+            model: opts.model ?? msg?.model,
+            createdAt: assistantMsg.createdAt,
+            durationMs: msg?.durationMs
+          })
+          .catch(() => {
+            // 持久化失败不阻断对话（仅历史回显缺省该轮元信息）
+          })
       }
     }
   }
@@ -320,12 +439,17 @@ export const useAgentStore = defineStore('agent', () => {
     selectedMessages.value.push(assistantMsg)
     conv.updateAt = Date.now()
 
+    artifactConversationId.value = conv.id
+    liveArtifact.value = null
+
     isStreaming.value = true
     isThinking.value = true
 
     await runStream(conv, assistantMsg, parts, {
       mode: 'append',
-      customModelId: opts?.customModelId
+      customModelId: opts?.customModelId,
+      model: opts?.model,
+      turnIndex: selectedMessages.value.filter((m) => m.role === 'user').length
     })
   }
 
@@ -349,12 +473,17 @@ export const useAgentStore = defineStore('agent', () => {
     selectedMessages.value.push(assistantMsg)
     conv.updateAt = Date.now()
 
+    artifactConversationId.value = conv.id
+    liveArtifact.value = null
+
     isStreaming.value = true
     isThinking.value = true
 
     await runStream(conv, assistantMsg, lastUser.content, {
       mode: 'regenerate',
-      customModelId: opts?.customModelId
+      customModelId: opts?.customModelId,
+      model: opts?.model,
+      turnIndex: selectedMessages.value.filter((m) => m.role === 'user').length
     })
   }
 
@@ -370,6 +499,9 @@ export const useAgentStore = defineStore('agent', () => {
   function stopAllTasks(): void {
     isStreaming.value = false
     isThinking.value = false
+    artifactConversationId.value = null
+    liveArtifact.value = null
+    artifactVersion.value += 1
   }
 
   // AI 总结标题异步生成完成 → 更新本地会话标题（侧栏即时刷新，无需重新拉取列表）
@@ -397,6 +529,8 @@ export const useAgentStore = defineStore('agent', () => {
     selectConversation,
     currentMessages,
     sortedConversations,
-    currentConversation
+    currentConversation,
+    liveArtifact,
+    artifactVersion
   }
 })

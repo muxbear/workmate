@@ -10,7 +10,13 @@ const api = {
     conversationId: string,
     parts: ({ type: 'text'; text: string } | { type: 'file'; path: string })[] | string,
     workspaceId?: string,
-    opts?: { regenerate?: boolean; model?: string; customModelId?: string }
+    opts?: {
+      regenerate?: boolean
+      model?: string
+      customModelId?: string
+      turnIndex?: number
+      createdAt?: number
+    }
   ): Promise<{ success: boolean; error?: string }> {
     return ipcRenderer.invoke('agent:send', conversationId, parts, workspaceId, opts) as Promise<{
       success: boolean
@@ -44,6 +50,64 @@ const api = {
   onAgentDone(callback: () => void): () => void {
     ipcRenderer.on('agent:stream-done', callback)
     return () => ipcRenderer.removeListener('agent:stream-done', callback)
+  },
+  onAgentArtifactStart(
+    callback: (meta: {
+      artifactId: string
+      name: string
+      relPath: string
+      workspaceId: string | null
+      ext: string
+      preview: string
+    }) => void
+  ): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      meta: {
+        artifactId: string
+        name: string
+        relPath: string
+        workspaceId: string | null
+        ext: string
+        preview: string
+      }
+    ): void => {
+      callback(meta)
+    }
+    ipcRenderer.on('agent:artifact-start', handler)
+    return () => ipcRenderer.removeListener('agent:artifact-start', handler)
+  },
+  onAgentArtifactChunk(callback: (data: { artifactId: string; text: string }) => void): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { artifactId: string; text: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('agent:artifact-chunk', handler)
+    return () => ipcRenderer.removeListener('agent:artifact-chunk', handler)
+  },
+  onAgentArtifactEnd(callback: (data: { artifactId: string; ok: boolean }) => void): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { artifactId: string; ok: boolean }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('agent:artifact-end', handler)
+    return () => ipcRenderer.removeListener('agent:artifact-end', handler)
+  },
+  onAgentArtifactError(
+    callback: (data: { artifactId: string; error: string }) => void
+  ): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { artifactId: string; error: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('agent:artifact-error', handler)
+    return () => ipcRenderer.removeListener('agent:artifact-error', handler)
   },
   onConversationTitleUpdated(
     callback: (data: { conversationId: string; title: string }) => void
@@ -128,6 +192,13 @@ const api = {
   renameConversation(id: string, title: string) {
     return ipcRenderer.invoke('conversation:rename', id, title)
   },
+  saveTurnMeta(
+    conversationId: string,
+    turnIndex: number,
+    meta: { model?: string; createdAt?: number; durationMs?: number }
+  ) {
+    return ipcRenderer.invoke('conversation:save-turn-meta', conversationId, turnIndex, meta)
+  },
   // ── 工作模式 API ──
   getWorkMode() {
     return ipcRenderer.invoke('mode:get')
@@ -203,8 +274,18 @@ const api = {
   browserSetVisible(visible: boolean) {
     return ipcRenderer.invoke('browser:set-visible', visible)
   },
-  onBrowserState(callback: (state: { displayUrl: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }) => void) {
-    const handler = (_event: Electron.IpcRendererEvent, state: { displayUrl: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }): void => {
+  onBrowserState(
+    callback: (state: {
+      displayUrl: string
+      canGoBack: boolean
+      canGoForward: boolean
+      isLoading: boolean
+    }) => void
+  ) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: { displayUrl: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }
+    ): void => {
       callback(state)
     }
     ipcRenderer.on('browser:state-changed', handler)
@@ -284,7 +365,14 @@ const api = {
   listModels() {
     return ipcRenderer.invoke('model:list')
   },
-  addModel(input: { id: string; name: string; vendor: string; url: string; protocol: string; apiKey: string }) {
+  addModel(input: {
+    id: string
+    name: string
+    vendor: string
+    url: string
+    protocol: string
+    apiKey: string
+  }) {
     return ipcRenderer.invoke('model:add', input)
   },
   removeModel(id: string) {
@@ -292,7 +380,14 @@ const api = {
   },
   updateModel(
     id: string,
-    input: { id: string; name: string; vendor: string; url: string; protocol: string; apiKey: string }
+    input: {
+      id: string
+      name: string
+      vendor: string
+      url: string
+      protocol: string
+      apiKey: string
+    }
   ) {
     return ipcRenderer.invoke('model:update', id, input)
   },

@@ -7,9 +7,9 @@ import {
   invokeSendMessage,
   toLangChainMessages
 } from '../../../src/main/agent/service'
-import type { ConversationMessage } from '../../../src/main/agent/ConversationStore'
+import type { RawConversationMessage } from '../../../src/main/agent/ConversationStore'
 
-function msg(id: string, role: ConversationMessage['role']): ConversationMessage {
+function msg(id: string, role: RawConversationMessage['role']): RawConversationMessage {
   return { id, role, content: `content-${id}` }
 }
 
@@ -71,12 +71,11 @@ describe('invokeSendMessage（configurable 注入）', () => {
 
   it('SVC-01: modelOverride 注入 configurable.model_override', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage(
-      [],
-      createFakeWin(),
-      createFakeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1', modelOverride: 'gpt-4o' }
-    )
+    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
+      thread_id: 't1',
+      user_id: 'u1',
+      modelOverride: 'gpt-4o'
+    })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect(config.configurable.thread_id).toBe('t1')
     expect(config.configurable.user_id).toBe('u1')
@@ -85,24 +84,22 @@ describe('invokeSendMessage（configurable 注入）', () => {
 
   it('SVC-02: 无 modelOverride 时 configurable 不含 model_override', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage(
-      [],
-      createFakeWin(),
-      createFakeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1' }
-    )
+    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
+      thread_id: 't1',
+      user_id: 'u1'
+    })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect('model_override' in config.configurable).toBe(false)
   })
 
   it('SVC-03: workspace_dir 注入与 modelOverride 共存不冲突', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage(
-      [],
-      createFakeWin(),
-      createFakeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1', workspace_dir: '/ws', modelOverride: 'm1' }
-    )
+    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
+      thread_id: 't1',
+      user_id: 'u1',
+      workspace_dir: '/ws',
+      modelOverride: 'm1'
+    })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect(config.configurable.workspace_dir).toBe('/ws')
     expect(config.configurable.model_override).toBe('m1')
@@ -136,5 +133,87 @@ describe('toLangChainMessages（rawContent 透传）', () => {
     expect((msgs[0] as AIMessage).content).toBe('回复')
     expect(msgs[1]).toBeInstanceOf(ToolMessage)
     expect((msgs[1] as ToolMessage).content).toBe('工具结果')
+  })
+})
+
+describe('invokeSendMessage（文档产物流事件）', () => {
+  function makeWin(): BrowserWindow {
+    return { webContents: { send: vi.fn() } } as unknown as BrowserWindow
+  }
+
+  function makeAgent(streamEvents: ReturnType<typeof vi.fn>): DeepAgent {
+    return { streamEvents } as unknown as DeepAgent
+  }
+
+  function createWriteFileStream(): {
+    messages: never[]
+    toolCalls: AsyncGenerator<{
+      name: string
+      callId: string
+      input: { file_path: string; content: string }
+      output: Promise<string>
+    }>
+  } {
+    async function* toolCalls() {
+      yield {
+        name: 'write_file',
+        callId: 'call_1',
+        input: { file_path: '/方案.md', content: '正文A正文B' },
+        output: Promise.resolve('ok')
+      }
+    }
+    return { messages: [], toolCalls: toolCalls() }
+  }
+
+  it('write_file 命中白名单时推送 artifact-start/end 并回调产物清单', async () => {
+    const streamEvents = vi.fn().mockResolvedValue(createWriteFileStream())
+    const win = makeWin()
+    let artifacts: unknown[] = []
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1', workspace: { id: 'ws1', name: '空间' } },
+      undefined,
+      (list) => {
+        artifacts = list
+      }
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    const starts = send.mock.calls.filter((c) => c[0] === 'agent:artifact-start')
+    const ends = send.mock.calls.filter((c) => c[0] === 'agent:artifact-end')
+    expect(starts).toHaveLength(1)
+    expect((starts[0][1] as { relPath: string }).relPath).toBe('方案.md')
+    expect((starts[0][1] as { preview: string }).preview).toBe('text')
+    expect((ends[0][1] as { ok: boolean }).ok).toBe(true)
+    expect(artifacts).toHaveLength(1)
+    expect((artifacts[0] as { name: string }).name).toBe('方案.md')
+  })
+
+  it('非文档扩展名的 write_file 不产生产物流事件', async () => {
+    async function* toolCalls() {
+      yield {
+        name: 'write_file',
+        callId: 'call_2',
+        input: { file_path: '/main.ts', content: 'export {}' },
+        output: Promise.resolve('ok')
+      }
+    }
+    const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
+    const win = makeWin()
+    let artifacts: unknown[] = []
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1' },
+      undefined,
+      (list) => {
+        artifacts = list
+      }
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    expect(send.mock.calls.some((c) => c[0] === 'agent:artifact-start')).toBe(false)
+    expect(artifacts).toHaveLength(0)
   })
 })

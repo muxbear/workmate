@@ -509,8 +509,16 @@ app.whenReady().then(() => {
       const optsObj =
         typeof opts === 'object' && opts !== null ? (opts as Record<string, unknown>) : {}
       const regenerate = optsObj.regenerate === true
+      // AI 轮次序号（1 起）：渲染层传入，用于元信息/文档产物按轮持久化与 regenerate 清理
+      const turnIndex =
+        typeof optsObj.turnIndex === 'number' &&
+        Number.isInteger(optsObj.turnIndex) &&
+        optsObj.turnIndex > 0
+          ? optsObj.turnIndex
+          : undefined
       // 自定义模型 id（渲染层不可信：经 getCredential 校验归属，伪造/已删除则忽略回退默认模型）
-      const customModelId = typeof optsObj.customModelId === 'string' ? optsObj.customModelId : undefined
+      const customModelId =
+        typeof optsObj.customModelId === 'string' ? optsObj.customModelId : undefined
 
       // 消息内容归一：字符串（regenerate 历史文本）→ 单文本段；数组 → 形状校验（主进程权威）
       // 校验失败/无有效内容返回错误对象（错误信息直达渲染层，避免 handle 拒绝丢失消息）
@@ -529,7 +537,7 @@ app.whenReady().then(() => {
         const userId = session.requireUserId()
         const [agent, history] = await Promise.all([
           agentManager.ready(),
-          conversationStore.getMessages(userId, conversationId)
+          conversationStore.getRawMessages(userId, conversationId)
         ])
         const messages = toLangChainMessages(history)
         if (regenerate) {
@@ -555,6 +563,11 @@ app.whenReady().then(() => {
           conversationStore.bindWorkspace(userId, conversationId, ws)
         }
 
+        // 重新生成：先清理该轮起（含）的展示元信息/文档产物，避免旧回复残留
+        if (regenerate && turnIndex !== undefined) {
+          conversationStore.deleteTurnDataFrom(userId, conversationId, turnIndex)
+        }
+
         await invokeSendMessage(
           messages,
           win,
@@ -569,16 +582,28 @@ app.whenReady().then(() => {
               ? { modelOverride: customModelId }
               : {})
           },
-          controller.signal
+          controller.signal,
+          (artifacts) => {
+            if (turnIndex === undefined) return
+            try {
+              conversationStore.saveTurnArtifacts(
+                userId,
+                conversationId,
+                turnIndex,
+                artifacts.map((artifact) => ({
+                  name: artifact.name,
+                  relPath: artifact.relPath,
+                  ext: artifact.ext,
+                  workspaceId: artifact.workspaceId ?? null
+                }))
+              )
+            } catch (err) {
+              console.error('[main] save turn artifacts failed:', err)
+            }
+          }
         )
         // 对话流完成后异步生成 AI 总结标题（不阻塞响应；失败通过 title-error 事件提示）
-        void generateConversationTitle(
-          userId,
-          conversationId,
-          win,
-          modelService,
-          customModelId
-        )
+        void generateConversationTitle(userId, conversationId, win, modelService, customModelId)
         console.log('[main] invokeSendMessage completed, returning success')
         return { success: true }
       } catch (error) {

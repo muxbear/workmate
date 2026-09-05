@@ -27,7 +27,9 @@ const CATALOG_NAV_TARGETS: Record<CatalogTab, CatalogNavTarget> = {
 const currentMessages = computed(() => agentStore.currentMessages)
 const isStreaming = computed(() => agentStore.isStreaming)
 const isThinking = computed(() => agentStore.isThinking)
-const currentWorkspaceId = computed(() => agentStore.currentConversation?.workspace?.id ?? undefined)
+const currentWorkspaceId = computed(
+  () => agentStore.currentConversation?.workspace?.id ?? undefined
+)
 
 // ── State ──
 const category = ref('work')
@@ -167,7 +169,10 @@ const insertFileTokenAtCaret = (el: HTMLElement, filePath: string): void => {
   svg.setAttribute('stroke', 'currentColor')
   svg.setAttribute('stroke-width', '2')
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute('d', 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z')
+  path.setAttribute(
+    'd',
+    'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'
+  )
   svg.appendChild(path)
   const del = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   del.classList.add('file-token-del')
@@ -265,7 +270,12 @@ const onSelectFiles = async (paths: string[]): Promise<void> => {
       showToast(`暂不支持该文件类型：${name}`)
       continue
     }
-    const limit = data.kind === 'text' ? FILE_MAX_TEXT_BYTES : data.kind === 'image' ? FILE_MAX_IMAGE_BYTES : FILE_MAX_PDF_BYTES
+    const limit =
+      data.kind === 'text'
+        ? FILE_MAX_TEXT_BYTES
+        : data.kind === 'image'
+          ? FILE_MAX_IMAGE_BYTES
+          : FILE_MAX_PDF_BYTES
     if (data.size > limit) {
       showToast(`文件过大（上限 ${Math.round(limit / 1024 / 1024)}MB）：${name}`)
       continue
@@ -404,19 +414,13 @@ const onInputSync = (): void => {
   // 用户清空内容后浏览器可能残留 <br>，清掉让 :empty 占位符恢复。
   // 注意：Chromium 的 innerText 包含 contentEditable=false 的 token 文本，因此仅剩文件 token 时
   // innerText 非空、守卫不触发——querySelector 分支是防御未来 token 渲染变化（如 display:none），非当前承重。
-  if (
-    el.innerText.trim() === '' &&
-    el.innerHTML !== '' &&
-    !el.querySelector('.file-token')
-  ) {
+  if (el.innerText.trim() === '' && el.innerHTML !== '' && !el.querySelector('.file-token')) {
     el.innerHTML = ''
   }
   taskInput.value = el.innerText
   // 对账：DOM 中不存在的 token 从勾选中移除（退格键/选择删除路径）
   const domIds = new Set(
-    Array.from(el.querySelectorAll<HTMLElement>('.skill-token')).map(
-      (t) => t.dataset.skillId ?? ''
-    )
+    Array.from(el.querySelectorAll<HTMLElement>('.skill-token')).map((t) => t.dataset.skillId ?? '')
   )
   for (const id of [...catalog.selectedSkillIds]) {
     if (!domIds.has(id)) catalog.toggleSkill(id)
@@ -560,6 +564,8 @@ const panelFullscreen = ref(false)
 
 // 右侧栏全屏切换：.chat-main 以 v-show 隐藏会重置 scrollTop，恢复后刷新滚动状态（防按钮/追滚读陈旧值）
 watch(panelFullscreen, () => {
+  // 全屏右侧栏时退出 6:4 比例态（全屏宽度 100%）
+  if (panelFullscreen.value) sideRatioMode.value = false
   nextTick(updateScrollState)
 })
 
@@ -572,6 +578,59 @@ const showToast = (text: string): void => {
   toastTimer = setTimeout(() => {
     toast.value = ''
   }, 1500)
+}
+
+// ── 文档右侧栏：6:4 比例态 + 产物流同步 ──
+const sidePanelRef = ref<InstanceType<typeof ChatSidePanel> | null>(null)
+const sideRatioMode = ref(false)
+const artifactTextLengths = new Map<string, number>()
+
+async function syncLiveArtifact(): Promise<void> {
+  const artifact = agentStore.liveArtifact
+  const panel = sidePanelRef.value
+  if (!artifact || !panel) return
+  const prevLength = artifactTextLengths.get(artifact.artifactId)
+  if (prevLength === undefined) {
+    artifactTextLengths.set(artifact.artifactId, artifact.text.length)
+    sideRatioMode.value = true
+    await panel.openArtifact(artifact, artifact.text)
+    return
+  }
+  if (artifact.text.length > prevLength) {
+    panel.appendArtifactText(artifact.artifactId, artifact.text.slice(prevLength))
+    artifactTextLengths.set(artifact.artifactId, artifact.text.length)
+  }
+  if (artifact.phase === 'done' || artifact.phase === 'error') {
+    artifactTextLengths.delete(artifact.artifactId)
+    await panel.finishArtifact(artifact.artifactId, artifact.phase === 'done', artifact.error)
+  }
+}
+
+watch(
+  () => agentStore.artifactVersion,
+  () => {
+    void syncLiveArtifact()
+  }
+)
+
+watch(
+  () => agentStore.currentConversationId,
+  () => {
+    artifactTextLengths.clear()
+    sideRatioMode.value = false
+  }
+)
+
+/** 点击消息区文档文件卡片/正文链接 → 右侧打开（未开则展开，已开则聚焦） */
+async function openDocFromMessage(file: { name: string; relPath: string }): Promise<void> {
+  sideRatioMode.value = true
+  await sidePanelRef.value?.openDocFileByRelPath(file.relPath, { name: file.name })
+}
+
+function openDocFromRelPath(relPath: string): void {
+  const name = relPath.split('/').pop() ?? relPath
+  sideRatioMode.value = true
+  void sidePanelRef.value?.openDocFileByRelPath(relPath, { name })
 }
 
 /** 点赞/点踩本地状态（按消息 id） */
@@ -825,7 +884,8 @@ const messages = computed(() => {
     reasoning: m.reasoning,
     createdAt: m.createdAt,
     durationMs: m.durationMs,
-    model: m.model
+    model: m.model,
+    files: m.files
   }))
 })
 const thinking = computed(() => {
@@ -866,8 +926,34 @@ const quickChips = [
 ]
 
 // ── 文件附件：选中即时校验（主进程权威，此处为 UX 前置副本） ──
-const FILE_TEXT_EXTS = ['txt','md','csv','json','yaml','yml','xml','html','css','js','ts','jsx','tsx','py','java','c','cpp','h','go','rs','sh','sql','log','ini','toml']
-const FILE_IMAGE_EXTS = ['png','jpg','jpeg','gif','webp','bmp']
+const FILE_TEXT_EXTS = [
+  'txt',
+  'md',
+  'csv',
+  'json',
+  'yaml',
+  'yml',
+  'xml',
+  'html',
+  'css',
+  'js',
+  'ts',
+  'jsx',
+  'tsx',
+  'py',
+  'java',
+  'c',
+  'cpp',
+  'h',
+  'go',
+  'rs',
+  'sh',
+  'sql',
+  'log',
+  'ini',
+  'toml'
+]
+const FILE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
 const FILE_MAX_TEXT_BYTES = 5 * 1024 * 1024
 const FILE_MAX_PDF_BYTES = 20 * 1024 * 1024
 const FILE_MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -881,7 +967,10 @@ const selectedCustomId = ref<string | null>(null)
 
 /** 模型下拉分组：内置 + 自定义（自定义模型名可重复，id 唯一，故按 id 传参） */
 const modelGroups = computed(() => [
-  { name: '内置模型', items: BUILTIN_MODELS.map((name) => ({ name, id: undefined as string | undefined })) },
+  {
+    name: '内置模型',
+    items: BUILTIN_MODELS.map((name) => ({ name, id: undefined as string | undefined }))
+  },
   { name: '自定义模型', items: modelStore.models.map((m) => ({ name: m.name, id: m.id })) }
 ])
 
@@ -936,7 +1025,11 @@ const sendMessage = async (): Promise<void> => {
   const el = getInputEl()
   const parts = el ? serializeInput(el) : [{ type: 'text' as const, text: taskInput.value }]
   const hasFile = parts.some((p) => p.type === 'file')
-  const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join('').trim()
+  const text = parts
+    .filter((p) => p.type === 'text')
+    .map((p) => p.text)
+    .join('')
+    .trim()
   if (!hasFile && !text) return
   // 发送后进入对话态前收起模型下拉，避免 chat 工具栏复用时残留展开态
   modelOpen.value = false
@@ -1475,14 +1568,8 @@ watch(
                 @mouseenter="modelMenuHover.cancelClose"
                 @mouseleave="modelMenuHover.closeNow"
               >
-                <template
-                  v-for="group in modelGroups"
-                  :key="group.name"
-                >
-                  <div
-                    v-if="group.items.length > 0"
-                    class="model-group-label"
-                  >
+                <template v-for="group in modelGroups" :key="group.name">
+                  <div v-if="group.items.length > 0" class="model-group-label">
                     {{ group.name }}
                   </div>
                   <button
@@ -1795,7 +1882,8 @@ watch(
             </div>
             <div class="perm-confirm-body">
               <p class="perm-confirm-message">
-                开启允许完全访问后，AI 将减少确认步骤，并可直接执行更多操作，包括敏感操作、文件修改或外部执行。仅建议在您信任当前任务时使用。
+                开启允许完全访问后，AI
+                将减少确认步骤，并可直接执行更多操作，包括敏感操作、文件修改或外部执行。仅建议在您信任当前任务时使用。
               </p>
               <label class="perm-risk">
                 <input v-model="riskChecked" type="checkbox" class="perm-risk-checkbox" />
@@ -1875,7 +1963,7 @@ watch(
     </div>
 
     <!-- Chat state -->
-    <div v-else class="chat-area">
+    <div v-else :class="['chat-area', { 'chat-area--doc-ratio': sideRatioMode }]">
       <div v-show="!panelFullscreen" class="chat-main">
         <!-- 会话标题栏 -->
         <header class="chat-header">
@@ -2115,21 +2203,44 @@ watch(
                   </button>
                   <Transition name="thinking-collapse">
                     <div v-show="!thinkingCollapsed[msg.id]" class="thinking-body">
-                      <MessageContent :content="msg.reasoning" content-type="markdown" :workspace-id="currentWorkspaceId" />
+                      <MessageContent
+                        :content="msg.reasoning"
+                        content-type="markdown"
+                        :workspace-id="currentWorkspaceId"
+                        @open-file="openDocFromRelPath"
+                      />
                     </div>
                   </Transition>
                 </div>
                 <!-- 消息内容：有内容时渲染，空内容+流式输出时显示加载动画 -->
                 <div v-if="msg.content" class="chat-bubble">
-                  <MessageContent :content="msg.content" content-type="markdown" :workspace-id="currentWorkspaceId" />
+                  <MessageContent
+                    :content="msg.content"
+                    content-type="markdown"
+                    :workspace-id="currentWorkspaceId"
+                    @open-file="openDocFromRelPath"
+                  />
                 </div>
                 <div
-                  v-else-if="isLastAssistant(msg.id) && thinking"
+                  v-if="!msg.content && isLastAssistant(msg.id) && thinking"
                   class="chat-bubble thinking-bubble"
                 >
                   <span class="dot-pulse" style="animation-delay: 0s"></span>
                   <span class="dot-pulse" style="animation-delay: 0.15s"></span>
                   <span class="dot-pulse" style="animation-delay: 0.3s"></span>
+                </div>
+                <!-- 生成文档链接条：live 与历史回显共用同一模板 -->
+                <div v-if="msg.files && msg.files.length" class="msg-artifacts">
+                  <button
+                    v-for="file in msg.files"
+                    :key="file.relPath"
+                    class="msg-artifact-link"
+                    :title="file.relPath"
+                    @click="openDocFromMessage(file)"
+                  >
+                    <span class="msg-artifact-ico">📄</span>
+                    <span class="msg-artifact-name">{{ file.name }}</span>
+                  </button>
                 </div>
               </div>
               <!-- 操作栏：按钮组 + 元信息 -->
@@ -2275,7 +2386,12 @@ watch(
             <template v-else>
               <div class="chat-bubble-wrapper chat-bubble-wrapper--user">
                 <div class="chat-bubble chat-bubble--user">
-                  <MessageContent :content="msg.content" content-type="markdown" :workspace-id="currentWorkspaceId" />
+                  <MessageContent
+                    :content="msg.content"
+                    content-type="markdown"
+                    :workspace-id="currentWorkspaceId"
+                    @open-file="openDocFromRelPath"
+                  />
                 </div>
               </div>
             </template>
@@ -2572,14 +2688,8 @@ watch(
                     @mouseenter="modelMenuHover.cancelClose"
                     @mouseleave="modelMenuHover.closeNow"
                   >
-                    <template
-                      v-for="group in modelGroups"
-                      :key="group.name"
-                    >
-                      <div
-                        v-if="group.items.length > 0"
-                        class="model-group-label"
-                      >
+                    <template v-for="group in modelGroups" :key="group.name">
+                      <div v-if="group.items.length > 0" class="model-group-label">
                         {{ group.name }}
                       </div>
                       <button
@@ -2690,7 +2800,12 @@ watch(
           </div>
         </Transition>
       </div>
-      <ChatSidePanel v-model:fullscreen="panelFullscreen" />
+      <ChatSidePanel
+        ref="sidePanelRef"
+        v-model:fullscreen="panelFullscreen"
+        :ratio-mode="sideRatioMode"
+        @ratio-exit="sideRatioMode = false"
+      />
     </div>
     <!-- Toast（页面级共享：位于 welcome-area / chat-area 两个互斥分支之外，
          欢迎态与对话态均需渲染——文件校验反馈（不支持类型/文件过大等）两种状态都不可缺失） -->
@@ -3793,6 +3908,48 @@ watch(
   display: flex;
   flex-direction: row;
   overflow: hidden;
+}
+
+/* 文档自动展开后左右 6:4（用户拖拽/收起/全屏时退出） */
+.chat-area--doc-ratio .chat-main {
+  flex: 0 1 60%;
+}
+
+/* AI 回复下的生成文档文件链接条（live 与历史回显共用） */
+.msg-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.msg-artifact-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 5px 10px;
+  border: 1px solid var(--kw-color-border-brand);
+  border-radius: 8px;
+  background: var(--kw-color-bg-soft);
+  color: var(--kw-color-brand);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.msg-artifact-link:hover {
+  background: var(--kw-color-brand-hover);
+}
+
+.msg-artifact-ico {
+  flex-shrink: 0;
+}
+
+.msg-artifact-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 左侧对话+输入列（全屏右侧栏时隐藏） */

@@ -18,7 +18,12 @@ interface MockApi {
   onAgentThinking: ReturnType<typeof vi.fn>
   onAgentThinkingDone: ReturnType<typeof vi.fn>
   onAgentDone: ReturnType<typeof vi.fn>
+  onAgentArtifactStart: ReturnType<typeof vi.fn>
+  onAgentArtifactChunk: ReturnType<typeof vi.fn>
+  onAgentArtifactEnd: ReturnType<typeof vi.fn>
+  onAgentArtifactError: ReturnType<typeof vi.fn>
   onConversationTitleUpdated: ReturnType<typeof vi.fn>
+  saveTurnMeta: ReturnType<typeof vi.fn>
 }
 
 /** 内存版 window.api（仅保留通道；会话数据由 LangGraph checkpointer 管理） */
@@ -61,7 +66,12 @@ function createMockWindowApi(): {
     onAgentThinking: vi.fn(() => () => {}),
     onAgentThinkingDone: vi.fn(() => () => {}),
     onAgentDone: vi.fn(() => () => {}),
-    onConversationTitleUpdated: vi.fn(() => () => {})
+    onAgentArtifactStart: vi.fn(() => () => {}),
+    onAgentArtifactChunk: vi.fn(() => () => {}),
+    onAgentArtifactEnd: vi.fn(() => () => {}),
+    onAgentArtifactError: vi.fn(() => () => {}),
+    onConversationTitleUpdated: vi.fn(() => () => {}),
+    saveTurnMeta: vi.fn(async () => ({ success: true, data: null }))
   }
 
   return { api, conversations }
@@ -138,7 +148,13 @@ describe('useAgentStore（会话数据基于 LangGraph checkpoint）', () => {
       convId,
       [{ type: 'text', text: '你好世界' }],
       undefined,
-      { regenerate: false }
+      {
+        regenerate: false,
+        customModelId: undefined,
+        model: undefined,
+        turnIndex: 1,
+        createdAt: expect.any(Number)
+      }
     )
     // 标题本地生成（第一条消息）
     expect(store.currentConversation?.title).toBe('你好世界')
@@ -167,7 +183,11 @@ describe('useAgentStore（会话数据基于 LangGraph checkpoint）', () => {
     expect(store.currentMessages[0].content).toBe('看📎 报告.md')
     // 主进程契约：保序 parts 原样透传（文件内容由主进程展开）
     expect(mock.api.sendAgentMessage).toHaveBeenCalledWith(convId, parts, undefined, {
-      regenerate: false
+      regenerate: false,
+      customModelId: undefined,
+      model: undefined,
+      turnIndex: 1,
+      createdAt: expect.any(Number)
     })
   })
 
@@ -195,7 +215,11 @@ describe('useAgentStore（会话数据基于 LangGraph checkpoint）', () => {
     await regen
 
     expect(mock.api.sendAgentMessage).toHaveBeenCalledWith(convId, '看📎 报告.md', undefined, {
-      regenerate: true
+      regenerate: true,
+      customModelId: undefined,
+      model: undefined,
+      turnIndex: 1,
+      createdAt: expect.any(Number)
     })
   })
 
@@ -281,7 +305,11 @@ describe('useAgentStore（会话数据基于 LangGraph checkpoint）', () => {
     await regen
 
     expect(mock.api.sendAgentMessage).toHaveBeenCalledWith(convId, '第二个问题', undefined, {
-      regenerate: true
+      regenerate: true,
+      customModelId: undefined,
+      model: undefined,
+      turnIndex: 2,
+      createdAt: expect.any(Number)
     })
     const last = store.currentMessages[store.currentMessages.length - 1]
     expect(last.role).toBe('assistant')

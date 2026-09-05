@@ -6,6 +6,7 @@ import {
   extractWorkspaceImagePaths,
   normalizeWorkspaceImagePath
 } from '../util/markdown-images'
+import { isDocRelPath, normalizeWorkspaceDocPath } from '../util/doc-files'
 
 /**
  * 消息内容渲染组件
@@ -28,6 +29,18 @@ const props = withDefaults(defineProps<MessageContentProps>(), {
   contentType: 'markdown',
   workspaceId: undefined
 })
+
+/** 工作区文档链接点击 → 由父级在右侧栏打开（历史与实时共用同一渲染路径） */
+const emit = defineEmits<{ (e: 'open-file', relPath: string): void }>()
+
+function onContentClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null
+  const link = target?.closest<HTMLElement>('[data-open-file]')
+  if (!link) return
+  event.preventDefault()
+  const relPath = link.getAttribute('data-open-file')
+  if (relPath) emit('open-file', relPath)
+}
 
 /** 原始图片 URL → 本地 ke-img:// 地址（主进程 images:resolve 解析结果） */
 const imageSrcMap = ref<Record<string, string>>({})
@@ -160,6 +173,33 @@ const renderedHtml = computed(() => {
     case 'markdown': {
       // 自定义 image renderer：外链替换为 ke-img://；工作区相对路径替换为 blob 地址
       const renderer = new marked.Renderer()
+      // 工作区相对文档链接（md/docx/html/txt/json 等白名单）→ 可点击并在右侧栏打开
+      renderer.link = ({ href, title, text }) => {
+        const raw = href ?? ''
+        const isExternal = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw) || raw.startsWith('#')
+        const normalized = normalizeWorkspaceDocPath(raw)
+        const q = String.fromCharCode(34)
+        if (!isExternal && normalized && isDocRelPath(normalized)) {
+          const titleAttr = title ? ' title=' + q + escapeHtmlAttr(title) + q : ''
+          return (
+            '<a href=' +
+            q +
+            '#' +
+            q +
+            ' data-open-file=' +
+            q +
+            escapeHtmlAttr(normalized) +
+            q +
+            titleAttr +
+            '>' +
+            text +
+            '</a>'
+          )
+        }
+        const hrefAttr = escapeHtmlAttr(raw)
+        const titleAttr2 = title ? ' title=' + q + escapeHtmlAttr(title) + q : ''
+        return '<a href=' + q + hrefAttr + q + titleAttr2 + '>' + text + '</a>'
+      }
       renderer.image = ({ href, title, text }) => {
         const normalized = normalizeWorkspaceImagePath(href)
         const src =
@@ -193,8 +233,14 @@ const renderedHtml = computed(() => {
     v-if="contentType === 'markdown' || contentType === 'html'"
     class="message-content message-content--rich"
     v-html="renderedHtml"
+    @click="onContentClick"
   ></div>
-  <div v-else class="message-content message-content--text" v-html="renderedHtml"></div>
+  <div
+    v-else
+    class="message-content message-content--text"
+    v-html="renderedHtml"
+    @click="onContentClick"
+  ></div>
 </template>
 
 <style>
@@ -218,9 +264,15 @@ const renderedHtml = computed(() => {
   color: var(--kw-color-text);
 }
 
-.message-content--rich h1 { font-size: 1.4em; }
-.message-content--rich h2 { font-size: 1.25em; }
-.message-content--rich h3 { font-size: 1.1em; }
+.message-content--rich h1 {
+  font-size: 1.4em;
+}
+.message-content--rich h2 {
+  font-size: 1.25em;
+}
+.message-content--rich h3 {
+  font-size: 1.1em;
+}
 
 .message-content--rich p {
   margin: 8px 0;

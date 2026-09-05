@@ -142,6 +142,37 @@ CREATE TABLE IF NOT EXISTS oauth2_sessions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth2_sessions_user ON oauth2_sessions(local_user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth2_sessions_web ON oauth2_sessions(web_account_id);
 `
+  },
+  {
+    // AI 轮次展示元信息（实时发送结束补写，历史回显恢复 model/createdAt/durationMs）
+    version: 9,
+    name: 'conversation_turn_meta_and_artifacts',
+    sql: `
+CREATE TABLE IF NOT EXISTS conversation_turn_meta (
+  user_id         TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  turn_index      INTEGER NOT NULL,
+  model           TEXT,
+  created_at_ms   INTEGER,
+  duration_ms     INTEGER,
+  updated_at      INTEGER NOT NULL,
+  PRIMARY KEY (user_id, conversation_id, turn_index)
+);
+
+CREATE TABLE IF NOT EXISTS conversation_doc_artifacts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  turn_index      INTEGER NOT NULL,
+  name            TEXT NOT NULL,
+  rel_path        TEXT NOT NULL,
+  ext             TEXT NOT NULL,
+  workspace_id    TEXT,
+  created_at      INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_doc_artifacts_uniq
+  ON conversation_doc_artifacts(user_id, conversation_id, turn_index, rel_path);
+`
   }
 ]
 

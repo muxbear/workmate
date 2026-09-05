@@ -17,6 +17,33 @@ export interface MessageFilePart {
   path: string
 }
 export type MessagePart = MessageTextPart | MessageFilePart
+/** 会话内 AI 轮次展示元信息（实时发送时记录，历史回显时恢复） */
+export interface MessageTurnMeta {
+  model?: string
+  createdAt?: number
+  durationMs?: number
+}
+
+/** 文档产物文件（消息区可点击打开 + 右侧栏展示） */
+export interface DocArtifactFile {
+  name: string
+  relPath: string
+  ext: string
+  workspaceId?: string | null
+}
+
+/** 右侧栏文档预览类型（与工作空间文件打开组件映射一致） */
+export type ArtifactPreviewKind = 'text' | 'word' | 'pdf' | 'browser' | 'unsupported'
+
+/** 主进程推送的文档产物元信息（agent:artifact-start 载荷） */
+export interface AgentArtifactMeta {
+  artifactId: string
+  name: string
+  relPath: string
+  workspaceId: string | null
+  ext: string
+  preview: ArtifactPreviewKind
+}
 
 export interface AuthResult {
   token: string
@@ -56,19 +83,31 @@ export interface AgentAPI {
     conversationId: string,
     parts: MessagePart[] | string,
     workspaceId?: string,
-    opts?: { regenerate?: boolean; model?: string; customModelId?: string }
+    opts?: {
+      regenerate?: boolean
+      model?: string
+      customModelId?: string
+      turnIndex?: number
+      createdAt?: number
+    }
   ): Promise<{ success: boolean; error?: string }>
   cancelAgentMessage(): void
   onAgentChunk(callback: (chunk: string) => void): () => void
   onAgentThinking(callback: (chunk: string) => void): () => void
   onAgentThinkingDone(callback: () => void): () => void
   onAgentDone(callback: () => void): () => void
+  onAgentArtifactStart(callback: (meta: AgentArtifactMeta) => void): () => void
+  onAgentArtifactChunk(callback: (data: { artifactId: string; text: string }) => void): () => void
+  onAgentArtifactEnd(callback: (data: { artifactId: string; ok: boolean }) => void): () => void
+  onAgentArtifactError(callback: (data: { artifactId: string; error: string }) => void): () => void
   /** 选中文件即时校验（存在性 + 类型分类 + 大小），返回 kind: text/image/pdf/unsupported/missing */
-  inspectFile(path: string): Promise<IpcResult<{
-    exists: boolean
-    size: number
-    kind: 'text' | 'image' | 'pdf' | 'unsupported' | 'missing'
-  }>>
+  inspectFile(path: string): Promise<
+    IpcResult<{
+      exists: boolean
+      size: number
+      kind: 'text' | 'image' | 'pdf' | 'unsupported' | 'missing'
+    }>
+  >
   /** 获取文件选择器选中文件的绝对路径（Electron 39 起 File.path 已移除，须走 webUtils） */
   getPathForFile(file: File): string
   /** AI 改写润色输入文本（主进程调 LLM，非流式）；data 为改写结果 */
@@ -112,6 +151,10 @@ export interface ConversationMessage {
   role: string
   content: string
   reasoning?: string
+  /** 该轮 AI 生成/涉及的文档文件清单（实时由流事件填充，回显从本地辅助表恢复） */
+  files?: DocArtifactFile[]
+  /** AI 轮次展示元信息（模型/开始时间/耗时；回显时恢复） */
+  meta?: MessageTurnMeta
 }
 
 export interface ConversationAPI {
@@ -120,6 +163,12 @@ export interface ConversationAPI {
   deleteConversation(id: string): Promise<IpcResult<null>>
   /** 重命名会话（自定义标题，列表读取时优先） */
   renameConversation(id: string, title: string): Promise<IpcResult<null>>
+  /** 保存某 AI 轮次的展示元信息（模型/开始时间/耗时；历史回显一致性用） */
+  saveTurnMeta(
+    conversationId: string,
+    turnIndex: number,
+    meta: MessageTurnMeta
+  ): Promise<IpcResult<null>>
   /** 监听 AI 总结标题异步生成完成（主进程推送，侧栏即时刷新） */
   onConversationTitleUpdated(
     callback: (data: { conversationId: string; title: string }) => void
@@ -346,7 +395,14 @@ export interface ModelAPI {
   /** 更新自定义模型（按 id 定位；id 本身不可改，其余字段可改） */
   updateModel(
     id: string,
-    input: { id: string; name: string; vendor: string; url: string; protocol: ModelProtocol; apiKey: string }
+    input: {
+      id: string
+      name: string
+      vendor: string
+      url: string
+      protocol: ModelProtocol
+      apiKey: string
+    }
   ): Promise<IpcResult<CustomModel>>
   /** 提供商列表（models.json 内 providers；缺失时主进程用内置种子） */
   listModelProviders(): Promise<IpcResult<ModelProvider[]>>
