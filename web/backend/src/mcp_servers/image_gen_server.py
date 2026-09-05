@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any, cast
@@ -27,7 +28,10 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME = "wan2.7-image-pro"
 DEFAULT_SIZE = "1024x1024"
-DEFAULT_TIMEOUT_SECONDS = 120.0
+# Image generation HTTP timeout (seconds); override with IMAGE_GEN_TIMEOUT_SECONDS.
+# Keep it below the desktop MCP tool timeout (AI image generation defaults to 240s)
+# so the server returns the result/error before the client aborts the request.
+DEFAULT_TIMEOUT_SECONDS = float(os.getenv("IMAGE_GEN_TIMEOUT_SECONDS", "180"))
 MAX_BATCH_COUNT = 8
 DASH_SCOPE_GENERATION_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 

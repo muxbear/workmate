@@ -8,7 +8,14 @@ import type { DesktopMcpConfig } from '../../../preload/index.d'
 /** MCP 连接超时（毫秒） */
 const CONNECT_TIMEOUT_MS = 8_000
 /** MCP 工具单次调用超时（毫秒） */
-const TOOL_TIMEOUT_MS = 60_000
+const DEFAULT_TOOL_TIMEOUT_MS = 60_000
+
+/**
+ * AI image generation tools need a longer per-call timeout.
+ * Backend IMAGE_GEN_TIMEOUT_SECONDS defaults to 180s; keep this above it
+ * so the client does not abort first with MCP error -32001.
+ */
+const IMAGE_GEN_TOOL_TIMEOUT_MS = 240_000
 
 /** 按服务地址缓存已连接的 MCP 客户端，避免每次重建智能体重复建连 */
 const mcpClients = new Map<string, Client>()
@@ -63,6 +70,25 @@ async function getMcpClient(cfg: DesktopMcpConfig): Promise<Client> {
   return client
 }
 
+/** Resolve per-tool timeout (ms): explicit config > env var > service default. */
+function resolveToolTimeoutMs(cfg: DesktopMcpConfig): number {
+  const configuredMs = readPositiveNumber(cfg.config?.toolTimeoutMs ?? cfg.config?.timeout, 0)
+  if (configuredMs > 0) return configuredMs
+
+  const envMs = readPositiveNumber(process.env.MCP_TOOL_TIMEOUT_MS, 0)
+  if (envMs > 0) return envMs
+
+  const isImageGen = [cfg.streamableHttpUrl, cfg.sseUrl, cfg.url].some((url) =>
+    url.includes('image-gen')
+  )
+  return isImageGen ? IMAGE_GEN_TOOL_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS
+}
+
+function readPositiveNumber(value: unknown, fallback: number): number {
+  const num = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(num) && num > 0 ? Math.round(num) : fallback
+}
+
 function normalizeMcpConfig(raw: unknown): DesktopMcpConfig | null {
   if (typeof raw !== 'object' || raw === null) return null
   const cfg = raw as Record<string, unknown>
@@ -97,7 +123,7 @@ export async function buildExpertMcpTools(mcpConfigs: unknown[]): Promise<Dynami
     try {
       const client = await getMcpClient(cfg)
       const loaded = await loadMcpTools(cfg.mcpToolName || 'mcp', client, {
-        defaultToolTimeout: TOOL_TIMEOUT_MS
+        defaultToolTimeout: resolveToolTimeoutMs(cfg)
       })
       tools.push(...loaded)
       console.log(
