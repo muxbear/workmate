@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { marked } from 'marked'
+import MessageContent from './MessageContent.vue'
 
 // 文件内容预览：按扩展名选择渲染方式
-// - markdown → marked 渲染（复用 MessageContent 的全局 .message-content--rich 样式）
+// - markdown 渲染复用 MessageContent 组件（内置工作区图片 blob / 远程 ke-img 解析）
 // - 其余 → 纯 <pre> 插值渲染（Vue 自动 HTML 转义，杜绝 XSS；html 展示源码）
 const props = withDefaults(
   defineProps<{
@@ -11,6 +11,8 @@ const props = withDefaults(
     relPath: string
     content: string
     truncated: boolean
+    /** 绑定的工作空间 id；存在时文件内工作区相对图片可正常显示 */
+    workspaceId?: string
     /** 是否显示返回按钮（标签页场景传 false） */
     showBack?: boolean
   }>(),
@@ -20,17 +22,21 @@ const props = withDefaults(
 defineEmits<{ (e: 'back'): void }>()
 
 const isMarkdown = computed(() => /\.md$/i.test(props.name))
-const renderedHtml = computed(() =>
-  isMarkdown.value ? (marked.parse(props.content, { async: false }) as string) : ''
-)
 </script>
 
 <template>
   <div class="fp">
     <div class="fp-head">
       <button v-if="showBack" class="fp-back" title="返回列表" @click="$emit('back')">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round">
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
           <polyline points="15 18 9 12 15 6" />
         </svg>
       </button>
@@ -41,7 +47,12 @@ const renderedHtml = computed(() =>
     </div>
     <p v-if="truncated" class="fp-truncated">文件较大，仅显示前 200KB</p>
     <div class="fp-body">
-      <div v-if="isMarkdown" class="message-content message-content--rich" v-html="renderedHtml"></div>
+      <MessageContent
+        v-if="isMarkdown"
+        :content="content"
+        content-type="markdown"
+        :workspace-id="workspaceId"
+      />
       <pre v-else class="fp-code">{{ content }}</pre>
     </div>
   </div>

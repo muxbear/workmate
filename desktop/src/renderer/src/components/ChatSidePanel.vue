@@ -690,6 +690,7 @@ defineExpose({
               :rel-path="activeTab.entry.relPath"
               :content="activeTab.content"
               :truncated="activeTab.truncated"
+              :workspace-id="panelWorkspaceId ?? undefined"
               :show-back="false"
             />
           </div>
@@ -734,6 +735,7 @@ defineExpose({
                 :rel-path="artifactsSelection.entry.relPath"
                 :content="artifactsSelection.content"
                 :truncated="artifactsSelection.truncated"
+                :workspace-id="panelWorkspaceId ?? undefined"
                 @back="closeArtifactsSelection"
               />
             </div>
