@@ -290,6 +290,28 @@ BUILTIN_MCP_TOOLS: list[dict] = [
         "sse_url": "http://127.0.0.1:8001/mcp/image-gen/sse",
         "streamable_http_url": "http://127.0.0.1:8001/mcp/image-gen-http/mcp",
     },
+    {
+        "name": "AI 视频生成",
+        "description": "基于阿里云百炼 wan3.0-video 视频生成模型，提供文生视频与参考生视频能力。",
+        "icon": "🎬",
+        "author": "ke-hermes",
+        "version": "1.0.0",
+        "license": "MIT",
+        "repository": "",
+        "rating": 4.9,
+        "category": "video_generation",
+        "tags": ["视频生成", "文生视频", "wan3.0-video", "阿里云百炼"],
+        "features": [
+            "文生视频：根据文本描述生成短视频",
+            "参考生视频：结合首帧、尾帧、参考图或参考视频等素材生成视频",
+            "异步任务提交与查询：任务处理中可继续查询进度与结果",
+        ],
+        "official": True,
+        "transport": "streamable_http",
+        "url": "http://127.0.0.1:8001/mcp/video-gen/sse",
+        "sse_url": "http://127.0.0.1:8001/mcp/video-gen/sse",
+        "streamable_http_url": "http://127.0.0.1:8001/mcp/video-gen-http/mcp",
+    },
 ]
 
 

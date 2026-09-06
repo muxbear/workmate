@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     IMAGE_GEN_BASE_URL: str = os.getenv("IMAGE_GEN_BASE_URL", "")
     IMAGE_GEN_MODEL: str = os.getenv("IMAGE_GEN_MODEL", "")
 
+    # ---- Video generation (阿里云百炼 wan3.0-video) ----
+    VIDEO_GEN_API_KEY: str = os.getenv("VIDEO_GEN_API_KEY", "")
+    VIDEO_GEN_BASE_URL: str = os.getenv("VIDEO_GEN_BASE_URL", "")
+    VIDEO_GEN_MODEL: str = os.getenv("VIDEO_GEN_MODEL", "")
+
     # ---- Embeddings (DashScope) ----
     DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
     DASHSCOPE_EMBEDDING: str = os.getenv("DASHSCOPE_EMBEDDING", "")

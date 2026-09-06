@@ -28,14 +28,17 @@ from api.deps import set_cache
 from core.cache import create_cache
 from db.engine import init_db
 from mcp_servers.image_gen_server import mcp as image_gen_mcp
+from mcp_servers.video_gen_server import mcp as video_gen_mcp
 from mcp_servers.web_search_server import mcp as web_search_mcp
 
 # 自托管 MCP 服务注册：加载工具时走进程内内存传输，避免启动阶段连接自身端口被拒
 register_local_mcp_server('联网搜索', web_search_mcp)
 register_local_mcp_server('AI 图像生成', image_gen_mcp)
+register_local_mcp_server('AI 视频生成', video_gen_mcp)
 
 streamable_http_subapp = web_search_mcp.streamable_http_app()
 image_gen_streamable_http_subapp = image_gen_mcp.streamable_http_app()
+video_gen_streamable_http_subapp = video_gen_mcp.streamable_http_app()
 
 
 async def _init_knowledge_base(app: FastAPI) -> None:
@@ -94,7 +97,8 @@ async def lifespan(app: FastAPI):
 
     async with web_search_mcp.session_manager.run():
         async with image_gen_mcp.session_manager.run():
-            yield
+            async with video_gen_mcp.session_manager.run():
+                yield
     await shutdown_graph()
 
 
@@ -133,3 +137,5 @@ app.mount('/mcp/web-search', web_search_mcp.sse_app())
 app.mount('/mcp/web-search-http', streamable_http_subapp)
 app.mount('/mcp/image-gen', image_gen_mcp.sse_app())
 app.mount('/mcp/image-gen-http', image_gen_streamable_http_subapp)
+app.mount('/mcp/video-gen', video_gen_mcp.sse_app())
+app.mount('/mcp/video-gen-http', video_gen_streamable_http_subapp)
