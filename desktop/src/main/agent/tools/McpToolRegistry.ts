@@ -17,6 +17,13 @@ const DEFAULT_TOOL_TIMEOUT_MS = 60_000
  */
 const IMAGE_GEN_TOOL_TIMEOUT_MS = 240_000
 
+/**
+ * AI video generation tools need an even longer per-call timeout.
+ * Backend video_gen_server 的默认等待上限 VIDEO_GEN_TIMEOUT_SECONDS 为 240s；
+ * 客户端超时需高于服务端，避免视频任务仍在轮询时被 MCP error -32001 提前掐断。
+ */
+const VIDEO_GEN_TOOL_TIMEOUT_MS = 300_000
+
 /** 按服务地址缓存已连接的 MCP 客户端，避免每次重建智能体重复建连 */
 const mcpClients = new Map<string, Client>()
 
@@ -78,9 +85,10 @@ function resolveToolTimeoutMs(cfg: DesktopMcpConfig): number {
   const envMs = readPositiveNumber(process.env.MCP_TOOL_TIMEOUT_MS, 0)
   if (envMs > 0) return envMs
 
-  const isImageGen = [cfg.streamableHttpUrl, cfg.sseUrl, cfg.url].some((url) =>
-    url.includes('image-gen')
-  )
+  const urls = [cfg.streamableHttpUrl, cfg.sseUrl, cfg.url]
+  if (urls.some((url) => url.includes('video-gen'))) return VIDEO_GEN_TOOL_TIMEOUT_MS
+
+  const isImageGen = urls.some((url) => url.includes('image-gen'))
   return isImageGen ? IMAGE_GEN_TOOL_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS
 }
 
