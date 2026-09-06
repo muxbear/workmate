@@ -6,6 +6,7 @@ import {
   extractWorkspaceImagePaths,
   normalizeWorkspaceImagePath
 } from '../util/markdown-images'
+import { extractWorkspaceVideoPaths, replaceWorkspaceVideoSrc } from '../util/markdown-videos'
 import { isDocRelPath, normalizeWorkspaceDocPath } from '../util/doc-files'
 
 /**
@@ -153,9 +154,79 @@ watch(
   () => {
     workspaceEpoch += 1
     revokeWorkspaceBlobs()
+    revokeWorkspaceVideoBlobs()
   }
 )
-onBeforeUnmount(revokeWorkspaceBlobs)
+onBeforeUnmount(() => {
+  revokeWorkspaceBlobs()
+  revokeWorkspaceVideoBlobs()
+})
+
+// 工作区相对视频路径 → blob 地址（HTML5 <video> 标签内嵌本地视频渲染）
+const workspaceVideoMap = ref<Record<string, string>>({})
+const resolvingWorkspaceVideos = new Set<string>()
+const workspaceVideoPaths = computed(() =>
+  props.workspaceId ? extractWorkspaceVideoPaths(props.content) : []
+)
+
+function mimeForVideoExt(ext: string): string {
+  switch (ext.toLowerCase()) {
+    case 'mp4':
+      return 'video/mp4'
+    case 'm4v':
+      return 'video/x-m4v'
+    case 'webm':
+      return 'video/webm'
+    case 'mov':
+      return 'video/quicktime'
+    case 'ogv':
+    case 'ogg':
+      return 'video/ogg'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
+function revokeWorkspaceVideoBlobs(): void {
+  for (const url of Object.values(workspaceVideoMap.value)) URL.revokeObjectURL(url)
+  workspaceVideoMap.value = {}
+  resolvingWorkspaceVideos.clear()
+}
+
+watch(
+  [workspaceVideoPaths, () => props.workspaceId],
+  ([paths, workspaceId]) => {
+    if (!workspaceId) return
+    const epoch = workspaceEpoch
+    for (const relPath of paths) {
+      if (workspaceVideoMap.value[relPath] || resolvingWorkspaceVideos.has(relPath)) continue
+      resolvingWorkspaceVideos.add(relPath)
+      window.api
+        .readWorkspaceMediaBytes(workspaceId, relPath)
+        .then((res) => {
+          if (!res.success || !res.data) return
+          const rawBuffer = res.data.bytes.buffer.slice(
+            res.data.bytes.byteOffset,
+            res.data.bytes.byteOffset + res.data.bytes.byteLength
+          ) as ArrayBuffer
+          const blob = new Blob([rawBuffer], { type: mimeForVideoExt(res.data.ext) })
+          const url = URL.createObjectURL(blob)
+          if (epoch !== workspaceEpoch) {
+            URL.revokeObjectURL(url)
+            return
+          }
+          workspaceVideoMap.value = { ...workspaceVideoMap.value, [relPath]: url }
+        })
+        .catch(() => {
+          // 读取失败保持原相对路径（页面显示空播放器，但不影响整篇渲染）
+        })
+        .finally(() => {
+          resolvingWorkspaceVideos.delete(relPath)
+        })
+    }
+  },
+  { immediate: true }
+)
 
 /** HTML 属性转义（marked 输出原样携带 URL，映射后需自行转义） */
 function escapeHtmlAttr(value: string): string {
@@ -211,11 +282,14 @@ const renderedHtml = computed(() => {
         if (title) attrs.push(`title="${escapeHtmlAttr(title)}"`)
         return `<img ${attrs.join(' ')}>`
       }
-      return marked.parse(props.content, { async: false, renderer }) as string
+      return replaceWorkspaceVideoSrc(
+        marked.parse(props.content, { async: false, renderer }) as string,
+        workspaceVideoMap.value
+      )
     }
     case 'html':
       // 预留：未来可在此处添加 XSS 过滤（如 DOMPurify.sanitize）
-      return props.content
+      return replaceWorkspaceVideoSrc(props.content, workspaceVideoMap.value)
     case 'text':
     default:
       // 纯文本：转义 HTML 并保留换行
@@ -372,6 +446,14 @@ const renderedHtml = computed(() => {
   margin: 16px 0;
   border: none;
   border-top: 1px solid var(--kw-color-border-brand);
+}
+
+.message-content--rich video {
+  max-width: 100%;
+  border-radius: 8px;
+  display: block;
+  margin: 12px 0;
+  background: #000;
 }
 
 .message-content--rich img {

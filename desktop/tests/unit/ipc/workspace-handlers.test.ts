@@ -107,7 +107,10 @@ describe('workspace IPC handlers', () => {
     const ipc = createFakeIpcMain()
     const createWorkspace = vi.fn().mockReturnValue(fakeWorkspace)
     registerWorkspaceHandlers(ipc as never, createDeps({ workspaceService: { createWorkspace } }))
-    const result = await ipc.invoke<{ success: boolean; data?: unknown }>('workspace:create', '项目A')
+    const result = await ipc.invoke<{ success: boolean; data?: unknown }>(
+      'workspace:create',
+      '项目A'
+    )
     expect(createWorkspace).toHaveBeenCalledWith('项目A', 'real-user')
     expect(result.success).toBe(true)
     expect(result.data).toEqual(fakeWorkspace)
@@ -203,7 +206,10 @@ describe('workspace IPC handlers', () => {
         conversationStore: { deleteConversationsByWorkspace: deleteConversations }
       })
     )
-    const result = await ipc.invoke<{ success: boolean; error?: string }>('workspace:delete', 'ws-1')
+    const result = await ipc.invoke<{ success: boolean; error?: string }>(
+      'workspace:delete',
+      'ws-1'
+    )
     expect(result.success).toBe(false)
     expect(result.error).toContain('checkpoint')
     expect(deleteWorkspace).not.toHaveBeenCalled()
@@ -274,9 +280,16 @@ describe('workspace IPC handlers', () => {
   it('read-file 缺参数返回错误', async () => {
     const ipc = createFakeIpcMain()
     registerWorkspaceHandlers(ipc as never, createDeps())
-    const noId = await ipc.invoke<{ success: boolean; error?: string }>('workspace:read-file', undefined, 'a.txt')
+    const noId = await ipc.invoke<{ success: boolean; error?: string }>(
+      'workspace:read-file',
+      undefined,
+      'a.txt'
+    )
     expect(noId.success).toBe(false)
-    const noPath = await ipc.invoke<{ success: boolean; error?: string }>('workspace:read-file', 'ws-1')
+    const noPath = await ipc.invoke<{ success: boolean; error?: string }>(
+      'workspace:read-file',
+      'ws-1'
+    )
     expect(noPath.success).toBe(false)
   })
 
@@ -292,6 +305,20 @@ describe('workspace IPC handlers', () => {
     expect(readFile).toHaveBeenCalledWith('ws-1', 'real-user', 'a.txt')
     expect(result.success).toBe(true)
     expect(result.data!.content).toBe('hello')
+  })
+
+  it('read-media-bytes 合法参数透传（注入 userId）并返回字节', async () => {
+    const ipc = createFakeIpcMain()
+    const readMediaBytes = vi.fn().mockReturnValue({ ext: 'mp4', bytes: new Uint8Array([1, 2]) })
+    registerWorkspaceHandlers(ipc as never, createDeps({ workspaceService: { readMediaBytes } }))
+    const result = await ipc.invoke<{ success: boolean; data?: { ext: string } }>(
+      'workspace:read-media-bytes',
+      'ws-1',
+      '同名目录/成片-1.mp4'
+    )
+    expect(readMediaBytes).toHaveBeenCalledWith('ws-1', 'real-user', '同名目录/成片-1.mp4')
+    expect(result.success).toBe(true)
+    expect(result.data!.ext).toBe('mp4')
   })
 
   it('业务错误（越界）透传 fail', async () => {

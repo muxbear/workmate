@@ -243,6 +243,9 @@ const api = {
   readWorkspaceImageBytes(workspaceId: string, relPath: string) {
     return ipcRenderer.invoke('workspace:read-image-bytes', workspaceId, relPath)
   },
+  readWorkspaceMediaBytes(workspaceId: string, relPath: string) {
+    return ipcRenderer.invoke('workspace:read-media-bytes', workspaceId, relPath)
+  },
 
   writeWorkspaceFile(workspaceId: string, relPath: string, bytes: Uint8Array | ArrayBuffer) {
     return ipcRenderer.invoke('workspace:write-file', workspaceId, relPath, bytes)
@@ -434,10 +437,7 @@ const api = {
       return ipcRenderer.invoke('expert-sync:disconnect')
     },
     onSyncProgress(callback: (data: ExpertSyncProgress) => void): () => void {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: ExpertSyncProgress
-      ): void => {
+      const handler = (_event: Electron.IpcRendererEvent, data: ExpertSyncProgress): void => {
         callback(data)
       }
       ipcRenderer.on('expert-sync:progress', handler)

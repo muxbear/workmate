@@ -130,6 +130,16 @@ export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDe
     }
   })
 
+  ipc.handle('workspace:read-media-bytes', async (_event, id?: unknown, relPath?: unknown) => {
+    if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
+    try {
+      const userId = session.requireUserId()
+      return ok(await workspaceService.readMediaBytes(id, userId, relPath))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   ipc.handle(
     'workspace:write-file',
     async (_event, id?: unknown, relPath?: unknown, bytes?: unknown) => {

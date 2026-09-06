@@ -26,6 +26,12 @@ export interface WorkspaceImageBytes {
   bytes: Uint8Array
 }
 
+/** 工作空间视频原始字节（消息/文档内嵌本地视频播放用） */
+export interface WorkspaceMediaBytes {
+  ext: string
+  bytes: Uint8Array
+}
+
 /** Word/PDF 预览时主进程返回给渲染层的原始文件字节。 */
 export interface WorkspaceFileBinary {
   name: string
@@ -45,16 +51,13 @@ const HIDDEN_NAMES = new Set([
 ])
 
 /** 聊天内嵌工作区图片的格式白名单 */
-const WORKSPACE_IMAGE_EXTS = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'bmp',
-  'svg',
-  'ico'
-])
+const WORKSPACE_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'])
+
+/** 聊天内嵌工作区视频格式白名单 */
+const WORKSPACE_MEDIA_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'ogg'])
+
+/** 聊天内嵌工作区视频单文件大小上限（200MB，短视频成片足够） */
+const MAX_WORKSPACE_MEDIA_BYTES = 200 * 1024 * 1024
 
 /** 聊天内嵌工作区图片单文件大小上限（20MB） */
 const MAX_WORKSPACE_IMAGE_BYTES = 20 * 1024 * 1024
@@ -190,9 +193,9 @@ export class WorkspaceService {
     ) {
       throw new Error('目标目录已被其他工作空间占用')
     }
-    const affected = this.repo.listAll().filter(
-      (row) => row.path === from || row.path.startsWith(from + sep)
-    )
+    const affected = this.repo
+      .listAll()
+      .filter((row) => row.path === from || row.path.startsWith(from + sep))
     await mkdir(to, { recursive: true })
     if (existsSync(from)) {
       await this.moveDirectoryContents(from, to)
@@ -337,7 +340,11 @@ export class WorkspaceService {
       .filter((d) => !HIDDEN_NAMES.has(d.name))
       .map((d) => {
         const entryPath = [relPath, d.name].filter(Boolean).join('/')
-        return { name: d.name, type: d.isDirectory() ? ('dir' as const) : ('file' as const), relPath: entryPath }
+        return {
+          name: d.name,
+          type: d.isDirectory() ? ('dir' as const) : ('file' as const),
+          relPath: entryPath
+        }
       })
       .sort((a, b) => {
         if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
@@ -404,6 +411,20 @@ export class WorkspaceService {
     const buffer = await readFile(target)
     if (buffer.byteLength > MAX_WORKSPACE_IMAGE_BYTES) {
       throw new Error('图片文件过大，暂不支持预览')
+    }
+    return { ext, bytes: new Uint8Array(buffer) }
+  }
+
+  /** 读取工作空间内视频原始字节（路径校验与格式白名单由主进程执行） */
+  async readMediaBytes(id: string, userId: string, relPath: string): Promise<WorkspaceMediaBytes> {
+    const target = this.resolveFilePath(id, userId, relPath)
+    const ext = extname(target).toLowerCase().replace(/^\./, '')
+    if (!WORKSPACE_MEDIA_EXTS.has(ext)) {
+      throw new Error('仅支持读取工作区视频文件')
+    }
+    const buffer = await readFile(target)
+    if (buffer.byteLength > MAX_WORKSPACE_MEDIA_BYTES) {
+      throw new Error('视频文件过大，暂不支持预览')
     }
     return { ext, bytes: new Uint8Array(buffer) }
   }

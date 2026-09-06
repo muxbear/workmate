@@ -960,7 +960,37 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             await db.execute(select(Expert).where(Expert.name == item["name"]))
         ).scalar_one_or_none()
         if existing is not None:
-            logger.info("内置专家 '%s' 已存在，跳过", item["name"])
+            updates = (
+                ('title', item['title']),
+                ('category', item['category']),
+                ('description', item['description']),
+                ('tags', list(item.get('tags', []))),
+                ('icon', item.get('icon', '')),
+                ('color', item.get('color', '')),
+                ('initials', item.get('initials', item['name'][:1])),
+                ('featured', item.get('featured', False)),
+                ('scene', item.get('scene')),
+                ('sort_order', item.get('sort_order', 0)),
+                ('is_published', item.get('is_published', True)),
+                ('status', 'active'),
+                ('system_prompt', item['system_prompt']),
+            )
+            changed = False
+            for attr, value in updates:
+                if getattr(existing, attr) != value:
+                    setattr(existing, attr, value)
+                    changed = True
+            if changed:
+                await _create_expert_version_snapshot(
+                    db,
+                    existing,
+                    [],
+                    [],
+                    change_summary='更新内置专家配置',
+                )
+                logger.info(f'已更新内置专家 {existing.name} (id={existing.id})')
+            else:
+                logger.info(f'内置专家 {existing.name} 已是最新，跳过')
             continue
 
         agent_existing = (

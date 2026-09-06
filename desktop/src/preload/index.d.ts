@@ -215,6 +215,12 @@ export interface WorkspaceImageBytes {
   bytes: Uint8Array
 }
 
+/** 工作空间视频原始字节（消息/文档内嵌本地视频播放用） */
+export interface WorkspaceMediaBytes {
+  ext: string
+  bytes: Uint8Array
+}
+
 /** 工作空间 Word/PDF 文件原始字节（doc 会被主进程转换为 docx 后返回）。 */
 export interface WorkspaceFileBinary {
   name: string
@@ -251,6 +257,12 @@ export interface WorkspaceAPI {
     workspaceId: string,
     relPath: string
   ): Promise<IpcResult<WorkspaceImageBytes>>
+
+  /** 读取工作空间下视频原始字节（供正文 HTML5 <video> 本地播放） */
+  readWorkspaceMediaBytes(
+    workspaceId: string,
+    relPath: string
+  ): Promise<IpcResult<WorkspaceMediaBytes>>
 
   /** 保存工作空间下 Word 文件字节 */
   writeWorkspaceFile(
