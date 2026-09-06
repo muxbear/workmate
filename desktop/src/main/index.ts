@@ -278,6 +278,7 @@ app.whenReady().then(() => {
   registerSkillSyncHandlers(ipcMain, { skillSyncService, session })
 
   const expertSyncService = new ExpertSyncService({
+    expertsDir: join(dataDir.getBaseDir(), 'experts'),
     secureStorage,
     openExternal: (url) =>
       process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'

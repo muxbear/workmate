@@ -1,6 +1,6 @@
-﻿import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { DesktopExpert } from './index.d'
+import type { DesktopExpert, ExpertSyncProgress } from './index.d'
 
 // Custom APIs for renderer
 const api = {
@@ -427,11 +427,21 @@ const api = {
     sync() {
       return ipcRenderer.invoke('expert-sync:sync')
     },
-    getCachedExperts() {
-      return ipcRenderer.invoke('expert-sync:cached')
+    loadLocal() {
+      return ipcRenderer.invoke('expert-sync:load-local')
     },
     disconnect() {
       return ipcRenderer.invoke('expert-sync:disconnect')
+    },
+    onSyncProgress(callback: (data: ExpertSyncProgress) => void): () => void {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: ExpertSyncProgress
+      ): void => {
+        callback(data)
+      }
+      ipcRenderer.on('expert-sync:progress', handler)
+      return () => ipcRenderer.removeListener('expert-sync:progress', handler)
     }
   },
   modelSync: {

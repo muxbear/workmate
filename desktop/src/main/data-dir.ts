@@ -5,7 +5,7 @@ import { homedir } from 'os'
 /**
  * 棰勫畾涔夌殑瀛愮洰褰曞垪琛紙浼氳瘽鏁版嵁宸茶縼绉昏嚦 LangGraph checkpointer锛屾棤 conversations 鐩綍锛? * 閰嶇疆/鐘舵€?蹇収鏂囦欢宸插榻?WorkBuddy 椤跺眰骞抽摵锛屾棤 config 瀛愮洰褰曪級
  */
-export const SUB_DIRS = ['logs', 'cache', 'workspace', 'binaries'] as const
+export const SUB_DIRS = ['logs', 'cache', 'workspace', 'binaries', 'experts'] as const
 export type SubDir = (typeof SUB_DIRS)[number]
 
 /**

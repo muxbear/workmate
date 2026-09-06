@@ -734,25 +734,17 @@ const summonExpert = (id: string): void => {
 </script>
 ```
 
-### 6.3 专家数据本地缓存（可选）
+### 6.3 专家数据本地存储（JSON 文件，已实施）
 
-同步后的专家数据可写入桌面版 SQLite（`desktop/src/main/database/`），实现离线可用：
+同步后的专家数据写入 `~/.ke-work/experts/experts.json`（替代早期 SQLite `cached_experts` 的可选方案）。
 
-```sql
-CREATE TABLE IF NOT EXISTS cached_experts (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  title TEXT,
-  category TEXT,
-  description TEXT,
-  system_prompt TEXT,
-  tools TEXT,        -- JSON array
-  expert_profile TEXT, -- JSON
-  synced_at INTEGER NOT NULL
-);
-```
+- 目录：`<dataBaseDir>/experts/experts.json`；`dataBaseDir` 即系统设置“存储”分组中的 `~/.ke-work` 目录。
+- 格式：`{ version: 1, syncedAt, syncedBy, experts: DesktopExpert[] }`；采用临时文件 + rename 原子写，损坏文件不覆盖旧数据。
+- `ExpertSyncService.sync()` 流程：拉取 `/api/expert-sync/list` → 映射 → 写盘 → 读回校验；页面挂载通过 `expert-sync:load-local` 读取该文件展示，离线可用。
+- 同步期间主进程经 `expert-sync:progress` 事件推送阶段进度，渲染层显示进度条，数据渲染完成后关闭。
+- 原 `getCachedExperts()` 内存缓存语义已移除，改为 `loadLocal()` 读取本地文件。
 
-`ExpertSyncService.sync()` 成功后写入 `cached_experts` 表，`getCachedExperts()` 优先读本地缓存。
+完整设计见《桌面版专家同步方案》。
 
 ---
 

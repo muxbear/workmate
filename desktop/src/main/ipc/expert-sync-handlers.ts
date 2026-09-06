@@ -1,6 +1,7 @@
-import type { IpcMain } from 'electron'
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { ExpertSyncService } from '../experts/ExpertSyncService'
+import type { ExpertSyncProgress } from '../../preload/index.d'
 
 interface ExpertSyncHandlerDeps {
   expertSyncService: ExpertSyncService
@@ -15,7 +16,7 @@ function fail(error: string): { success: false; error: string } {
   return { success: false, error }
 }
 
-/** 注册 Web 专家同步 IPC 通道。 */
+/** 注册 Web 专家同步 IPC 通道（含主进程 → 渲染层的同步进度事件）。 */
 export function registerExpertSyncHandlers(ipc: IpcMain, deps: ExpertSyncHandlerDeps): void {
   const { expertSyncService, session } = deps
 
@@ -37,19 +38,27 @@ export function registerExpertSyncHandlers(ipc: IpcMain, deps: ExpertSyncHandler
     }
   })
 
-  ipc.handle('expert-sync:sync', async () => {
+  ipc.handle('expert-sync:sync', async (event: IpcMainInvokeEvent) => {
+    const sendProgress = (p: ExpertSyncProgress): void => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('expert-sync:progress', p)
+      }
+    }
     try {
       const userId = session.requireUserId()
-      return ok(await expertSyncService.sync(userId))
+      return ok(await expertSyncService.sync(userId, sendProgress))
     } catch (err) {
-      return fail((err as Error).message)
+      const message = (err as Error).message
+      sendProgress({ phase: 'error', percent: 0, message })
+      return fail(message)
     }
   })
 
-  ipc.handle('expert-sync:cached', async () => {
+  /** 读取 ~/.ke-work/experts/experts.json（专家页挂载与同步完成后加载） */
+  ipc.handle('expert-sync:load-local', async () => {
     try {
       session.requireUserId()
-      return ok(expertSyncService.getCachedExperts())
+      return ok(await expertSyncService.loadLocal())
     } catch (err) {
       return fail((err as Error).message)
     }

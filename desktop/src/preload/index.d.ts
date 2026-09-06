@@ -516,12 +516,29 @@ export type ExpertSyncStatus = {
   webUser: WebUser | null
 }
 
+/** 专家同步阶段（主进程 → 渲染层进度事件） */
+export type ExpertSyncPhase = 'authorize' | 'fetch' | 'save' | 'load' | 'done' | 'error'
+
+export interface ExpertSyncProgress {
+  phase: ExpertSyncPhase
+  /** 0–100 单调递增进度 */
+  percent: number
+  /** 阶段提示文案 */
+  message?: string
+  received?: number
+  total?: number
+}
+
 export interface ExpertSyncAPI {
   getStatus(): Promise<IpcResult<ExpertSyncStatus>>
   authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
+  /** 拉取 → 落盘 → 读回，返回与磁盘一致的专家数据 */
   sync(): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number }>>
-  getCachedExperts(): Promise<IpcResult<DesktopExpert[]>>
+  /** 读取 ~/.ke-work/experts/experts.json；文件缺失返回 null */
+  loadLocal(): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number } | null>>
   disconnect(): Promise<IpcResult<null>>
+  /** 订阅同步进度事件，返回取消订阅函数 */
+  onSyncProgress(callback: (data: ExpertSyncProgress) => void): () => void
 }
 
 /** Web 模型同步状态 */

@@ -1,12 +1,14 @@
-import axios, { type AxiosInstance } from 'axios'
+import axios, { type AxiosInstance, type AxiosProgressEvent } from 'axios'
 import type {
   DesktopExpert,
   DesktopMcpConfig,
+  ExpertSyncProgress,
   ExpertSyncStatus,
   WebUser
 } from '../../preload/index.d'
 import type { ISecureStorage } from '../security/secure-storage'
 import { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
+import { ExpertJsonStore } from './ExpertJsonStore'
 
 interface WebApiEnvelope<T> {
   code: number
@@ -73,6 +75,8 @@ interface ExpertSyncListData {
 interface ExpertSyncServiceDeps {
   secureStorage: ISecureStorage
   openExternal: (url: string) => Promise<void>
+  /** ~/.ke-work/experts 目录（由主进程 DataDirectory 解析后注入） */
+  expertsDir: string
   apiBaseUrl?: string
   clientId?: string
 }
@@ -81,6 +85,7 @@ const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const DEFAULT_CLIENT_ID = 'ke-work-desktop'
 const TOKEN_KEY_PREFIX = 'expert-sync:'
 const EXPERT_SCOPE = 'expert:read'
+const JSON_FILE_VERSION = 1
 
 function mapExpert(item: ExpertSyncItem): DesktopExpert {
   return {
@@ -119,22 +124,25 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
 }
 
 /**
- * 桌面端 Web 专家同步服务。
+ * 桌面版 Web 专家同步服务。
  *
- * 复用 SkillSyncService 的 OAuth2 Authorization Code + PKCE 流程，
- * 使用独立的 expert:read scope 调用 /api/expert-sync/list。
+ * 职责：OAuth2 Authorization Code + PKCE 授权、expert:read scope 拉取专家列表，
+ * 映射后原子写入 ~/.ke-work/experts/experts.json，并以文件读回结果作为同步返回值，
+ * 保证页面展示的数据与磁盘一致。
  */
 export class ExpertSyncService {
   private readonly http: AxiosInstance
   private readonly apiBaseUrl: string
   private readonly clientId: string
   private readonly oauth2: OAuth2ClientService
+  private readonly store: ExpertJsonStore
   private cachedExperts: DesktopExpert[] = []
   private lastSyncedAt: number | null = null
 
   constructor(deps: ExpertSyncServiceDeps) {
     this.apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
     this.clientId = deps.clientId || DEFAULT_CLIENT_ID
+    this.store = new ExpertJsonStore(deps.expertsDir)
     this.oauth2 = new OAuth2ClientService({
       secureStorage: deps.secureStorage,
       openExternal: deps.openExternal,
@@ -165,19 +173,53 @@ export class ExpertSyncService {
     return { webUser: token.webUser }
   }
 
-  async sync(localUserId: string): Promise<{ experts: DesktopExpert[]; syncedAt: number }> {
+  /**
+   * 拉取专家列表 → 映射 → 写盘 → 读回校验。
+   * 同步期间通过 onProgress 回调向调用方（IPC → 渲染层）推送阶段进度。
+   */
+  async sync(
+    localUserId: string,
+    onProgress?: (p: ExpertSyncProgress) => void
+  ): Promise<{ experts: DesktopExpert[]; syncedAt: number }> {
+    this.report(onProgress, 'authorize', 5, '正在校验专家同步授权…')
     const accessToken = await this.oauth2.ensureValidAccessToken(this.tokenKey(localUserId))
+    const webUser = this.getStatus(localUserId).webUser
+
+    this.report(onProgress, 'fetch', 12, '正在从服务器拉取专家数据…')
     const data = await this.request<ExpertSyncListData>('get', '/api/expert-sync/list', undefined, {
-      headers: { Authorization: `Bearer ${accessToken}` }
+      headers: { Authorization: `Bearer ${accessToken}` },
+      onDownloadProgress: (e: AxiosProgressEvent): void => {
+        if (!e.total) return
+        const ratio = Math.min(Math.max(e.loaded / e.total, 0), 1)
+        this.report(onProgress, 'fetch', Math.round(12 + ratio * 55), '正在从服务器拉取专家数据…')
+      }
     })
 
-    this.cachedExperts = data.items.map(mapExpert)
-    this.lastSyncedAt = Date.now()
+    const mapped = data.items.map(mapExpert)
+    const syncedAt = Date.now()
+    this.report(onProgress, 'save', 75, '正在保存专家数据到本地…')
+    await this.store.write({
+      version: JSON_FILE_VERSION,
+      syncedAt,
+      syncedBy: webUser ? { webUserId: webUser.id || '', nickname: webUser.nickname || '' } : null,
+      experts: mapped
+    })
+
+    this.report(onProgress, 'load', 88, '正在加载本地专家数据…')
+    const disk = await this.store.read()
+    this.cachedExperts = disk?.experts ?? mapped
+    this.lastSyncedAt = disk?.syncedAt ?? syncedAt
+    this.report(onProgress, 'done', 100, '专家数据同步完成')
     return { experts: this.cachedExperts, syncedAt: this.lastSyncedAt }
   }
 
-  getCachedExperts(): DesktopExpert[] {
-    return this.cachedExperts
+  /** 读取 ~/.ke-work/experts/experts.json 供页面展示；文件缺失返回 null。 */
+  async loadLocal(): Promise<{ experts: DesktopExpert[]; syncedAt: number } | null> {
+    const data = await this.store.read()
+    if (!data) return null
+    this.cachedExperts = data.experts
+    this.lastSyncedAt = data.syncedAt
+    return { experts: data.experts, syncedAt: data.syncedAt }
   }
 
   async disconnect(localUserId: string): Promise<void> {
@@ -188,6 +230,15 @@ export class ExpertSyncService {
     this.oauth2.deleteToken(this.tokenKey(localUserId))
     this.cachedExperts = []
     this.lastSyncedAt = null
+  }
+
+  private report(
+    onProgress: ((p: ExpertSyncProgress) => void) | undefined,
+    phase: ExpertSyncProgress['phase'],
+    percent: number,
+    message: string
+  ): void {
+    onProgress?.({ phase, percent, message })
   }
 
   private tokenKey(localUserId: string): string {

@@ -15,6 +15,7 @@ import { useAgentStore } from '@renderer/store/agent'
 import { useWorkspaceStore } from '@renderer/store/workspace'
 import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
 import { useSkillSyncStore } from '@renderer/store/skillSync'
+import { useExpertSyncStore } from '@renderer/store/expertSync'
 import type { ThemeName } from '@renderer/store/settings'
 import type { Conversation } from '@renderer/store/agent'
 import type { Workspace } from '../../../preload/index.d'
@@ -25,6 +26,7 @@ const agentStore = useAgentStore()
 const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
 const skillSyncStore = useSkillSyncStore()
+const expertSyncStore = useExpertSyncStore()
 
 // ── 当前登录用户展示 ──
 /** 显示名：用户名 → 手机号 → 兜底文案 */
@@ -353,6 +355,7 @@ const handleLogout = async (): Promise<void> => {
     userMenuOpen.value = false
     userStore.logout() // 清渲染层 pinia + localStorage
     skillSyncStore.resetLocal() // 清 Web 技能同步状态，避免切换账号残留
+    expertSyncStore.resetLocal() // 清 Web 专家同步状态与本地列表，避免切换账号残留
     workspaceStore.reset() // 清工作空间列表/选中态，防切换账号残留
     await router.push('/') // 此时主进程 session 已清，守卫放行至登录页
   } catch (err: unknown) {

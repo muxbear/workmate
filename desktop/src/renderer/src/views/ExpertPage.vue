@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { experts, useCatalogStore } from '@store/catalog'
+import { useExpertSyncStore } from '@store/expertSync'
 
 const emit = defineEmits<{ summon: [] }>()
 
 /** 数据与「+」菜单共源（catalog store） */
 const catalog = useCatalogStore()
+const expertSync = useExpertSyncStore()
 
 const expertFilter = ref('全部')
 const sort = ref<'综合' | '最新'>('综合')
 const search = ref('')
-const syncStatus = ref<'idle' | 'syncing' | 'unauthorized'>('idle')
 
 const featuredScenes = [
   {
@@ -65,45 +66,15 @@ const summonExpert = (id: string): void => {
   emit('summon')
 }
 
-async function loadExperts() {
-  const cachedRes = await window.api.expert.getCachedExperts()
-  const cachedData = cachedRes.data
-  if (cachedRes.success && cachedData && cachedData.length > 0) {
-    catalog.setExperts(cachedData)
-  }
-
-  const statusRes = await window.api.expert.getStatus()
-  const statusData = statusRes.data
-  if (statusRes.success && statusData && statusData.status === 'authorized') {
-    syncStatus.value = 'syncing'
-    const syncRes = await window.api.expert.sync()
-    if (syncRes.success && syncRes.data) {
-      catalog.setExperts(syncRes.data.experts)
-    }
-    syncStatus.value = 'idle'
-  } else {
-    syncStatus.value = 'unauthorized'
-  }
-}
-
-async function handleSync() {
-  const statusRes = await window.api.expert.getStatus()
-  const statusData = statusRes.data
-  if (statusRes.success && statusData && statusData.status !== 'authorized') {
-    await window.api.expert.authorize()
-  }
-
-  syncStatus.value = 'syncing'
-  const res = await window.api.expert.sync()
-  if (res.success && res.data) {
-    catalog.setExperts(res.data.experts)
-  }
-  syncStatus.value = 'idle'
-}
-
+/** 挂载：先展示本地 experts.json 数据，再读取同步状态（不自动触发网络同步） */
 onMounted(() => {
-  void loadExperts()
+  void expertSync.loadStatus()
+  void expertSync.loadLocal()
 })
+
+async function handleSync(): Promise<void> {
+  await expertSync.sync()
+}
 </script>
 
 <template>
@@ -125,7 +96,7 @@ onMounted(() => {
         </svg>
         <input v-model="search" type="text" placeholder="搜索专家" class="search-input" />
       </div>
-      <button class="sync-btn" :disabled="syncStatus === 'syncing'" @click="handleSync">
+      <button class="sync-btn" :disabled="expertSync.syncing" @click="handleSync">
         <svg
           width="12"
           height="12"
@@ -137,9 +108,24 @@ onMounted(() => {
           <polyline points="23 4 23 10 17 10" />
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
         </svg>
-        同步专家
+        {{ expertSync.syncing ? '同步中…' : '同步专家' }}
       </button>
     </div>
+
+    <Transition name="sync-fade">
+      <div v-if="expertSync.syncing" class="sync-progress">
+        <div class="sync-progress-bar">
+          <div
+            class="sync-progress-fill"
+            :style="{ width: expertSync.percent + '%' }"
+          />
+        </div>
+        <span class="sync-progress-text">
+          {{ expertSync.progressMessage }} {{ expertSync.percent }}%
+        </span>
+      </div>
+    </Transition>
+    <div v-if="expertSync.error" class="sync-error">{{ expertSync.error }}</div>
 
     <div class="page-body">
       <section class="scene-section">
@@ -677,4 +663,55 @@ onMounted(() => {
     display: none;
   }
 }
+
+/* 专家同步进度条与错误提示 */
+.sync-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  background: var(--kw-color-surface-soft);
+  border-bottom: 1px solid var(--kw-color-border-brand);
+  flex-shrink: 0;
+}
+
+.sync-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--kw-color-bg-muted, #eff1f1);
+  overflow: hidden;
+}
+
+.sync-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--kw-color-brand);
+  transition: width 0.2s ease;
+}
+
+.sync-progress-text {
+  font-size: 11px;
+  color: var(--kw-color-text-secondary);
+  white-space: nowrap;
+}
+
+.sync-error {
+  padding: 8px 24px;
+  font-size: 12px;
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.06);
+  border-bottom: 1px solid rgba(220, 38, 38, 0.12);
+}
+
+.sync-fade-enter-active,
+.sync-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.sync-fade-enter-from,
+.sync-fade-leave-to {
+  opacity: 0;
+}
+
 </style>
