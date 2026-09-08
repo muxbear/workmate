@@ -213,7 +213,7 @@ function handleUpload() {
 
 /* Dropzone */
 .dropzone {
-  border: 2px dashed rgba(255, 255, 255, 0.1);
+  border: 2px dashed var(--border-medium);
   border-radius: var(--radius-xl);
   padding: 32px 20px;
   text-align: center;
@@ -226,7 +226,7 @@ function handleUpload() {
 }
 
 .dropzone-icon {
-  color: #93c5fd;
+  color: var(--accent-primary);
   margin-bottom: 10px;
 }
 
@@ -245,7 +245,7 @@ function handleUpload() {
 .file-list {
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
 }
 
@@ -255,7 +255,7 @@ function handleUpload() {
   gap: 8px;
   padding: 9px 12px;
   font-size: var(--font-size-sm);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .file-item:last-child {
@@ -297,17 +297,17 @@ function handleUpload() {
 
 .file-item-del:hover {
   background: rgba(244, 63, 94, 0.12);
-  color: #f87171;
+  color: var(--status-error-text);
 }
 
 /* Custom config section */
 .custom-config-section {
   max-height: 420px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
   padding: 16px;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--surface-secondary);
 }
 
 .config-section-title {
@@ -335,8 +335,8 @@ function handleUpload() {
   justify-content: center;
   height: 38px;
   padding: 0 20px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-card);
+  border: 1px solid var(--border-medium);
   border-radius: 10px;
   color: var(--foreground-primary);
   font-size: var(--font-size-base);
@@ -346,8 +346,8 @@ function handleUpload() {
 }
 
 .btn-cancel:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--surface-secondary);
+  border-color: var(--border-medium);
 }
 
 .btn-upload {
@@ -378,13 +378,13 @@ function handleUpload() {
 <!-- 全局：对话框底色 -->
 <style>
 .upload-doc-dialog {
-  --el-dialog-bg-color: #0f172e;
-  --el-dialog-border-color: rgba(255, 255, 255, 0.1);
+  --el-dialog-bg-color: var(--color-modal-bg);
+  --el-dialog-border-color: var(--border-medium);
 }
 
 .upload-doc-dialog .el-dialog {
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-medium);
   transition: width 0.25s ease;
 }
 
@@ -403,8 +403,8 @@ function handleUpload() {
 /* Radio group dark theme */
 .index-mode-radio {
   --el-radio-text-color: var(--foreground-primary);
-  --el-radio-input-bg-color: rgba(255, 255, 255, 0.05);
-  --el-radio-input-border-color: rgba(255, 255, 255, 0.2);
+  --el-radio-input-bg-color: var(--surface-inset-soft);
+  --el-radio-input-border-color: var(--border-medium);
 }
 
 .index-mode-radio .el-radio__label {

@@ -389,7 +389,7 @@ function onLlmProviderChange(pid: string) {
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--surface-stat);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   margin-top: 4px;
@@ -419,11 +419,11 @@ function onLlmProviderChange(pid: string) {
 }
 
 /* Colors */
-.icon-cyan { color: #67e8f9; }
-.icon-purple { color: #c4b5fd; }
-.icon-amber { color: #fcd34d; }
-.icon-green { color: #6ee7b7; }
-.icon-rose { color: #fda4af; }
+.icon-cyan { color: var(--status-cyan-text); }
+.icon-purple { color: var(--status-purple-text); }
+.icon-amber { color: var(--status-amber-text); }
+.icon-green { color: var(--status-ready-text); }
+.icon-rose { color: var(--status-error-text); }
 </style>
 
 <!-- 全局样式覆盖: 索引配置表单内的 Element Plus 组件 -->
@@ -439,7 +439,7 @@ function onLlmProviderChange(pid: string) {
 }
 
 .index-config-form .el-select .el-input__wrapper:hover {
-  border-color: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(59, 130, 246, 0.45) !important;
 }
 
 .index-config-form .el-select .el-input__wrapper.is-focus {
@@ -458,10 +458,10 @@ function onLlmProviderChange(pid: string) {
 
 /* Select 下拉面板 */
 .config-select-popper {
-  background: var(--color-bg-input) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: var(--color-modal-bg) !important;
+  border: 1px solid var(--border-medium) !important;
   border-radius: var(--radius-input) !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55) !important;
+  box-shadow: var(--shadow-card) !important;
   padding: 4px !important;
 }
 
@@ -480,14 +480,14 @@ function onLlmProviderChange(pid: string) {
 }
 
 .config-select-popper .el-select-dropdown__item.is-selected {
-  color: #93c5fd !important;
+  color: var(--status-indexing-text) !important;
   font-weight: var(--font-weight-medium) !important;
   background: rgba(59, 130, 246, 0.08) !important;
 }
 
 /* Slider 轨道 */
 .index-config-form .el-slider__runway {
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: var(--border-subtle) !important;
 }
 
 .index-config-form .el-slider__bar {

@@ -134,7 +134,7 @@ function stageStatusIcon(status: string) {
 
 .pipeline-overall {
   padding: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--surface-stat);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   margin-bottom: 16px;
@@ -192,7 +192,7 @@ function stageStatusIcon(status: string) {
 }
 
 .pipeline-title-icon {
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 
 .stage-list {
@@ -210,23 +210,23 @@ function stageStatusIcon(status: string) {
 .stage-done {
   background: rgba(16, 185, 129, 0.1);
   border-color: rgba(16, 185, 129, 0.3);
-  color: #6ee7b7;
+  color: var(--status-ready-text);
 }
 
 .stage-running {
   background: rgba(59, 130, 246, 0.1);
   border-color: rgba(59, 130, 246, 0.3);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 
 .stage-failed {
   background: rgba(244, 63, 94, 0.1);
   border-color: rgba(244, 63, 94, 0.3);
-  color: #fda4af;
+  color: var(--status-error-text);
 }
 
 .stage-pending {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--surface-inset-soft);
   border-color: var(--border-subtle);
   color: var(--foreground-muted);
 }

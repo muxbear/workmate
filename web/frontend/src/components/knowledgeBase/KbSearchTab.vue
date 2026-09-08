@@ -162,19 +162,18 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 
 .mode-card {
   padding: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--surface-secondary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   cursor: pointer;
   transition: all 0.15s;
   text-align: left;
-  border: none;
   outline: none;
   font-family: inherit;
 }
 
 .mode-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(59, 130, 246, 0.35);
 }
 
 .mode-active {
@@ -222,8 +221,8 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
   width: 100%;
   height: 44px;
   padding: 0 16px 0 42px;
-  background: rgba(15, 23, 46, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-base);
@@ -321,7 +320,7 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 }
 
 .score-primary {
-  color: #6ee7b7;
+  color: var(--status-ready-text);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -334,7 +333,7 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 
 .highlight {
   background: rgba(250, 204, 21, 0.3);
-  color: #fde68a;
+  color: var(--status-highlight-text);
   padding: 0 2px;
   border-radius: 2px;
 }
@@ -359,8 +358,8 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
   margin-right: 4px;
 }
 
-.text-blue-300 { color: #93c5fd; }
+.text-blue-300 { color: var(--accent-primary); }
 .text-slate-400 { color: var(--foreground-secondary); }
 .text-white { color: var(--foreground-primary); }
-.text-slate-300 { color: var(--foreground-primary); }
+.text-slate-300 { color: var(--foreground-secondary); }
 </style>

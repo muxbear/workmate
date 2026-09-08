@@ -229,6 +229,11 @@
   --status-indexing-text: #93c5fd;
   --status-error-text: #fda4af;
   --status-draft-text: #94a3b8;
+  --status-cyan-text: #67e8f9;
+  --status-purple-text: #c4b5fd;
+  --status-amber-text: #fcd34d;
+  --status-pink-text: #f9a8d4;
+  --status-highlight-text: #fde68a;
 }
 
 :root[data-theme='light'] {
@@ -258,4 +263,9 @@
   --status-indexing-text: #1d4ed8;
   --status-error-text: #b91c1c;
   --status-draft-text: #64748b;
+  --status-cyan-text: #0e7490;
+  --status-purple-text: #7c3aed;
+  --status-amber-text: #b45309;
+  --status-pink-text: #be185d;
+  --status-highlight-text: #a16207;
 }

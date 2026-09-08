@@ -121,7 +121,7 @@ function handleSaveAndReindex() {
 .preview-icon {
   display: flex;
   align-items: center;
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 
 .divider {
@@ -165,7 +165,7 @@ function handleSaveAndReindex() {
   background: rgba(59, 130, 246, 0.12);
   border: 1px solid rgba(59, 130, 246, 0.25);
   border-radius: var(--radius-input);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
   font-size: var(--font-size-base);
   font-family: inherit;
   cursor: pointer;
@@ -175,7 +175,7 @@ function handleSaveAndReindex() {
 .btn-reindex:hover {
   background: rgba(59, 130, 246, 0.2);
   border-color: rgba(59, 130, 246, 0.4);
-  color: #bfdbfe;
+  color: var(--status-indexing-text);
 }
 
 .save-feedback {
@@ -184,7 +184,7 @@ function handleSaveAndReindex() {
   gap: 4px;
   justify-content: center;
   font-size: var(--font-size-xs);
-  color: #6ee7b7;
+  color: var(--status-ready-text);
 }
 
 .btn-icon {

@@ -40,49 +40,49 @@ const icon = computed(() => {
 
 .doc-status-queued {
   background: rgba(100, 116, 139, 0.15);
-  color: #94a3b8;
+  color: var(--status-draft-text);
   border-color: rgba(100, 116, 139, 0.3);
 }
 
 .doc-status-parsing {
   background: rgba(59, 130, 246, 0.15);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
   border-color: rgba(59, 130, 246, 0.3);
 }
 
 .doc-status-chunking {
   background: rgba(6, 182, 212, 0.15);
-  color: #67e8f9;
+  color: var(--status-cyan-text);
   border-color: rgba(6, 182, 212, 0.3);
 }
 
 .doc-status-embedding {
   background: rgba(139, 92, 246, 0.15);
-  color: #c4b5fd;
+  color: var(--status-purple-text);
   border-color: rgba(139, 92, 246, 0.3);
 }
 
 .doc-status-bm25 {
   background: rgba(245, 158, 11, 0.15);
-  color: #fcd34d;
+  color: var(--status-amber-text);
   border-color: rgba(245, 158, 11, 0.3);
 }
 
 .doc-status-extracting {
   background: rgba(236, 72, 153, 0.15);
-  color: #f9a8d4;
+  color: var(--status-pink-text);
   border-color: rgba(236, 72, 153, 0.3);
 }
 
 .doc-status-indexed {
   background: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
+  color: var(--status-ready-text);
   border-color: rgba(16, 185, 129, 0.3);
 }
 
 .doc-status-failed {
   background: rgba(244, 63, 94, 0.15);
-  color: #fda4af;
+  color: var(--status-error-text);
   border-color: rgba(244, 63, 94, 0.3);
 }
 

@@ -286,8 +286,8 @@ function handleEditFragment(doc: KBDoc) {
   width: 100%;
   height: 36px;
   padding: 0 12px 0 36px;
-  background: rgba(15, 23, 46, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-base);
@@ -342,7 +342,7 @@ function handleEditFragment(doc: KBDoc) {
 }
 
 .docs-table thead {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-secondary);
 }
 
 .docs-table thead th {
@@ -362,7 +362,7 @@ function handleEditFragment(doc: KBDoc) {
 .doc-row {
   cursor: pointer;
   transition: background 0.15s;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .doc-row:last-child {
@@ -370,7 +370,7 @@ function handleEditFragment(doc: KBDoc) {
 }
 
 .doc-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-secondary);
 }
 
 .doc-row--sel {
@@ -387,7 +387,7 @@ function handleEditFragment(doc: KBDoc) {
 .col-chunks { width: 70px; }
 .col-er { width: 100px; }
 .col-status { width: 180px; cursor: pointer; }
-.col-status:hover { background: rgba(255, 255, 255, 0.02); }
+.col-status:hover { background: rgba(59, 130, 246, 0.06); }
 .col-action { width: 150px; text-align: right; }
 
 .action-row {
@@ -413,26 +413,26 @@ function handleEditFragment(doc: KBDoc) {
 }
 
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 
 .action-view {
-  color: #60a5fa;
+  color: var(--accent-primary);
 }
 
 .action-view:hover {
   background: rgba(59, 130, 246, 0.15);
-  color: #93c5fd;
+  color: var(--accent-primary);
 }
 
 .action-edit {
-  color: #a78bfa;
+  color: var(--status-purple-text);
 }
 
 .action-edit:hover {
   background: rgba(139, 92, 246, 0.15);
-  color: #c4b5fd;
+  color: var(--status-purple-text);
 }
 
 .action-btn:disabled {
@@ -446,7 +446,7 @@ function handleEditFragment(doc: KBDoc) {
 }
 
 .action-del:hover {
-  color: #f87171;
+  color: var(--status-error-text);
   background: rgba(244, 63, 94, 0.12);
 }
 
