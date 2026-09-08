@@ -77,7 +77,7 @@ const circleSize = computed(() => Math.min(72, 48 + props.data.mentions * 3))
   align-items: center;
   justify-content: center;
   transition: transform 0.2s, box-shadow 0.2s;
-  box-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--graph-sphere-shadow);
 }
 
 .kb-graph-node:hover .node-sphere {
@@ -99,13 +99,13 @@ const circleSize = computed(() => Math.min(72, 48 + props.data.mentions * 3))
 .node-label {
   font-size: 12px;
   font-weight: 500;
-  color: #cbd5e1;
+  color: var(--graph-node-label);
   text-align: center;
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  text-shadow: var(--graph-label-shadow);
 }
 
 :deep(.vue-flow__handle) {

@@ -180,7 +180,9 @@ function handleExportPng() {
     canvas.width = img.width * 2
     canvas.height = img.height * 2
     ctx!.scale(2, 2)
-    ctx!.fillStyle = '#0f172a'
+    const canvasBg =
+      getComputedStyle(document.documentElement).getPropertyValue('--canvas-surface').trim() || '#0f172a'
+    ctx!.fillStyle = canvasBg
     ctx!.fillRect(0, 0, canvas.width, canvas.height)
     ctx!.drawImage(img, 0, 0)
     URL.revokeObjectURL(url)
@@ -285,7 +287,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
           @pane-click="handlePaneClick"
           @pane-ready="handlePaneReady"
         >
-          <Background :gap="20" :size="1" pattern-color="#1e293b" />
+          <Background :gap="20" :size="1" pattern-color="var(--graph-dot-color)" />
           <Controls position="bottom-right" :show-interactive="false" :show-zoom="false" :show-fit-view="false">
             <ControlButton title="放大" @click="zoomIn({ duration: 200 })">
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -312,9 +314,9 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
           </Controls>
           <MiniMap
             position="bottom-left"
-            style="background: rgba(15, 23, 42, 0.9); border: 1px solid #334155; border-radius: 8px;"
+            style="background: var(--graph-minimap-bg, rgba(15, 23, 42, 0.9)); border: 1px solid var(--graph-minimap-border, #334155); border-radius: 8px;"
             :node-color="minimapNodeColor"
-            :mask-color="'rgba(30, 41, 59, 0.4)'"
+            :mask-color="'var(--graph-minimap-mask, rgba(30, 41, 59, 0.4))'"
           />
         </VueFlow>
       </div>
@@ -449,7 +451,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-card);
   margin-bottom: 12px;
@@ -496,7 +498,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 .search-icon {
   position: absolute;
   left: 8px;
-  color: #64748b;
+  color: var(--foreground-muted);
   pointer-events: none;
 }
 
@@ -505,7 +507,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   height: 30px;
   padding: 0 28px 0 28px;
   font-size: 12px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-inset);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   color: var(--foreground-primary);
@@ -514,11 +516,11 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .search-input:focus {
-  border-color: #60a5fa;
+  border-color: var(--accent-primary);
 }
 
 .search-input::placeholder {
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 .search-clear {
@@ -526,7 +528,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   right: 4px;
   background: none;
   border: none;
-  color: #64748b;
+  color: var(--foreground-muted);
   cursor: pointer;
   padding: 2px;
   display: flex;
@@ -538,10 +540,10 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   justify-content: center;
   width: 30px;
   height: 30px;
-  background: #1e293b;
-  border: 1px solid #475569;
+  background: var(--graph-control-bg);
+  border: 1px solid var(--graph-control-border);
   border-radius: 6px;
-  color: #cbd5e1;
+  color: var(--graph-control-color);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -576,7 +578,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .graph-canvas {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--canvas-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-card);
   overflow: hidden;
@@ -598,7 +600,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .panel-section {
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-card);
   padding: 14px;
@@ -630,7 +632,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--surface-inset-soft);
   border: 1px solid transparent;
   border-radius: 8px;
   cursor: pointer;
@@ -689,7 +691,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .entity-item-arrow {
-  color: #475569;
+  color: var(--foreground-muted);
   flex-shrink: 0;
 }
 
@@ -717,7 +719,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   background: none;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  color: #94a3b8;
+  color: var(--foreground-muted);
   cursor: pointer;
 }
 
@@ -775,7 +777,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .detail-stat {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--surface-stat);
   border-radius: 8px;
   padding: 10px;
   text-align: center;
@@ -812,7 +814,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .relation-entity {
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -820,7 +822,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .relation-link {
-  color: #60a5fa;
+  color: var(--accent-primary);
   cursor: pointer;
 }
 
@@ -829,8 +831,8 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .relation-label {
-  background: rgba(59, 130, 246, 0.15);
-  color: #93c5fd;
+  background: var(--graph-pill-bg);
+  color: var(--graph-pill-text);
   padding: 1px 8px;
   border-radius: 10px;
   font-size: 11px;
@@ -863,24 +865,30 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .vue-flow__background pattern circle {
-  fill: #1e293b !important;
+  fill: var(--graph-dot-color) !important;
 }
 
 .vue-flow__minimap {
+  background: var(--graph-minimap-bg) !important;
+  border: 1px solid var(--graph-minimap-border) !important;
   border-radius: 8px !important;
+}
+
+.vue-flow__minimap-mask {
+  fill: var(--graph-minimap-mask) !important;
 }
 
 .vue-flow__controls {
   border-radius: 8px !important;
   overflow: hidden;
-  border: 1px solid #475569 !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+  border: 1px solid var(--graph-control-border) !important;
+  box-shadow: var(--graph-control-shadow) !important;
 }
 
 .vue-flow__controls-button {
-  background: #1e293b !important;
-  border-color: #475569 !important;
-  color: #e2e8f0 !important;
+  background: var(--graph-control-bg) !important;
+  border-color: var(--graph-control-border) !important;
+  color: var(--graph-control-color) !important;
   width: 40px !important;
   height: 40px !important;
 }
@@ -899,6 +907,6 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
 }
 
 .vue-flow__edge.selected .vue-flow__edge-path {
-  stroke: #60a5fa !important;
+  stroke: var(--graph-edge-highlight) !important;
 }
 </style>

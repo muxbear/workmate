@@ -197,3 +197,65 @@
   --border-subtle: rgba(15, 30, 60, 0.08);
   --border-medium: var(--color-border-input);
 }
+
+
+/* ========================================
+   浅色/深色主题语义色 — 知识库组件
+   ======================================== */
+:root {
+  --surface-glass: rgba(6, 11, 26, 0.85);
+  --surface-panel: rgba(15, 23, 42, 0.6);
+  --surface-inset: rgba(0, 0, 0, 0.3);
+  --surface-inset-soft: rgba(0, 0, 0, 0.15);
+  --surface-stat: rgba(0, 0, 0, 0.2);
+  --canvas-surface: rgba(0, 0, 0, 0.3);
+  --graph-dot-color: #1e293b;
+  --graph-control-bg: #1e293b;
+  --graph-control-border: #475569;
+  --graph-control-color: #e2e8f0;
+  --graph-control-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --graph-minimap-bg: rgba(15, 23, 42, 0.9);
+  --graph-minimap-border: #334155;
+  --graph-minimap-mask: rgba(30, 41, 59, 0.4);
+  --graph-edge-color: #475569;
+  --graph-edge-highlight: #60a5fa;
+  --graph-edge-label: #94a3b8;
+  --graph-node-label: #cbd5e1;
+  --graph-sphere-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
+  --graph-label-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --graph-pill-bg: rgba(59, 130, 246, 0.15);
+  --graph-pill-text: #93c5fd;
+  --status-ready-text: #6ee7b7;
+  --status-indexing-text: #93c5fd;
+  --status-error-text: #fda4af;
+  --status-draft-text: #94a3b8;
+}
+
+:root[data-theme='light'] {
+  --surface-glass: rgba(255, 255, 255, 0.88);
+  --surface-panel: rgba(255, 255, 255, 0.86);
+  --surface-inset: rgba(15, 30, 60, 0.05);
+  --surface-inset-soft: rgba(15, 30, 60, 0.04);
+  --surface-stat: rgba(15, 30, 60, 0.05);
+  --canvas-surface: #0f172a;
+  --graph-dot-color: #1e293b;
+  --graph-control-bg: #1e293b;
+  --graph-control-border: #475569;
+  --graph-control-color: #e2e8f0;
+  --graph-control-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --graph-minimap-bg: rgba(15, 23, 42, 0.9);
+  --graph-minimap-border: #334155;
+  --graph-minimap-mask: rgba(30, 41, 59, 0.4);
+  --graph-edge-color: #475569;
+  --graph-edge-highlight: #60a5fa;
+  --graph-edge-label: #94a3b8;
+  --graph-node-label: #cbd5e1;
+  --graph-sphere-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
+  --graph-label-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --graph-pill-bg: rgba(59, 130, 246, 0.12);
+  --graph-pill-text: #2563eb;
+  --status-ready-text: #047857;
+  --status-indexing-text: #1d4ed8;
+  --status-error-text: #b91c1c;
+  --status-draft-text: #64748b;
+}

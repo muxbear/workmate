@@ -21,7 +21,9 @@ const edgePath = computed(() => {
 })
 
 const pathStyle = computed(() => ({
-  stroke: highlighted.value ? '#60a5fa' : '#475569',
+  stroke: highlighted.value
+    ? 'var(--graph-edge-highlight, #60a5fa)'
+    : 'var(--graph-edge-color, #475569)',
   strokeWidth: highlighted.value ? 2.5 : 1.5,
   opacity: dimmed.value ? 0.1 : 0.6,
   transition: 'all 0.2s',
@@ -53,7 +55,7 @@ const labelText = computed(() => props.data?.label ?? '')
     v-if="!dimmed && labelText"
     :x="labelX"
     :y="labelY - 6"
-    fill="#94a3b8"
+    style="fill: var(--graph-edge-label, #94a3b8)"
     font-size="11"
     text-anchor="middle"
     pointer-events="none"
@@ -61,3 +63,14 @@ const labelText = computed(() => props.data?.label ?? '')
     {{ labelText }}
   </text>
 </template>
+
+
+<style>
+#arrowNormal path {
+  fill: var(--graph-edge-color, #475569);
+}
+
+#arrowHighlighted path {
+  fill: var(--graph-edge-highlight, #60a5fa);
+}
+</style>

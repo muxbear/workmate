@@ -2,9 +2,10 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Database, ChevronLeft, RefreshCw, Trash2,
+  Database, ChevronRight, RefreshCw, Trash2,
   Activity, FileText, Network, FileSearch, Settings2,
 } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 import type { KB } from '@/types/knowledgeBase'
 import { KB_STATUS_CONFIG } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
@@ -25,10 +26,20 @@ const emit = defineEmits<{
 }>()
 
 const store = useKnowledgeBaseStore()
+const router = useRouter()
 const activeTab = ref('overview')
 const reindexing = ref(false)
 
 const statusCfg = KB_STATUS_CONFIG[props.kb.status]
+
+function handleGoHome() {
+  store.clearSelection()
+  router.push({ name: 'overview' })
+}
+
+function handleBackList() {
+  emit('back')
+}
 
 function handleConfigSave(config: typeof props.kb.config) {
   emit('update', { config })
@@ -54,9 +65,13 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
     <div class="detail-header">
       <div class="detail-header-inner">
         <div class="header-left">
-          <el-button text @click="$emit('back')" class="back-btn">
-            <ChevronLeft :size="16" />返回
-          </el-button>
+          <nav class="detail-crumbs" aria-label="breadcrumb">
+            <button class="crumb-link" @click="handleGoHome">首页</button>
+            <ChevronRight :size="12" class="crumb-sep" />
+            <button class="crumb-link" @click="handleBackList">知识库</button>
+            <ChevronRight :size="12" class="crumb-sep" />
+            <span class="crumb-current">{{ kb.name }}</span>
+          </nav>
           <div class="kb-icon-box">
             <Database :size="20" />
           </div>
@@ -140,7 +155,7 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
   position: sticky;
   top: 0;
   z-index: 30;
-  background: rgba(6, 11, 26, 0.85);
+  background: var(--surface-glass);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -160,8 +175,39 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
   gap: 16px;
 }
 
-.back-btn {
+.detail-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.crumb-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--foreground-secondary);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.crumb-link:hover {
+  color: var(--accent-primary);
+}
+
+.crumb-sep {
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+}
+
+.crumb-current {
   color: var(--foreground-primary);
+  font-weight: var(--font-weight-medium);
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kb-icon-box {
@@ -199,25 +245,25 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
 
 .status-ready {
   background: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
+  color: var(--status-ready-text);
   border-color: rgba(16, 185, 129, 0.3);
 }
 
 .status-indexing {
   background: rgba(59, 130, 246, 0.15);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
   border-color: rgba(59, 130, 246, 0.3);
 }
 
 .status-error {
   background: rgba(244, 63, 94, 0.15);
-  color: #fda4af;
+  color: var(--status-error-text);
   border-color: rgba(244, 63, 94, 0.3);
 }
 
 .status-draft {
   background: rgba(100, 116, 139, 0.15);
-  color: #94a3b8;
+  color: var(--status-draft-text);
   border-color: rgba(100, 116, 139, 0.3);
 }
 
@@ -237,7 +283,7 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
 }
 
 .btn-delete {
-  color: #fda4af;
+  color: var(--status-error-text);
   border-color: rgba(244, 63, 94, 0.3);
   background: rgba(244, 63, 94, 0.1);
 }
@@ -274,16 +320,16 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
 }
 
 .kb-tabs :deep(.el-tabs__item) {
-  color: #94a3b8;
+  color: var(--foreground-muted);
   transition: color 0.2s;
 }
 
 .kb-tabs :deep(.el-tabs__item.is-active) {
-  color: #93c5fd;
+  color: var(--accent-primary);
 }
 
 .kb-tabs :deep(.el-tabs__item:hover:not(.is-active)) {
-  color: #cbd5e1;
+  color: var(--foreground-primary);
 }
 
 .tab-icon {
