@@ -35,6 +35,7 @@ from api.notification import (
 from api.oauth import router as oauth_router
 from api.oauth2 import router as oauth2_router
 from api.overview import router as overview_router
+from api.params import router as params_router
 from api.personnel import router as personnel_router
 from api.providers import router as providers_router
 from api.rbac import router as rbac_router
@@ -73,5 +74,6 @@ router.include_router(search_router)
 router.include_router(notification_router)
 router.include_router(notification_admin_router)
 router.include_router(overview_router)
+router.include_router(params_router)
 
 __all__ = ["router"]

@@ -123,6 +123,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/AnnouncementView.vue'),
         meta: { title: '公告管理', permKey: 'admin:announcements' },
       },
+      {
+        path: 'admin/params',
+        name: 'admin-params',
+        component: () => import('@/views/ParamConfigView.vue'),
+        meta: { title: '参数配置', permKey: 'admin:params' },
+      },
     ],
   },
   {

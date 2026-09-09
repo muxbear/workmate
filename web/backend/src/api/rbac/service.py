@@ -583,6 +583,16 @@ class RbacService:
             {"id": "m-admin-announcements", "parent": "g-admin", "type": "menu",
              "label": "公告管理", "perm_key": "admin:announcements",
              "path": "/admin/announcements", "icon": "Megaphone", "sort": 7},
+            {"id": "m-admin-params", "parent": "g-admin", "type": "menu",
+             "label": "参数配置", "perm_key": "admin:params", "path": "/admin/params",
+             "icon": "Settings", "sort": 8},
+            {"id": "b-admin-param-create", "parent": "m-admin-params", "type": "button",
+             "label": "新增参数", "perm_key": "admin:params:create", "icon": "Plus", "sort": 1},
+            {"id": "b-admin-param-edit", "parent": "m-admin-params", "type": "button",
+             "label": "编辑参数", "perm_key": "admin:params:edit", "icon": "Edit2", "sort": 2},
+            {"id": "b-admin-param-delete", "parent": "m-admin-params", "type": "button",
+             "label": "删除参数", "perm_key": "admin:params:delete", "icon": "Trash2",
+             "sort": 3, "danger": True},
         ]
 
         for rd in resources_data:
@@ -704,6 +714,7 @@ class RbacService:
         # Sync expert menu (added after initial seed)
         await self._sync_expert_menu()
         await self._sync_announcement_menu()
+        await self._sync_params_menu()
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -798,6 +809,84 @@ class RbacService:
 
         await self.db.flush()
         logger.info("Announcement menu synced successfully.")
+
+    async def _sync_params_menu(self) -> None:
+        """Ensure the parameter configuration menu and buttons exist (added after initial seed)."""
+        menu_result = await self.db.execute(
+            select(PermissionResource).where(PermissionResource.id == "m-admin-params")
+        )
+        if menu_result.scalar_one_or_none() is None:
+            self.db.add(
+                PermissionResource(
+                    id="m-admin-params",
+                    parent_id="g-admin",
+                    type="menu",
+                    label="参数配置",
+                    perm_key="admin:params",
+                    path="/admin/params",
+                    icon="Settings",
+                    sort_order=8,
+                    status="active",
+                    is_builtin=True,
+                    description="系统参数配置",
+                    btn_variant=None,
+                    danger=False,
+                )
+            )
+            await self.db.flush()
+
+        button_data: list[tuple[str, str, str, str, int]] = [
+            ("b-admin-param-create", "新增参数", "admin:params:create", "Plus", 1),
+            ("b-admin-param-edit", "编辑参数", "admin:params:edit", "Edit2", 2),
+            ("b-admin-param-delete", "删除参数", "admin:params:delete", "Trash2", 3),
+        ]
+        for resource_id, label, perm_key, icon, sort_order in button_data:
+            result = await self.db.execute(
+                select(PermissionResource).where(PermissionResource.id == resource_id)
+            )
+            if result.scalar_one_or_none() is not None:
+                continue
+            self.db.add(
+                PermissionResource(
+                    id=resource_id,
+                    parent_id="m-admin-params",
+                    type="button",
+                    label=label,
+                    perm_key=perm_key,
+                    path=None,
+                    icon=icon,
+                    sort_order=sort_order,
+                    status="active",
+                    is_builtin=True,
+                    description="",
+                    btn_variant=None,
+                    danger=resource_id.endswith("delete"),
+                )
+            )
+            await self.db.flush()
+
+        grant_keys = [
+            "admin:params",
+            "admin:params:create",
+            "admin:params:edit",
+            "admin:params:delete",
+        ]
+        rp_result = await self.db.execute(
+            select(RolePermission).where(RolePermission.perm_key == "admin:accounts")
+        )
+        for rp in rp_result.scalars().all():
+            for perm_key in grant_keys:
+                dup_result = await self.db.execute(
+                    select(RolePermission).where(
+                        RolePermission.role_id == rp.role_id,
+                        RolePermission.perm_key == perm_key,
+                    )
+                )
+                if dup_result.scalar_one_or_none() is None:
+                    self.db.add(RolePermission(role_id=rp.role_id, perm_key=perm_key))
+
+        await self.db.flush()
+        logger.info("Params menu synced successfully.")
 
     async def _get_resource(self, resource_id: str) -> PermissionResource | None:
         result = await self.db.execute(

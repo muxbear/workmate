@@ -32,6 +32,7 @@ from db.models.role import Role
 from db.models.role_permission import RolePermission
 from db.models.skill import Skill
 from db.models.system_event import SystemEvent
+from db.models.system_param import SystemParam
 from db.models.tool import Tool
 from db.models.user import Account
 from db.models.user_oauth import UserOAuth
@@ -73,6 +74,7 @@ __all__ = [
     "RolePermission",
     "Skill",
     "SystemEvent",
+    "SystemParam",
     "Tool",
     "Account",
     "UserOAuth",
