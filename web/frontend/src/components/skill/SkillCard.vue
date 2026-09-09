@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { Pencil, Trash2, CircleCheck, CircleAlert } from 'lucide-vue-next'
 import type { Skill } from '@/types/skill'
-import { CATEGORY_LABELS, SOURCE_LABELS } from '@/types/skill'
+import { SOURCE_LABELS, getSkillCategoryMeta } from '@/types/skill'
 import { getSkillIcon } from './iconMap'
 
 const props = defineProps<{ skill: Skill }>()
@@ -14,8 +14,10 @@ const emit = defineEmits<{
 }>()
 
 const iconComponent = computed(() => getSkillIcon(props.skill.icon))
-const categoryLabel = computed(() => CATEGORY_LABELS[props.skill.category] || props.skill.category)
-const sourceLabel = computed(() => SOURCE_LABELS[props.skill.source] || props.skill.source || '未知')
+const categoryMeta = computed(() => getSkillCategoryMeta(props.skill.category))
+const sourceLabel = computed(
+  () => SOURCE_LABELS[props.skill.source] || props.skill.source || '未知',
+)
 
 interface ValidationError {
   field: string
@@ -33,7 +35,7 @@ const validationErrors = computed<ValidationError[]>(() => {
 
 const validationTooltip = computed(() => {
   if (validationErrors.value.length === 0) return ''
-  return validationErrors.value.map(e => `[${e.field}] ${e.message}`).join('\n')
+  return validationErrors.value.map((e) => `[${e.field}] ${e.message}`).join('\n')
 })
 </script>
 
@@ -61,11 +63,7 @@ const validationTooltip = computed(() => {
           class="validation-badge validation-badge--success"
         />
       </div>
-      <el-switch
-        :model-value="skill.enabled"
-        size="small"
-        @change="emit('toggle', skill)"
-      />
+      <el-switch :model-value="skill.enabled" size="small" @change="emit('toggle', skill)" />
     </div>
 
     <p class="card-description">
@@ -74,10 +72,18 @@ const validationTooltip = computed(() => {
 
     <div class="card-footer">
       <div class="card-tags">
-        <el-tag size="small" type="info">{{ categoryLabel }}</el-tag>
-        <el-tag size="small" type="info" v-if="skill.source">
-          {{ sourceLabel }}
-        </el-tag>
+        <span
+          class="category-badge"
+          :style="{
+            background: categoryMeta.bg,
+            borderColor: categoryMeta.border,
+            color: categoryMeta.color,
+          }"
+        >
+          <component :is="getSkillIcon(categoryMeta.icon)" :size="11" />
+          {{ categoryMeta.label }}
+        </span>
+        <el-tag v-if="skill.source" size="small" type="info">{{ sourceLabel }}</el-tag>
       </div>
       <div v-if="!skill.is_builtin" class="card-actions">
         <el-button text size="small" @click.stop="emit('edit', skill)">
@@ -173,6 +179,18 @@ const validationTooltip = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.category-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  border: 1px solid;
+  font-size: 11px;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 
 .card-actions {

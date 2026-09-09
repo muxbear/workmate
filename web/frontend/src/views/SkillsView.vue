@@ -1,20 +1,41 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Zap, CheckCircle2, PauseCircle, XCircle } from 'lucide-vue-next'
 import { useSkillStore } from '@/stores/skill'
 import type { Skill, SkillCreateRequest } from '@/types/skill'
-import { CATEGORY_LABELS, CATEGORY_FILTERS } from '@/types/skill'
+import { CATEGORY_ORDER, getSkillCategoryMeta } from '@/types/skill'
 import SkillCard from '@/components/skill/SkillCard.vue'
 import SkillDialog from '@/components/skill/SkillDialog.vue'
 
 const skillStore = useSkillStore()
 
-// Category filter
+// Category filter（与工具页一致：带数量的彩色分类 chips，再次点击可取消筛选）
 const activeCategory = ref('')
 const filteredSkills = computed(() => {
   if (!activeCategory.value) return skillStore.skills
   return skillStore.skills.filter((s) => s.category === activeCategory.value)
+})
+
+// 分类 chips：仅展示有技能的分类，并按内置顺序排列
+const activeCategories = computed(() => {
+  const stats = skillStore.categoryStats
+  const known = CATEGORY_ORDER.filter((key) => stats[key] && stats[key].total > 0)
+  const unknown = Object.keys(stats)
+    .filter((key) => !(CATEGORY_ORDER as readonly string[]).includes(key) && stats[key].total > 0)
+    .sort()
+  return [...known, ...unknown].map((key) => ({
+    key,
+    meta: getSkillCategoryMeta(key),
+    count: stats[key].total,
+  }))
+})
+
+// 当前分类被删空后自动回到全部
+watch(activeCategories, (cats) => {
+  if (activeCategory.value && !cats.some((c) => c.key === activeCategory.value)) {
+    activeCategory.value = ''
+  }
 })
 
 // Dialog
@@ -64,11 +85,11 @@ async function handleToggle(skill: Skill) {
 
 async function handleDelete(skill: Skill) {
   try {
-    await ElMessageBox.confirm(
-      `确定要删除技能"${skill.name}"吗？此操作不可撤销。`,
-      '确认删除',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    )
+    await ElMessageBox.confirm(`确定要删除技能"${skill.name}"吗？此操作不可撤销。`, '确认删除', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
     await skillStore.removeSkill(skill.id)
     ElMessage.success('技能已删除')
   } catch (err: unknown) {
@@ -77,15 +98,6 @@ async function handleDelete(skill: Skill) {
     }
   }
 }
-
-// Category stats for breakdown
-const categoryStatsEntries = computed(() => {
-  return Object.entries(skillStore.categoryStats).map(([key, stats]) => ({
-    key,
-    label: CATEGORY_LABELS[key] || key,
-    ...stats,
-  }))
-})
 
 onMounted(() => {
   skillStore.fetchSkills()
@@ -108,12 +120,7 @@ onMounted(() => {
 
     <!-- Status Banner -->
     <div v-if="skillStore.error" class="status-banner">
-      <el-alert
-        :title="skillStore.error"
-        type="warning"
-        show-icon
-        :closable="true"
-      >
+      <el-alert :title="skillStore.error" type="warning" show-icon :closable="true">
         <template #default>
           <el-button text size="small" @click="skillStore.fetchSkills()">重试</el-button>
         </template>
@@ -160,42 +167,30 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Category Filter -->
+    <!-- Category Filter（对齐工具页：彩色分类 chips + 数量统计） -->
     <div class="category-filter">
-      <el-button
-        v-for="cat in CATEGORY_FILTERS"
-        :key="cat.key"
-        :type="activeCategory === cat.key ? 'primary' : 'default'"
-        :plain="activeCategory !== cat.key"
-        size="small"
-        round
-        @click="activeCategory = cat.key"
+      <button
+        class="chip-btn"
+        :class="{ active: activeCategory === '' }"
+        @click="activeCategory = ''"
       >
-        {{ cat.label }}
-      </el-button>
-    </div>
-
-    <!-- Category Breakdown -->
-    <div v-if="categoryStatsEntries.length > 0" class="category-section">
-      <div class="section-header">
-        <span class="section-title">分类概览</span>
-      </div>
-      <div class="category-grid">
-        <div
-          v-for="cat in categoryStatsEntries"
-          :key="cat.key"
-          class="category-card"
-        >
-          <div class="cat-card-header">
-            <span class="cat-label">{{ cat.label }}</span>
-            <span class="cat-total">{{ cat.total }}</span>
-          </div>
-          <div class="cat-card-stats">
-            <span class="cat-stat">可用 {{ cat.enabled }}</span>
-            <span class="cat-stat cat-stat--muted">禁用 {{ cat.disabled }}</span>
-          </div>
-        </div>
-      </div>
+        全部分类
+      </button>
+      <button
+        v-for="cat in activeCategories"
+        :key="cat.key"
+        class="chip-btn"
+        :class="{ active: activeCategory === cat.key }"
+        :style="
+          activeCategory === cat.key
+            ? { background: cat.meta.bg, color: cat.meta.color, borderColor: cat.meta.border }
+            : {}
+        "
+        @click="activeCategory = activeCategory === cat.key ? '' : cat.key"
+      >
+        <span>{{ cat.meta.label }}</span>
+        <span class="chip-count">{{ cat.count }}</span>
+      </button>
     </div>
 
     <!-- Skills Grid -->
@@ -252,6 +247,7 @@ onMounted(() => {
   gap: 20px;
   padding: 24px 32px;
   height: 100%;
+  overflow-y: auto;
   background: var(--surface-primary);
 }
 
@@ -348,65 +344,43 @@ onMounted(() => {
   color: var(--foreground-secondary);
 }
 
-/* Category Filter */
+/* Category Filter（对齐工具页分类筛选样式） */
 .category-filter {
   display: flex;
-  gap: 8px;
   flex-wrap: wrap;
-}
-
-/* Category Breakdown */
-.category-section {
-  margin-top: 0;
-}
-
-.category-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.category-card {
-  padding: 14px 16px;
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.cat-card-header {
-  display: flex;
-  justify-content: space-between;
+  gap: 6px;
   align-items: center;
 }
 
-.cat-label {
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-semibold);
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-base);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chip-btn:hover {
   color: var(--foreground-primary);
+  border-color: var(--border-medium);
 }
 
-.cat-total {
-  font-size: 18px;
-  font-weight: var(--font-weight-bold);
-  color: var(--foreground-primary);
+.chip-btn.active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
-.cat-card-stats {
-  display: flex;
-  gap: 12px;
-}
-
-.cat-stat {
-  font-size: var(--font-size-xs);
-  color: #22c55e;
-}
-
-.cat-stat--muted {
-  color: var(--foreground-muted);
+.chip-count {
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Section */
