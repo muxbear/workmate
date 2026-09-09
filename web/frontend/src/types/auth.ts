@@ -5,6 +5,13 @@ export interface AuthTokens {
   expiresIn: number // Access Token 有效期（秒），默认 7200
 }
 
+/** 角色下拉展示所需的精简信息 */
+export interface RoleInfo {
+  key: string
+  name: string
+  sortOrder: number
+}
+
 /** 用户基本信息 */
 export interface UserInfo {
   id: string
@@ -13,7 +20,12 @@ export interface UserInfo {
   phone: string
   email: string
   workspaceId: string
+  /** 角色 key 列表（兼容旧逻辑） */
   roles: string[]
+  /** 当前人员全部角色（下拉列表数据） */
+  roleList: RoleInfo[]
+  /** 当前生效的角色 key */
+  activeRole: string | null
 }
 
 /** 账号密码登录请求 */
@@ -60,6 +72,17 @@ export interface AuthResponse {
   tokens: AuthTokens
   user: UserInfo
   needProtocolAgreement?: string
+}
+
+/** 切换角色请求 */
+export interface SwitchRoleRequest {
+  roleKey: string
+}
+
+/** 当前角色列表响应 */
+export interface MyRolesResponse {
+  roles: RoleInfo[]
+  activeRole: string | null
 }
 
 /** 登录失败计数 */

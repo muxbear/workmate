@@ -145,6 +145,9 @@ def create_token_pair(
         "iat": now,
         "exp": now + settings.JWT_REFRESH_EXPIRE,
     }
+    if extra:
+        # 活动角色等上下文需要同时写入 refresh token，刷新后保持一致
+        refresh_payload.update(extra)
     return TokenPair(
         accessToken=jwt.encode(access_payload, secret, algorithm="HS256"),
         refreshToken=jwt.encode(refresh_payload, secret, algorithm="HS256"),

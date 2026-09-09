@@ -1,63 +1,65 @@
-"""RBAC authorization dependencies."""
+"""RBAC 鉴权依赖：按会话活动角色进行权限判断."""
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
-from db.models.role import Role
+from api.deps import get_current_token_payload, get_db
+from api.rbac.role_utils import find_active_user_role, list_active_user_roles
 from db.models.role_permission import RolePermission
-from db.models.user_role import UserRole
 
 
-async def check_user_permission(db: AsyncSession, user_id: str, perm_key: str) -> bool:
-    """Check if user has a specific permission via their roles.
+async def check_user_permission(
+    db: AsyncSession,
+    user_id: str,
+    perm_key: str,
+    role_key: str | None = None,
+) -> bool:
+    """判断用户活动角色是否拥有指定权限.
 
-    Super admin role always has all permissions.
+    超级管理员默认拥有全部权限；未提供 role_key 时回退到用户默认角色。
     """
-    result = await db.execute(
-        select(UserRole).where(UserRole.user_id == user_id)
-    )
-    user_roles = result.scalars().all()
-    role_ids = [ur.role_id for ur in user_roles]
+    role = None
+    if role_key:
+        role = await find_active_user_role(db, user_id, role_key)
+    if role is None:
+        # 旧 Token 无 role claim 或所持角色已失效时，回退默认角色
+        roles = await list_active_user_roles(db, user_id)
+        role = roles[0] if roles else None
 
-    if not role_ids:
+    if role is None:
         return False
 
-    # Check for super_admin role key
-    super_result = await db.execute(
-        select(Role).where(Role.id.in_(role_ids), Role.key == "super_admin")
-    )
-    if super_result.scalar_one_or_none():
+    if role.key == "super_admin":
         return True
 
-    # Check specific permission
-    perm_result = await db.execute(
+    result = await db.execute(
         select(RolePermission).where(
-            RolePermission.role_id.in_(role_ids),
+            RolePermission.role_id == role.id,
             RolePermission.perm_key == perm_key,
         )
     )
-    return perm_result.scalar_one_or_none() is not None
+    return result.scalar_one_or_none() is not None
 
 
 def RequirePermission(perm_key: str):
-    """FastAPI dependency factory: require a specific permission.
+    """FastAPI 依赖工厂：要求当前会话的活动角色拥有指定权限.
 
-    Usage:
+    用法示例:
         @router.delete("/users/{id}")
         async def delete_user(
             user_id: str,
             _: str = Depends(RequirePermission("admin:user:delete")),
         ): ...
     """
-
     async def checker(
         request: Request,
         db: AsyncSession = Depends(get_db),
     ) -> str:
-        user_id = await get_current_user_id(request)
-        if not await check_user_permission(db, user_id, perm_key):
+        payload = await get_current_token_payload(request)
+        user_id = str(payload["sub"])
+        role_key = payload.get("role")
+        if not await check_user_permission(db, user_id, perm_key, role_key):
             raise HTTPException(
                 status_code=403,
                 detail=f"Missing permission: {perm_key}",
@@ -65,16 +67,3 @@ def RequirePermission(perm_key: str):
         return user_id
 
     return checker
-
-
-async def get_current_user_roles(
-    user_id: str,
-    db: AsyncSession,
-) -> list[Role]:
-    """Get all roles assigned to a user."""
-    result = await db.execute(
-        select(Role)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id, Role.is_active)
-    )
-    return list(result.scalars().all())

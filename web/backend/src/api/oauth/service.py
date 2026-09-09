@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth.schemas import AuthResponse, AuthTokens, UserInfo
+from api.auth.schemas import AuthResponse, AuthTokens
+from api.auth.service import user_to_info
 from api.oauth.providers import get_oauth_provider
 from core.cache import KeyValueCache
 from core.security import create_token_pair
@@ -107,19 +108,14 @@ async def handle_callback(
         db.add(UserOAuth(user_id=user.id, provider=provider, open_id=info.open_id))
         await db.flush()
 
-    token_pair = create_token_pair(user.id)
+    user_info = await user_to_info(user, db)
+    extra = {"role": user_info.activeRole} if user_info.activeRole else None
+    token_pair = create_token_pair(user.id, extra)
     return AuthResponse(
         tokens=AuthTokens(
             accessToken=token_pair.accessToken,
             refreshToken=token_pair.refreshToken,
             expiresIn=token_pair.expiresIn,
         ),
-        user=UserInfo(
-            id=user.id,
-            nickname=user.nickname or "",
-            avatar=user.avatar or "",
-            phone=user.phone or "",
-            email=user.email or "",
-            workspaceId=user.workspace_id or "default",
-        ),
+        user=user_info,
     )

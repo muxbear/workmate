@@ -42,6 +42,15 @@ async def get_current_user_id(request: Request) -> str:
     return str(payload["sub"])
 
 
+async def get_current_token_payload(request: Request) -> dict:
+    """解析当前请求的 access token，返回完整 payload."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = auth.split(" ", 1)[1]
+    return decode_token(token, "access")
+
+
 def require_scope(required: str):
     """资源接口 scope 校验依赖工厂.
 

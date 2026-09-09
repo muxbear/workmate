@@ -12,10 +12,16 @@ from api.auth.schemas import (
     ChangePasswordRequest,
     EmailRegisterRequest,
     LoginFailInfo,
+    MyRolesResponse,
     PhoneLoginRequest,
     RefreshRequest,
     RegisterRequest,
+    RoleInfo,
     UserInfo,
+)
+from api.rbac.role_utils import (
+    find_active_user_role,
+    list_active_user_roles,
 )
 from core.cache import KeyValueCache
 from core.security import (
@@ -28,7 +34,7 @@ from core.security import (
 from core.security import (
     get_public_key as _get_public_key,
 )
-from db.models import Account, LoginRecord, Role, UserRole
+from db.models import Account, LoginRecord
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +87,10 @@ async def _clear_fail(account: str, store: KeyValueCache):
     await store.delete(f"login:fail:{account}")
 
 
-async def _user_to_info(user: Account, db: AsyncSession) -> UserInfo:
-    result = await db.execute(
-        select(Role.key)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user.id, Role.is_active)
-    )
-    roles = [row[0] for row in result.all()]
+async def user_to_info(user: Account, db: AsyncSession) -> UserInfo:
+    """构建登录/刷新响应中的用户信息，包含全部角色与默认活动角色."""
+    active_roles = await list_active_user_roles(db, user.id)
+    roles = [role.key for role in active_roles]
 
     # Get email/phone from linked personnel record
     from db.models.personnel import Personnel
@@ -110,17 +113,31 @@ async def _user_to_info(user: Account, db: AsyncSession) -> UserInfo:
         email=personnel_email,
         workspaceId=user.workspace_id or "default",
         roles=roles,
+        roleList=[
+            RoleInfo(key=role.key, name=role.name, sortOrder=role.sort_order)
+            for role in active_roles
+        ],
+        activeRole=active_roles[0].key if active_roles else None,
     )
 
 
-async def _to_auth_response(user: Account, token_pair, db: AsyncSession) -> AuthResponse:
+async def _to_auth_response(
+    user: Account,
+    db: AsyncSession,
+    active_role: str | None = None,
+) -> AuthResponse:
+    """签发带活动角色的 Token 并组装登录响应."""
+    user_info = await user_to_info(user, db)
+    role_key = active_role or user_info.activeRole
+    extra = {"role": role_key} if role_key else None
+    token_pair = create_token_pair(user.id, extra)
     return AuthResponse(
         tokens=AuthTokens(
             accessToken=token_pair.accessToken,
             refreshToken=token_pair.refreshToken,
             expiresIn=token_pair.expiresIn,
         ),
-        user=await _user_to_info(user, db),
+        user=user_info,
     )
 
 
@@ -150,8 +167,7 @@ async def account_login(
 
     await _record_login(db, req.account, True, ip)
     await _clear_fail(req.account, store)
-    token_pair = create_token_pair(user.id)
-    return await _to_auth_response(user, token_pair, db)
+    return await _to_auth_response(user, db)
 
 
 async def phone_login(
@@ -173,8 +189,7 @@ async def phone_login(
         await db.flush()
         await db.refresh(user)
 
-    token_pair = create_token_pair(user.id)
-    return await _to_auth_response(user, token_pair, db)
+    return await _to_auth_response(user, db)
 
 
 async def register_phone(
@@ -205,8 +220,7 @@ async def register_phone(
     await db.flush()
     await db.refresh(user)
 
-    token_pair = create_token_pair(user.id)
-    return await _to_auth_response(user, token_pair, db)
+    return await _to_auth_response(user, db)
 
 
 async def register_email(
@@ -237,8 +251,7 @@ async def register_email(
     await db.flush()
     await db.refresh(user)
 
-    token_pair = create_token_pair(user.id)
-    return await _to_auth_response(user, token_pair, db)
+    return await _to_auth_response(user, db)
 
 
 async def refresh_token_svc(
@@ -255,8 +268,49 @@ async def refresh_token_svc(
     if not user:
         raise HTTPException(status_code=401, detail="Account not found")
 
-    token_pair = create_token_pair(user.id)
-    return await _to_auth_response(user, token_pair, db)
+    claimed_role = payload.get("role")
+    if claimed_role and not await find_active_user_role(db, user_id, claimed_role):
+        # 角色已被移除/停用时回退到默认角色，避免会话卡死
+        claimed_role = None
+    return await _to_auth_response(user, db, active_role=claimed_role)
+
+
+async def switch_role_svc(
+    role_key: str,
+    user_id: str,
+    db: AsyncSession,
+) -> AuthResponse:
+    """切换会话活动角色：校验角色归属后签发新 Token 对."""
+    result = await db.execute(select(Account).where(Account.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    role = await find_active_user_role(db, user_id, role_key)
+    if not role:
+        raise HTTPException(status_code=403, detail="角色未分配或已停用")
+
+    return await _to_auth_response(user, db, active_role=role_key)
+
+
+async def get_my_roles_svc(
+    user_id: str,
+    claimed_role: str | None,
+    db: AsyncSession,
+) -> MyRolesResponse:
+    """返回当前账号全部启用角色；claimed_role 失效时回退默认角色."""
+    roles = await list_active_user_roles(db, user_id)
+    role_keys = [role.key for role in roles]
+    active_role = claimed_role if claimed_role in role_keys else (
+        role_keys[0] if role_keys else None
+    )
+    return MyRolesResponse(
+        roles=[
+            RoleInfo(key=role.key, name=role.name, sortOrder=role.sort_order)
+            for role in roles
+        ],
+        activeRole=active_role,
+    )
 
 
 async def get_fail_count_svc(account: str, store: KeyValueCache) -> LoginFailInfo:

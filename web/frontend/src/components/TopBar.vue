@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Search,
   Bell,
@@ -10,17 +10,20 @@ import {
   Settings,
   Palette,
   KeyRound,
+  ShieldCheck,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
 import { useNotificationStore } from '@/stores/notification'
 import NotificationPanel from './NotificationPanel.vue'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissionStore } from '@/stores/permission'
 import { useAuth } from '@/composables/useAuth'
 import { authApi } from '@/services/authApi'
 import { usePasswordEncrypt } from '@/composables/usePasswordEncrypt'
 
 const route = useRoute()
+const router = useRouter()
 const uiStore = useUiStore()
 const notificationStore = useNotificationStore()
 const authStore = useAuthStore()
@@ -66,6 +69,27 @@ const breadcrumb = computed(() => {
   if (path.startsWith('/mcp/')) return map['/mcp']
   return map[path] ?? null
 })
+
+function handleRoleDropdownVisible(visible: boolean) {
+  if (visible) authStore.refreshMyRoles()
+}
+
+async function handleRoleChange(roleKey: string) {
+  const target = authStore.roleList.find((role) => role.key === roleKey)
+  try {
+    await authStore.switchRole(roleKey)
+    ElMessage.success(`已切换为「${target?.name ?? roleKey}」`)
+    // 当前页面在新角色下不可访问时，跳转到第一个可用菜单
+    const permStore = usePermissionStore()
+    const permKey = route.meta.permKey as string | undefined
+    if (permKey && !permStore.hasPermission(permKey)) {
+      router.replace(permStore.firstMenuPath)
+    }
+  } catch (err: any) {
+    const msg = err?.message || err?.response?.data?.message || '角色切换失败'
+    ElMessage.error(msg)
+  }
+}
 
 function toggleUserMenu() {
   userMenuOpen.value = !userMenuOpen.value
@@ -155,6 +179,11 @@ function clearSearch() {
   uiStore.searchQuery = ''
 }
 
+// 挂载后拉取最新角色列表，保证下拉与后端授权一致
+onMounted(() => {
+  authStore.refreshMyRoles()
+})
+
 // Click outside to close user menu
 import { watch } from 'vue'
 watch(userMenuOpen, (open) => {
@@ -194,7 +223,12 @@ onUnmounted(() => {
           &times;
         </button>
       </div>
-      <el-popover trigger="click" placement="bottom-end" :width="380" popper-class="notification-popper">
+      <el-popover
+        trigger="click"
+        placement="bottom-end"
+        :width="380"
+        popper-class="notification-popper"
+      >
         <template #reference>
           <button class="action-btn" title="通知">
             <Bell :size="18" />
@@ -205,6 +239,31 @@ onUnmounted(() => {
         </template>
         <NotificationPanel />
       </el-popover>
+
+      <!-- 角色切换下拉（位于人员头像左侧） -->
+      <div v-if="authStore.roleList.length > 1" class="role-switch">
+        <ShieldCheck :size="14" class="role-switch-icon" />
+        <el-select
+          :model-value="authStore.activeRole ?? undefined"
+          class="role-select"
+          popper-class="role-select-popper"
+          :loading="authStore.switchRoleLoading"
+          :disabled="authStore.switchRoleLoading"
+          placeholder="选择角色"
+          @visible-change="handleRoleDropdownVisible"
+          @change="handleRoleChange"
+        >
+          <el-option
+            v-for="role in authStore.roleList"
+            :key="role.key"
+            :value="role.key"
+            :label="role.name"
+          >
+            <span class="role-option-name">{{ role.name }}</span>
+            <span class="role-option-key">{{ role.key }}</span>
+          </el-option>
+        </el-select>
+      </div>
 
       <!-- User menu -->
       <div class="user-menu-wrap">
@@ -433,6 +492,38 @@ onUnmounted(() => {
 
 .action-btn {
   position: relative;
+}
+
+/* Role switch */
+.role-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.role-switch-icon {
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+}
+
+.role-select {
+  width: 128px;
+}
+
+.role-select :deep(.el-select__wrapper) {
+  box-shadow: none;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
+}
+
+.role-option-name {
+  color: var(--foreground-primary);
+}
+
+.role-option-key {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--foreground-muted);
 }
 
 /* User menu */

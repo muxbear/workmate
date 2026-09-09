@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.rbac.role_utils import find_active_user_role, list_active_user_roles
 from api.rbac.schemas import (
     DataScopeItem,
     MyMenuNode,
@@ -350,11 +351,20 @@ class RbacService:
 
     # ── Current-user Permissions ──────────────────────────────────
 
-    async def get_my_permissions(self, user_id: str) -> MyPermissionsResponse:
-        roles = await self._get_user_roles_with_data(user_id)
-        role_keys = [r.key for r in roles]
+    async def get_my_permissions(
+        self, user_id: str, role_key: str | None = None
+    ) -> MyPermissionsResponse:
+        """按会话活动角色计算权限与菜单；未指定时回退默认角色."""
+        active_role = None
+        if role_key:
+            active_role = await find_active_user_role(self.db, user_id, role_key)
+        if active_role is None:
+            assigned_roles = await list_active_user_roles(self.db, user_id)
+            active_role = assigned_roles[0] if assigned_roles else None
 
-        is_super = any(r.key == "super_admin" for r in roles)
+        role_keys = [active_role.key] if active_role else []
+        role_ids = [active_role.id] if active_role else []
+        is_super = bool(active_role and active_role.key == "super_admin")
 
         # Collect granted permKeys
         if is_super:
@@ -366,7 +376,6 @@ class RbacService:
             )
             perm_keys = [row[0] for row in result.all()]
         else:
-            role_ids = [r.id for r in roles]
             result = await self.db.execute(
                 select(RolePermission.perm_key).where(
                     RolePermission.role_id.in_(role_ids)
@@ -413,7 +422,6 @@ class RbacService:
             resource_keys = [row[0] for row in result.all()]
             data_scopes = [DataScopeItem(resourceKey=rk, scope="all") for rk in resource_keys]
         else:
-            role_ids = [r.id for r in roles]
             result = await self.db.execute(
                 select(DataScope).where(DataScope.role_id.in_(role_ids))
             )
@@ -429,6 +437,7 @@ class RbacService:
         return MyPermissionsResponse(
             user_id=user_id,
             roles=role_keys,
+            active_role=role_keys[0] if role_keys else None,
             perm_keys=perm_keys,
             menus=menus,
             data_scopes=data_scopes,

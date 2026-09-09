@@ -263,6 +263,7 @@ export interface MyMenuNode {
 export interface MyPermissionsResponse {
   userId: string
   roles: string[]
+  activeRole?: string
   permKeys: string[]
   menus: MyMenuNode[]
   dataScopes: { resourceKey: string; scope: string }[]

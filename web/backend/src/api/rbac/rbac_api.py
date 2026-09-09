@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_current_token_payload, get_db
 from api.rbac.deps import RequirePermission
 from api.rbac.schemas import (
     MyPermissionsResponse,
@@ -210,8 +210,8 @@ async def my_permissions(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the current user's effective permissions, menus, and data scopes."""
-    user_id = await get_current_user_id(request)
+    """Get the active role's effective permissions, menus, and data scopes."""
+    payload = await get_current_token_payload(request)
     svc = RbacService(db)
-    data = await svc.get_my_permissions(user_id)
+    data = await svc.get_my_permissions(str(payload["sub"]), payload.get("role"))
     return ok(data)

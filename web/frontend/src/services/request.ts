@@ -42,8 +42,8 @@ instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config
 })
 
-// Token 刷新去重锁
-let refreshPromise: Promise<string> | null = null
+// Token 刷新去重锁（统一走 auth store，刷新后同步用户信息并重载权限）
+let refreshPromise: Promise<void> | null = null
 
 // 响应拦截器
 instance.interceptors.response.use(
@@ -55,9 +55,9 @@ instance.interceptors.response.use(
     return response
   },
   async (error: AxiosError<ApiResponse>) => {
-    if (error.response?.status === 401 && error.config) {
-      const rt = getRefreshTokenValue()
-      if (!rt) {
+    const isRefreshRequest = error.config?.url?.includes('/auth/refresh') ?? false
+    if (error.response?.status === 401 && error.config && !isRefreshRequest) {
+      if (!getRefreshTokenValue()) {
         clearTokensFromStorage()
         window.location.href = '/login'
         return Promise.reject(error)
@@ -66,42 +66,24 @@ instance.interceptors.response.use(
       try {
         if (!refreshPromise) {
           refreshPromise = (async () => {
-            try {
-              const res = await axios.post<
-                ApiResponse<{ tokens: { accessToken: string; refreshToken: string } }>
-              >(`${instance.defaults.baseURL}/auth/refresh`, { refreshToken: rt })
-              const { accessToken, refreshToken } = res.data.data.tokens
-              // 更新存储中的 token
-              updateStoredTokens(accessToken, refreshToken)
-              return accessToken
-            } finally {
-              refreshPromise = null
-            }
+            const { useAuthStore } = await import('@/stores/auth')
+            const authStore = useAuthStore()
+            await authStore.refreshAccessToken()
           })()
         }
-
-        const newToken = await refreshPromise
-        error.config!.headers.Authorization = `Bearer ${newToken}`
-        return instance.request(error.config!)
+        await refreshPromise
+        error.config.headers.Authorization = `Bearer ${getAccessToken()}`
+        return instance.request(error.config)
       } catch {
         clearTokensFromStorage()
         window.location.href = '/login'
+      } finally {
+        refreshPromise = null
       }
     }
     return Promise.reject(error)
   },
 )
-
-function updateStoredTokens(accessToken: string, refreshToken: string) {
-  sessionStorage.setItem(
-    TOKEN_STORAGE_KEY,
-    JSON.stringify({
-      accessToken,
-      refreshToken,
-      expiresIn: 7200,
-    }),
-  )
-}
 
 function clearTokensFromStorage() {
   sessionStorage.removeItem(TOKEN_STORAGE_KEY)
@@ -132,12 +114,7 @@ function chatAuthHeaders(): Record<string, string> {
   return headers
 }
 
-import type {
-  AgentStartData,
-  AgentEndData,
-  ToolStartData,
-  ToolEndData,
-} from '@/types/chat'
+import type { AgentStartData, AgentEndData, ToolStartData, ToolEndData } from '@/types/chat'
 
 export interface StreamCallbacks {
   onToken: (agentName: string, content: string) => void

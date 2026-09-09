@@ -35,6 +35,14 @@ class AuthTokens(BaseModel):
     expiresIn: int = 7200
 
 
+class RoleInfo(BaseModel):
+    """角色下拉展示所需的精简角色信息."""
+
+    key: str
+    name: str
+    sortOrder: int = 0
+
+
 class UserInfo(BaseModel):
     id: str
     nickname: str
@@ -43,6 +51,8 @@ class UserInfo(BaseModel):
     email: str
     workspaceId: str
     roles: list[str] = Field(default_factory=list)
+    roleList: list[RoleInfo] = Field(default_factory=list)
+    activeRole: str | None = None
 
 
 class AuthResponse(BaseModel):
@@ -53,6 +63,19 @@ class AuthResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refreshToken: str
+
+
+class SwitchRoleRequest(BaseModel):
+    """切换当前会话的活动角色."""
+
+    roleKey: str = Field(min_length=1, max_length=64)
+
+
+class MyRolesResponse(BaseModel):
+    """当前账号的角色列表与活动角色."""
+
+    roles: list[RoleInfo] = Field(default_factory=list)
+    activeRole: str | None = None
 
 
 class LoginFailInfo(BaseModel):

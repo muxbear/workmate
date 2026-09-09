@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { oauthApi } from '@/services/oauthApi'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissionStore } from '@/stores/permission'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,8 +23,10 @@ onMounted(async () => {
   try {
     const res = await oauthApi.handleCallback(provider, code, state)
     const { tokens, user } = res.data.data
-    authStore.setTokens(tokens, true)
-    authStore.user = user
+    authStore.setTokens(tokens)
+    authStore.setUser(user)
+    const permStore = usePermissionStore()
+    await permStore.load()
     router.push('/')
   } catch (err) {
     error.value = err instanceof Error ? err.message : '第三方登录失败'

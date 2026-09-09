@@ -8,6 +8,8 @@ vi.mock('@/services/authApi', () => ({
     phoneLogin: vi.fn(),
     logout: vi.fn().mockResolvedValue({ data: { code: 0, data: null } }),
     refreshToken: vi.fn(),
+    switchRole: vi.fn(),
+    getMyRoles: vi.fn(),
     getFailCount: vi.fn(),
     getPublicKey: vi.fn(),
   },
@@ -23,7 +25,20 @@ function createMockAuthResponse() {
       code: 0,
       data: {
         tokens: { accessToken: 'at-123', refreshToken: 'rt-123', expiresIn: 7200 },
-        user: { id: '1', nickname: 'test', avatar: '', phone: '', email: '', workspaceId: 'ws1' },
+        user: {
+          id: '1',
+          nickname: 'test',
+          avatar: '',
+          phone: '',
+          email: '',
+          workspaceId: 'ws1',
+          roles: ['super_admin', 'member'],
+          roleList: [
+            { key: 'super_admin', name: '超级管理员', sortOrder: 1 },
+            { key: 'member', name: '普通成员', sortOrder: 4 },
+          ],
+          activeRole: 'super_admin',
+        },
       },
       message: 'ok',
       requestId: '1',
@@ -82,6 +97,44 @@ describe('authStore', () => {
     expect(JSON.parse(sessionStorage.getItem('auth_tokens')!).accessToken).toBe('at-123')
   })
 
+  it('stores roleList and default active role after login', async () => {
+    vi.mocked(authApi.accountLogin).mockResolvedValue(createMockAuthResponse() as any)
+    const store = useAuthStore()
+
+    await store.loginWithPassword({ account: 'testuser', password: 'encrypted', rememberMe: false })
+
+    expect(store.roleList).toHaveLength(2)
+    expect(store.roleList[1].name).toBe('普通成员')
+    expect(store.activeRole).toBe('super_admin')
+  })
+
+  it('switchRole updates tokens, user and active role', async () => {
+    vi.mocked(authApi.accountLogin).mockResolvedValue(createMockAuthResponse() as any)
+    const switchUser = {
+      ...createMockAuthResponse().data.data.user,
+      activeRole: 'member',
+    }
+    vi.mocked(authApi.switchRole).mockResolvedValue({
+      data: {
+        code: 0,
+        data: {
+          tokens: { accessToken: 'at-switch', refreshToken: 'rt-switch', expiresIn: 7200 },
+          user: switchUser,
+        },
+      },
+    } as any)
+
+    const store = useAuthStore()
+    await store.loginWithPassword({ account: 'testuser', password: 'encrypted', rememberMe: false })
+
+    await store.switchRole('member')
+
+    expect(authApi.switchRole).toHaveBeenCalledWith({ roleKey: 'member' })
+    expect(store.accessToken).toBe('at-switch')
+    expect(store.activeRole).toBe('member')
+    expect(store.roleList[1].name).toBe('普通成员')
+  })
+
   it('logout clears tokens and calls API', async () => {
     vi.mocked(authApi.accountLogin).mockResolvedValue(createMockAuthResponse() as any)
     const store = useAuthStore()
@@ -97,16 +150,15 @@ describe('authStore', () => {
   it('refreshAccessToken deduplicates concurrent calls', async () => {
     vi.mocked(authApi.accountLogin).mockResolvedValue(createMockAuthResponse() as any)
     vi.mocked(authApi.refreshToken).mockResolvedValue({
-      data: { data: { tokens: { accessToken: 'new-at', refreshToken: 'new-rt', expiresIn: 7200 } } },
+      data: {
+        data: { tokens: { accessToken: 'new-at', refreshToken: 'new-rt', expiresIn: 7200 } },
+      },
     } as any)
 
     const store = useAuthStore()
     await store.loginWithPassword({ account: 'testuser', password: 'encrypted', rememberMe: true })
 
-    const [a, b] = await Promise.all([
-      store.refreshAccessToken(),
-      store.refreshAccessToken(),
-    ])
+    const [a, b] = await Promise.all([store.refreshAccessToken(), store.refreshAccessToken()])
 
     expect(a).toBe('new-at')
     expect(b).toBe('new-at')

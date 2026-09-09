@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notification'
 import { useAuthStore } from '@/stores/auth'
 import SideMenu from './SideMenu.vue'
@@ -8,11 +9,18 @@ import { usePermissionStore } from '@/stores/permission'
 
 const notificationStore = useNotificationStore()
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 
-onMounted(() => {
+onMounted(async () => {
   const permStore = usePermissionStore()
   if (!permStore.loaded) {
-    permStore.load()
+    await permStore.load()
+  }
+  // 若刷新后当前路由不在新角色权限内，跳到第一个可用菜单
+  const permKey = route.meta.permKey as string | undefined
+  if (permKey && !permStore.hasPermission(permKey)) {
+    router.replace(permStore.firstMenuPath)
   }
   if (authStore.isAuthenticated) {
     notificationStore.init()

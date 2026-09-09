@@ -177,10 +177,11 @@ class MyMenuNode(CamelCaseModel):
 
 
 class MyPermissionsResponse(CamelCaseModel):
-    """Current user's effective permissions."""
+    """Current user's effective permissions for the active role."""
 
     user_id: str = Field(serialization_alias="userId")
     roles: list[str]  # role keys
+    active_role: str | None = Field(default=None, serialization_alias="activeRole")
     perm_keys: list[str] = Field(default_factory=list, serialization_alias="permKeys")
     menus: list[MyMenuNode] = Field(default_factory=list)
     data_scopes: list[DataScopeItem] = Field(default_factory=list, serialization_alias="dataScopes")

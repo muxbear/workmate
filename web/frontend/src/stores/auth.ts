@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { AuthTokens, UserInfo } from '@/types/auth'
+import type { AuthTokens, RoleInfo, UserInfo } from '@/types/auth'
 import { authApi } from '@/services/authApi'
 import { clearTokensFromStorage } from '@/services/request'
 import { useNotificationStore } from '@/stores/notification'
@@ -16,6 +16,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserInfo | null>(loadUser())
   const loginLoading = ref(false)
   const loginError = ref<string | null>(null)
+  const switchRoleLoading = ref(false)
   const agreedProtocolVersion = ref<string | null>(null)
 
   // ---- Getters ----
@@ -23,12 +24,17 @@ export const useAuthStore = defineStore('auth', () => {
   const accessToken = computed(() => tokens.value?.accessToken ?? '')
   const refreshTokenValue = computed(() => tokens.value?.refreshToken ?? '')
   const isLoginLoading = computed(() => loginLoading.value)
+  const activeRole = computed(() => user.value?.activeRole ?? null)
+  const roleList = computed<RoleInfo[]>(() => user.value?.roleList ?? [])
+  const activeRoleInfo = computed(
+    () => roleList.value.find((role) => role.key === activeRole.value) ?? null,
+  )
 
   // ---- Permission loading helper ----
-  async function loadPermissions() {
+  async function loadPermissions(force = false) {
     try {
       const permStore = usePermissionStore()
-      await permStore.load()
+      await permStore.load(force)
     } catch {
       // Permission load failure shouldn't block the app
     }
@@ -229,6 +235,44 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** 切换当前会话的活动角色，并刷新权限与菜单。 */
+  async function switchRole(roleKey: string) {
+    const currentUser = user.value
+    if (!currentUser) throw new Error('未登录')
+    if (roleKey === currentUser.activeRole) return
+    const target = currentUser.roleList.find((role) => role.key === roleKey)
+    if (!target) throw new Error('角色不存在')
+
+    switchRoleLoading.value = true
+    try {
+      const res = await authApi.switchRole({ roleKey })
+      const { tokens: t, user: u } = res.data.data
+      setTokens(t)
+      setUser(u)
+      await loadPermissions(true)
+    } finally {
+      switchRoleLoading.value = false
+    }
+  }
+
+  /** 拉取最新角色列表，保证管理员调整角色后下拉能即时反映。 */
+  async function refreshMyRoles() {
+    const currentUser = user.value
+    if (!currentUser) return
+    try {
+      const res = await authApi.getMyRoles()
+      const { roles, activeRole } = res.data.data
+      user.value = { ...currentUser, roleList: roles, activeRole }
+      persistUser()
+      // 若活动角色已失效（被移除/停用），同步刷新菜单与按钮权限
+      if (activeRole && activeRole !== currentUser.activeRole) {
+        await loadPermissions(true)
+      }
+    } catch {
+      // 下拉数据刷新失败不阻断主流程，沿用登录时的角色列表
+    }
+  }
+
   async function logout() {
     try {
       await authApi.logout()
@@ -248,13 +292,20 @@ export const useAuthStore = defineStore('auth', () => {
     loginLoading,
     loginError,
     agreedProtocolVersion,
+    switchRoleLoading,
     isAuthenticated,
     accessToken,
     refreshToken: refreshTokenValue,
     isLoginLoading,
+    activeRole,
+    roleList,
+    activeRoleInfo,
     setTokens,
+    setUser,
     clearTokens,
     refreshAccessToken,
+    switchRole,
+    refreshMyRoles,
     loginWithPassword,
     loginWithPhone,
     register,
