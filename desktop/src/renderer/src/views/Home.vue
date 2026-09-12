@@ -7,6 +7,7 @@ import ProjectPage from './ProjectPage.vue'
 import ExpertPage from './ExpertPage.vue'
 import SkillPage from './SkillPage.vue'
 import ConnectorPage from './ConnectorPage.vue'
+import KnowledgePage from './KnowledgePage.vue'
 import AutomationPage from './AutomationPage.vue'
 import NewTaskPage from './NewTaskPage.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -184,7 +185,7 @@ const handleAddSpaceItem = (spaceName: string): void => {
 }
 
 // ── Navigation ──
-type NavKey = '新建任务' | '助理' | '项目' | '自动化' | '更多'
+type NavKey = '新建任务' | '助理' | '项目' | '知识库' | '自动化' | '更多'
 type AgentNavKey = '专家' | '技能' | '连接器'
 type AppNav = NavKey | AgentNavKey
 const activeNav = ref<AppNav>('新建任务')
@@ -192,6 +193,8 @@ const activeNav = ref<AppNav>('新建任务')
 const navItems = [
   { label: '助理' as NavKey, icon: 'bot' },
   { label: '项目' as NavKey, icon: 'folder' },
+  // 知识库位于「智能体」分组之后（分组由下方模板在「项目」后插入）
+  { label: '知识库' as NavKey, icon: 'book' },
   { label: '自动化' as NavKey, icon: 'workflow' },
   { label: '更多' as NavKey, icon: 'more', tag: '资库·灵感' }
 ]
@@ -546,6 +549,22 @@ const adjustMenuDirection = (): void => {
               >
                 <path
                   d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                />
+              </svg>
+              <svg
+                v-else-if="item.icon === 'book'"
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 7v14" />
+                <path
+                  d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
                 />
               </svg>
               <svg
@@ -1256,6 +1275,7 @@ const adjustMenuDirection = (): void => {
         <ExpertPage v-else-if="activeNav === '专家'" key="expert" @summon="switchNav('新建任务')" />
         <SkillPage v-else-if="activeNav === '技能'" key="skill" />
         <ConnectorPage v-else-if="activeNav === '连接器'" key="connector" />
+        <KnowledgePage v-else-if="activeNav === '知识库'" key="knowledge" />
         <AutomationPage v-else-if="activeNav === '自动化'" key="automation" />
         <div v-else key="placeholder" class="placeholder-page">
           <div class="placeholder-icon">
