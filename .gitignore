@@ -7,11 +7,15 @@ Desktop.ini
 .vscode/
 
 # Claude Code
+.claude/
 ./CLAUDE.md
 
 # Codex
 ./AGENTS.md
 .codex/
+
+# resume
+/resume/
 
 # 日志
 *.log
