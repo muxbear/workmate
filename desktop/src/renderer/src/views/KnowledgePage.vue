@@ -1,23 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
+import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
+import KnowledgeSettingsModal from '../components/knowledge/KnowledgeSettingsModal.vue'
+import {
+  findGroupIdOf,
+  pickSelectionAfterRemoval,
+  removeLibrary,
+  renameLibrary,
+  type KnowledgeFolder,
+  type KnowledgeGroup
+} from '../components/knowledge/knowledgeList'
+import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
 
-// ── 知识库数据模型 ──
-interface KnowledgeFolder {
-  id: string
-  name: string
-  description: string
-  files: number
-  updated: string
-  tone: string
-}
-type GroupIcon = 'hard-drive' | 'users' | 'cloud'
+// ── 知识库数据模型（KnowledgeFolder / KnowledgeGroup 见 components/knowledge/knowledgeList.ts） ──
 type FileIcon = 'file-text' | 'file-type-2' | 'file-spreadsheet'
-interface KnowledgeGroup {
-  id: string
-  label: string
-  icon: GroupIcon
-  items: KnowledgeFolder[]
-}
 interface KnowledgeFile {
   name: string
   type: string
@@ -144,6 +141,20 @@ const selectedLibrary = ref<KnowledgeFolder>(KNOWLEDGE_GROUPS[0].items[0])
 const moreGroupId = ref<string | null>(null)
 const openGroupMenu = ref<string | null>(null)
 
+// ── 知识库条目三点菜单与三个弹窗 ──
+/** 当前展开三点菜单的知识库 id（同一时刻只允许一个） */
+const openLibMenu = ref<string | null>(null)
+/** 知识库设置弹窗目标（按库覆盖配置） */
+const settingsLibrary = ref<KnowledgeFolder | null>(null)
+const settingsOpen = ref(false)
+/** 知识库编辑弹窗目标 */
+const editLibrary = ref<KnowledgeFolder | null>(null)
+const editOpen = ref(false)
+/** 待确认删除的知识库 */
+const deleteCandidate = ref<KnowledgeFolder | null>(null)
+/** 按库覆盖配置（弹窗内保存/删除时清理） */
+const knowledgeSettingsStore = useKnowledgeSettingsStore()
+
 // ── 文件列表：排序、上传、标签页 ──
 const files = ref<KnowledgeFile[]>(KNOWLEDGE_FILES)
 const sortKey = ref<SortKey>('updated')
@@ -267,6 +278,75 @@ const toggleGroupMenu = (groupId: string): void => {
   openGroupMenu.value = openGroupMenu.value === groupId ? null : groupId
 }
 
+// ── 知识库条目操作（三点菜单：编辑 / 设置 / 删除）──
+/** 同一时刻只展开一个菜单：分组菜单与条目菜单互斥 */
+const toggleLibMenu = (libraryId: string): void => {
+  openLibMenu.value = openLibMenu.value === libraryId ? null : libraryId
+  openGroupMenu.value = null
+}
+
+const openEditLibrary = (library: KnowledgeFolder): void => {
+  openLibMenu.value = null
+  editLibrary.value = library
+  editOpen.value = true
+}
+
+/** 编辑保存（名称 + 描述）：只改页面内列表，不落盘 */
+const saveLibraryEdit = (name: string, description: string): void => {
+  const target = editLibrary.value
+  if (!target) return
+  knowledgeGroups.value = renameLibrary(knowledgeGroups.value, target.id, { name, description })
+  // 详情区读的是同一个对象，选中项需同步为更新后的值
+  if (selectedLibrary.value.id === target.id) {
+    selectedLibrary.value = { ...selectedLibrary.value, name, description, updated: '刚刚' }
+  }
+  notify(`已更新「${name}」`)
+}
+
+const openLibrarySettings = (library: KnowledgeFolder): void => {
+  openLibMenu.value = null
+  settingsLibrary.value = library
+  settingsOpen.value = true
+}
+
+const askDeleteLibrary = (library: KnowledgeFolder): void => {
+  openLibMenu.value = null
+  deleteCandidate.value = library
+}
+
+/** 删除确认：移除条目 → 切走选中 → 清理该库的按库覆盖配置 */
+const confirmDeleteLibrary = async (): Promise<void> => {
+  const target = deleteCandidate.value
+  deleteCandidate.value = null
+  if (!target) return
+  const groupId = findGroupIdOf(knowledgeGroups.value, target.id)
+  knowledgeGroups.value = removeLibrary(knowledgeGroups.value, target.id)
+  if (selectedLibrary.value.id === target.id) {
+    // 全部删空时返回 null，此时保留原引用（详情区只做属性读取，不会报错）
+    const next = pickSelectionAfterRemoval(knowledgeGroups.value, groupId)
+    if (next) selectedLibrary.value = next
+  }
+  // 列表本身无持久化，但按库配置有：顺手清掉，避免残留
+  const cleaned = await knowledgeSettingsStore.saveOverrides(target.id, {})
+  notify(cleaned ? `已删除「${target.name}」` : `已删除「${target.name}」，配置清理未完成`)
+}
+
+const onLibrarySettingsSaved = (name: string): void => {
+  notify(`「${name}」设置已保存`)
+}
+
+/** 点击条目菜单以外的区域关闭菜单 */
+const onDocumentMousedown = (event: MouseEvent): void => {
+  if (!openLibMenu.value) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.kb-lib-row')) return
+  openLibMenu.value = null
+}
+
+const onDocumentKeydown = (event: KeyboardEvent): void => {
+  if (event.key === 'Escape') openLibMenu.value = null
+}
+
 // ── 文件与标签页 ──
 const openFile = (file: KnowledgeFile): void => {
   if (!openTabs.value.includes(file.name)) openTabs.value = [...openTabs.value, file.name]
@@ -365,9 +445,13 @@ const moveTabs = (direction: -1 | 1): void => {
 onMounted(() => {
   updateTabScroll()
   window.addEventListener('resize', updateTabScroll)
+  document.addEventListener('mousedown', onDocumentMousedown)
+  document.addEventListener('keydown', onDocumentKeydown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateTabScroll)
+  document.removeEventListener('mousedown', onDocumentMousedown)
+  document.removeEventListener('keydown', onDocumentKeydown)
 })
 watch(openTabs, () => {
   nextTick(updateTabScroll)
@@ -645,32 +729,123 @@ watch(openTabs, () => {
 
             <!-- 分组下的知识库列表 -->
             <div v-if="expanded[group.id]" class="kb-group-items">
-              <button
+              <div
                 v-for="library in group.items"
                 :key="library.id"
-                class="kb-lib-item"
-                :class="{ 'kb-lib-item--active': selectedLibrary.id === library.id }"
-                @click="selectLibrary(library)"
+                class="kb-lib-row"
+                @mouseleave="openLibMenu = null"
               >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+                <button
+                  class="kb-lib-item"
+                  :class="{ 'kb-lib-item--active': selectedLibrary.id === library.id }"
+                  @click="selectLibrary(library)"
                 >
-                  <path
-                    d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"
-                  />
-                  <path d="M8 10v4" />
-                  <path d="M12 10v2" />
-                  <path d="M16 10v6" />
-                </svg>
-                <span class="kb-lib-name">{{ library.name }}</span>
-              </button>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"
+                    />
+                    <path d="M8 10v4" />
+                    <path d="M12 10v2" />
+                    <path d="M16 10v6" />
+                  </svg>
+                  <span class="kb-lib-name">{{ library.name }}</span>
+                </button>
+
+                <!-- 三点操作按钮：悬浮条目时淡入，点击展开菜单 -->
+                <button
+                  class="kb-lib-more"
+                  type="button"
+                  :title="`「${library.name}」操作`"
+                  :aria-label="`「${library.name}」操作`"
+                  @click="toggleLibMenu(library.id)"
+                >
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="19" cy="12" r="1" />
+                    <circle cx="5" cy="12" r="1" />
+                  </svg>
+                </button>
+
+                <!-- 条目操作菜单：编辑 / 设置 / 删除 -->
+                <div v-if="openLibMenu === library.id" class="kb-lib-menu">
+                  <button class="kb-lib-menu-item" @click="openEditLibrary(library)">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                      />
+                      <path d="m15 5 4 4" />
+                    </svg>
+                    知识库编辑
+                  </button>
+                  <button class="kb-lib-menu-item" @click="openLibrarySettings(library)">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="3" />
+                      <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                      />
+                    </svg>
+                    知识库设置
+                  </button>
+                  <button
+                    class="kb-lib-menu-item kb-lib-menu-item--danger"
+                    @click="askDeleteLibrary(library)"
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <line x1="10" x2="10" y1="11" y2="17" />
+                      <line x1="14" x2="14" y1="11" y2="17" />
+                    </svg>
+                    知识库删除
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1116,6 +1291,28 @@ watch(openTabs, () => {
       </div>
     </div>
 
+    <!-- 知识库编辑 / 按库设置弹窗 + 删除确认 -->
+    <KnowledgeEditModal
+      :open="editOpen"
+      :library="editLibrary"
+      @close="editOpen = false"
+      @saved="saveLibraryEdit"
+    />
+    <KnowledgeSettingsModal
+      :open="settingsOpen"
+      :library="settingsLibrary"
+      @close="settingsOpen = false"
+      @saved="onLibrarySettingsSaved"
+    />
+    <ConfirmDialog
+      v-if="deleteCandidate"
+      title="删除知识库"
+      :message="`确定删除「${deleteCandidate.name}」吗？该知识库的按库设置会一并清除，此操作不可撤销。`"
+      confirm-text="删除"
+      @confirm="confirmDeleteLibrary"
+      @cancel="deleteCandidate = null"
+    />
+
     <!-- 轻量 toast -->
     <div v-if="toast" class="kb-toast">{{ toast }}</div>
   </div>
@@ -1301,14 +1498,21 @@ watch(openTabs, () => {
   padding-left: 8px;
 }
 
+/* 条目行：选择按钮 + 悬浮出现的操作按钮（同级按钮，避免 button 嵌套） */
+.kb-lib-row {
+  position: relative;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+
 .kb-lib-item {
   display: flex;
   width: 100%;
   align-items: center;
   gap: 8px;
-  margin-bottom: 2px;
   border-radius: 8px;
-  padding: 6px 10px;
+  /* 右侧给操作按钮预留：名称可用宽度恒定，悬浮时不重排 */
+  padding: 6px 28px 6px 10px;
   text-align: left;
   font-family: inherit;
   background: transparent;
@@ -1316,15 +1520,85 @@ watch(openTabs, () => {
   border: none;
   cursor: pointer;
 }
-.kb-lib-item--active {
+.kb-lib-item:hover {
+  background: #edf4f1;
+}
+/* 选中态必须与 :hover 同列写：否则 .kb-lib-item:hover 特异性更高会把选中色盖掉 */
+.kb-lib-item--active,
+.kb-lib-item--active:hover {
   background: #ddf0ea;
   color: #147967;
 }
 .kb-lib-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 三点操作按钮（悬浮淡入，对齐 .kb-group-more） */
+.kb-lib-more {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  padding: 3px;
+  border-radius: 4px;
+  color: #668078;
+  background: transparent;
+  border: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+}
+.kb-lib-row:hover .kb-lib-more,
+.kb-lib-more:focus-visible {
+  opacity: 1;
+}
+.kb-lib-more:hover {
+  background: #ffffff;
+  color: #168b7a;
+}
+
+/* 条目操作菜单（视觉对齐 .kb-group-menu） */
+.kb-lib-menu {
+  position: absolute;
+  right: 4px;
+  top: 28px;
+  z-index: 30;
+  width: 132px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #e1e9e6;
+  background: #ffffff;
+  padding: 4px 0;
+  box-shadow: 0 8px 22px rgba(24, 58, 51, 0.14);
+}
+.kb-lib-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 12px;
+  font-family: inherit;
+  color: #405258;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.kb-lib-menu-item:hover {
+  background: #f1f7f4;
+}
+.kb-lib-menu-item--danger {
+  color: #cf625b;
+}
+.kb-lib-menu-item--danger:hover {
+  background: #fdeeee;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

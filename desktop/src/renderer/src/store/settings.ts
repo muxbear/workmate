@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useWorkspaceStore } from './workspace'
+import type { KnowledgeOverrides } from '../../../preload/index.d'
 
 /** 系统设置存储 key（与主进程 settings/schema.ts 对齐；嵌套路径扁平化） */
 export type SettingsKey =
@@ -112,6 +113,31 @@ export const useSettingsStore = defineStore('settings', () => {
   const knowledgeTopK = ref(12)
   const knowledgeGraphEnabled = ref(false)
   const knowledgeGraphModel = ref('GLM-5')
+
+  /**
+   * 知识库 17 项全局值（短 key 形态，字段与「按库覆盖」一一对应；不含存放目录）
+   * 「知识库设置」页表单回填与按知识库设置弹窗的「跟随全局」都读它 —— 单一来源，
+   * 因此全局值一变，所有未覆盖该项的知识库会自动跟随。
+   */
+  const knowledgeGlobalValues = computed<KnowledgeOverrides>(() => ({
+    maxUploadSize: knowledgeMaxUploadSize.value,
+    uploadTimeout: knowledgeUploadTimeout.value,
+    maxFilesPerBatch: knowledgeMaxFilesPerBatch.value,
+    chunkStrategy: knowledgeChunkStrategy.value,
+    chunkSize: knowledgeChunkSize.value,
+    chunkOverlap: knowledgeChunkOverlap.value,
+    vectorDimensions: knowledgeVectorDimensions.value,
+    embeddingModel: knowledgeEmbeddingModel.value,
+    sparseRetrieval: knowledgeSparseRetrieval.value,
+    bm25K1: knowledgeBm25K1.value,
+    bm25B: knowledgeBm25B.value,
+    hybridWeight: knowledgeHybridWeight.value,
+    rerankEnabled: knowledgeRerankEnabled.value,
+    rerankModel: knowledgeRerankModel.value,
+    topK: knowledgeTopK.value,
+    graphEnabled: knowledgeGraphEnabled.value,
+    graphModel: knowledgeGraphModel.value
+  }))
 
   const meta = ref<SettingsMeta>()
   const storageStats = ref<StorageStats | null>(null)
@@ -382,6 +408,7 @@ export const useSettingsStore = defineStore('settings', () => {
     knowledgeTopK,
     knowledgeGraphEnabled,
     knowledgeGraphModel,
+    knowledgeGlobalValues,
     meta,
     storageStats,
     loaded,

@@ -328,6 +328,15 @@ const api = {
   openDataDir() {
     return ipcRenderer.invoke('config:open-data-dir')
   },
+  // ── 知识库设置 API（用户级：配置按登录用户隔离，未登录返回失败）──
+  /** 批量读取各知识库的覆盖项（省略 kbIds = 该用户全部） */
+  getKbSettings(kbIds?: string[]) {
+    return ipcRenderer.invoke('knowledge:get-kb-settings', kbIds)
+  },
+  /** 全量替换某知识库的覆盖项（传 {} 即恢复全部跟随全局） */
+  setKbSettings(kbId: string, overrides: Record<string, unknown>) {
+    return ipcRenderer.invoke('knowledge:set-kb-settings', kbId, overrides)
+  },
   // ── 内置运行时管理 API ──
   listRuntimes() {
     return ipcRenderer.invoke('runtime:list')

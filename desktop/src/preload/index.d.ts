@@ -352,6 +352,40 @@ export interface ConfigAPI {
   openDataDir(): Promise<IpcResult<null>>
 }
 
+/**
+ * 知识库「按库覆盖」配置项短 key（去掉了 knowledge. 前缀）。
+ * 与主进程 src/main/knowledge/knowledge-schema.ts 的清单一致（由单测钉住）；
+ * 不含「本地存储 / 存放目录」——它是整个索引库的机器级位置，不按知识库区分。
+ */
+export type KnowledgeOverrideKey =
+  | 'maxUploadSize'
+  | 'uploadTimeout'
+  | 'maxFilesPerBatch'
+  | 'chunkStrategy'
+  | 'chunkSize'
+  | 'chunkOverlap'
+  | 'vectorDimensions'
+  | 'embeddingModel'
+  | 'sparseRetrieval'
+  | 'bm25K1'
+  | 'bm25B'
+  | 'hybridWeight'
+  | 'rerankEnabled'
+  | 'rerankModel'
+  | 'topK'
+  | 'graphEnabled'
+  | 'graphModel'
+
+/** 单个知识库的覆盖项：稀疏结构，未出现的 key 表示「跟随全局」 */
+export type KnowledgeOverrides = Partial<Record<KnowledgeOverrideKey, unknown>>
+
+export interface KnowledgeAPI {
+  /** 批量读取各知识库的覆盖项（省略 kbIds = 该用户全部；未配置的知识库返回 {}） */
+  getKbSettings(kbIds?: string[]): Promise<IpcResult<Record<string, KnowledgeOverrides>>>
+  /** 全量替换某知识库的覆盖项（传 {} 即恢复全部跟随全局；主进程校验白名单 + 区间 + 枚举） */
+  setKbSettings(kbId: string, overrides: KnowledgeOverrides): Promise<IpcResult<KnowledgeOverrides>>
+}
+
 /** 模型协议类型 */
 export type ModelProtocol = 'openai-chat' | 'openai-response' | 'anthropic'
 
@@ -586,7 +620,8 @@ export interface KeWorkWindowApi
     ConfigAPI,
     ModelAPI,
     BrowserAPI,
-    RuntimeAPI {
+    RuntimeAPI,
+    KnowledgeAPI {
   skillSync: SkillSyncAPI
   expert: ExpertSyncAPI
   modelSync: ModelSyncAPI

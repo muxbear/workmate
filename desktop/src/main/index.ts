@@ -42,6 +42,9 @@ import { MIGRATIONS_DIR } from './database/local/SqlMigrationRunner'
 import { SettingsStore } from './settings/SettingsStore'
 import { SettingsService, type ProxyMode, type ThemeName } from './settings/SettingsService'
 import { registerConfigHandlers } from './ipc/config-handlers'
+import { KnowledgeSettingsStore } from './knowledge/KnowledgeSettingsStore'
+import { KnowledgeSettingsService } from './knowledge/KnowledgeSettingsService'
+import { registerKnowledgeHandlers } from './ipc/knowledge-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
 import { registerExpertSyncHandlers } from './ipc/expert-sync-handlers'
@@ -443,6 +446,14 @@ app.whenReady().then(() => {
 
   // ── 注册系统设置 IPC（机器级，不调 requireUserId）──
   registerConfigHandlers(ipcMain, { settingsService })
+
+  // ── 知识库设置 IPC（用户级：按登录用户隔离，须 requireUserId，与 config:* 语义不同）──
+  // 「知识库设置」页的全局值仍在 settings.json；这里只存每个知识库的稀疏覆盖项
+  const knowledgeSettingsStore = new KnowledgeSettingsStore(dataDir.getDir('knowledge'))
+  const knowledgeSettingsService = new KnowledgeSettingsService(knowledgeSettingsStore, {
+    getGlobalSettings: () => settingsStore.getAll()
+  })
+  registerKnowledgeHandlers(ipcMain, { knowledgeSettingsService, session })
 
   // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
   const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)
