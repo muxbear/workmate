@@ -285,7 +285,7 @@ export interface StorageStats {
 /** 系统设置快照（config:get-all；settings 为扁平 key 映射，meta 供 UI 显示真实值） */
 export interface SettingsSnapshot {
   settings: Record<string, unknown>
-  meta: { dataBaseDir: string; defaultWorkspaceDir: string }
+  meta: { dataBaseDir: string; defaultWorkspaceDir: string; defaultKnowledgeDir: string }
 }
 
 /** 内置运行时类型标识 */
@@ -346,6 +346,8 @@ export interface ConfigAPI {
   getStorageStats(): Promise<IpcResult<StorageStats>>
   /** 系统目录选择对话框；用户取消时 data 为 null */
   selectDefaultWorkspaceDir(): Promise<IpcResult<string | null>>
+  /** 知识库目录选择对话框（不迁移旧目录）；用户取消时 data 为 null */
+  selectKnowledgeDir(): Promise<IpcResult<string | null>>
   /** 在系统资源管理器中打开 ~/.ke-work */
   openDataDir(): Promise<IpcResult<null>>
 }

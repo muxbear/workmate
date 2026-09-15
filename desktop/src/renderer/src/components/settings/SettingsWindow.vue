@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import SystemSettingsPage from './pages/SystemSettingsPage.vue'
 import AccountPage from './pages/AccountPage.vue'
 import AgentSettingsPage from './pages/AgentSettingsPage.vue'
+import KnowledgeSettingsPage from './pages/KnowledgeSettingsPage.vue'
 import PersonalizationPage from './pages/PersonalizationPage.vue'
 import MemoryPage from './pages/MemoryPage.vue'
 import ModelPage from './pages/ModelPage.vue'
@@ -16,6 +17,7 @@ type PageKey =
   | 'system'
   | 'account'
   | 'agent'
+  | 'knowledge'
   | 'personal'
   | 'memory'
   | 'model'
@@ -55,6 +57,7 @@ const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: 'system', label: '系统设置', icon: 'gear' },
   { key: 'account', label: '账户管理', icon: 'user' },
   { key: 'agent', label: '智能体设置', icon: 'puzzle' },
+  { key: 'knowledge', label: '知识库设置', icon: 'book-open' },
   { key: 'personal', label: '个性化', icon: 'sparkles' },
   { key: 'memory', label: '记忆', icon: 'brain' },
   { key: 'model', label: '模型', icon: 'box' },
@@ -200,6 +203,21 @@ const subtitles: Partial<Record<PageKey, string>> = {
                     rx="4"
                   />
                   <path d="M12 6a2 2 0 0 1 4 0v2h2a2 2 0 0 1 0 4h-2v2a2 2 0 0 1-4 0v-2h-2a2 2 0 0 1 0-4h2z" />
+                </svg>
+                <!-- 知识库设置 -->
+                <svg
+                  v-else-if="item.icon === 'book-open'"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 5v16" />
+                  <path d="M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z" />
                 </svg>
                 <!-- 个性化 -->
                 <svg
@@ -439,6 +457,7 @@ const subtitles: Partial<Record<PageKey, string>> = {
               @logout="emit('logout')"
             />
             <AgentSettingsPage v-else-if="activeKey === 'agent'" />
+            <KnowledgeSettingsPage v-else-if="activeKey === 'knowledge'" />
             <PersonalizationPage v-else-if="activeKey === 'personal'" />
             <MemoryPage v-else-if="activeKey === 'memory'" />
             <ModelPage v-else-if="activeKey === 'model'" />

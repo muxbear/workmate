@@ -322,6 +322,9 @@ const api = {
   selectDefaultWorkspaceDir() {
     return ipcRenderer.invoke('config:select-workspace-dir')
   },
+  selectKnowledgeDir() {
+    return ipcRenderer.invoke('config:select-knowledge-dir')
+  },
   openDataDir() {
     return ipcRenderer.invoke('config:open-data-dir')
   },

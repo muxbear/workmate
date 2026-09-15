@@ -27,6 +27,24 @@ export type SettingsKey =
   | 'runtime.python.enabled'
   | 'runtime.node.enabled'
   | 'runtime.git.enabled'
+  | 'knowledge.directory'
+  | 'knowledge.maxUploadSize'
+  | 'knowledge.uploadTimeout'
+  | 'knowledge.maxFilesPerBatch'
+  | 'knowledge.chunkStrategy'
+  | 'knowledge.chunkSize'
+  | 'knowledge.chunkOverlap'
+  | 'knowledge.vectorDimensions'
+  | 'knowledge.embeddingModel'
+  | 'knowledge.sparseRetrieval'
+  | 'knowledge.bm25K1'
+  | 'knowledge.bm25B'
+  | 'knowledge.hybridWeight'
+  | 'knowledge.rerankEnabled'
+  | 'knowledge.rerankModel'
+  | 'knowledge.topK'
+  | 'knowledge.graphEnabled'
+  | 'knowledge.graphModel'
 
 export interface SettingsSchemaEntry {
   type: 'string' | 'number' | 'boolean'
@@ -41,6 +59,10 @@ const LANGUAGE_OPTIONS = ['zh-CN', 'zh-TW', 'en']
 const THEME_OPTIONS = ['light', 'dark']
 const PROXY_MODES = ['direct', 'system', 'manual']
 const SOUND_OPTIONS = ['none', 'crisp', 'soft']
+
+/** 知识库：切片算法 / 向量维度枚举（对齐设置页下拉项） */
+const CHUNK_STRATEGIES = ['semantic', 'fixed', 'markdown', 'recursive']
+const VECTOR_DIMENSIONS = [1024, 1536, 3072]
 
 /** http(s)://host[:port][/path] 鏍煎紡锛堜唬鐞嗗湴鍧€蹇呭～鏍￠獙锛?*/
 const PROXY_URL_RE = /^https?:\/\/[^:\s/]+(:\d{1,5})?(\/.*)?$/
@@ -97,7 +119,101 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
   'runtime.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
   'runtime.python.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
   'runtime.node.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
-  'runtime.git.enabled': { type: 'boolean', default: true, applyTiming: 'instant' }
+  'runtime.git.enabled': { type: 'boolean', default: true, applyTiming: 'instant' },
+  // ── 知识库配置（设置窗口「知识库设置」页；空目录 = 回退 meta.defaultKnowledgeDir） ──
+  'knowledge.directory': {
+    type: 'string',
+    default: '',
+    applyTiming: 'pending',
+    validate: (v) => typeof v === 'string' && (v === '' || isAbsolute(v))
+  },
+  'knowledge.maxUploadSize': {
+    type: 'number',
+    default: 100,
+    applyTiming: 'pending',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 10240
+  },
+  'knowledge.uploadTimeout': {
+    type: 'number',
+    default: 10,
+    applyTiming: 'pending',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 600
+  },
+  'knowledge.maxFilesPerBatch': {
+    type: 'number',
+    default: 20,
+    applyTiming: 'pending',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000
+  },
+  'knowledge.chunkStrategy': {
+    type: 'string',
+    default: 'semantic',
+    applyTiming: 'pending',
+    validate: (v) => CHUNK_STRATEGIES.includes(v as string)
+  },
+  'knowledge.chunkSize': {
+    type: 'number',
+    default: 800,
+    applyTiming: 'pending',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 100 && (v as number) <= 8192
+  },
+  'knowledge.chunkOverlap': {
+    type: 'number',
+    default: 120,
+    applyTiming: 'pending',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 4096
+  },
+  'knowledge.vectorDimensions': {
+    type: 'number',
+    default: 1024,
+    applyTiming: 'pending',
+    validate: (v) => VECTOR_DIMENSIONS.includes(v as number)
+  },
+  'knowledge.embeddingModel': {
+    type: 'string',
+    default: 'text-embedding-3-large',
+    applyTiming: 'pending',
+    validate: (v) => typeof v === 'string' && v.trim().length > 0
+  },
+  'knowledge.sparseRetrieval': { type: 'boolean', default: true, applyTiming: 'pending' },
+  'knowledge.bm25K1': {
+    type: 'number',
+    default: 1.5,
+    applyTiming: 'pending',
+    validate: (v) => (v as number) >= 0 && (v as number) <= 10
+  },
+  'knowledge.bm25B': {
+    type: 'number',
+    default: 0.75,
+    applyTiming: 'pending',
+    validate: (v) => (v as number) >= 0 && (v as number) <= 1
+  },
+  'knowledge.hybridWeight': {
+    type: 'number',
+    default: 0.65,
+    applyTiming: 'pending',
+    validate: (v) => (v as number) >= 0 && (v as number) <= 1
+  },
+  'knowledge.rerankEnabled': { type: 'boolean', default: true, applyTiming: 'pending' },
+  'knowledge.rerankModel': {
+    type: 'string',
+    default: 'bge-reranker-v2-m3',
+    applyTiming: 'pending',
+    validate: (v) => typeof v === 'string' && v.trim().length > 0
+  },
+  'knowledge.topK': {
+    type: 'number',
+    default: 12,
+    applyTiming: 'pending',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100
+  },
+  'knowledge.graphEnabled': { type: 'boolean', default: false, applyTiming: 'pending' },
+  'knowledge.graphModel': {
+    type: 'string',
+    default: 'GLM-5',
+    applyTiming: 'pending',
+    validate: (v) => typeof v === 'string' && v.trim().length > 0
+  }
 }
 
 /** settings.json 椤跺眰缁撴瀯鐗堟湰锛堝榻?WorkBuddy workspace-state.json 鐨?version 瀛楁锛?*/

@@ -21,11 +21,31 @@ export type SettingsKey =
   | 'runtime.python.enabled'
   | 'runtime.node.enabled'
   | 'runtime.git.enabled'
+  | 'knowledge.directory'
+  | 'knowledge.maxUploadSize'
+  | 'knowledge.uploadTimeout'
+  | 'knowledge.maxFilesPerBatch'
+  | 'knowledge.chunkStrategy'
+  | 'knowledge.chunkSize'
+  | 'knowledge.chunkOverlap'
+  | 'knowledge.vectorDimensions'
+  | 'knowledge.embeddingModel'
+  | 'knowledge.sparseRetrieval'
+  | 'knowledge.bm25K1'
+  | 'knowledge.bm25B'
+  | 'knowledge.hybridWeight'
+  | 'knowledge.rerankEnabled'
+  | 'knowledge.rerankModel'
+  | 'knowledge.topK'
+  | 'knowledge.graphEnabled'
+  | 'knowledge.graphModel'
 
 export type Language = 'zh-CN' | 'zh-TW' | 'en'
 export type ThemeName = 'light' | 'dark'
 export type ProxyMode = 'direct' | 'system' | 'manual'
 export type NotificationSound = 'none' | 'crisp' | 'soft'
+export type ChunkStrategy = 'semantic' | 'fixed' | 'markdown' | 'recursive'
+export type VectorDimensions = 1024 | 1536 | 3072
 
 export const THEME_OPTIONS: Array<{ value: ThemeName; label: string }> = [
   { value: 'light', label: '浅色' },
@@ -35,6 +55,7 @@ export const THEME_OPTIONS: Array<{ value: ThemeName; label: string }> = [
 interface SettingsMeta {
   dataBaseDir: string
   defaultWorkspaceDir: string
+  defaultKnowledgeDir: string
 }
 
 interface StorageStats {
@@ -72,6 +93,25 @@ export const useSettingsStore = defineStore('settings', () => {
   const runtimePythonEnabled = ref(true)
   const runtimeNodeEnabled = ref(true)
   const runtimeGitEnabled = ref(true)
+  // ── 知识库配置（「知识库设置」页） ──
+  const knowledgeDirectory = ref('')
+  const knowledgeMaxUploadSize = ref(100)
+  const knowledgeUploadTimeout = ref(10)
+  const knowledgeMaxFilesPerBatch = ref(20)
+  const knowledgeChunkStrategy = ref<ChunkStrategy>('semantic')
+  const knowledgeChunkSize = ref(800)
+  const knowledgeChunkOverlap = ref(120)
+  const knowledgeVectorDimensions = ref<VectorDimensions>(1024)
+  const knowledgeEmbeddingModel = ref('text-embedding-3-large')
+  const knowledgeSparseRetrieval = ref(true)
+  const knowledgeBm25K1 = ref(1.5)
+  const knowledgeBm25B = ref(0.75)
+  const knowledgeHybridWeight = ref(0.65)
+  const knowledgeRerankEnabled = ref(true)
+  const knowledgeRerankModel = ref('bge-reranker-v2-m3')
+  const knowledgeTopK = ref(12)
+  const knowledgeGraphEnabled = ref(false)
+  const knowledgeGraphModel = ref('GLM-5')
 
   const meta = ref<SettingsMeta>()
   const storageStats = ref<StorageStats | null>(null)
@@ -130,6 +170,60 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'runtime.git.enabled':
         runtimeGitEnabled.value = value as boolean
+        break
+      case 'knowledge.directory':
+        knowledgeDirectory.value = value as string
+        break
+      case 'knowledge.maxUploadSize':
+        knowledgeMaxUploadSize.value = value as number
+        break
+      case 'knowledge.uploadTimeout':
+        knowledgeUploadTimeout.value = value as number
+        break
+      case 'knowledge.maxFilesPerBatch':
+        knowledgeMaxFilesPerBatch.value = value as number
+        break
+      case 'knowledge.chunkStrategy':
+        knowledgeChunkStrategy.value = value as ChunkStrategy
+        break
+      case 'knowledge.chunkSize':
+        knowledgeChunkSize.value = value as number
+        break
+      case 'knowledge.chunkOverlap':
+        knowledgeChunkOverlap.value = value as number
+        break
+      case 'knowledge.vectorDimensions':
+        knowledgeVectorDimensions.value = value as VectorDimensions
+        break
+      case 'knowledge.embeddingModel':
+        knowledgeEmbeddingModel.value = value as string
+        break
+      case 'knowledge.sparseRetrieval':
+        knowledgeSparseRetrieval.value = value as boolean
+        break
+      case 'knowledge.bm25K1':
+        knowledgeBm25K1.value = value as number
+        break
+      case 'knowledge.bm25B':
+        knowledgeBm25B.value = value as number
+        break
+      case 'knowledge.hybridWeight':
+        knowledgeHybridWeight.value = value as number
+        break
+      case 'knowledge.rerankEnabled':
+        knowledgeRerankEnabled.value = value as boolean
+        break
+      case 'knowledge.rerankModel':
+        knowledgeRerankModel.value = value as string
+        break
+      case 'knowledge.topK':
+        knowledgeTopK.value = value as number
+        break
+      case 'knowledge.graphEnabled':
+        knowledgeGraphEnabled.value = value as boolean
+        break
+      case 'knowledge.graphModel':
+        knowledgeGraphModel.value = value as string
         break
     }
   }
@@ -210,6 +304,37 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /**
+   * 批量保存（「知识库设置」页「保存设置」按钮）：
+   * 乐观更新 → 逐项立即 IPC 写入（不走防抖队列，便于按成败反馈）；任一项失败即回滚重载。
+   * @returns 是否全部写入成功
+   */
+  async function saveMany(entries: Array<[SettingsKey, unknown]>): Promise<boolean> {
+    for (const [key, value] of entries) {
+      applyToField(key, value)
+    }
+    for (const [key, value] of entries) {
+      const result = await window.api.setSetting(key, value)
+      if (!result.success) {
+        console.warn(`[settings] save ${key} failed:`, result.error)
+        await load() // 失败回滚：以主进程为准重新拉取
+        return false
+      }
+    }
+    applyRuntimeEffects()
+    return true
+  }
+
+  /** 知识库目录选择对话框（不迁移旧文件；非空则保存并同步 meta） */
+  async function changeKnowledgeDir(): Promise<void> {
+    const result = await window.api.selectKnowledgeDir()
+    if (!result.success) throw new Error(result.error ?? '选择目录失败')
+    if (result.data) {
+      knowledgeDirectory.value = result.data
+      if (meta.value) meta.value.defaultKnowledgeDir = result.data
+    }
+  }
+
   /** 系统目录选择对话框更改默认工作空间路径（非空则保存并同步 meta） */
   async function changeWorkspaceDir(): Promise<void> {
     const result = await window.api.selectDefaultWorkspaceDir()
@@ -239,13 +364,33 @@ export const useSettingsStore = defineStore('settings', () => {
     runtimePythonEnabled,
     runtimeNodeEnabled,
     runtimeGitEnabled,
+    knowledgeDirectory,
+    knowledgeMaxUploadSize,
+    knowledgeUploadTimeout,
+    knowledgeMaxFilesPerBatch,
+    knowledgeChunkStrategy,
+    knowledgeChunkSize,
+    knowledgeChunkOverlap,
+    knowledgeVectorDimensions,
+    knowledgeEmbeddingModel,
+    knowledgeSparseRetrieval,
+    knowledgeBm25K1,
+    knowledgeBm25B,
+    knowledgeHybridWeight,
+    knowledgeRerankEnabled,
+    knowledgeRerankModel,
+    knowledgeTopK,
+    knowledgeGraphEnabled,
+    knowledgeGraphModel,
     meta,
     storageStats,
     loaded,
     load,
     set,
     setTheme,
+    saveMany,
     refreshStorageStats,
-    changeWorkspaceDir
+    changeWorkspaceDir,
+    changeKnowledgeDir
   }
 })

@@ -19,8 +19,8 @@ describe('settings schema', () => {
     expect(isSettingsKey('ui')).toBe(false)
   })
 
-  it('13 项配置全部在 schema 内且类型/默认值合法', () => {
-    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(13)
+  it('35 项配置全部在 schema 内且类型/默认值合法', () => {
+    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(35)
     for (const [key, entry] of Object.entries(SETTINGS_SCHEMA)) {
       expect(isSettingsKey(key)).toBe(true)
       expect(['string', 'number', 'boolean']).toContain(entry.type)
@@ -44,6 +44,49 @@ describe('settings schema', () => {
     expect(d['privacy.experienceImprovement']).toBe(true)
     expect(d['notification.clientNotifications']).toBe(true)
     expect(d['notification.sound']).toBe('none')
+  })
+
+  it('知识库配置默认值与 Figma 设置页一致', () => {
+    const d = defaultSettings()
+    expect(d['knowledge.directory']).toBe('')
+    expect(d['knowledge.maxUploadSize']).toBe(100)
+    expect(d['knowledge.uploadTimeout']).toBe(10)
+    expect(d['knowledge.maxFilesPerBatch']).toBe(20)
+    expect(d['knowledge.chunkStrategy']).toBe('semantic')
+    expect(d['knowledge.chunkSize']).toBe(800)
+    expect(d['knowledge.chunkOverlap']).toBe(120)
+    expect(d['knowledge.vectorDimensions']).toBe(1024)
+    expect(d['knowledge.embeddingModel']).toBe('text-embedding-3-large')
+    expect(d['knowledge.sparseRetrieval']).toBe(true)
+    expect(d['knowledge.bm25K1']).toBe(1.5)
+    expect(d['knowledge.bm25B']).toBe(0.75)
+    expect(d['knowledge.hybridWeight']).toBe(0.65)
+    expect(d['knowledge.rerankEnabled']).toBe(true)
+    expect(d['knowledge.rerankModel']).toBe('bge-reranker-v2-m3')
+    expect(d['knowledge.topK']).toBe(12)
+    expect(d['knowledge.graphEnabled']).toBe(false)
+    expect(d['knowledge.graphModel']).toBe('GLM-5')
+  })
+
+  it('知识库配置 validate 拒绝越界/非法枚举', () => {
+    expect(isValidSettingsValue('knowledge.directory', '')).toBe(true)
+    expect(isValidSettingsValue('knowledge.directory', 'C:\\KeWork\\kb')).toBe(true)
+    expect(isValidSettingsValue('knowledge.directory', 'relative/path')).toBe(false)
+    expect(isValidSettingsValue('knowledge.maxUploadSize', 0)).toBe(false)
+    expect(isValidSettingsValue('knowledge.maxUploadSize', 100)).toBe(true)
+    expect(isValidSettingsValue('knowledge.uploadTimeout', 0)).toBe(false)
+    expect(isValidSettingsValue('knowledge.chunkStrategy', 'bogus')).toBe(false)
+    expect(isValidSettingsValue('knowledge.chunkStrategy', 'markdown')).toBe(true)
+    expect(isValidSettingsValue('knowledge.chunkSize', 50)).toBe(false)
+    expect(isValidSettingsValue('knowledge.chunkOverlap', 0)).toBe(true)
+    expect(isValidSettingsValue('knowledge.vectorDimensions', 2048)).toBe(false)
+    expect(isValidSettingsValue('knowledge.vectorDimensions', 1536)).toBe(true)
+    expect(isValidSettingsValue('knowledge.bm25B', 1.5)).toBe(false)
+    expect(isValidSettingsValue('knowledge.hybridWeight', 0.65)).toBe(true)
+    expect(isValidSettingsValue('knowledge.topK', 0)).toBe(false)
+    expect(isValidSettingsValue('knowledge.topK', 101)).toBe(false)
+    expect(isValidSettingsValue('knowledge.embeddingModel', '  ')).toBe(false)
+    expect(isValidSettingsValue('knowledge.graphEnabled', true)).toBe(true)
   })
 
   it('validate 拒绝非法枚举/区间/格式', () => {

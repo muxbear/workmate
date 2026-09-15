@@ -33,10 +33,15 @@ export interface SettingsMeta {
   dataBaseDir: string
   /** 默认工作空间目录（settings 为空时 = ~/KeWork 目录本身） */
   defaultWorkspaceDir: string
+  /** 知识库目录（settings 为空时 = 默认工作空间目录下 knowledge-base） */
+  defaultKnowledgeDir: string
 }
 
 /** 默认工作空间目录默认值（与 WorkspaceService 构造默认一致） */
 export const DEFAULT_WORKSPACE_DIR = join(homedir(), 'KeWork')
+
+/** 默认知识库目录（设置值留空时回退） */
+export const DEFAULT_KNOWLEDGE_DIR = join(DEFAULT_WORKSPACE_DIR, 'knowledge-base')
 
 /**
  * 系统设置业务服务：
@@ -57,11 +62,20 @@ export class SettingsService {
     return (this.store.get('workspace.defaultWorkspaceDir') as string) || DEFAULT_WORKSPACE_DIR
   }
 
+  /** 当前生效的知识库目录（设置值；为空时回退默认工作空间下的 knowledge-base） */
+  getKnowledgeDir(): string {
+    return (this.store.get('knowledge.directory') as string) || DEFAULT_KNOWLEDGE_DIR
+  }
+
   getAll(): { settings: Record<string, unknown>; meta: SettingsMeta } {
     const settings = this.store.getAll() as unknown as Record<string, unknown>
     return {
       settings,
-      meta: { dataBaseDir: this.dataBaseDir, defaultWorkspaceDir: this.getDefaultWorkspaceDir() }
+      meta: {
+        dataBaseDir: this.dataBaseDir,
+        defaultWorkspaceDir: this.getDefaultWorkspaceDir(),
+        defaultKnowledgeDir: this.getKnowledgeDir()
+      }
     }
   }
 
@@ -122,6 +136,18 @@ export class SettingsService {
     if (!dir) return null
     if (!isAbsolute(dir)) throw new Error('路径必须为绝对路径')
     await this.set('workspace.defaultWorkspaceDir', dir)
+    return dir
+  }
+
+  /**
+   * 知识库目录选择：系统目录对话框 → 校验绝对路径 → 持久化。
+   * 与默认工作空间不同，知识库换目录不迁移旧文件（仅影响后续新增/重新索引）。
+   */
+  async selectKnowledgeDir(): Promise<string | null> {
+    const dir = await this.deps.selectDir()
+    if (!dir) return null
+    if (!isAbsolute(dir)) throw new Error('路径必须为绝对路径')
+    await this.set('knowledge.directory', dir)
     return dir
   }
 

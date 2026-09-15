@@ -56,6 +56,15 @@ export function registerConfigHandlers(ipc: IpcMain, deps: ConfigHandlerDeps): v
     }
   })
 
+  ipc.handle('config:select-knowledge-dir', async () => {
+    try {
+      // 用户取消返回 null（success: true），对齐 config:select-workspace-dir
+      return ok(await settingsService.selectKnowledgeDir())
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   ipc.handle('config:open-data-dir', async () => {
     try {
       await settingsService.openDataDir()
