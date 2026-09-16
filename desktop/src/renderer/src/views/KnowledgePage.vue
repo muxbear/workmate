@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
 import KnowledgeSettingsModal from '../components/knowledge/KnowledgeSettingsModal.vue'
+import KnowledgeUploadModal from '../components/knowledge/KnowledgeUploadModal.vue'
 import {
   findGroupIdOf,
   pickSelectionAfterRemoval,
@@ -11,10 +12,13 @@ import {
   type KnowledgeFolder,
   type KnowledgeGroup
 } from '../components/knowledge/knowledgeList'
+import { uploadResultText, type KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
 import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
 
 // ── 知识库数据模型（KnowledgeFolder / KnowledgeGroup 见 components/knowledge/knowledgeList.ts） ──
 type FileIcon = 'file-text' | 'file-type-2' | 'file-spreadsheet'
+/** 文件建立索引的方式（undefined = 页面初始数据，按「已建立索引」展示） */
+type FileIndexState = 'default' | 'custom' | 'none'
 interface KnowledgeFile {
   name: string
   type: string
@@ -22,6 +26,8 @@ interface KnowledgeFile {
   updated: string
   icon: FileIcon
   tint: string
+  /** 该文件的索引方式：默认索引 / 自定义索引 / 只上传未索引 */
+  indexState?: FileIndexState
 }
 type SortKey = 'name' | 'size' | 'updated'
 
@@ -171,7 +177,9 @@ const filePanelPercent = ref(40)
 const detailRef = ref<HTMLElement | null>(null)
 
 // ── 文件上传 ──
-const uploadRef = ref<HTMLInputElement | null>(null)
+/** 上传弹窗：选文件 → 选择上传后处理方式 → 需要时进入索引配置向导 */
+const uploadOpen = ref(false)
+/** 上传文件夹仍走系统目录选择 */
 const folderUploadRef = ref<HTMLInputElement | null>(null)
 
 // ── 标签栏横向滚动 ──
@@ -191,6 +199,24 @@ const sortedFiles = computed(() =>
 )
 
 const activeFile = computed(() => files.value.find((file) => file.name === activeTab.value))
+
+/** 已建立索引的文件数（「只上传文件」的条目不计数） */
+const indexedCount = computed(() => files.value.filter((file) => file.indexState !== 'none').length)
+
+/** 文件区副标题：文件总数与索引情况 */
+const fileSummary = computed(() => {
+  const total = files.value.length
+  if (!total) return '暂无文件'
+  if (indexedCount.value === total) return `${total} 份文件已建立索引`
+  return `${total} 份文件 · ${indexedCount.value} 份已建立索引`
+})
+
+/** 列表里的索引标记：只上传的文件与自定义索引的文件需要单独标出 */
+const indexTagText = (file: KnowledgeFile): string => {
+  if (file.indexState === 'none') return '未索引'
+  if (file.indexState === 'custom') return '自定义索引'
+  return ''
+}
 
 /** 「查看更多」页：当前分组下的知识库 + 两个归档卡片 */
 const moreLibraries = computed<KnowledgeFolder[]>(() => {
@@ -373,26 +399,58 @@ const changeSort = (key: SortKey): void => {
   }
 }
 
+/** 文件大小展示（与上传弹窗保持一致） */
+const formatSize = (bytes: number): string => {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${bytes} B`
+}
+
+/** 扩展名 → 表格里的三套文件图标 */
+const pickFileIcon = (ext: string): FileIcon => {
+  if (['csv', 'xls', 'xlsx'].includes(ext)) return 'file-spreadsheet'
+  if (['doc', 'docx'].includes(ext)) return 'file-type-2'
+  return 'file-text'
+}
+
+/** File → 列表条目（保留 File 对象，同时记下这次上传的索引方式） */
+const toKnowledgeFile = (file: File, indexState: FileIndexState): KnowledgeFile => {
+  const ext = file.name.split('.').pop()?.toLowerCase() || ''
+  return {
+    name: file.name,
+    type: ext ? ext.toUpperCase() : '文件',
+    size: formatSize(file.size),
+    updated: '刚刚',
+    icon: pickFileIcon(ext),
+    tint: '#168b7a',
+    indexState
+  }
+}
+
+/** 上传文件夹：仍走系统目录选择，按「只上传文件」处理 */
 const addUpload = (list: FileList | null): void => {
   if (!list?.length) return
-  const newFiles: KnowledgeFile[] = Array.from(list).map((file) => ({
-    name: file.name,
-    type: file.name.split('.').pop()?.toUpperCase() || '文件',
-    size: `${Math.max(1, Math.ceil(file.size / 1024))} KB`,
-    updated: '刚刚',
-    icon: 'file-text',
-    tint: '#168b7a'
-  }))
+  const newFiles = Array.from(list).map((file) => toKnowledgeFile(file, 'none'))
   files.value = [...newFiles, ...files.value]
-  notify(`已上传 ${newFiles.length} 个文件`)
+  notify(`已上传 ${newFiles.length} 个文件（未建立索引）`)
 }
 
 const onUploadChange = (event: Event): void => {
   addUpload((event.target as HTMLInputElement).files)
 }
 
-const pickUpload = (): void => {
-  uploadRef.value?.click()
+/** 「上传文件」按钮：打开上传弹窗 */
+const openUploadModal = (): void => {
+  uploadOpen.value = true
+}
+
+/** 上传弹窗确定后的落地：按所选方式把文件加入列表（索引链路待主进程实现） */
+const onUploadSubmit = (payload: KnowledgeUploadPayload): void => {
+  const indexState: FileIndexState =
+    payload.mode === 'none' ? 'none' : payload.mode === 'custom' ? 'custom' : 'default'
+  const newFiles = payload.files.map((file) => toKnowledgeFile(file, indexState))
+  files.value = [...newFiles, ...files.value]
+  notify(uploadResultText(payload.mode, newFiles.length, payload.sourceLabel))
 }
 
 /** 选择文件夹：webkitdirectory 仅在点击前挂载，避免影响单文件上传框 */
@@ -883,19 +941,10 @@ watch(openTabs, () => {
                 </span>
                 <h1 class="kb-files-title">{{ selectedLibrary.name }}</h1>
               </div>
-              <p class="kb-files-sub">
-                {{ selectedLibrary.description }} · {{ files.length }} 份文件已建立索引
-              </p>
+              <p class="kb-files-sub">{{ selectedLibrary.description }} · {{ fileSummary }}</p>
             </div>
 
             <div class="kb-files-actions">
-              <input
-                ref="uploadRef"
-                type="file"
-                multiple
-                class="kb-file-input"
-                @change="onUploadChange"
-              />
               <input
                 ref="folderUploadRef"
                 type="file"
@@ -903,7 +952,7 @@ watch(openTabs, () => {
                 class="kb-file-input"
                 @change="onUploadChange"
               />
-              <button class="kb-btn-ghost" @click="pickUpload">
+              <button class="kb-btn-ghost" @click="openUploadModal">
                 <svg
                   width="14"
                   height="14"
@@ -1053,6 +1102,13 @@ watch(openTabs, () => {
                   </svg>
                 </span>
                 <span class="kb-file-name">{{ file.name }}</span>
+                <span
+                  v-if="indexTagText(file)"
+                  class="kb-file-tag"
+                  :class="{ 'kb-file-tag--none': file.indexState === 'none' }"
+                >
+                  {{ indexTagText(file) }}
+                </span>
               </button>
               <span class="kb-file-meta">{{ file.size }}</span>
               <span class="kb-file-meta">{{ file.updated }}</span>
@@ -1303,6 +1359,12 @@ watch(openTabs, () => {
       :library="settingsLibrary"
       @close="settingsOpen = false"
       @saved="onLibrarySettingsSaved"
+    />
+    <KnowledgeUploadModal
+      :open="uploadOpen"
+      :library="selectedLibrary"
+      @close="uploadOpen = false"
+      @submit="onUploadSubmit"
     />
     <ConfirmDialog
       v-if="deleteCandidate"
@@ -1750,6 +1812,19 @@ watch(openTabs, () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.kb-file-tag {
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #e5f3ef;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #147967;
+}
+.kb-file-tag--none {
+  background: #f1f3f4;
+  color: #8a969a;
 }
 .kb-file-meta {
   font-size: 11px;
