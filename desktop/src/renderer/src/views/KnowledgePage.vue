@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import KnowledgeDetailModal from '../components/knowledge/KnowledgeDetailModal.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
+import KnowledgeRenameModal from '../components/knowledge/KnowledgeRenameModal.vue'
 import KnowledgeSettingsModal from '../components/knowledge/KnowledgeSettingsModal.vue'
+import KnowledgeShareModal from '../components/knowledge/KnowledgeShareModal.vue'
 import KnowledgeUploadModal from '../components/knowledge/KnowledgeUploadModal.vue'
 import {
   findGroupIdOf,
@@ -12,24 +15,39 @@ import {
   type KnowledgeFolder,
   type KnowledgeGroup
 } from '../components/knowledge/knowledgeList'
+import {
+  childKey,
+  collectFileNodes,
+  fileNode,
+  findNode,
+  flattenVisible,
+  mergeUploads,
+  parentKeyOf,
+  patchFile,
+  remapKey,
+  removeNode,
+  renameNode,
+  sortTree,
+  type KnowledgeFileIcon,
+  type KnowledgeFileIndexState,
+  type KnowledgeFileMeta,
+  type KnowledgeNode,
+  type KnowledgeSortKey
+} from '../components/knowledge/knowledgeTree'
 import { uploadResultText, type KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
 import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
 
-// ── 知识库数据模型（KnowledgeFolder / KnowledgeGroup 见 components/knowledge/knowledgeList.ts） ──
-type FileIcon = 'file-text' | 'file-type-2' | 'file-spreadsheet'
+// ── 知识库数据模型（知识库列表见 components/knowledge/knowledgeList.ts，文件树见 knowledgeTree.ts） ──
+type FileIcon = KnowledgeFileIcon
 /** 文件建立索引的方式（undefined = 页面初始数据，按「已建立索引」展示） */
-type FileIndexState = 'default' | 'custom' | 'none'
-interface KnowledgeFile {
-  name: string
-  type: string
-  size: string
-  updated: string
-  icon: FileIcon
-  tint: string
-  /** 该文件的索引方式：默认索引 / 自定义索引 / 只上传未索引 */
-  indexState?: FileIndexState
-}
-type SortKey = 'name' | 'size' | 'updated'
+type FileIndexState = KnowledgeFileIndexState
+/** 文件元信息（列表行与右侧预览标签页共用） */
+type KnowledgeFile = KnowledgeFileMeta
+/** 列表节点：文件夹 / 文件 */
+type KnowledgeTreeNode = KnowledgeNode
+type SortKey = KnowledgeSortKey
+/** 创建共享的对象类型 */
+type ShareKind = 'library' | 'folder' | 'file'
 
 // ── 知识库分组（本地 / 共享 / 云端） ──
 const KNOWLEDGE_GROUPS: KnowledgeGroup[] = [
@@ -161,12 +179,24 @@ const deleteCandidate = ref<KnowledgeFolder | null>(null)
 /** 按库覆盖配置（弹窗内保存/删除时清理） */
 const knowledgeSettingsStore = useKnowledgeSettingsStore()
 
-// ── 文件列表：排序、上传、标签页 ──
-const files = ref<KnowledgeFile[]>(KNOWLEDGE_FILES)
+// ── 文件列表：文件树、排序、上传、标签页 ──
+/** 文件树：上传文件夹后保留原始目录结构，key 即相对路径 */
+const fileTree = ref<KnowledgeTreeNode[]>(KNOWLEDGE_FILES.map((file) => fileNode([], file)))
+/** 文件夹展开状态（缺省展开，上传完就能看到原始结构） */
+const folderExpanded = ref<Record<string, boolean>>({})
 const sortKey = ref<SortKey>('updated')
 const ascending = ref(false)
+/** 标签页以文件 key 标识（'问答' 是常驻标签） */
 const openTabs = ref<string[]>(['问答'])
 const activeTab = ref('问答')
+/** 问答区域是否收起（默认收起：整个问答区域不显示） */
+const panelCollapsed = ref(true)
+/** 问答区域是否全屏 */
+const panelFullscreen = ref(false)
+/** 文件行三点菜单当前展开的 key */
+const fileMenuKey = ref<string | null>(null)
+/** 知识库名字右侧的操作菜单是否展开 */
+const libraryMenuOpen = ref(false)
 
 // ── 问答 ──
 const question = ref('')
@@ -175,6 +205,21 @@ const answer = ref('')
 // ── 左右分栏拖拽 ──
 const filePanelPercent = ref(40)
 const detailRef = ref<HTMLElement | null>(null)
+
+/** 左侧知识库分组栏宽度：可拖动分割栏调整，并记住到本地 */
+const GROUPS_WIDTH_KEY = 'ke-work.kb-groups-width'
+const GROUPS_WIDTH_DEFAULT = 250
+const GROUPS_WIDTH_MIN = 180
+const GROUPS_WIDTH_MAX = 420
+
+/** 读取本地记住的侧栏宽度（非法/越界值回退默认） */
+function readGroupsWidth(): number {
+  const saved = Number(localStorage.getItem(GROUPS_WIDTH_KEY))
+  if (!Number.isFinite(saved) || saved <= 0) return GROUPS_WIDTH_DEFAULT
+  return Math.min(GROUPS_WIDTH_MAX, Math.max(GROUPS_WIDTH_MIN, saved))
+}
+
+const groupsWidth = ref(readGroupsWidth())
 
 // ── 文件上传 ──
 /** 上传弹窗：选文件 → 选择上传后处理方式 → 需要时进入索引配置向导 */
@@ -190,32 +235,50 @@ const moreGroup = computed(
   () => knowledgeGroups.value.find((group) => group.id === moreGroupId.value) ?? null
 )
 
-const sortedFiles = computed(() =>
-  [...files.value].sort((a, b) => {
-    const left = a[sortKey.value]
-    const right = b[sortKey.value]
-    return `${left}`.localeCompare(`${right}`, 'zh-CN') * (ascending.value ? 1 : -1)
-  })
+/** 排序后的文件树（文件夹恒排在文件前） */
+const sortedTree = computed(() => sortTree(fileTree.value, sortKey.value, ascending.value))
+
+/** 展开可见行：文件夹折叠时跳过其子节点 */
+const rows = computed(() =>
+  flattenVisible(sortedTree.value, (key) => folderExpanded.value[key] !== false)
 )
 
-const activeFile = computed(() => files.value.find((file) => file.name === activeTab.value))
+/** 全部文件节点（不含文件夹） */
+const allFiles = computed(() => collectFileNodes(fileTree.value))
+
+/** 当前标签对应的节点（'问答' 不是节点，返回 null） */
+const activeNode = computed(() => findNode(fileTree.value, activeTab.value))
+
+const activeFile = computed(() => activeNode.value?.file ?? null)
+
+/** 标签页显示名：文件重命名后跟着更新 */
+const tabLabel = (tab: string): string => findNode(fileTree.value, tab)?.name ?? tab
 
 /** 已建立索引的文件数（「只上传文件」的条目不计数） */
-const indexedCount = computed(() => files.value.filter((file) => file.indexState !== 'none').length)
+const indexedCount = computed(
+  () => allFiles.value.filter((node) => node.file?.indexState !== 'none').length
+)
 
 /** 文件区副标题：文件总数与索引情况 */
 const fileSummary = computed(() => {
-  const total = files.value.length
+  const total = allFiles.value.length
   if (!total) return '暂无文件'
   if (indexedCount.value === total) return `${total} 份文件已建立索引`
   return `${total} 份文件 · ${indexedCount.value} 份已建立索引`
 })
 
 /** 列表里的索引标记：只上传的文件与自定义索引的文件需要单独标出 */
-const indexTagText = (file: KnowledgeFile): string => {
-  if (file.indexState === 'none') return '未索引'
-  if (file.indexState === 'custom') return '自定义索引'
+const indexTagText = (node: KnowledgeTreeNode): string => {
+  if (node.file?.indexState === 'none') return '未索引'
+  if (node.file?.indexState === 'custom') return '自定义索引'
   return ''
+}
+
+/** 索引状态文案（详情弹窗用，undefined 视为已建立索引） */
+const indexStateText = (node: KnowledgeTreeNode): string => {
+  if (node.file?.indexState === 'none') return '未建立索引'
+  if (node.file?.indexState === 'custom') return '自定义索引'
+  return '已建立索引'
 }
 
 /** 「查看更多」页：当前分组下的知识库 + 两个归档卡片 */
@@ -361,34 +424,52 @@ const onLibrarySettingsSaved = (name: string): void => {
   notify(`「${name}」设置已保存`)
 }
 
-/** 点击条目菜单以外的区域关闭菜单 */
+/** 点击菜单以外的区域关闭菜单（侧栏条目菜单 / 文件行菜单 / 知识库操作菜单） */
 const onDocumentMousedown = (event: MouseEvent): void => {
-  if (!openLibMenu.value) return
-  const target = event.target as HTMLElement | null
-  if (target?.closest('.kb-lib-row')) return
-  openLibMenu.value = null
+  const element = event.target instanceof Element ? event.target : null
+  if (openLibMenu.value && !element?.closest('.kb-lib-row')) openLibMenu.value = null
+  if (fileMenuKey.value && !element?.closest('.kb-row-more')) fileMenuKey.value = null
+  if (libraryMenuOpen.value && !element?.closest('.kb-library-menu-wrap')) {
+    libraryMenuOpen.value = false
+  }
 }
 
 const onDocumentKeydown = (event: KeyboardEvent): void => {
-  if (event.key === 'Escape') openLibMenu.value = null
+  if (event.key !== 'Escape') return
+  openLibMenu.value = null
+  fileMenuKey.value = null
+  libraryMenuOpen.value = false
+  // 问答区域全屏时按 Esc = 退出全屏，回到展开的分栏宽度
+  if (panelFullscreen.value) {
+    panelFullscreen.value = false
+    panelCollapsed.value = false
+  }
 }
 
-// ── 文件与标签页 ──
-const openFile = (file: KnowledgeFile): void => {
-  if (!openTabs.value.includes(file.name)) openTabs.value = [...openTabs.value, file.name]
-  activeTab.value = file.name
+// ── 文件夹展开 / 文件标签页 ──
+const isFolderExpanded = (key: string): boolean => folderExpanded.value[key] !== false
+
+const toggleFolder = (key: string): void => {
+  folderExpanded.value = { ...folderExpanded.value, [key]: !isFolderExpanded(key) }
 }
 
-const closeTab = (name: string): void => {
-  openTabs.value = openTabs.value.filter((tab) => tab !== name)
-  if (activeTab.value === name) activeTab.value = '问答'
+/** 选中文件：在最右侧以标签页打开（已打开则直接切过去） */
+const openFile = (node: KnowledgeTreeNode): void => {
+  if (node.kind !== 'file') return
+  // 选中文件时确保问答区域显示出来，否则标签页会藏在收起的面板里
+  panelCollapsed.value = false
+  if (!openTabs.value.includes(node.key)) openTabs.value = [...openTabs.value, node.key]
+  activeTab.value = node.key
+  libraryMenuOpen.value = false
 }
 
-const deleteFile = (file: KnowledgeFile): void => {
-  files.value = files.value.filter((item) => item.name !== file.name)
-  closeTab(file.name)
-  notify('文件已删除')
+const closeTab = (tab: string): void => {
+  openTabs.value = openTabs.value.filter((item) => item !== tab)
+  if (activeTab.value === tab) activeTab.value = '问答'
 }
+
+/** 节点自身或它的子孙是否对应这个标签 */
+const tabBelongsTo = (tab: string, key: string): boolean => tab === key || tab.startsWith(`${key}/`)
 
 const changeSort = (key: SortKey): void => {
   if (sortKey.value === key) {
@@ -427,16 +508,42 @@ const toKnowledgeFile = (file: File, indexState: FileIndexState): KnowledgeFile 
   }
 }
 
-/** 上传文件夹：仍走系统目录选择，按「只上传文件」处理 */
-const addUpload = (list: FileList | null): void => {
-  if (!list?.length) return
-  const newFiles = Array.from(list).map((file) => toKnowledgeFile(file, 'none'))
-  files.value = [...newFiles, ...files.value]
-  notify(`已上传 ${newFiles.length} 个文件（未建立索引）`)
+/** 上传文件夹：只允许选文件夹，按 webkitRelativePath 还原原始目录结构 */
+const onFolderChange = (event: Event): void => {
+  const input = event.target as HTMLInputElement
+  const picked = Array.from(input.files ?? [])
+  // 复位，同一个文件夹可以再次选择
+  input.value = ''
+  if (!picked.length) return
+  addFolderUpload(picked)
 }
 
-const onUploadChange = (event: Event): void => {
-  addUpload((event.target as HTMLInputElement).files)
+const addFolderUpload = (picked: File[]): void => {
+  const entries = picked.map((file) => ({
+    dirs: folderSegments(file),
+    file: toKnowledgeFile(file, 'none')
+  }))
+  fileTree.value = mergeUploads(fileTree.value, entries)
+  // 新上传的目录默认展开，保证「原始结构」一眼可见
+  for (const entry of entries) {
+    let key = ''
+    for (const dir of entry.dirs) {
+      key = childKey(key, dir)
+      folderExpanded.value[key] = true
+    }
+  }
+  const root = entries[0]?.dirs[0]
+  notify(
+    root
+      ? `已上传文件夹「${root}」（${entries.length} 个文件，未建立索引）`
+      : `已上传 ${entries.length} 个文件（未建立索引）`
+  )
+}
+
+/** File → 目录层级（webkitRelativePath 形如「设计规范/组件/按钮.md」） */
+const folderSegments = (file: File): string[] => {
+  const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+  return relative.split('/').filter(Boolean).slice(0, -1)
 }
 
 /** 「上传文件」按钮：打开上传弹窗 */
@@ -444,19 +551,241 @@ const openUploadModal = (): void => {
   uploadOpen.value = true
 }
 
-/** 上传弹窗确定后的落地：按所选方式把文件加入列表（索引链路待主进程实现） */
+/** 上传弹窗确定后的落地：按所选方式把文件加入文件树（索引链路待主进程实现） */
 const onUploadSubmit = (payload: KnowledgeUploadPayload): void => {
   const indexState: FileIndexState =
     payload.mode === 'none' ? 'none' : payload.mode === 'custom' ? 'custom' : 'default'
-  const newFiles = payload.files.map((file) => toKnowledgeFile(file, indexState))
-  files.value = [...newFiles, ...files.value]
-  notify(uploadResultText(payload.mode, newFiles.length, payload.sourceLabel))
+  fileTree.value = mergeUploads(
+    fileTree.value,
+    payload.files.map((file) => ({ dirs: [], file: toKnowledgeFile(file, indexState) }))
+  )
+  notify(uploadResultText(payload.mode, payload.files.length, payload.sourceLabel))
 }
 
-/** 选择文件夹：webkitdirectory 仅在点击前挂载，避免影响单文件上传框 */
+/** 「上传文件夹」按钮：只打开目录选择器（webkitdirectory 挂在输入框上） */
 const uploadFolder = (): void => {
-  folderUploadRef.value?.setAttribute('webkitdirectory', '')
   folderUploadRef.value?.click()
+}
+
+// ── 文件行三点菜单：查看详情 / 重新命名 / 重建索引 / 创建共享 / 删除 ──
+/** 鼠标移到三点按钮即滑出菜单 */
+const openFileMenu = (key: string): void => {
+  fileMenuKey.value = key
+  libraryMenuOpen.value = false
+}
+
+/** 鼠标离开整个菜单区域（含下拉层）时收起 */
+const leaveFileMenu = (key: string): void => {
+  if (fileMenuKey.value === key) fileMenuKey.value = null
+}
+
+const closeFileMenu = (): void => {
+  fileMenuKey.value = null
+}
+
+// ── 查看详情 ──
+const detailNode = ref<KnowledgeTreeNode | null>(null)
+const detailOpen = ref(false)
+
+const detailTitle = computed(() => detailNode.value?.name ?? '')
+
+/** 详情弹窗的信息行（文件夹与文件展示不同字段） */
+const detailItems = computed<Array<{ label: string; value: string }>>(() => {
+  const node = detailNode.value
+  if (!node) return []
+  const location = parentKeyOf(node.key) || '知识库根目录'
+  if (node.kind === 'folder') {
+    return [
+      { label: '名称', value: node.name },
+      { label: '类型', value: '文件夹' },
+      { label: '包含文件', value: `${collectFileNodes(node.children ?? []).length} 个` },
+      { label: '所在位置', value: location },
+      { label: '索引状态', value: '随其中的文件一起建立索引' }
+    ]
+  }
+  return [
+    { label: '名称', value: node.name },
+    { label: '类型', value: node.file?.type ?? '文件' },
+    { label: '大小', value: node.file?.size ?? '—' },
+    { label: '更新时间', value: node.file?.updated ?? '—' },
+    { label: '所在位置', value: location },
+    { label: '索引状态', value: indexStateText(node) }
+  ]
+})
+
+const openFileDetail = (node: KnowledgeTreeNode): void => {
+  closeFileMenu()
+  detailNode.value = node
+  detailOpen.value = true
+}
+
+// ── 重新命名（文件 / 文件夹）──
+const renameTarget = ref<KnowledgeTreeNode | null>(null)
+const fileRenameOpen = ref(false)
+
+const openFileRename = (node: KnowledgeTreeNode): void => {
+  closeFileMenu()
+  renameTarget.value = node
+  fileRenameOpen.value = true
+}
+
+const submitFileRename = (name: string): void => {
+  const target = renameTarget.value
+  renameTarget.value = null
+  if (!target || name === target.name) return
+  const newKey = childKey(parentKeyOf(target.key), name)
+  fileTree.value = renameNode(fileTree.value, target.key, name)
+  // 已打开的标签页跟着改名，避免指向不存在的 key
+  const remap = (tab: string): string => remapKey(tab, target.key, newKey)
+  openTabs.value = openTabs.value.map(remap)
+  if (activeTab.value !== '问答') activeTab.value = remap(activeTab.value)
+  notify(`已重命名为「${name}」`)
+}
+
+// ── 重建索引（前端演示：直接把该文件标记为已建立索引）──
+const rebuildIndex = (node: KnowledgeTreeNode): void => {
+  closeFileMenu()
+  if (node.kind !== 'file') return
+  fileTree.value = patchFile(fileTree.value, node.key, { indexState: 'default', updated: '刚刚' })
+  notify(`已为「${node.name}」重建索引`)
+}
+
+// ── 创建共享（知识库 / 文件夹 / 文件共用同一个弹窗）──
+const shareOpen = ref(false)
+const shareName = ref('')
+const shareKind = ref<ShareKind>('file')
+
+const openShare = (name: string, kind: ShareKind): void => {
+  closeFileMenu()
+  libraryMenuOpen.value = false
+  shareName.value = name
+  shareKind.value = kind
+  shareOpen.value = true
+}
+
+const onShareCreated = (name: string): void => {
+  notify(`已创建「${name}」的共享链接`)
+}
+
+// ── 删除文件 / 文件夹：二次确认 ──
+const deleteFileNode = ref<KnowledgeTreeNode | null>(null)
+
+const askDeleteFile = (node: KnowledgeTreeNode): void => {
+  closeFileMenu()
+  deleteFileNode.value = node
+}
+
+const confirmDeleteFile = (): void => {
+  const target = deleteFileNode.value
+  deleteFileNode.value = null
+  if (!target) return
+  fileTree.value = removeNode(fileTree.value, target.key)
+  openTabs.value = openTabs.value.filter((tab) => !tabBelongsTo(tab, target.key))
+  if (tabBelongsTo(activeTab.value, target.key)) activeTab.value = '问答'
+  notify(`已删除「${target.name}」`)
+}
+
+// ── 知识库名字右侧的操作菜单：重命名 / 创建共享 / 索引设置 / 删除 ──
+const libraryRenameOpen = ref(false)
+
+const toggleLibraryMenu = (): void => {
+  libraryMenuOpen.value = !libraryMenuOpen.value
+  fileMenuKey.value = null
+}
+
+const openLibraryRename = (): void => {
+  libraryMenuOpen.value = false
+  libraryRenameOpen.value = true
+}
+
+/** 只改名称，描述沿用原值（描述编辑仍在「知识库编辑」弹窗里） */
+const submitLibraryRename = (name: string): void => {
+  libraryRenameOpen.value = false
+  const target = selectedLibrary.value
+  if (name === target.name) return
+  knowledgeGroups.value = renameLibrary(knowledgeGroups.value, target.id, {
+    name,
+    description: target.description
+  })
+  selectedLibrary.value = { ...target, name, updated: '刚刚' }
+  notify(`已重命名为「${name}」`)
+}
+
+const openLibrarySettingsFromHeader = (): void => {
+  libraryMenuOpen.value = false
+  openLibrarySettings(selectedLibrary.value)
+}
+
+const deleteLibraryFromHeader = (): void => {
+  libraryMenuOpen.value = false
+  askDeleteLibrary(selectedLibrary.value)
+}
+
+// ── 问答区域：折叠 / 展开 / 全屏（默认折叠 = 整块区域不显示）──
+/**
+ * - 折叠（默认）：整个问答区域收起不显示，知识库内容区域占满工作台，右侧只留一条展开入口
+ * - 展开：重新显示问答区域（恢复拖拽出来的分栏宽度）
+ * - 全屏：整块工作台都交给问答区域
+ *
+ * 展开 / 折叠由同一个按钮承担：收起时只显示「展开」，显示时只显示「折叠」。
+ */
+const togglePanelCollapsed = (): void => {
+  // 全屏时点它先退出全屏，再收起区域
+  if (panelFullscreen.value) {
+    panelFullscreen.value = false
+    panelCollapsed.value = true
+    return
+  }
+  panelCollapsed.value = !panelCollapsed.value
+}
+
+/** 全屏 / 还原：全屏时按钮切成「还原」，还原回展开（分栏）状态 */
+const togglePanelFullscreen = (): void => {
+  panelFullscreen.value = !panelFullscreen.value
+  // 全屏必然处于显示状态；退出全屏后回到展开的分栏宽度
+  panelCollapsed.value = false
+}
+
+/** 收起时知识库内容区域占满工作台，显示时按拖拽出来的分栏比例 */
+const filePanelStyle = computed<Record<string, string>>(() => {
+  const style: Record<string, string> = {}
+  if (!panelCollapsed.value) style.width = `${filePanelPercent.value}%`
+  return style
+})
+
+// ── 左侧分组栏 / 右侧内容区 拖拽分栏 ──
+/**
+ * 拖动分组栏右侧的分割栏调整它的宽度：
+ * 结果限制在 180~420px，同时给右侧内容区留出足够空间，松手后写入本地。
+ */
+const resizeGroups = (event: MouseEvent): void => {
+  event.preventDefault()
+  const workbench = (event.currentTarget as HTMLElement | null)?.parentElement
+  const total = workbench?.clientWidth ?? 0
+  const maxWidth = total
+    ? Math.max(GROUPS_WIDTH_MIN, Math.min(GROUPS_WIDTH_MAX, total - 460))
+    : GROUPS_WIDTH_MAX
+  const startX = event.clientX
+  const startWidth = groupsWidth.value
+  const onMove = (moveEvent: MouseEvent): void => {
+    groupsWidth.value = Math.min(
+      maxWidth,
+      Math.max(GROUPS_WIDTH_MIN, startWidth + moveEvent.clientX - startX)
+    )
+  }
+  const onUp = (): void => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    localStorage.setItem(GROUPS_WIDTH_KEY, String(groupsWidth.value))
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+/** 双击分割栏恢复默认宽度 */
+const resetGroupsWidth = (): void => {
+  groupsWidth.value = GROUPS_WIDTH_DEFAULT
+  localStorage.setItem(GROUPS_WIDTH_KEY, String(GROUPS_WIDTH_DEFAULT))
 }
 
 // ── 左侧文件区 / 右侧问答区 拖拽分栏 ──
@@ -481,7 +810,7 @@ const resizePanels = (event: MouseEvent): void => {
 // ── 问答提交 ──
 const ask = (): void => {
   if (!question.value.trim()) return
-  answer.value = `已基于「${selectedLibrary.value.name}」中的 ${files.value.length} 份资料开始检索。关于“${question.value.trim()}”，建议先查看《${files.value[0]?.name || '资料索引'}》中的相关章节；如需，我可以继续归纳要点或形成行动清单。`
+  answer.value = `已基于「${selectedLibrary.value.name}」中的 ${allFiles.value.length} 份资料开始检索。关于“${question.value.trim()}”，建议先查看《${allFiles.value[0]?.name || '资料索引'}》中的相关章节；如需，我可以继续归纳要点或形成行动清单。`
   question.value = ''
 }
 
@@ -618,9 +947,16 @@ watch(openTabs, () => {
     </div>
 
     <!-- ════════════════ 知识库工作台 ════════════════ -->
-    <div v-else class="kb-workbench">
+    <div
+      v-else
+      class="kb-workbench"
+      :class="{
+        'kb-workbench--panel-collapsed': panelCollapsed,
+        'kb-workbench--panel-full': panelFullscreen
+      }"
+    >
       <!-- ── 知识库分组侧栏 ── -->
-      <aside class="kb-groups">
+      <aside class="kb-groups" :style="{ width: `${groupsWidth}px` }">
         <button class="kb-overview">
           <svg
             width="15"
@@ -910,9 +1246,19 @@ watch(openTabs, () => {
       </aside>
 
       <!-- ── 文件区 + 问答区 ── -->
+      <!-- 分组侧栏 / 内容区 分割栏：左右拖动调整知识库侧栏宽度 -->
+      <div
+        class="kb-resizer kb-resizer--groups"
+        title="拖动调整知识库侧栏宽度（双击恢复默认）"
+        @mousedown="resizeGroups"
+        @dblclick="resetGroupsWidth"
+      >
+        <span class="kb-resizer-bar"></span>
+      </div>
+
       <div ref="detailRef" class="kb-detail">
         <!-- 文件区 -->
-        <section class="kb-files" :style="{ width: `${filePanelPercent}%` }">
+        <section class="kb-files" :style="filePanelStyle">
           <div class="kb-files-header">
             <div>
               <div class="kb-files-title-row">
@@ -940,17 +1286,128 @@ watch(openTabs, () => {
                   </svg>
                 </span>
                 <h1 class="kb-files-title">{{ selectedLibrary.name }}</h1>
+                <!-- 知识库操作：重命名 / 创建共享 / 索引设置 / 删除 -->
+                <div class="kb-library-menu-wrap">
+                  <button
+                    class="kb-library-more"
+                    type="button"
+                    title="知识库操作"
+                    aria-label="知识库操作"
+                    :aria-expanded="libraryMenuOpen"
+                    @click="toggleLibraryMenu"
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="1" />
+                      <circle cx="19" cy="12" r="1" />
+                      <circle cx="5" cy="12" r="1" />
+                    </svg>
+                  </button>
+
+                  <div v-if="libraryMenuOpen" class="kb-library-menu">
+                    <button class="kb-lib-menu-item" @click="openLibraryRename">
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path
+                          d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                        />
+                        <path d="m15 5 4 4" />
+                      </svg>
+                      重命名
+                    </button>
+                    <button
+                      class="kb-lib-menu-item"
+                      @click="openShare(selectedLibrary.name, 'library')"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="18" cy="5" r="3" />
+                        <circle cx="6" cy="12" r="3" />
+                        <circle cx="18" cy="19" r="3" />
+                        <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+                        <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+                      </svg>
+                      创建共享
+                    </button>
+                    <button class="kb-lib-menu-item" @click="openLibrarySettingsFromHeader">
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                        />
+                      </svg>
+                      索引设置
+                    </button>
+                    <button
+                      class="kb-lib-menu-item kb-lib-menu-item--danger"
+                      @click="deleteLibraryFromHeader"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        <line x1="10" x2="10" y1="11" y2="17" />
+                        <line x1="14" x2="14" y1="11" y2="17" />
+                      </svg>
+                      删除
+                    </button>
+                  </div>
+                </div>
               </div>
               <p class="kb-files-sub">{{ selectedLibrary.description }} · {{ fileSummary }}</p>
             </div>
 
             <div class="kb-files-actions">
+              <!-- 上传文件夹：webkitdirectory 让系统选择器只能选目录 -->
               <input
                 ref="folderUploadRef"
                 type="file"
                 multiple
+                webkitdirectory
                 class="kb-file-input"
-                @change="onUploadChange"
+                @change="onFolderChange"
               />
               <button class="kb-btn-ghost" @click="openUploadModal">
                 <svg
@@ -1039,17 +1496,72 @@ watch(openTabs, () => {
                   <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
                 </svg>
               </button>
-              <span></span>
+              <span class="kb-table-head-ops">操作</span>
             </div>
 
-            <div v-for="file in sortedFiles" :key="file.name" class="kb-table-row">
-              <button class="kb-file-btn" @click="openFile(file)">
+            <div
+              v-for="row in rows"
+              :key="row.node.key"
+              class="kb-table-row"
+              :class="{ 'kb-table-row--menu': fileMenuKey === row.node.key }"
+            >
+              <!-- 文件夹：点击展开 / 折叠；文件：点击在最右侧以标签页打开 -->
+              <button
+                v-if="row.node.kind === 'folder'"
+                class="kb-file-btn kb-file-btn--folder"
+                :style="{ paddingLeft: `${row.depth * 16}px` }"
+                @click="toggleFolder(row.node.key)"
+              >
+                <svg
+                  class="kb-file-chevron"
+                  :class="{ 'kb-file-chevron--open': isFolderExpanded(row.node.key) }"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+                <span class="kb-file-icon kb-file-icon--folder">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"
+                    />
+                  </svg>
+                </span>
+                <span class="kb-file-name">{{ row.node.name }}</span>
+                <span class="kb-file-tag kb-file-tag--folder">
+                  {{ collectFileNodes(row.node.children ?? []).length }} 项
+                </span>
+              </button>
+              <button
+                v-else
+                class="kb-file-btn"
+                :style="{ paddingLeft: `${row.depth * 16}px` }"
+                @click="openFile(row.node)"
+              >
                 <span
                   class="kb-file-icon"
-                  :style="{ color: file.tint, background: file.tint + '12' }"
+                  :style="{
+                    color: row.node.file?.tint,
+                    background: (row.node.file?.tint || '#168b7a') + '12'
+                  }"
                 >
                   <svg
-                    v-if="file.icon === 'file-text'"
+                    v-if="row.node.file?.icon === 'file-text'"
                     width="16"
                     height="16"
                     viewBox="0 0 24 24"
@@ -1066,7 +1578,7 @@ watch(openTabs, () => {
                     <path d="M16 17H8" />
                   </svg>
                   <svg
-                    v-else-if="file.icon === 'file-type-2'"
+                    v-else-if="row.node.file?.icon === 'file-type-2'"
                     width="16"
                     height="16"
                     viewBox="0 0 24 24"
@@ -1101,46 +1613,170 @@ watch(openTabs, () => {
                     <path d="M14 17h2" />
                   </svg>
                 </span>
-                <span class="kb-file-name">{{ file.name }}</span>
+                <span class="kb-file-name">{{ row.node.name }}</span>
                 <span
-                  v-if="indexTagText(file)"
+                  v-if="indexTagText(row.node)"
                   class="kb-file-tag"
-                  :class="{ 'kb-file-tag--none': file.indexState === 'none' }"
+                  :class="{ 'kb-file-tag--none': row.node.file?.indexState === 'none' }"
                 >
-                  {{ indexTagText(file) }}
+                  {{ indexTagText(row.node) }}
                 </span>
               </button>
-              <span class="kb-file-meta">{{ file.size }}</span>
-              <span class="kb-file-meta">{{ file.updated }}</span>
-              <button class="kb-file-del" title="删除文件" @click="deleteFile(file)">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+              <span class="kb-file-meta">{{ row.node.file?.size ?? '—' }}</span>
+              <span class="kb-file-meta">{{ row.node.file?.updated ?? '—' }}</span>
+
+              <!-- 操作列：三个点，鼠标移上去滑出下拉菜单 -->
+              <div
+                class="kb-row-more"
+                @mouseenter="openFileMenu(row.node.key)"
+                @mouseleave="leaveFileMenu(row.node.key)"
+              >
+                <button
+                  class="kb-row-more-btn"
+                  type="button"
+                  :title="`「${row.node.name}」操作`"
+                  :aria-label="`「${row.node.name}」操作`"
+                  @click="openFileMenu(row.node.key)"
                 >
-                  <path d="M3 6h18" />
-                  <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                  <line x1="10" x2="10" y1="11" y2="17" />
-                  <line x1="14" x2="14" y1="11" y2="17" />
-                </svg>
-              </button>
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="19" cy="12" r="1" />
+                    <circle cx="5" cy="12" r="1" />
+                  </svg>
+                </button>
+
+                <div v-if="fileMenuKey === row.node.key" class="kb-row-menu">
+                  <button class="kb-lib-menu-item" @click="openFileDetail(row.node)">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+                      />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                    查看详情
+                  </button>
+                  <button class="kb-lib-menu-item" @click="openFileRename(row.node)">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                      />
+                      <path d="m15 5 4 4" />
+                    </svg>
+                    重新命名
+                  </button>
+                  <button
+                    v-if="row.node.kind === 'file'"
+                    class="kb-lib-menu-item"
+                    @click="rebuildIndex(row.node)"
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                      <path d="M21 3v5h-5" />
+                      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                      <path d="M8 16H3v5" />
+                    </svg>
+                    重建索引
+                  </button>
+                  <button
+                    class="kb-lib-menu-item"
+                    @click="
+                      openShare(row.node.name, row.node.kind === 'folder' ? 'folder' : 'file')
+                    "
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="18" cy="5" r="3" />
+                      <circle cx="6" cy="12" r="3" />
+                      <circle cx="18" cy="19" r="3" />
+                      <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+                      <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+                    </svg>
+                    创建共享
+                  </button>
+                  <button
+                    class="kb-lib-menu-item kb-lib-menu-item--danger"
+                    @click="askDeleteFile(row.node)"
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <line x1="10" x2="10" y1="11" y2="17" />
+                      <line x1="14" x2="14" y1="11" y2="17" />
+                    </svg>
+                    删除
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
-        <!-- 分栏拖拽手柄 -->
-        <div class="kb-resizer" title="拖动调整区域宽度" @mousedown="resizePanels">
+        <!-- 分栏拖拽手柄（问答区域收起时用不到） -->
+        <div
+          v-if="!panelCollapsed"
+          class="kb-resizer"
+          title="拖动调整区域宽度"
+          @mousedown="resizePanels"
+        >
           <span class="kb-resizer-bar"></span>
         </div>
 
-        <!-- 问答 / 文件预览区 -->
-        <aside class="kb-panel">
+        <!-- 问答 / 文件预览区：折叠时整块收起，只留右侧一条展开入口 -->
+        <aside v-if="!panelCollapsed" class="kb-panel">
           <div class="kb-tabs">
             <button
               class="kb-tab-scroll"
@@ -1169,7 +1805,7 @@ watch(openTabs, () => {
                 class="kb-tab"
                 :class="{ 'kb-tab--active': activeTab === tab }"
               >
-                <button class="kb-tab-name" @click="activeTab = tab">{{ tab }}</button>
+                <button class="kb-tab-name" @click="activeTab = tab">{{ tabLabel(tab) }}</button>
                 <button v-if="tab !== '问答'" class="kb-tab-close" @click="closeTab(tab)">
                   <svg
                     width="12"
@@ -1207,6 +1843,74 @@ watch(openTabs, () => {
                 <path d="m9 18 6-6-6-6" />
               </svg>
             </button>
+
+            <!-- 问答区域（最右侧）右上角：展开 / 折叠 + 全屏 / 还原（默认折叠） -->
+            <div class="kb-panel-actions">
+              <!-- 折叠：整个问答区域收起，用指向右侧的单箭头（与右栏「收起右栏」一致） -->
+              <button
+                class="kb-panel-btn kb-panel-btn--active"
+                type="button"
+                title="折叠"
+                aria-label="折叠问答区域"
+                :aria-expanded="true"
+                @click="togglePanelCollapsed"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+              <button
+                class="kb-panel-btn"
+                :class="{ 'kb-panel-btn--active': panelFullscreen }"
+                type="button"
+                :title="panelFullscreen ? '还原' : '全屏'"
+                :aria-label="panelFullscreen ? '还原问答区域' : '全屏显示问答区域'"
+                :aria-pressed="panelFullscreen"
+                @click="togglePanelFullscreen"
+              >
+                <!-- 还原：四角向内（退出全屏） -->
+                <svg
+                  v-if="panelFullscreen"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"
+                  />
+                </svg>
+                <!-- 全屏：四角向外 -->
+                <svg
+                  v-else
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- 问答 -->
@@ -1310,6 +2014,7 @@ watch(openTabs, () => {
           </div>
 
           <!-- 文件预览标签 -->
+          <!-- 文件预览标签 -->
           <div v-else class="kb-file-tab">
             <div
               class="kb-file-tab-icon"
@@ -1335,7 +2040,7 @@ watch(openTabs, () => {
                 <path d="M16 17H8" />
               </svg>
             </div>
-            <h2 class="kb-file-tab-title">{{ activeTab }}</h2>
+            <h2 class="kb-file-tab-title">{{ activeNode?.name ?? activeTab }}</h2>
             <p class="kb-file-tab-meta">
               {{ activeFile?.type }} · {{ activeFile?.size }} · 更新于 {{ activeFile?.updated }}
             </p>
@@ -1343,6 +2048,31 @@ watch(openTabs, () => {
               文件预览区域<br /><br />已在右侧以独立标签打开。可切换至“问答”标签，针对当前知识库继续提问。
             </div>
           </div>
+        </aside>
+        <aside v-else class="kb-panel-strip">
+          <button
+            class="kb-panel-btn kb-panel-strip-btn"
+            type="button"
+            title="展开"
+            aria-label="展开问答区域"
+            :aria-expanded="false"
+            @click="togglePanelCollapsed"
+          >
+            <!-- 展开：把问答区域从左拉出显示，用单箭头指向左侧 -->
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <span class="kb-panel-strip-label">问答</span>
         </aside>
       </div>
     </div>
@@ -1373,6 +2103,50 @@ watch(openTabs, () => {
       confirm-text="删除"
       @confirm="confirmDeleteLibrary"
       @cancel="deleteCandidate = null"
+    />
+    <ConfirmDialog
+      v-if="deleteFileNode"
+      title="删除文件"
+      :message="`确定删除「${deleteFileNode.name}」吗？${
+        deleteFileNode.kind === 'folder' ? '该文件夹及其中的文件会' : '该文件会'
+      }从当前知识库移除，此操作不可撤销。`"
+      confirm-text="删除"
+      @confirm="confirmDeleteFile"
+      @cancel="deleteFileNode = null"
+    />
+    <KnowledgeDetailModal
+      :open="detailOpen"
+      :title="detailTitle"
+      :items="detailItems"
+      @close="detailOpen = false"
+    />
+    <KnowledgeRenameModal
+      :open="fileRenameOpen"
+      :current="renameTarget?.name ?? ''"
+      title="重新命名"
+      :hint="
+        renameTarget?.kind === 'folder'
+          ? '重命名文件夹后，其中文件的路径会一起更新。'
+          : '重命名后，列表与预览标签页中的名称会同步更新。'
+      "
+      @close="fileRenameOpen = false"
+      @submit="submitFileRename"
+    />
+    <KnowledgeRenameModal
+      :open="libraryRenameOpen"
+      :current="selectedLibrary.name"
+      title="重命名知识库"
+      label="知识库名称"
+      hint="重命名只改显示名称，知识库中的文件与索引设置不受影响。"
+      @close="libraryRenameOpen = false"
+      @submit="submitLibraryRename"
+    />
+    <KnowledgeShareModal
+      :open="shareOpen"
+      :target-name="shareName"
+      :target-kind="shareKind"
+      @close="shareOpen = false"
+      @created="onShareCreated"
     />
 
     <!-- 轻量 toast -->
@@ -1741,12 +2515,14 @@ watch(openTabs, () => {
 
 /* ── 文件表格 ── */
 .kb-table {
-  overflow: hidden;
+  /* 行内三点菜单要溢出显示，圆角改由表头与末行兜住 */
+  overflow: visible;
   border-radius: 16px;
   border: 1px solid #e1ebe7;
   background: #ffffff;
 }
 .kb-table-head {
+  border-radius: 16px 16px 0 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 76px 100px 36px;
   align-items: center;
@@ -1848,6 +2624,171 @@ watch(openTabs, () => {
   color: #cf625b;
 }
 
+/* ── 知识库名字右侧的操作按钮与下拉菜单 ── */
+.kb-library-menu-wrap {
+  position: relative;
+  display: flex;
+}
+.kb-library-more {
+  display: flex;
+  padding: 5px;
+  border-radius: 8px;
+  border: 1px solid #dfe9e5;
+  background: #ffffff;
+  color: #668078;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.kb-library-more:hover {
+  border-color: #168b7a;
+  color: #168b7a;
+}
+.kb-library-menu {
+  position: absolute;
+  left: 0;
+  top: 34px;
+  z-index: 40;
+  width: 132px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #e1e9e6;
+  background: #ffffff;
+  padding: 4px 0;
+  box-shadow: 0 8px 22px rgba(24, 58, 51, 0.14);
+}
+
+/* ── 文件夹行 / 操作列 / 行内三点菜单 ── */
+.kb-table-head-ops {
+  text-align: right;
+}
+.kb-table-row--menu {
+  position: relative;
+  z-index: 20;
+}
+.kb-table-row:last-child {
+  border-radius: 0 0 16px 16px;
+}
+.kb-file-btn--folder {
+  gap: 8px;
+}
+.kb-file-chevron {
+  flex-shrink: 0;
+  color: #8a969a;
+  transition: transform 0.15s ease;
+}
+.kb-file-chevron:not(.kb-file-chevron--open) {
+  transform: rotate(-90deg);
+}
+.kb-file-icon--folder {
+  color: #f59e0b;
+  background: #fef5e7;
+}
+.kb-file-tag--folder {
+  background: #f1f3f4;
+  color: #8a969a;
+}
+.kb-row-more {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+}
+.kb-row-more-btn {
+  display: flex;
+  padding: 4px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #b3bfc1;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.kb-table-row:hover .kb-row-more-btn {
+  color: #668078;
+}
+.kb-row-more-btn:hover {
+  background: #edf4f1;
+  color: #168b7a;
+}
+.kb-row-menu {
+  position: absolute;
+  right: 0;
+  top: 26px;
+  z-index: 40;
+  width: 132px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #e1e9e6;
+  background: #ffffff;
+  padding: 4px 0;
+  box-shadow: 0 8px 22px rgba(24, 58, 51, 0.14);
+}
+
+/* ── 最右侧区域右上角：展开 / 折叠 / 全屏 ── */
+.kb-panel-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-left: 4px;
+  border-left: 1px solid #e6eeeb;
+  padding-left: 8px;
+}
+.kb-panel-btn {
+  display: flex;
+  padding: 5px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8a969a;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.kb-panel-btn:hover {
+  background: #edf4f1;
+  color: #168b7a;
+}
+.kb-panel-btn--active {
+  border-color: #cfe6df;
+  background: #e5f3ef;
+  color: #147967;
+}
+
+/* 折叠（默认）：整块问答区域收起不显示，知识库内容区域占满工作台 */
+.kb-workbench--panel-collapsed .kb-files {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* 收起后右侧只留一条展开入口，保证还能重新展开 */
+.kb-panel-strip {
+  display: flex;
+  width: 44px;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  border-left: 1px solid #e6eeeb;
+  background: #f7faf9;
+  padding: 12px 0;
+}
+.kb-panel-strip-label {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: #879498;
+}
+
+/* 全屏：整块工作台交给最右侧区域 */
+.kb-workbench--panel-full .kb-groups,
+.kb-workbench--panel-full .kb-files,
+.kb-workbench--panel-full .kb-resizer {
+  display: none;
+}
 /* ── 分栏拖拽手柄 ── */
 .kb-resizer {
   position: relative;
@@ -1874,6 +2815,16 @@ watch(openTabs, () => {
 }
 .kb-resizer:hover .kb-resizer-bar {
   opacity: 1;
+}
+/* 左侧分组栏分隔条：热区加宽到 6px 更好拖，视觉上仍是一条细线 */
+.kb-resizer--groups {
+  width: 6px;
+  margin-right: -3px;
+  margin-left: -3px;
+  background: transparent;
+}
+.kb-resizer--groups:hover {
+  background: rgba(22, 139, 122, 0.12);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
