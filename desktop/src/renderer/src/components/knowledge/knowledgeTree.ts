@@ -20,7 +20,13 @@ export type KnowledgeSortKey = 'name' | 'size' | 'updated'
 export interface KnowledgeFileMeta {
   name: string
   type: string
+  /** 展示用大小文案（如 4.8 MB） */
   size: string
+  /**
+   * 文件字节数（主进程文档列表提供）。
+   * 有值时「大小」排序按数值比较，避免 '4.8 MB' 与 '126 KB' 按字符串比较出错。
+   */
+  sizeBytes?: number
   updated: string
   icon: KnowledgeFileIcon
   tint: string
@@ -214,6 +220,13 @@ export function sortTree(
     .sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === 'folder' ? -1 : 1
       if (left.kind === 'folder') return left.name.localeCompare(right.name, 'zh-CN')
+      if (sortKey === 'size') {
+        const leftBytes = left.file?.sizeBytes
+        const rightBytes = right.file?.sizeBytes
+        if (typeof leftBytes === 'number' && typeof rightBytes === 'number') {
+          return (leftBytes - rightBytes) * direction
+        }
+      }
       const a = `${left.file?.[sortKey] ?? ''}`
       const b = `${right.file?.[sortKey] ?? ''}`
       return a.localeCompare(b, 'zh-CN') * direction

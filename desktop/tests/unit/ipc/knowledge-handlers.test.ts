@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { registerKnowledgeHandlers } from '../../../src/main/ipc/knowledge-handlers'
@@ -68,12 +68,22 @@ function createHarness(userId: string | null = 'u1') {
     })
   }
   const ipc = createFakeIpcMain()
+  // 打开文件夹：用桩记录主进程解析出的路径，避免单测真的弹资源管理器
+  const openedDirs: string[] = []
+  const revealedFiles: string[] = []
   registerKnowledgeHandlers(ipc as never, {
     knowledgeSettingsService: service,
     knowledgeService,
-    session: session as unknown as SessionService
+    session: session as unknown as SessionService,
+    openDir: async (target) => {
+      openedDirs.push(target)
+      return ''
+    },
+    showItemInFolder: (file) => {
+      revealedFiles.push(file)
+    }
   })
-  return { ipc, service, knowledgeService, knowledgeStore }
+  return { ipc, service, knowledgeService, knowledgeStore, openedDirs, revealedFiles }
 }
 
 /** 造一个真实源文件用于导入 */
@@ -99,13 +109,14 @@ describe('knowledge IPC handlers', () => {
       'knowledge:rename-doc',
       'knowledge:remove-doc',
       'knowledge:read-file',
+      'knowledge:open-dir',
       'knowledge:create-share',
       'knowledge:list-shares',
       'knowledge:revoke-share'
     ]) {
       expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
-    expect(ipc.handlers.size).toBe(15)
+    expect(ipc.handlers.size).toBe(16)
   })
 
   it('set 后 get 拿到已落盘的覆盖项', async () => {
@@ -253,6 +264,46 @@ describe('knowledge IPC handlers', () => {
       [{ srcPath: makeSourceFile('b.md'), relPath: '../../etc/passwd' }]
     )
     expect(result.data.failed[0].reason).toContain('非法')
+  })
+
+  it('打开文件夹：知识库目录与文件所在目录（路径由主进程解析）', async () => {
+    const { ipc, openedDirs, revealedFiles } = createHarness()
+    const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
+      name: '目录测试库'
+    })
+    const kbId = created.data.id
+    await ipc.invoke('knowledge:import', kbId, [
+      { srcPath: makeSourceFile('目录.md', '# 目录'), relPath: '资料/目录.md' }
+    ])
+
+    // 知识库目录：不传 relPath → openDir
+    const base = await ipc.invoke<{ success: boolean }>('knowledge:open-dir', kbId)
+    expect(base.success).toBe(true)
+    expect(openedDirs[0]).toBe(join(dir, 'files', kbId))
+    expect(existsSync(openedDirs[0])).toBe(true)
+
+    // 文件：传 relPath → 在资源管理器中定位该文件
+    const fileDir = await ipc.invoke<{ success: boolean }>('knowledge:open-dir', kbId, '资料/目录.md')
+    expect(fileDir.success).toBe(true)
+    expect(revealedFiles[0].endsWith('目录.md')).toBe(true)
+
+    // 不存在的文件 → 明确报错
+    const missing = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:open-dir',
+      kbId,
+      '不存在.md'
+    )
+    expect(missing.success).toBe(false)
+    expect(missing.error).toContain('文件不存在')
+
+    // 未登录 → 拒绝
+    const anonymous = createHarness(null)
+    const denied = await anonymous.ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:open-dir',
+      kbId
+    )
+    expect(denied.success).toBe(false)
+    expect(denied.error).toContain('未登录')
   })
 
   it('共享：create-share → list-shares → revoke-share', async () => {

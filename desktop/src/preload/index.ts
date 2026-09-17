@@ -370,6 +370,14 @@ const api = {
   readKnowledgeFile(kbId: string, relPath: string, as: 'text' | 'bytes') {
     return ipcRenderer.invoke('knowledge:read-file', kbId, relPath, as)
   },
+  /** 打开知识库所在目录（系统文件管理器；目录不存在时主进程会先创建） */
+  openKnowledgeBaseDir(kbId: string) {
+    return ipcRenderer.invoke('knowledge:open-dir', kbId)
+  },
+  /** 打开文件所在目录（在资源管理器中定位并选中该文件） */
+  openKnowledgeFileDir(kbId: string, relPath: string) {
+    return ipcRenderer.invoke('knowledge:open-dir', kbId, relPath)
+  },
   createKnowledgeShare(input: {
     targetKind: 'library' | 'folder' | 'file'
     targetId: string

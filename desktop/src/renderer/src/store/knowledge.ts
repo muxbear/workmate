@@ -1,12 +1,35 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
+  IpcResult,
   KnowledgeBaseSummary,
   KnowledgeDocumentMeta,
   KnowledgeKind,
   KnowledgeShare,
   KnowledgeStats
 } from '../../../preload/index.d'
+
+/**
+ * IPC 调用被 reject 时的兜底文案。
+ * 典型场景：主进程还是旧实例、尚未注册该通道（渲染层热更新后常见），
+ * 此时 `ipcRenderer.invoke` 会 reject 而不是返回 `{ success: false }`。
+ */
+const IPC_FALLBACK = '与主进程通信失败，请重启应用后重试'
+
+/**
+ * 统一收敛知识库 IPC 调用。
+ *
+ * `window.api.*` 内部是 `ipcRenderer.invoke`，在「无对应 handler」等情况下会 reject；
+ * 直接 await 会让按钮点击**静默无反应**。这里统一转成失败结果，交给调用方提示。
+ */
+async function call<T>(run: () => Promise<IpcResult<T>>, fallback: string): Promise<IpcResult<T>> {
+  try {
+    return await run()
+  } catch (err) {
+    const detail = err instanceof Error && err.message ? err.message : ''
+    return { success: false, error: detail ? `${fallback}（${detail}）` : fallback }
+  }
+}
 
 /**
  * 知识库 store（渲染层唯一数据源）
@@ -41,7 +64,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
 
   async function loadBases(kind?: KnowledgeKind): Promise<boolean> {
     loading.value = true
-    const result = await window.api.listKnowledgeBases(kind ? { kind } : undefined)
+    const result = await call(() => window.api.listKnowledgeBases(kind ? { kind } : undefined), IPC_FALLBACK)
     loading.value = false
     if (!result.success) {
       lastError.value = result.error ?? '读取知识库失败'
@@ -57,7 +80,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
 
   async function loadDocuments(kbId: string): Promise<boolean> {
     if (!kbId) return false
-    const result = await window.api.listKnowledgeDocuments(kbId)
+    const result = await call(() => window.api.listKnowledgeDocuments(kbId), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '读取文件列表失败'
       return false
@@ -68,7 +91,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   }
 
   async function loadStats(): Promise<boolean> {
-    const result = await window.api.getKnowledgeStats()
+    const result = await call(() => window.api.getKnowledgeStats(), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '读取概览失败'
       return false
@@ -88,7 +111,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     description?: string
     kind?: KnowledgeKind
   }): Promise<KnowledgeBaseSummary | null> {
-    const result = await window.api.createKnowledgeBase(input)
+    const result = await call(() => window.api.createKnowledgeBase(input), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '创建知识库失败'
       return null
@@ -102,7 +125,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     id: string,
     patch: { name?: string; description?: string }
   ): Promise<boolean> {
-    const result = await window.api.updateKnowledgeBase(id, patch)
+    const result = await call(() => window.api.updateKnowledgeBase(id, patch), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '保存知识库失败'
       return false
@@ -112,7 +135,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   }
 
   async function removeBase(id: string): Promise<boolean> {
-    const result = await window.api.deleteKnowledgeBase(id)
+    const result = await call(() => window.api.deleteKnowledgeBase(id), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '删除知识库失败'
       return false
@@ -129,7 +152,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     items: Array<{ srcPath: string; relPath: string }>
   ): Promise<{ accepted: number; skipped: number; failed: number; message: string } | null> {
     // 索引能力未开放：统一按「只上传文件」提交
-    const result = await window.api.importKnowledgeDocuments(kbId, items, 'none')
+    const result = await call(() => window.api.importKnowledgeDocuments(kbId, items, 'none'), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '上传失败'
       return null
@@ -156,7 +179,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     relPath: string,
     newName: string
   ): Promise<{ relPath: string } | null> {
-    const result = await window.api.renameKnowledgeDocument(kbId, relPath, newName)
+    const result = await call(() => window.api.renameKnowledgeDocument(kbId, relPath, newName), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '重命名失败'
       return null
@@ -166,7 +189,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   }
 
   async function removeDocument(kbId: string, relPath: string): Promise<boolean> {
-    const result = await window.api.removeKnowledgeDocument(kbId, relPath)
+    const result = await call(() => window.api.removeKnowledgeDocument(kbId, relPath), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '删除失败'
       return false
@@ -176,12 +199,32 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     return true
   }
 
+  /** 打开知识库所在目录（系统文件管理器） */
+  async function openBaseDir(kbId: string): Promise<boolean> {
+    const result = await call(() => window.api.openKnowledgeBaseDir(kbId), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '打开文件夹失败'
+      return false
+    }
+    return true
+  }
+
+  /** 打开文件所在目录（并在资源管理器中选中该文件） */
+  async function openFileDir(kbId: string, relPath: string): Promise<boolean> {
+    const result = await call(() => window.api.openKnowledgeFileDir(kbId, relPath), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '打开文件夹失败'
+      return false
+    }
+    return true
+  }
+
   async function readFile(
     kbId: string,
     relPath: string,
     as: 'text' | 'bytes'
   ): Promise<{ content?: string; bytes?: Uint8Array; ext: string; name: string } | null> {
-    const result = await window.api.readKnowledgeFile(kbId, relPath, as)
+    const result = await call(() => window.api.readKnowledgeFile(kbId, relPath, as), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '读取文件失败'
       return null
@@ -195,7 +238,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     targetName: string
     expiresInDays?: number
   }): Promise<KnowledgeShare | null> {
-    const result = await window.api.createKnowledgeShare(input)
+    const result = await call(() => window.api.createKnowledgeShare(input), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '创建共享失败'
       return null
@@ -204,13 +247,13 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   }
 
   async function listShares(): Promise<KnowledgeShare[]> {
-    const result = await window.api.listKnowledgeShares()
+    const result = await call(() => window.api.listKnowledgeShares(), IPC_FALLBACK)
     if (!result.success) return []
     return result.data ?? []
   }
 
   async function revokeShare(token: string): Promise<boolean> {
-    const result = await window.api.revokeKnowledgeShare(token)
+    const result = await call(() => window.api.revokeKnowledgeShare(token), IPC_FALLBACK)
     if (!result.success) {
       lastError.value = result.error ?? '取消共享失败'
       return false
@@ -247,6 +290,8 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     importDocuments,
     renameDocument,
     removeDocument,
+    openBaseDir,
+    openFileDir,
     readFile,
     createShare,
     listShares,

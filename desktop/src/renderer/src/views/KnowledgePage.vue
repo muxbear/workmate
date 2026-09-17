@@ -150,6 +150,7 @@ function metaOf(doc: KnowledgeDocumentMeta): KnowledgeFileMeta {
     name: doc.name,
     type: doc.type,
     size: formatSize(doc.sizeBytes),
+    sizeBytes: doc.sizeBytes,
     updated: formatTimestamp(doc.updatedAt),
     icon: pickFileIcon(ext),
     tint: FILE_TINTS[ext] ?? '#64748b',
@@ -348,8 +349,15 @@ const openMoreGroup = (groupId: string): void => {
   moreGroupId.value = groupId
 }
 
+/**
+ * 点击分组三点按钮：只负责「打开」菜单。
+ *
+ * 菜单本身由 `@mouseenter` 展开，若这里再做 toggle，鼠标点击会立刻把刚展开的菜单关掉
+ * （hover 与 click 互相抵消）；关闭交给移出分组、点击空白处或 Esc。
+ */
 const toggleGroupMenu = (groupId: string): void => {
-  openGroupMenu.value = openGroupMenu.value === groupId ? null : groupId
+  openGroupMenu.value = groupId
+  openLibMenu.value = null
 }
 
 // ── 知识库条目操作（三点菜单：编辑 / 设置 / 删除）──
@@ -573,12 +581,18 @@ const addFolderUpload = async (picked: File[]): Promise<void> => {
     notify('请先创建或选择一个知识库')
     return
   }
-  const items = picked
-    .map((file) => ({
-      srcPath: window.api.getPathForFile(file),
-      relPath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-    }))
-    .filter((item) => !!item.srcPath)
+  let items: Array<{ srcPath: string; relPath: string }> = []
+  try {
+    items = picked
+      .map((file) => ({
+        srcPath: window.api.getPathForFile(file),
+        relPath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+      }))
+      .filter((item) => !!item.srcPath)
+  } catch (err) {
+    notify(`读取文件路径失败：${(err as Error).message}`)
+    return
+  }
   if (!items.length) {
     notify('未能解析文件路径，请重新选择文件夹')
     return
@@ -603,9 +617,15 @@ const onUploadSubmit = async (payload: KnowledgeUploadPayload): Promise<void> =>
     notify('请先创建或选择一个知识库')
     return
   }
-  const items = payload.files
-    .map((file) => ({ srcPath: window.api.getPathForFile(file), relPath: file.name }))
-    .filter((item) => !!item.srcPath)
+  let items: Array<{ srcPath: string; relPath: string }> = []
+  try {
+    items = payload.files
+      .map((file) => ({ srcPath: window.api.getPathForFile(file), relPath: file.name }))
+      .filter((item) => !!item.srcPath)
+  } catch (err) {
+    notify(`读取文件路径失败：${(err as Error).message}`)
+    return
+  }
   if (!items.length) {
     notify('未能解析文件路径，请重新选择文件')
     return
@@ -679,6 +699,14 @@ const openFileRename = (node: KnowledgeTreeNode): void => {
   closeFileMenu()
   renameTarget.value = node
   fileRenameOpen.value = true
+}
+
+/** 打开文件所在目录：主进程解析真实路径并在资源管理器中定位该文件 */
+const openFileDir = async (node: KnowledgeTreeNode): Promise<void> => {
+  closeFileMenu()
+  if (!selectedKbId.value) return
+  const ok = await kbStore.openFileDir(selectedKbId.value, node.key)
+  if (!ok) notify(kbStore.lastError || '打开文件夹失败')
 }
 
 const submitFileRename = async (name: string): Promise<void> => {
@@ -758,6 +786,17 @@ const toggleLibraryMenu = (): void => {
 const openLibraryRename = (): void => {
   libraryMenuOpen.value = false
   libraryRenameOpen.value = true
+}
+
+/** 打开知识库所在目录：路径由主进程解析并在系统文件管理器中打开 */
+const openLibraryDir = async (): Promise<void> => {
+  libraryMenuOpen.value = false
+  if (!selectedKbId.value) {
+    notify('请先创建或选择一个知识库')
+    return
+  }
+  const ok = await kbStore.openBaseDir(selectedKbId.value)
+  if (!ok) notify(kbStore.lastError || '打开文件夹失败')
 }
 
 /** 只改名称，描述沿用原值（描述编辑仍在「知识库编辑」弹窗里） */
@@ -1402,6 +1441,23 @@ watch(openTabs, () => {
                       </svg>
                       重命名
                     </button>
+                    <button class="kb-lib-menu-item" @click="openLibraryDir">
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path
+                          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+                        />
+                      </svg>
+                      打开文件夹
+                    </button>
                     <button
                       class="kb-lib-menu-item"
                       @click="openShare(selectedLibrary.name, 'library')"
@@ -1761,6 +1817,23 @@ watch(openTabs, () => {
                       <path d="m15 5 4 4" />
                     </svg>
                     重新命名
+                  </button>
+                  <button class="kb-lib-menu-item" @click="openFileDir(row.node)">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+                      />
+                    </svg>
+                    打开文件夹
                   </button>
                   <button
                     v-if="row.node.kind === 'file'"

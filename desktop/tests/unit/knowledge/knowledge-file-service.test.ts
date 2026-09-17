@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { KnowledgeStore } from '../../../src/main/knowledge/KnowledgeStore'
 import {
   KnowledgeFileService,
@@ -153,6 +153,22 @@ describe('KnowledgeFileService', () => {
     expect(readFileSync(store.listDocuments('u1', kbId)[0].storagePath, 'utf-8')).toContain('标题')
 
     await expect(files.readDocument('u1', kbId, 'missing.md', 'text')).rejects.toThrow('文件不存在')
+  })
+
+  it('打开文件夹：解析知识库目录与文件位置，并拦截非法输入', () => {
+    const base = files.resolveBaseDir('u1', kbId)
+    expect(base).toBe(join(dir, 'files', kbId))
+    expect(existsSync(base)).toBe(true)
+    expect(() => files.resolveBaseDir('u1', 'not-exist')).toThrow('知识库不存在')
+
+    files.importDocuments('u1', kbId, [{ srcPath: src('x.md', 'x'), relPath: '子目录/x.md' }])
+    const location = files.resolveDocumentLocation('u1', kbId, '子目录/x.md')
+    expect(location.file.endsWith('x.md')).toBe(true)
+    expect(location.dir).toBe(dirname(location.file))
+    expect(existsSync(location.file)).toBe(true)
+
+    expect(() => files.resolveDocumentLocation('u1', kbId, '../x.md')).toThrow()
+    expect(() => files.resolveDocumentLocation('u1', kbId, '不存在.md')).toThrow('文件不存在')
   })
 
   it('删库：清理全部文档与知识库目录', () => {

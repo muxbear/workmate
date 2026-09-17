@@ -277,6 +277,33 @@ export class KnowledgeFileService {
     return docs.length
   }
 
+  /**
+   * 知识库文件目录（不存在时创建）。
+   *
+   * 供「打开文件夹」使用：库内文件实际存放在
+   * `<knowledge.directory>/files/<kbId>/<docId>/<原文件名>`。
+   */
+  resolveBaseDir(userId: string, kbId: string): string {
+    if (!this.store.getBase(userId, kbId)) throw new Error('知识库不存在')
+    const root = this.kbRoot(kbId)
+    mkdirSync(root, { recursive: true })
+    return root
+  }
+
+  /** 文件所在目录与文件绝对路径（用于在系统文件管理器中定位并选中该文件） */
+  resolveDocumentLocation(
+    userId: string,
+    kbId: string,
+    relPath: string
+  ): { dir: string; file: string } {
+    const safeRel = this.normalizeRelPath(relPath)
+    const doc = this.store.findDocument(userId, kbId, safeRel)
+    if (!doc) throw new Error('文件不存在')
+    const file = this.resolveInside(this.kbRoot(kbId), doc.storagePath)
+    if (!existsSync(file)) throw new Error('文件已丢失')
+    return { dir: dirname(file), file }
+  }
+
   // ── 内部工具 ──
 
   /** 相对路径规范化：拒绝绝对路径、越界、空路径；统一 '/' 分隔 */

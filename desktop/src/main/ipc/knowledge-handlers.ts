@@ -9,6 +9,13 @@ export interface KnowledgeHandlerDeps {
   knowledgeSettingsService: KnowledgeSettingsService
   knowledgeService: KnowledgeService
   session: SessionService
+  /**
+   * 在系统文件管理器中打开目录（返回错误文案，空串表示成功）。
+   * 未注入时「打开文件夹」返回失败，便于单测与无 GUI 环境。
+   */
+  openDir?: (dir: string) => Promise<string>
+  /** 在系统文件管理器中定位并选中文件（优先于 openDir） */
+  showItemInFolder?: (file: string) => void
 }
 
 function ok<T>(data: T): { success: true; data: T } {
@@ -67,7 +74,7 @@ function asIndexState(raw: unknown): KnowledgeIndexState {
  * 知识库管理、文件落盘、文件读取与共享。
  */
 export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDeps): void {
-  const { knowledgeSettingsService, knowledgeService, session } = deps
+  const { knowledgeSettingsService, knowledgeService, session, openDir, showItemInFolder } = deps
 
   // ── 按库覆盖配置（沿用既有实现）──
 
@@ -236,6 +243,35 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
       }
     }
   )
+
+  // ── 打开文件夹（路径一律由主进程解析）──
+
+  ipc.handle('knowledge:open-dir', async (_event, kbId?: unknown, relPath?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      const id = assertKbId(kbId)
+      if (!openDir) return fail('当前环境不支持打开文件夹')
+      // 不传 relPath = 知识库目录；传 = 该文件所在目录（并尽量选中文件）
+      if (relPath === undefined || relPath === null || relPath === '') {
+        const dir = knowledgeService.resolveKnowledgeBaseDir(userId, id)
+        const error = await openDir(dir)
+        return error ? fail(error) : ok(null)
+      }
+      const location = knowledgeService.resolveDocumentLocation(
+        userId,
+        id,
+        asText(relPath, '文件路径')
+      )
+      if (showItemInFolder) {
+        showItemInFolder(location.file)
+        return ok(null)
+      }
+      const error = await openDir(location.dir)
+      return error ? fail(error) : ok(null)
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
 
   // ── 共享 ──
 

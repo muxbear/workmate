@@ -502,6 +502,10 @@ export interface KnowledgeAPI {
       name: string
     }>
   >
+  /** 在系统文件管理器中打开知识库目录（目录不存在时主进程会先创建） */
+  openKnowledgeBaseDir(kbId: string): Promise<IpcResult<null>>
+  /** 在系统文件管理器中打开文件所在目录，并尽量选中该文件 */
+  openKnowledgeFileDir(kbId: string, relPath: string): Promise<IpcResult<null>>
   createKnowledgeShare(input: {
     targetKind: 'library' | 'folder' | 'file'
     targetId: string

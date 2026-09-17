@@ -136,6 +136,22 @@ export class KnowledgeService {
     return this.files.readDocument(userId, kbId, relPath, as)
   }
 
+  /** 知识库文件目录（不存在时创建），供「打开文件夹」使用 */
+  resolveKnowledgeBaseDir(userId: string, kbId: string): string {
+    this.requireBase(userId, kbId)
+    return this.files.resolveBaseDir(userId, kbId)
+  }
+
+  /** 文件所在目录与文件绝对路径（主进程解析，渲染层不接触路径） */
+  resolveDocumentLocation(
+    userId: string,
+    kbId: string,
+    relPath: string
+  ): { dir: string; file: string } {
+    this.requireBase(userId, kbId)
+    return this.files.resolveDocumentLocation(userId, kbId, relPath)
+  }
+
   // ── 共享 ──
 
   createShare(

@@ -467,7 +467,22 @@ app.whenReady().then(() => {
     })
   })
   const knowledgeService = new KnowledgeService(knowledgeStore, knowledgeFileService)
-  registerKnowledgeHandlers(ipcMain, { knowledgeSettingsService, knowledgeService, session })
+  registerKnowledgeHandlers(ipcMain, {
+    knowledgeSettingsService,
+    knowledgeService,
+    session,
+    // 打开文件夹：主进程执行，渲染层只传 ID 与库内相对路径
+    openDir: async (dir) => {
+      const error = await shell.openPath(dir)
+      // openPath 失败时返回错误文案（成功为空串）；打日志便于排查环境问题
+      if (error) console.warn('[knowledge] 打开文件夹失败:', dir, error)
+      return error
+    },
+    showItemInFolder: (file) => {
+      console.log('[knowledge] 定位文件:', file)
+      shell.showItemInFolder(file)
+    }
+  })
 
   // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
   const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)
