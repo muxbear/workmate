@@ -351,6 +351,14 @@ const api = {
   deleteKnowledgeBase(id: string) {
     return ipcRenderer.invoke('knowledge:delete-kb', id)
   },
+  /** 拖拽排序：ids 为该分类下全部知识库 id（顺序可变），返回排序后的全量列表 */
+  reorderKnowledgeBases(kind: string, ids: string[]) {
+    return ipcRenderer.invoke('knowledge:reorder-kbs', kind, ids)
+  },
+  /** 置顶 / 取消置顶：返回排序后的全量列表 */
+  setKnowledgeBasePinned(id: string, pinned: boolean) {
+    return ipcRenderer.invoke('knowledge:set-kb-pinned', id, pinned)
+  },
   getKnowledgeStats() {
     return ipcRenderer.invoke('knowledge:stats')
   },

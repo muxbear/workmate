@@ -64,7 +64,10 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
 
   async function loadBases(kind?: KnowledgeKind): Promise<boolean> {
     loading.value = true
-    const result = await call(() => window.api.listKnowledgeBases(kind ? { kind } : undefined), IPC_FALLBACK)
+    const result = await call(
+      () => window.api.listKnowledgeBases(kind ? { kind } : undefined),
+      IPC_FALLBACK
+    )
     loading.value = false
     if (!result.success) {
       lastError.value = result.error ?? '读取知识库失败'
@@ -147,12 +150,45 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     return true
   }
 
+  /** 拖拽排序：按主进程返回的顺序重建列表（失败时重新拉取，避免本地顺序与库不一致） */
+  async function reorderBases(kind: KnowledgeKind, orderedIds: string[]): Promise<boolean> {
+    const result = await call(
+      () => window.api.reorderKnowledgeBases(kind, orderedIds),
+      IPC_FALLBACK
+    )
+    if (!result.success) {
+      const message = result.error ?? '保存排序失败'
+      // 重新拉取会清空 lastError，这里在拉取后恢复，保证调用方能弹出真实原因
+      await loadBases()
+      lastError.value = message
+      return false
+    }
+    bases.value = result.data ?? bases.value
+    lastError.value = ''
+    return true
+  }
+
+  /** 置顶 / 取消置顶：排序规则在主进程，直接采用返回的全量列表 */
+  async function setPinned(id: string, pinned: boolean): Promise<boolean> {
+    const result = await call(() => window.api.setKnowledgeBasePinned(id, pinned), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '置顶设置失败'
+      return false
+    }
+    bases.value = result.data ?? bases.value
+    lastError.value = ''
+    return true
+  }
+
   async function importDocuments(
     kbId: string,
     items: Array<{ srcPath: string; relPath: string }>
   ): Promise<{ accepted: number; skipped: number; failed: number; message: string } | null> {
     // 索引能力未开放：统一按「只上传文件」提交
-    const result = await call(() => window.api.importKnowledgeDocuments(kbId, items, 'none'), IPC_FALLBACK)
+    const result = await call(
+      () => window.api.importKnowledgeDocuments(kbId, items, 'none'),
+      IPC_FALLBACK
+    )
     if (!result.success) {
       lastError.value = result.error ?? '上传失败'
       return null
@@ -179,7 +215,10 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     relPath: string,
     newName: string
   ): Promise<{ relPath: string } | null> {
-    const result = await call(() => window.api.renameKnowledgeDocument(kbId, relPath, newName), IPC_FALLBACK)
+    const result = await call(
+      () => window.api.renameKnowledgeDocument(kbId, relPath, newName),
+      IPC_FALLBACK
+    )
     if (!result.success) {
       lastError.value = result.error ?? '重命名失败'
       return null
@@ -293,6 +332,8 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     createBase,
     updateBase,
     removeBase,
+    reorderBases,
+    setPinned,
     importDocuments,
     renameDocument,
     removeDocument,

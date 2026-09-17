@@ -77,6 +77,15 @@ CREATE TABLE IF NOT EXISTS knowledge_shares (
 );
 CREATE INDEX IF NOT EXISTS idx_ks_user ON knowledge_shares(user_id, created_at DESC);
 `
+  },
+  {
+    version: 2,
+    name: 'kb_sort_and_pin',
+    sql: `
+ALTER TABLE knowledge_bases ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE knowledge_bases ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_kb_user_pin_order ON knowledge_bases(user_id, pinned DESC, sort_order ASC);
+`
   }
 ]
 
@@ -89,6 +98,8 @@ interface BaseDbRow {
   status: string
   docs_count: number
   size_bytes: number
+  sort_order: number
+  pinned: number
   created_at: number
   updated_at: number
 }
@@ -133,6 +144,9 @@ function toBase(row: BaseDbRow): KnowledgeBaseRow {
     status: row.status,
     docsCount: row.docs_count,
     sizeBytes: row.size_bytes,
+    // 迁移前的历史行为 0 / 未置顶，读取时兜底
+    sortOrder: row.sort_order ?? 0,
+    pinned: row.pinned === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -227,8 +241,7 @@ export class KnowledgeStore {
   private runMigrations(db: Database.Database): void {
     db.exec('CREATE TABLE IF NOT EXISTS kb_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     const row = db.prepare("SELECT value FROM kb_meta WHERE key = 'schema_version'").get() as
-      | { value: string }
-      | undefined
+      { value: string } | undefined
     let current = row ? Number(row.value) || 0 : 0
     for (const migration of MIGRATIONS) {
       if (migration.version <= current) continue
@@ -261,7 +274,7 @@ export class KnowledgeStore {
     }
     const rows = db
       .prepare(
-        `SELECT * FROM knowledge_bases WHERE ${conditions.join(' AND ')} ORDER BY updated_at DESC, rowid DESC`
+        `SELECT * FROM knowledge_bases WHERE ${conditions.join(' AND ')} ORDER BY pinned DESC, sort_order ASC, updated_at DESC, rowid DESC`
       )
       .all(...params) as BaseDbRow[]
     return rows.map(toBase)
@@ -301,16 +314,15 @@ export class KnowledgeStore {
       status: 'ready',
       docsCount: 0,
       sizeBytes: 0,
+      // 新建的知识库排在同分类未置顶区的最前面（sort_order 与其他未拖拽项一致时按更新时间兜底）
+      sortOrder: 0,
+      pinned: false,
       createdAt: now,
       updatedAt: now
     }
   }
 
-  updateBase(
-    userId: string,
-    id: string,
-    patch: { name?: string; description?: string }
-  ): void {
+  updateBase(userId: string, id: string, patch: { name?: string; description?: string }): void {
     const db = this.open()
     const sets: string[] = []
     const params: unknown[] = []
@@ -328,6 +340,54 @@ export class KnowledgeStore {
     db.prepare(`UPDATE knowledge_bases SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(
       ...params
     )
+  }
+
+  /**
+   * 拖拽排序：按传入顺序把某分类下的知识库写回 sort_order（0 起，越小越靠前）。
+   * 只影响传进来的 id，其余行保持原值。
+   */
+  reorderBases(userId: string, kind: KnowledgeKind, orderedIds: string[]): number {
+    const db = this.open()
+    const stmt = db.prepare(
+      'UPDATE knowledge_bases SET sort_order = ? WHERE id = ? AND user_id = ? AND kind = ?'
+    )
+    let changed = 0
+    db.transaction((ids: string[]) => {
+      ids.forEach((id, index) => {
+        changed += stmt.run(index, id, userId, kind).changes
+      })
+    })(orderedIds)
+    return changed
+  }
+
+  /**
+   * 置顶 / 取消置顶。
+   *
+   * - 置顶：sort_order 取同分类置顶组最小值之前，保证它是置顶区第一条；
+   * - 取消置顶：保留当前 sort_order，于是落到未置顶区的最前面。
+   */
+  setBasePinned(userId: string, id: string, pinned: boolean): void {
+    const db = this.open()
+    const row = db
+      .prepare('SELECT kind FROM knowledge_bases WHERE id = ? AND user_id = ?')
+      .get(id, userId) as { kind: string } | undefined
+    if (!row) return
+    if (!pinned) {
+      db.prepare('UPDATE knowledge_bases SET pinned = 0 WHERE id = ? AND user_id = ?').run(
+        id,
+        userId
+      )
+      return
+    }
+    const head = db
+      .prepare(
+        'SELECT MIN(sort_order) AS value FROM knowledge_bases WHERE user_id = ? AND kind = ? AND pinned = 1'
+      )
+      .get(userId, row.kind) as { value: number | null }
+    const next = (head.value ?? 0) - 1
+    db.prepare(
+      'UPDATE knowledge_bases SET pinned = 1, sort_order = ? WHERE id = ? AND user_id = ?'
+    ).run(next, id, userId)
   }
 
   deleteBase(userId: string, id: string): number {
@@ -549,7 +609,9 @@ export class KnowledgeStore {
   /** 撤销共享：返回受影响行数（0 = 不存在或非本人） */
   revokeShare(userId: string, token: string): number {
     return this.open()
-      .prepare('UPDATE knowledge_shares SET revoked_at = ? WHERE token = ? AND user_id = ? AND revoked_at IS NULL')
+      .prepare(
+        'UPDATE knowledge_shares SET revoked_at = ? WHERE token = ? AND user_id = ? AND revoked_at IS NULL'
+      )
       .run(Date.now(), token, userId).changes
   }
 

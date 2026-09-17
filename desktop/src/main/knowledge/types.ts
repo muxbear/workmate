@@ -25,6 +25,10 @@ export interface KnowledgeBaseRow {
   status: string
   docsCount: number
   sizeBytes: number
+  /** 手动拖拽排序序号（同分类内越小越靠前） */
+  sortOrder: number
+  /** 是否置顶（置顶始终排在未置顶之前） */
+  pinned: boolean
   createdAt: number
   updatedAt: number
 }

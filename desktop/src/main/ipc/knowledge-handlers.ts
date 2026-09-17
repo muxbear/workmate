@@ -157,6 +157,27 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
     }
   })
 
+  ipc.handle('knowledge:reorder-kbs', async (_event, kind?: unknown, ids?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      const category = kind as KnowledgeKind
+      if (typeof kind !== 'string' || !KINDS.includes(category)) return fail('知识库分类非法')
+      return ok(knowledgeService.reorderBases(userId, category, assertKbIdList(ids)))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  ipc.handle('knowledge:set-kb-pinned', async (_event, id?: unknown, pinned?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      if (typeof pinned !== 'boolean') return fail('置顶参数非法')
+      return ok(knowledgeService.setBasePinned(userId, assertKbId(id), pinned))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   ipc.handle('knowledge:stats', async () => {
     try {
       const userId = session.requireUserId()

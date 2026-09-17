@@ -398,6 +398,10 @@ export interface KnowledgeBaseSummary {
   status: string
   docsCount: number
   sizeBytes: number
+  /** 手动拖拽排序序号（同分类内越小越靠前） */
+  sortOrder: number
+  /** 是否置顶（置顶始终排在未置顶之前） */
+  pinned: boolean
   createdAt: number
   updatedAt: number
 }
@@ -474,6 +478,10 @@ export interface KnowledgeAPI {
     patch: { name?: string; description?: string }
   ): Promise<IpcResult<KnowledgeBaseSummary>>
   deleteKnowledgeBase(id: string): Promise<IpcResult<{ removedDocs: number; overridesCleared: boolean }>>
+  /** 拖拽排序：ids 为该分类下全部知识库 id（顺序可变），返回排序后的全量列表 */
+  reorderKnowledgeBases(kind: KnowledgeKind, ids: string[]): Promise<IpcResult<KnowledgeBaseSummary[]>>
+  /** 置顶 / 取消置顶：返回排序后的全量列表 */
+  setKnowledgeBasePinned(id: string, pinned: boolean): Promise<IpcResult<KnowledgeBaseSummary[]>>
   getKnowledgeStats(): Promise<IpcResult<KnowledgeStats>>
   listKnowledgeDocuments(kbId: string): Promise<IpcResult<KnowledgeDocumentMeta[]>>
   /** 导入文件：items 为「源绝对路径 + 库内相对路径」；索引未开放时只接受 indexState = 'none' */

@@ -143,4 +143,44 @@ describe('KnowledgeStore', () => {
     expect(() => files.sanitizeName('a/b')).toThrow()
     expect(() => files.sanitizeName('x'.repeat(61))).toThrow()
   })
+  it('拖拽排序：按提交顺序写回 sort_order，读取顺序一致', () => {
+    const a = store.createBase('u1', { name: '库 A', description: '', kind: 'local' })
+    const b = store.createBase('u1', { name: '库 B', description: '', kind: 'local' })
+    const c = store.createBase('u1', { name: '库 C', description: '', kind: 'local' })
+    // 新建默认未置顶、sort_order 为 0
+    expect(store.getBase('u1', a.id)).toMatchObject({ sortOrder: 0, pinned: false })
+
+    expect(store.reorderBases('u1', 'local', [c.id, b.id, a.id])).toBe(3)
+    expect(store.listBases('u1', { kind: 'local' }).map((row) => row.id)).toEqual([
+      c.id,
+      b.id,
+      a.id
+    ])
+    // 分类之间互不影响
+    expect(store.listBases('u1', { kind: 'cloud' })).toEqual([])
+  })
+
+  it('置顶：置顶排最前，取消置顶后落到未置顶区最前，且不串分类', () => {
+    const a = store.createBase('u1', { name: '库 A', description: '', kind: 'local' })
+    const b = store.createBase('u1', { name: '库 B', description: '', kind: 'local' })
+    const c = store.createBase('u1', { name: '库 C', description: '', kind: 'local' })
+    const cloud = store.createBase('u1', { name: '云库', description: '', kind: 'cloud' })
+
+    store.setBasePinned('u1', c.id, true)
+    const pinned = store.listBases('u1', { kind: 'local' })
+    expect(pinned[0].id).toBe(c.id)
+    expect(pinned[0].pinned).toBe(true)
+    expect(pinned.filter((row) => row.pinned)).toHaveLength(1)
+    // 置顶不影响其它分类
+    expect(store.listBases('u1', { kind: 'cloud' }).map((row) => row.id)).toEqual([cloud.id])
+
+    store.setBasePinned('u1', c.id, false)
+    const after = store.listBases('u1', { kind: 'local' })
+    expect(after.find((row) => row.id === c.id)?.pinned).toBe(false)
+    // 取消置顶保留原 sort_order（比其它未置顶项更小），因此落在未置顶区最前
+    expect(after[0].id).toBe(c.id)
+    expect(after).toHaveLength(3)
+    expect([a.id, b.id].every((id) => after.some((row) => row.id === id))).toBe(true)
+  })
+
 })

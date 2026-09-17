@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   allLibraries,
+  clampDropIndex,
   findGroupIdOf,
+  moveLibrary,
   pickSelectionAfterRemoval,
   removeLibrary,
   renameLibrary,
+  type KnowledgeFolder,
   type KnowledgeGroup
 } from '../../../src/renderer/src/components/knowledge/knowledgeList'
 
@@ -103,6 +106,36 @@ describe('knowledgeList 列表变换', () => {
     expect(after[1].items).toHaveLength(0)
     expect(after[1].label).toBe('我的共享知识')
     expect(allLibraries(after).map((item) => item.id)).toEqual(['product', 'design'])
+  })
+
+  it('moveLibrary 把条目移动到目标下标，返回新数组', () => {
+    const items = allLibraries(createGroups())
+    const moved = moveLibrary(items, 0, 2)
+    expect(moved.map((item) => item.id)).toEqual(['design', 'team', 'product'])
+    // 原数组保持不变
+    expect(items.map((item) => item.id)).toEqual(['product', 'design', 'team'])
+  })
+
+  it('moveLibrary 原地移动或起点越界时原样返回，目标越界夹取到末尾', () => {
+    const items = allLibraries(createGroups())
+    expect(moveLibrary(items, 0, 0)).toBe(items)
+    expect(moveLibrary(items, 9, 1)).toBe(items)
+    expect(moveLibrary(items, 0, 99).map((item) => item.id)).toEqual(['design', 'team', 'product'])
+  })
+
+  it('clampDropIndex 未置顶项拖不进置顶区，置顶项拖不出置顶区', () => {
+    const items: KnowledgeFolder[] = [
+      { id: 'a', name: 'A', description: '', files: 0, updated: '', tone: '#000', pinned: true },
+      { id: 'b', name: 'B', description: '', files: 0, updated: '', tone: '#000', pinned: true },
+      { id: 'c', name: 'C', description: '', files: 0, updated: '', tone: '#000' },
+      { id: 'd', name: 'D', description: '', files: 0, updated: '', tone: '#000' }
+    ]
+    // 未置顶项（from=2）落点被抬到未置顶区首位
+    expect(clampDropIndex(items, 2, 0)).toBe(2)
+    // 置顶项（from=0）落点被压回置顶区末位
+    expect(clampDropIndex(items, 0, 3)).toBe(1)
+    // 区内移动保持原下标
+    expect(clampDropIndex(items, 3, 2)).toBe(2)
   })
 
   it('pickSelectionAfterRemoval 优先同分组首项', () => {

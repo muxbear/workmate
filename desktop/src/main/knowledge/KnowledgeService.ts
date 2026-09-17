@@ -81,6 +81,35 @@ export class KnowledgeService {
     return updated
   }
 
+  /**
+   * 拖拽排序：orderedIds 必须是该分类下全部知识库的 id（顺序可变）。
+   *
+   * 严格校验集合一致，避免渲染层拿着过期列表乱序写库；不一致时抛错，前端刷新后重试。
+   * 返回该用户全部知识库（已按置顶 + 手动顺序排好）。
+   */
+  reorderBases(userId: string, kind: KnowledgeKind, orderedIds: string[]): KnowledgeBaseRow[] {
+    const category = this.sanitizeKind(kind)
+    const current = this.store.listBases(userId, { kind: category })
+    const currentIds = current.map((row) => row.id)
+    const unique = new Set(orderedIds)
+    if (
+      orderedIds.length !== currentIds.length ||
+      unique.size !== orderedIds.length ||
+      currentIds.some((id) => !unique.has(id))
+    ) {
+      throw new Error('知识库列表已变化，请刷新后重新排序')
+    }
+    this.store.reorderBases(userId, category, orderedIds)
+    return this.store.listBases(userId)
+  }
+
+  /** 置顶 / 取消置顶：返回该用户全部知识库（已按置顶 + 手动顺序排好） */
+  setBasePinned(userId: string, id: string, pinned: boolean): KnowledgeBaseRow[] {
+    if (!this.store.getBase(userId, id)) throw new Error('知识库不存在')
+    this.store.setBasePinned(userId, id, pinned)
+    return this.store.listBases(userId)
+  }
+
   /** 删除知识库：级联清理文档记录、磁盘目录与共享链接（按库配置由 IPC 层一并清理） */
   deleteBase(userId: string, id: string): { removedDocs: number } {
     const base = this.store.getBase(userId, id)

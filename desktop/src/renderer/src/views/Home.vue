@@ -200,7 +200,7 @@ const navItems = [
 ]
 
 /** 智能体子菜单（父菜单位于“项目”下方，可折叠展开） */
-const agentMenuOpen = ref(true)
+const agentMenuOpen = ref(false)
 const agentSubItems: Array<{ label: AgentNavKey }> = [
   { label: '专家' },
   { label: '技能' },
