@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { marked } from 'marked'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import KnowledgeDetailModal from '../components/knowledge/KnowledgeDetailModal.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
@@ -13,7 +12,6 @@ import {
   type KnowledgeGroup
 } from '../components/knowledge/knowledgeList'
 import {
-  childKey,
   collectFileNodes,
   findNode,
   flattenVisible,
@@ -28,6 +26,8 @@ import {
 } from '../components/knowledge/knowledgeTree'
 import type { KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
 import KnowledgeCreateModal from '../components/knowledge/KnowledgeCreateModal.vue'
+import FilePreviewPane from '../components/file-preview/FilePreviewPane.vue'
+import { createKnowledgeFileSource } from '../components/file-preview/sources'
 import KnowledgeOverviewModal from '../components/knowledge/KnowledgeOverviewModal.vue'
 import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
 import { useKnowledgeStore } from '../store/knowledge'
@@ -165,14 +165,8 @@ function rebuildFileTree(docs: KnowledgeDocumentMeta[]): void {
     file: metaOf(doc)
   }))
   fileTree.value = mergeUploads([], entries)
-  // 新出现的目录默认展开，上传完即可看到原始结构（已有的折叠状态不覆盖）
-  for (const entry of entries) {
-    let key = ''
-    for (const dir of entry.dirs) {
-      key = childKey(key, dir)
-      if (folderExpanded.value[key] === undefined) folderExpanded.value[key] = true
-    }
-  }
+  // 目录结构由 relPath 还原（与上传的文件夹层级一致）；
+  // 这里**不**自动展开：文件夹默认折叠，由用户点击展开
 }
 
 // 文档列表变化（切换知识库 / 上传 / 删除 / 重命名后）重建树
@@ -181,8 +175,13 @@ watch(
   (docs) => rebuildFileTree(docs),
   { immediate: true, deep: true }
 )
-/** 文件夹展开状态（缺省展开，上传完就能看到原始结构） */
+/** 文件夹展开状态（缺省折叠：只有显式展开过的目录才展开） */
 const folderExpanded = ref<Record<string, boolean>>({})
+
+/** 文件夹是否展开（缺省折叠；rows 与模板的折叠箭头共用同一判定） */
+function isFolderExpanded(key: string): boolean {
+  return folderExpanded.value[key] === true
+}
 const sortKey = ref<SortKey>('updated')
 const ascending = ref(false)
 /** 标签页以文件 key 标识（'问答' 是常驻标签） */
@@ -238,17 +237,13 @@ const moreGroup = computed(
 const sortedTree = computed(() => sortTree(fileTree.value, sortKey.value, ascending.value))
 
 /** 展开可见行：文件夹折叠时跳过其子节点 */
-const rows = computed(() =>
-  flattenVisible(sortedTree.value, (key) => folderExpanded.value[key] !== false)
-)
+const rows = computed(() => flattenVisible(sortedTree.value, isFolderExpanded))
 
 /** 全部文件节点（不含文件夹） */
 const allFiles = computed(() => collectFileNodes(fileTree.value))
 
 /** 当前标签对应的节点（'问答' 不是节点，返回 null） */
 const activeNode = computed(() => findNode(fileTree.value, activeTab.value))
-
-const activeFile = computed(() => activeNode.value?.file ?? null)
 
 /** 标签页显示名：文件重命名后跟着更新 */
 const tabLabel = (tab: string): string => findNode(fileTree.value, tab)?.name ?? tab
@@ -437,8 +432,6 @@ const onDocumentKeydown = (event: KeyboardEvent): void => {
 }
 
 // ── 文件夹展开 / 文件标签页 ──
-const isFolderExpanded = (key: string): boolean => folderExpanded.value[key] !== false
-
 const toggleFolder = (key: string): void => {
   folderExpanded.value = { ...folderExpanded.value, [key]: !isFolderExpanded(key) }
 }
@@ -451,75 +444,16 @@ const openFile = (node: KnowledgeTreeNode): void => {
   if (!openTabs.value.includes(node.key)) openTabs.value = [...openTabs.value, node.key]
   activeTab.value = node.key
   libraryMenuOpen.value = false
-  void loadPreview(node.key)
 }
 
-// ── 文件预览（文本 / Markdown / 图片；其余格式给出提示）──
-type PreviewKind = 'empty' | 'text' | 'markdown' | 'image' | 'unsupported'
-const previewKind = ref<PreviewKind>('empty')
-const previewText = ref('')
-const previewUrl = ref('')
-const previewNotice = ref('')
-const TEXT_PREVIEW_EXTS = [
-  'md',
-  'markdown',
-  'txt',
-  'csv',
-  'json',
-  'log',
-  'yaml',
-  'yml',
-  'html',
-  'xml',
-  'js',
-  'ts',
-  'py',
-  'sql'
-]
-const IMAGE_PREVIEW_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif']
-
-/** Markdown → HTML（预览用；内容来自本地文件） */
-const previewHtml = computed(() =>
-  previewKind.value === 'markdown' ? (marked.parse(previewText.value) as string) : ''
-)
-
-async function loadPreview(relPath: string): Promise<void> {
-  previewKind.value = 'empty'
-  previewText.value = ''
-  previewNotice.value = '正在加载…'
-  if (previewUrl.value) {
-    URL.revokeObjectURL(previewUrl.value)
-    previewUrl.value = ''
-  }
-  if (!selectedKbId.value) return
-  const ext = relPath.split('.').pop()?.toLowerCase() ?? ''
-  if (TEXT_PREVIEW_EXTS.includes(ext)) {
-    const res = await kbStore.readFile(selectedKbId.value, relPath, 'text')
-    if (!res) {
-      previewNotice.value = kbStore.lastError || '读取失败'
-      return
-    }
-    previewText.value = res.content ?? ''
-    previewKind.value = ext === 'md' || ext === 'markdown' ? 'markdown' : 'text'
-    previewNotice.value = ''
-    return
-  }
-  if (IMAGE_PREVIEW_EXTS.includes(ext)) {
-    const res = await kbStore.readFile(selectedKbId.value, relPath, 'bytes')
-    if (!res?.bytes) {
-      previewNotice.value = kbStore.lastError || '读取失败'
-      return
-    }
-    // BlobPart 是 TS 类型引用（仅用于跨 lib 的字节类型收敛），ESLint no-undef 需要显式豁免
-    // eslint-disable-next-line no-undef
-    previewUrl.value = URL.createObjectURL(new Blob([res.bytes as unknown as BlobPart]))
-    previewKind.value = 'image'
-    previewNotice.value = ''
-    return
-  }
-  previewKind.value = 'unsupported'
-  previewNotice.value = `暂不支持预览 .${ext || '未知'} 格式，可在文件详情中查看元信息`
-}
+// ── 文件预览（复用共享组件 FilePreviewPane；知识库侧为自加载模式）──
+/** 当前文件标签对应的预览来源（null = 未选中文件） */
+const previewSource = computed(() => {
+  const node = activeNode.value
+  const kbId = selectedKbId.value
+  if (!node || node.kind !== 'file' || !kbId) return null
+  return createKnowledgeFileSource(kbId, { name: node.name, relPath: node.key })
+})
 
 const closeTab = (tab: string): void => {
   openTabs.value = openTabs.value.filter((item) => item !== tab)
@@ -947,7 +881,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateTabScroll)
   document.removeEventListener('mousedown', onDocumentMousedown)
   document.removeEventListener('keydown', onDocumentKeydown)
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   if (toastTimer) clearTimeout(toastTimer)
 })
 watch(openTabs, () => {
@@ -2161,48 +2094,10 @@ watch(openTabs, () => {
             </div>
           </div>
 
-          <!-- 文件预览标签 -->
-          <!-- 文件预览标签 -->
+          <!-- 文件预览标签：只渲染文件内容本身（文件名/图标/元信息不在此处重复展示） -->
           <div v-else class="kb-file-tab">
-            <div
-              class="kb-file-tab-icon"
-              :style="{
-                color: activeFile?.tint,
-                background: (activeFile?.tint || '#168b7a') + '14'
-              }"
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-                <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-                <path d="M10 9H8" />
-                <path d="M16 13H8" />
-                <path d="M16 17H8" />
-              </svg>
-            </div>
-            <h2 class="kb-file-tab-title">{{ activeNode?.name ?? activeTab }}</h2>
-            <p class="kb-file-tab-meta">
-              {{ activeFile?.type }} · {{ activeFile?.size }} · 更新于 {{ activeFile?.updated }}
-            </p>
-            <div class="kb-file-tab-preview">
-              <p v-if="previewNotice" class="kb-preview-notice">{{ previewNotice }}</p>
-              <pre v-else-if="previewKind === 'text'" class="kb-preview-text">{{ previewText }}</pre>
-              <!-- eslint-disable-next-line vue/no-v-html -->
-              <div
-                v-else-if="previewKind === 'markdown'"
-                class="kb-preview-markdown"
-                v-html="previewHtml"
-              ></div>
-              <img v-else-if="previewKind === 'image'" class="kb-preview-image" :src="previewUrl" />
-            </div>
+            <FilePreviewPane v-if="previewSource" :source="previewSource" />
+            <p v-else class="kb-preview-notice">在左侧文件列表中点击文件即可预览内容。</p>
           </div>
         </aside>
         <aside v-else class="kb-panel-strip">
@@ -3228,41 +3123,12 @@ watch(openTabs, () => {
   background: #117764;
 }
 
-/* ── 文件预览标签 ── */
+/* ── 文件预览标签：容器不额外加装饰，内容占满整块区域 ── */
 .kb-file-tab {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
-  padding: 20px;
-}
-.kb-file-tab-icon {
-  display: flex;
-  width: 40px;
-  height: 40px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-}
-.kb-file-tab-title {
-  margin: 16px 0 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: #26383d;
-}
-.kb-file-tab-meta {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: #869398;
-}
-.kb-file-tab-preview {
-  margin-top: 24px;
-  border-radius: 12px;
-  border: 1px solid #e5ece9;
-  background: #fafcfb;
-  padding: 16px;
-  font-size: 12px;
-  line-height: 24px;
-  color: #65767a;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3463,31 +3329,6 @@ watch(openTabs, () => {
   font-size: 13px;
   line-height: 20px;
   color: var(--kw-color-text-muted);
-}
-
-.kb-preview-text {
-  margin: 0;
-  max-height: 100%;
-  overflow: auto;
-  font-size: 12px;
-  line-height: 1.7;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--kw-color-text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.kb-preview-markdown {
-  font-size: 13px;
-  line-height: 1.75;
-  color: var(--kw-color-text-secondary);
-  word-break: break-word;
-}
-
-.kb-preview-image {
-  max-width: 100%;
-  border-radius: 10px;
-  border: 1px solid var(--kw-color-border-soft);
 }
 
 </style>

@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWorkspaceStore } from '@store/workspace'
 import { useAgentStore } from '@store/agent'
 import FileList from './FileList.vue'
 import FilePreview from './FilePreview.vue'
+import FilePreviewPane from './file-preview/FilePreviewPane.vue'
 import BrowserPanel from './BrowserPanel.vue'
 import type { Workspace, WorkspaceFileEntry } from '../../../preload/index.d'
 
-const WordEditor = defineAsyncComponent(() => import('./WordEditor.vue'))
-const PdfPreview = defineAsyncComponent(() => import('./PdfPreview.vue'))
 
 const props = defineProps<{ fullscreen: boolean; ratioMode?: boolean }>()
 const emit = defineEmits<{
@@ -669,29 +668,20 @@ defineExpose({
         <!-- 工作空间文件 -->
         <template v-else-if="view === 'files'">
           <div v-if="activeTab" class="csp-view-body">
-            <p v-if="activeTab.loading" class="csp-empty-tip">加载中…</p>
-            <p v-else-if="activeTab.error" class="csp-load-error">{{ activeTab.error }}</p>
-            <p v-else-if="activeTab.artifactPending" class="csp-empty-tip">生成中…</p>
-            <WordEditor
-              v-else-if="activeTab.kind === 'word' && activeTab.document"
-              v-model:mode="activeTab.wordMode"
-              :document="activeTab.document"
-              :title="activeTab.entry.name"
-              @save="saveActiveWord"
-            />
-            <PdfPreview
-              v-else-if="activeTab.kind === 'pdf' && activeTab.document"
-              :document="activeTab.document"
-              :name="activeTab.entry.name"
-            />
-            <FilePreview
+            <p v-if="activeTab.artifactPending" class="csp-empty-tip">生成中…</p>
+            <!-- 预览统一走共享组件：按扩展名分发到 Markdown / 文本 / 图片 / PDF / Word -->
+            <FilePreviewPane
               v-else
               :name="activeTab.entry.name"
               :rel-path="activeTab.entry.relPath"
               :content="activeTab.content"
               :truncated="activeTab.truncated"
+              :document="activeTab.document"
+              :loading="activeTab.loading"
+              :error="activeTab.error"
               :workspace-id="panelWorkspaceId ?? undefined"
-              :show-back="false"
+              v-model:word-mode="activeTab.wordMode"
+              @save="saveActiveWord"
             />
           </div>
           <div v-else-if="panelWorkspaceId" class="csp-view-body">
