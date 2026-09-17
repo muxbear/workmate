@@ -638,8 +638,15 @@ const onUploadSubmit = async (payload: KnowledgeUploadPayload): Promise<void> =>
   }
   let items: Array<{ srcPath: string; relPath: string }> = []
   try {
-    items = payload.files
-      .map((file) => ({ srcPath: window.api.getPathForFile(file), relPath: file.name }))
+    // 带相对路径的待上传项优先（拖入文件夹时保留目录结构），缺省退回文件名
+    const queued = payload.items?.length
+      ? payload.items
+      : payload.files.map((file) => ({ file, relPath: file.name }))
+    items = queued
+      .map((entry) => ({
+        srcPath: window.api.getPathForFile(entry.file),
+        relPath: entry.relPath || entry.file.name
+      }))
       .filter((item) => !!item.srcPath)
   } catch (err) {
     notify(`读取文件路径失败：${(err as Error).message}`)

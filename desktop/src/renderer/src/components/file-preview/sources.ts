@@ -17,10 +17,16 @@ export function createKnowledgeFileSource(
     key: doc.relPath,
     name: doc.name,
     relPath: doc.relPath,
-    async readText() {
-      const result = await knowledge.readFile(kbId, doc.relPath, 'text')
+    markdownKnowledgeId: kbId,
+    async readText(cursor?: number) {
+      const result = await knowledge.readFile(kbId, doc.relPath, 'text', cursor)
       if (!result) throw new Error(knowledge.lastError || '读取文件失败')
-      return { content: result.content ?? '', truncated: result.truncated }
+      return {
+        content: result.content ?? '',
+        truncated: result.truncated,
+        cursor: result.cursor,
+        totalChars: result.totalChars
+      }
     },
     async readBytes() {
       const result = await knowledge.readFile(kbId, doc.relPath, 'bytes')
@@ -42,9 +48,14 @@ export function createWorkspaceFileSource(
     name: entry.name,
     relPath: entry.relPath,
     markdownWorkspaceId: workspaceId,
-    async readText() {
-      const result = await workspace.readFile(workspaceId, entry.relPath)
-      return { content: result.content, truncated: result.truncated }
+    async readText(cursor?: number) {
+      const result = await workspace.readFile(workspaceId, entry.relPath, cursor)
+      return {
+        content: result.content,
+        truncated: result.truncated,
+        cursor: result.cursor,
+        totalChars: result.totalChars
+      }
     },
     async readBytes() {
       const result = await workspace.readFileBytes(workspaceId, entry.relPath)

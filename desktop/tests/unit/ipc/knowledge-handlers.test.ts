@@ -94,7 +94,7 @@ function makeSourceFile(name: string, content = 'hello'): string {
 }
 
 describe('knowledge IPC handlers', () => {
-  it('注册全部通道（配置 2 个 + 知识库本体 16 个）', () => {
+  it('注册全部通道（配置 2 个 + 知识库本体 17 个）', () => {
     const { ipc } = createHarness()
     for (const channel of [
       'knowledge:get-kb-settings',
@@ -111,6 +111,7 @@ describe('knowledge IPC handlers', () => {
       'knowledge:rename-doc',
       'knowledge:remove-doc',
       'knowledge:read-file',
+      'knowledge:read-image-bytes',
       'knowledge:open-dir',
       'knowledge:create-share',
       'knowledge:list-shares',
@@ -118,7 +119,7 @@ describe('knowledge IPC handlers', () => {
     ]) {
       expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
-    expect(ipc.handlers.size).toBe(18)
+    expect(ipc.handlers.size).toBe(19)
   })
 
   it('set 后 get 拿到已落盘的覆盖项', async () => {

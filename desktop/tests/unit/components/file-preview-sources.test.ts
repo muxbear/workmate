@@ -28,8 +28,8 @@ describe('知识库文件预览来源适配器', () => {
     expect(source.name).toBe('a.md')
     await expect(source.readText()).resolves.toEqual({ content: '# 标题', truncated: false })
     await expect(source.readBytes?.()).resolves.toEqual({ bytes: new Uint8Array([1, 2, 3]) })
-    expect(readKnowledgeFile).toHaveBeenCalledWith('kb-1', '目录/a.md', 'text')
-    expect(readKnowledgeFile).toHaveBeenCalledWith('kb-1', '目录/a.md', 'bytes')
+    expect(readKnowledgeFile).toHaveBeenCalledWith('kb-1', '目录/a.md', 'text', undefined)
+    expect(readKnowledgeFile).toHaveBeenCalledWith('kb-1', '目录/a.md', 'bytes', undefined)
     // 知识库文件只读：不暴露保存能力（预览组件据此隐藏写入路径）
     expect(source.saveBytes).toBeUndefined()
   })

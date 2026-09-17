@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decodeImagePath,
   extractRemoteImageUrls,
-  extractWorkspaceImagePaths
+  extractWorkspaceImagePaths,
+  normalizeWorkspaceImagePath,
+  resolveMarkdownRelativePath
 } from '../../../src/renderer/src/util/markdown-images'
 
 describe('extractRemoteImageUrls（Markdown/HTML 远程图片提取）', () => {
@@ -39,5 +42,33 @@ describe('extractWorkspaceImagePaths（工作区相对图片提取）', () => {
   it('忽略 http(s) 远程图片与绝对路径引用', () => {
     const md = '![x](https://x.com/a.png) ![y](/abs/a.png) ![z](blob:https://x/1)'
     expect(extractWorkspaceImagePaths(md)).toEqual([])
+  })
+})
+
+describe('decodeImagePath / resolveMarkdownRelativePath（Markdown 相对图片路径解析）', () => {
+  it('解码百分号编码的中文与空格路径', () => {
+    expect(decodeImagePath('images/%E5%9B%BE%201.png')).toBe('images/图 1.png')
+    // 非法编码原样返回，避免解析异常影响整篇渲染
+    expect(decodeImagePath('images/100%.png')).toBe('images/100%.png')
+  })
+
+  it('反斜杠路径按正斜杠归一（兼容 Windows 写法）', () => {
+    const bs = String.fromCharCode(92)
+    const raw = '.' + bs + 'DeepAgents-1.x.assets' + bs + 'x.png'
+    expect(normalizeWorkspaceImagePath(raw)).toBe('DeepAgents-1.x.assets/x.png')
+  })
+
+  it('以 Markdown 文件所在目录为基准解析相对路径', () => {
+    expect(resolveMarkdownRelativePath('a.md', './DeepAgents-1.x.assets/x.png')).toBe(
+      'DeepAgents-1.x.assets/x.png'
+    )
+    expect(resolveMarkdownRelativePath('docs/guide/a.md', '../img/x.png')).toBe('docs/img/x.png')
+    expect(resolveMarkdownRelativePath('docs/a.md', 'assets/x.png')).toBe('docs/assets/x.png')
+  })
+
+  it('绝对路径、协议地址与越界路径返回空串', () => {
+    expect(resolveMarkdownRelativePath('a.md', '/abs/x.png')).toBe('')
+    expect(resolveMarkdownRelativePath('a.md', 'https://x.com/a.png')).toBe('')
+    expect(resolveMarkdownRelativePath('docs/a.md', '../../x.png')).toBe('')
   })
 })

@@ -60,6 +60,10 @@ const selfLoading = ref(false)
 const selfError = ref('')
 const selfText = ref('')
 const selfTruncated = ref(false)
+/** 续读游标：非空表示还有后续内容可继续加载（完整读取大文件） */
+const selfCursor = ref<number | null>(null)
+const selfTotalChars = ref<number | null>(null)
+const moreLoading = ref(false)
 const selfBytes = ref<Uint8Array | null>(null)
 const objectUrl = ref('')
 
@@ -70,6 +74,15 @@ const truncatedFlag = computed(() =>
   props.source ? selfTruncated.value : props.truncated === true
 )
 const bytes = computed(() => (props.source ? selfBytes.value : (props.document ?? null)))
+
+/** 是否还有未加载的后续内容 */
+const canLoadMore = computed(() => truncatedFlag.value && selfCursor.value !== null)
+/** 已加载字符数（大文件提示用） */
+const loadedChars = computed(() => selfText.value.length)
+/** 全文总字符数提示（转换型文档可提前得知） */
+const totalCharsHint = computed(() =>
+  selfTotalChars.value === null ? '' : '（全文 ' + selfTotalChars.value + ' 字）'
+)
 const markdownWorkspaceId = computed(() => props.workspaceId ?? props.source?.markdownWorkspaceId)
 
 const wordModeProxy = computed({
@@ -92,6 +105,8 @@ async function load(): Promise<void> {
   selfError.value = ''
   selfText.value = ''
   selfTruncated.value = false
+  selfCursor.value = null
+  selfTotalChars.value = null
   selfBytes.value = null
   releaseObjectUrl()
 
@@ -110,6 +125,8 @@ async function load(): Promise<void> {
       const result = await src.readText()
       selfText.value = result.content
       selfTruncated.value = result.truncated === true
+      selfCursor.value = typeof result.cursor === 'number' ? result.cursor : null
+      selfTotalChars.value = typeof result.totalChars === 'number' ? result.totalChars : null
     }
   } catch (err) {
     selfError.value = err instanceof Error ? err.message : '读取文件失败'
@@ -120,6 +137,49 @@ async function load(): Promise<void> {
 
 watch(() => props.source?.key, load, { immediate: true })
 onBeforeUnmount(releaseObjectUrl)
+
+/** 读取一页内容：append 为 true 时追加到已加载内容之后 */
+async function loadPage(cursor: number | undefined, append: boolean): Promise<boolean> {
+  const src = props.source
+  if (!src) return false
+  const result = await src.readText(cursor)
+  selfText.value = append ? selfText.value + result.content : result.content
+  selfTruncated.value = result.truncated === true
+  selfCursor.value = typeof result.cursor === 'number' ? result.cursor : null
+  if (typeof result.totalChars === 'number') selfTotalChars.value = result.totalChars
+  return selfTruncated.value
+}
+
+/** 继续加载下一页（不整篇重读，避免大文件卡顿） */
+async function loadMore(): Promise<void> {
+  if (!canLoadMore.value || moreLoading.value) return
+  moreLoading.value = true
+  try {
+    await loadPage(selfCursor.value ?? undefined, true)
+  } catch (err) {
+    selfError.value = err instanceof Error ? err.message : '读取文件失败'
+  } finally {
+    moreLoading.value = false
+  }
+}
+
+/** 连续续读直至读完整篇文档（最多 200 页，防止异常数据造成死循环） */
+async function loadAll(): Promise<void> {
+  if (!canLoadMore.value || moreLoading.value) return
+  moreLoading.value = true
+  try {
+    let guard = 0
+    while (selfTruncated.value && selfCursor.value !== null && guard < 200) {
+      guard += 1
+      const more = await loadPage(selfCursor.value, true)
+      if (!more) break
+    }
+  } catch (err) {
+    selfError.value = err instanceof Error ? err.message : '读取文件失败'
+  } finally {
+    moreLoading.value = false
+  }
+}
 
 /** Word 保存：自加载模式写回来源；受控模式交回调用方（保持既有产物逻辑） */
 async function onSave(payload: ArrayBuffer): Promise<void> {
@@ -162,7 +222,20 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
     <p v-if="isLoading" class="fpp-tip">加载中…</p>
     <p v-else-if="errorText" class="fpp-error">{{ errorText }}</p>
     <template v-else>
-      <p v-if="truncatedFlag" class="fpp-truncated">文件较大，仅显示前 200KB</p>
+      <div v-if="truncatedFlag" class="fpp-truncated">
+        <span v-if="canLoadMore">
+          文件较大，已加载 {{ loadedChars }} 字{{ totalCharsHint }}，可继续加载至完整内容
+        </span>
+        <span v-else>文件较大，仅显示已加载的部分内容</span>
+        <span v-if="canLoadMore" class="fpp-truncated-actions">
+          <button class="fpp-more-btn" type="button" :disabled="moreLoading" @click="loadMore">
+            继续加载
+          </button>
+          <button class="fpp-more-btn" type="button" :disabled="moreLoading" @click="loadAll">
+            加载全部
+          </button>
+        </span>
+      </div>
       <div class="fpp-body">
         <WordEditor
           v-if="kind === 'word' && bytes"
@@ -182,6 +255,8 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
           :content="textContent"
           content-type="markdown"
           :workspace-id="markdownWorkspaceId"
+          :knowledge-id="props.source?.markdownKnowledgeId"
+          :base-path="displayPath"
         />
         <pre v-else-if="kind === 'text'" class="fpp-code">{{ textContent }}</pre>
         <p v-else class="fpp-tip">{{ unsupportedHint(displayName) }}</p>
@@ -266,6 +341,11 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
 }
 
 .fpp-truncated {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 0;
   padding: 6px 12px;
   font-size: 11px;
@@ -273,6 +353,32 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
   background: rgba(245, 158, 11, 0.08);
   border-bottom: 1px solid rgba(245, 158, 11, 0.15);
   flex-shrink: 0;
+}
+
+.fpp-truncated-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.fpp-more-btn {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(180, 83, 9, 0.35);
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  color: #b45309;
+  cursor: pointer;
+}
+
+.fpp-more-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.fpp-more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .fpp-body {
@@ -301,5 +407,8 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
 
 .fpp-body :deep(.message-content) {
   padding: 12px 16px;
+  /* 预览正文字号与界面正文一致，避免 Markdown 继承浏览器默认 16px 显得偏大 */
+  font-size: var(--kw-font-size-content, 13px);
+  line-height: 1.7;
 }
 </style>

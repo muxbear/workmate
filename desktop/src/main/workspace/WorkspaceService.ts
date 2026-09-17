@@ -4,7 +4,7 @@ import { basename, extname, isAbsolute, join, parse, relative, resolve, sep } fr
 import { homedir } from 'os'
 import type { WorkspaceRepository } from './WorkspaceRepository'
 import type { WorkspaceRow } from './types'
-import { loadFileText, MAX_BINARY_BYTES } from './FileLoaders'
+import { loadFileText, MAX_BINARY_BYTES, PREVIEW_PAGE_CHARS } from './FileLoaders'
 import { WordConversionService } from './WordConversionService'
 
 /** 文件列表条目（relPath 统一用 '/' 分隔的相对路径，渲染层据此缩进与回传） */
@@ -18,6 +18,10 @@ export interface WorkspaceFileEntry {
 export interface WorkspaceFileContent {
   content: string
   truncated: boolean
+  /** 续读游标：truncated 为 true 时回传可继续读取后续内容 */
+  cursor?: number
+  /** 抽取文本总字符数（转换型文档可提前得知） */
+  totalChars?: number
 }
 
 /** 工作空间图片原始字节（聊天内嵌本地图片渲染用） */
@@ -358,13 +362,19 @@ export class WorkspaceService {
    * 读取工作空间下文件文本内容（按扩展名分发文本加载器）
    * @throws 工作空间不存在 / 路径越界 / 不是文件 / 二进制（未知扩展名）时抛错
    */
-  async readFile(id: string, userId: string, relPath: string): Promise<WorkspaceFileContent> {
+  async readFile(
+    id: string,
+    userId: string,
+    relPath: string,
+    cursor?: number
+  ): Promise<WorkspaceFileContent> {
     const ws = this.resolveWorkspace(id, userId)
     if (!ws) throw new Error('工作空间不存在或目录已移除')
     const target = this.resolveInside(ws.dir, relPath)
     if (!statSync(target).isFile()) throw new Error('不是文件')
     const ext = extname(target).toLowerCase().replace(/^\./, '')
-    return loadFileText(target, ext)
+    // 预览按 PREVIEW_PAGE_CHARS 分页，渲染层可携带 cursor 续读直至完整读取整篇文档
+    return loadFileText(target, ext, { cursor, maxChars: PREVIEW_PAGE_CHARS })
   }
 
   /** 解析工作空间内文件路径并校验存在性与 containment。 */

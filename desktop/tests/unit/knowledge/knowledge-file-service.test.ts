@@ -180,4 +180,29 @@ describe('KnowledgeFileService', () => {
     expect(store.listDocuments('u1', kbId)).toEqual([])
     expect(existsSync(join(dir, 'files', kbId))).toBe(false)
   })
+
+  it('读取图片：仅允许已登记的图片文件，非图片与越界路径被拒绝', async () => {
+    files.importDocuments('u1', kbId, [
+      { srcPath: src('figure.png', 'PNG-BYTES'), relPath: 'assets/figure.png' },
+      { srcPath: src('note.md', '# 标题'), relPath: 'note.md' }
+    ])
+    const image = await files.readImageBytes('u1', kbId, 'assets/figure.png')
+    expect(image.ext).toBe('png')
+    expect(Buffer.from(image.bytes).toString('utf-8')).toBe('PNG-BYTES')
+    await expect(files.readImageBytes('u1', kbId, 'note.md')).rejects.toThrow('图片')
+    await expect(files.readImageBytes('u1', kbId, '../escape.png')).rejects.toThrow()
+  })
+
+  it('分页续读：text 携带 cursor 可继续读取后续内容，最终读完整篇', async () => {
+    // 超过预览分页步长（512KB）才会出现 truncated / cursor
+    const long = '汉字'.repeat(100000)
+    files.importDocuments('u1', kbId, [{ srcPath: src('long.md', long), relPath: 'long.md' }])
+    const first = await files.readDocument('u1', kbId, 'long.md', 'text')
+    expect(first.truncated).toBe(true)
+    expect(first.cursor).toBeGreaterThan(0)
+    const rest = await files.readDocument('u1', kbId, 'long.md', 'text', { cursor: first.cursor })
+    expect(first.content! + rest.content!).toBe(long)
+    expect(rest.truncated).toBe(false)
+  })
+
 })

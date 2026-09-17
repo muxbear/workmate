@@ -1,5 +1,7 @@
 :root {
   color-scheme: light;
+  /* 正文（消息 / 文件预览）默认字号：与界面正文一致，避免 Markdown 继承浏览器默认 16px 显得偏大 */
+  --kw-font-size-content: 13px;
 }
 
 :root[data-theme='light'] {

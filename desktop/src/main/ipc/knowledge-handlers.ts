@@ -57,6 +57,13 @@ function asImportItems(raw: unknown): KnowledgeImportItem[] {
   })
 }
 
+/** 校验续读游标：缺省 / null 视为从头读取 */
+function asCursor(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) throw new Error('续读游标非法')
+  return Math.floor(raw)
+}
+
 function asIndexState(raw: unknown): KnowledgeIndexState {
   if (raw === undefined || raw === null) return 'none'
   if (raw === 'none' || raw === 'default' || raw === 'custom') return raw
@@ -247,7 +254,7 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
 
   ipc.handle(
     'knowledge:read-file',
-    async (_event, kbId?: unknown, relPath?: unknown, as?: unknown) => {
+    async (_event, kbId?: unknown, relPath?: unknown, as?: unknown, cursor?: unknown) => {
       try {
         const userId = session.requireUserId()
         if (as !== 'text' && as !== 'bytes') return fail('读取方式非法')
@@ -256,7 +263,26 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
             userId,
             assertKbId(kbId),
             asText(relPath, '文件路径'),
-            as
+            as,
+            { cursor: asCursor(cursor) }
+          )
+        )
+      } catch (err) {
+        return fail((err as Error).message)
+      }
+    }
+  )
+
+  ipc.handle(
+    'knowledge:read-image-bytes',
+    async (_event, kbId?: unknown, relPath?: unknown) => {
+      try {
+        const userId = session.requireUserId()
+        return ok(
+          await knowledgeService.readImageBytes(
+            userId,
+            assertKbId(kbId),
+            asText(relPath, '文件路径')
           )
         )
       } catch (err) {

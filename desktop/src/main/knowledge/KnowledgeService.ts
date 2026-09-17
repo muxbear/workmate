@@ -159,10 +159,21 @@ export class KnowledgeService {
     userId: string,
     kbId: string,
     relPath: string,
-    as: 'text' | 'bytes'
+    as: 'text' | 'bytes',
+    options: { cursor?: number } = {}
   ): ReturnType<KnowledgeFileService['readDocument']> {
     this.requireBase(userId, kbId)
-    return this.files.readDocument(userId, kbId, relPath, as)
+    return this.files.readDocument(userId, kbId, relPath, as, options)
+  }
+
+  /** 读取知识库内图片原始字节（Markdown 相对路径插图渲染用） */
+  readImageBytes(
+    userId: string,
+    kbId: string,
+    relPath: string
+  ): ReturnType<KnowledgeFileService['readImageBytes']> {
+    this.requireBase(userId, kbId)
+    return this.files.readImageBytes(userId, kbId, relPath)
   }
 
   /** 知识库文件目录（不存在时创建），供「打开文件夹」使用 */

@@ -45,7 +45,7 @@ const isMarkdown = computed(() => /\.md$/i.test(props.name))
         <p class="fp-path">{{ relPath }}</p>
       </div>
     </div>
-    <p v-if="truncated" class="fp-truncated">文件较大，仅显示前 200KB</p>
+    <p v-if="truncated" class="fp-truncated">文件较大，仅显示已加载的部分内容</p>
     <div class="fp-body">
       <MessageContent
         v-if="isMarkdown"
@@ -149,5 +149,8 @@ const isMarkdown = computed(() => /\.md$/i.test(props.name))
 
 .fp-body .message-content {
   padding: 12px 16px;
+  /* 预览正文字号与界面正文一致，避免 Markdown 继承浏览器默认 16px 显得偏大 */
+  font-size: var(--kw-font-size-content, 13px);
+  line-height: 1.7;
 }
 </style>

@@ -207,6 +207,10 @@ export interface WorkspaceFileEntry {
 export interface WorkspaceFileContent {
   content: string
   truncated: boolean
+  /** 续读游标：truncated 为 true 时回传可继续读取后续内容 */
+  cursor?: number
+  /** 抽取文本总字符数（转换型文档可提前得知） */
+  totalChars?: number
 }
 
 /** 工作空间图片原始字节（聊天内嵌本地图片渲染用） */
@@ -246,7 +250,11 @@ export interface WorkspaceAPI {
     relPath?: string
   ): Promise<IpcResult<WorkspaceFileEntry[]>>
   /** 读取工作空间下文件文本内容 */
-  readWorkspaceFile(workspaceId: string, relPath: string): Promise<IpcResult<WorkspaceFileContent>>
+  readWorkspaceFile(
+    workspaceId: string,
+    relPath: string,
+    cursor?: number
+  ): Promise<IpcResult<WorkspaceFileContent>>
   /** 读取工作空间下 Word/PDF 文件原始字节 */
   readWorkspaceFileBytes(
     workspaceId: string,
@@ -436,6 +444,12 @@ export interface KnowledgeImportResult {
 }
 
 /** 知识库概览统计（文件维度；切片/实体随索引能力提供） */
+/** 知识库图片原始字节（Markdown 插图渲染用） */
+export interface KnowledgeImageBytes {
+  ext: string
+  bytes: Uint8Array
+}
+
 export interface KnowledgeStats {
   kbCount: number
   docCount: number
@@ -500,16 +514,24 @@ export interface KnowledgeAPI {
   readKnowledgeFile(
     kbId: string,
     relPath: string,
-    as: 'text' | 'bytes'
+    as: 'text' | 'bytes',
+    cursor?: number
   ): Promise<
     IpcResult<{
       content?: string
       truncated?: boolean
+      cursor?: number
+      totalChars?: number
       bytes?: Uint8Array
       ext: string
       name: string
     }>
   >
+  /** 读取知识库内图片原始字节（Markdown 相对路径插图渲染用） */
+  readKnowledgeImageBytes(
+    kbId: string,
+    relPath: string
+  ): Promise<IpcResult<KnowledgeImageBytes>>
   /** 在系统文件管理器中打开知识库目录（目录不存在时主进程会先创建） */
   openKnowledgeBaseDir(kbId: string): Promise<IpcResult<null>>
   /** 在系统文件管理器中打开文件所在目录，并尽量选中该文件 */

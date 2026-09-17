@@ -261,15 +261,21 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   async function readFile(
     kbId: string,
     relPath: string,
-    as: 'text' | 'bytes'
+    as: 'text' | 'bytes',
+    cursor?: number
   ): Promise<{
     content?: string
     truncated?: boolean
+    cursor?: number
+    totalChars?: number
     bytes?: Uint8Array
     ext: string
     name: string
   } | null> {
-    const result = await call(() => window.api.readKnowledgeFile(kbId, relPath, as), IPC_FALLBACK)
+    const result = await call(
+      () => window.api.readKnowledgeFile(kbId, relPath, as, cursor),
+      IPC_FALLBACK
+    )
     if (!result.success) {
       lastError.value = result.error ?? '读取文件失败'
       return null

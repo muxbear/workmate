@@ -234,8 +234,8 @@ const api = {
   listWorkspaceFiles(workspaceId: string, relPath?: string) {
     return ipcRenderer.invoke('workspace:list-files', workspaceId, relPath)
   },
-  readWorkspaceFile(workspaceId: string, relPath: string) {
-    return ipcRenderer.invoke('workspace:read-file', workspaceId, relPath)
+  readWorkspaceFile(workspaceId: string, relPath: string, cursor?: number) {
+    return ipcRenderer.invoke('workspace:read-file', workspaceId, relPath, cursor)
   },
   readWorkspaceFileBytes(workspaceId: string, relPath: string) {
     return ipcRenderer.invoke('workspace:read-file-bytes', workspaceId, relPath)
@@ -375,8 +375,11 @@ const api = {
   removeKnowledgeDocument(kbId: string, relPath: string) {
     return ipcRenderer.invoke('knowledge:remove-doc', kbId, relPath)
   },
-  readKnowledgeFile(kbId: string, relPath: string, as: 'text' | 'bytes') {
-    return ipcRenderer.invoke('knowledge:read-file', kbId, relPath, as)
+  readKnowledgeFile(kbId: string, relPath: string, as: 'text' | 'bytes', cursor?: number) {
+    return ipcRenderer.invoke('knowledge:read-file', kbId, relPath, as, cursor)
+  },
+  readKnowledgeImageBytes(kbId: string, relPath: string) {
+    return ipcRenderer.invoke('knowledge:read-image-bytes', kbId, relPath)
   },
   /** 打开知识库所在目录（系统文件管理器；目录不存在时主进程会先创建） */
   openKnowledgeBaseDir(kbId: string) {

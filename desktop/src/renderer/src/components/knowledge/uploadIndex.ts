@@ -87,9 +87,18 @@ export const KNOWLEDGE_INDEX_STEPS: readonly KnowledgeIndexStep[] = [
   }
 ]
 
+/** 待上传项：file 为浏览器 File，relPath 为相对上传根目录的路径 */
+export interface KnowledgeUploadItem {
+  file: File
+  /** 相对上传根目录的路径（拖入文件夹时保留目录结构） */
+  relPath: string
+}
+
 export interface KnowledgeUploadPayload {
   /** 本次要上传的文件（渲染层只持 File 对象，字节暂不落盘） */
   files: File[]
+  /** 待上传项（带相对路径，优先使用；缺省时按文件名逐项上传） */
+  items?: KnowledgeUploadItem[]
   mode: KnowledgeUploadMode
   /** 本次上传的索引配置快照（只含索引项；只上传文件时为空对象） */
   config: KnowledgeOverrides

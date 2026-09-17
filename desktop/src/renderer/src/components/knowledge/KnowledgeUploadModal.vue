@@ -14,6 +14,7 @@ import {
   KNOWLEDGE_UPLOAD_OPTIONS,
   pickIndexConfig,
   summarizeIndexConfig,
+  type KnowledgeUploadItem,
   type KnowledgeUploadMode,
   type KnowledgeUploadPayload
 } from './uploadIndex'
@@ -52,6 +53,8 @@ const modelStore = useModelStore()
 interface UploadQueueItem {
   id: number
   file: File
+  /** 相对上传根目录的路径：拖入文件夹时保留目录结构（缺省为文件名） */
+  relPath: string
   name: string
   typeText: string
   sizeText: string
@@ -104,24 +107,27 @@ function formatSize(bytes: number): string {
   return `${bytes} B`
 }
 
-/** 同一文件重复拖入时只保留一份（同名 + 同大小 + 同修改时间） */
-function queueKey(file: File): string {
-  return `${file.name}|${file.size}|${file.lastModified}`
+/** 同一文件重复加入时只保留一份（同路径 + 同大小 + 同修改时间） */
+function queueKey(relPath: string, file: File): string {
+  return relPath + '|' + file.size + '|' + file.lastModified
 }
 
-function addFiles(list: FileList | File[] | null): void {
-  const files = list ? Array.from(list) : []
-  if (!files.length) return
-  const known = new Set(queue.value.map((item) => queueKey(item.file)))
+/** 加入待上传项（relPath 缺省为文件名；拖入文件夹时保留目录结构） */
+function addEntries(entries: KnowledgeUploadItem[]): void {
+  if (!entries.length) return
+  const known = new Set(queue.value.map((item) => queueKey(item.relPath, item.file)))
   const added: UploadQueueItem[] = []
-  for (const file of files) {
-    const key = queueKey(file)
+  for (const entry of entries) {
+    const file = entry.file
+    const relPath = entry.relPath || file.name
+    const key = queueKey(relPath, file)
     if (known.has(key)) continue
     known.add(key)
     const ext = fileExt(file.name)
     added.push({
       id: ++queueSeq,
       file,
+      relPath,
       name: file.name,
       typeText: ext ? ext.toUpperCase() : '文件',
       sizeText: formatSize(file.size),
@@ -131,6 +137,81 @@ function addFiles(list: FileList | File[] | null): void {
   if (!added.length) return
   queue.value = [...queue.value, ...added]
   error.value = ''
+}
+
+function addFiles(list: FileList | File[] | null): void {
+  const files = list ? Array.from(list) : []
+  addEntries(files.map((file) => ({ file, relPath: file.name })))
+}
+
+/** 汇总待上传项（带相对路径，落盘时据此保留目录结构） */
+function buildUploadItems(): KnowledgeUploadItem[] {
+  return queue.value.map((item) => ({ file: item.file, relPath: item.relPath }))
+}
+
+function readFileEntry(entry: FileSystemFileEntry): Promise<File | null> {
+  return new Promise((resolve) => {
+    entry.file(
+      (file) => resolve(file),
+      () => resolve(null)
+    )
+  })
+}
+
+function readDirectoryEntries(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
+  return new Promise((resolve) => {
+    const reader = dir.createReader()
+    const all: FileSystemEntry[] = []
+    // readEntries 每次最多返回 100 项，需要循环读到空才算读完
+    const readBatch = (): void => {
+      reader.readEntries(
+        (batch) => {
+          if (!batch.length) {
+            resolve(all)
+            return
+          }
+          all.push(...batch)
+          readBatch()
+        },
+        () => resolve(all)
+      )
+    }
+    readBatch()
+  })
+}
+
+/** 递归展开拖入的文件/文件夹：文件夹按「文件夹名/子路径」保留目录结构 */
+async function walkEntry(
+  entry: FileSystemEntry,
+  prefix: string,
+  out: KnowledgeUploadItem[]
+): Promise<void> {
+  if (entry.isFile) {
+    const file = await readFileEntry(entry as FileSystemFileEntry)
+    if (file) out.push({ file, relPath: prefix ? prefix + '/' + file.name : file.name })
+    return
+  }
+  if (!entry.isDirectory) return
+  const nextPrefix = prefix ? prefix + '/' + entry.name : entry.name
+  const children = await readDirectoryEntries(entry as FileSystemDirectoryEntry)
+  for (const child of children) await walkEntry(child, nextPrefix, out)
+}
+
+/** 拖拽来源：优先递归展开文件夹，退化时按 files 平铺（保持文件名） */
+async function collectDropItems(dt: DataTransfer): Promise<KnowledgeUploadItem[]> {
+  const roots: FileSystemEntry[] = []
+  for (const item of Array.from(dt.items ?? [])) {
+    if (typeof item.webkitGetAsEntry !== 'function') continue
+    // webkitGetAsEntry 必须在 drop 事件同步阶段调用，之后 items 会被清空
+    const entry = item.webkitGetAsEntry()
+    if (entry) roots.push(entry)
+  }
+  if (!roots.length) {
+    return Array.from(dt.files ?? []).map((file) => ({ file, relPath: file.name }))
+  }
+  const out: KnowledgeUploadItem[] = []
+  for (const root of roots) await walkEntry(root, '', out)
+  return out
 }
 
 function removeItem(id: number): void {
@@ -180,7 +261,15 @@ function onDrop(event: DragEvent): void {
   event.preventDefault()
   dragDepth = 0
   dragging.value = false
-  addFiles(event.dataTransfer?.files ?? null)
+  const dt = event.dataTransfer
+  if (!dt) return
+  // 文件夹拖入时递归展平，保留「文件夹名/子路径」的目录结构
+  void collectDropItems(dt)
+    .then(addEntries)
+    .catch(() => {
+      // 目录读取失败时保持列表不变，由错误提示兜底
+      error.value = '读取拖入的文件夹失败，请改用「上传文件夹」'
+    })
 }
 
 // ── 默认索引配置来源 ──
@@ -302,13 +391,15 @@ function onConfirm(): void {
     return
   }
   const files = queue.value.map((item) => item.file)
+  const items = buildUploadItems()
   if (mode.value === 'none') {
-    emit('submit', { files, mode: 'none', config: {}, sourceLabel: '' })
+    emit('submit', { files, items, mode: 'none', config: {}, sourceLabel: '' })
     emit('close')
     return
   }
   emit('submit', {
     files,
+    items,
     mode: 'default',
     config: effectiveIndexConfig.value as KnowledgeOverrides,
     sourceLabel: defaultSourceLabel.value
@@ -341,6 +432,7 @@ function finish(): void {
   if (!config) return
   emit('submit', {
     files: queue.value.map((item) => item.file),
+    items: buildUploadItems(),
     mode: 'custom',
     config,
     sourceLabel: '自定义索引配置'

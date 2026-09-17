@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } f
 import { createHash, randomUUID } from 'crypto'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'path'
 import { readFile } from 'fs/promises'
-import { loadFileText, MAX_BINARY_BYTES } from '../workspace/FileLoaders'
+import { loadFileText, MAX_BINARY_BYTES, PREVIEW_PAGE_CHARS } from '../workspace/FileLoaders'
 import type { KnowledgeStore } from './KnowledgeStore'
 import type {
   KnowledgeDocumentMeta,
@@ -29,6 +29,11 @@ export interface KnowledgeFileServiceDeps {
 const NAME_MAX_LEN = 60
 // eslint-disable-next-line no-control-regex
 const INVALID_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/
+
+/** 知识库内可作为 Markdown 插图渲染的图片扩展名 */
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'])
+/** 单张图片读取上限，避免超大图片撑爆渲染层 */
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 /** 文档行 → 渲染层可见元信息（剥掉 storage_path / user_id / hash） */
 export function toDocumentMeta(row: KnowledgeDocumentRow): KnowledgeDocumentMeta {
@@ -237,10 +242,15 @@ export class KnowledgeFileService {
     userId: string,
     kbId: string,
     relPath: string,
-    as: 'text' | 'bytes'
+    as: 'text' | 'bytes',
+    options: { cursor?: number } = {}
   ): Promise<{
     content?: string
     truncated?: boolean
+    /** 续读游标：truncated 为 true 时回传可继续读取后续内容 */
+    cursor?: number
+    /** 抽取文本总字符数（转换型文档可提前得知） */
+    totalChars?: number
     bytes?: Uint8Array
     ext: string
     name: string
@@ -253,12 +263,46 @@ export class KnowledgeFileService {
 
     const ext = extname(doc.name).toLowerCase().replace(/^\./, '')
     if (as === 'text') {
-      const loaded = await loadFileText(target, ext)
-      return { content: loaded.content, truncated: loaded.truncated, ext, name: doc.name }
+      // 预览按 PREVIEW_PAGE_CHARS 分页，前端可携带 cursor 续读，直至完整读取整篇文档
+      const loaded = await loadFileText(target, ext, {
+        cursor: options.cursor,
+        maxChars: PREVIEW_PAGE_CHARS
+      })
+      return {
+        content: loaded.content,
+        truncated: loaded.truncated,
+        cursor: loaded.cursor,
+        totalChars: loaded.totalChars,
+        ext,
+        name: doc.name
+      }
     }
     if (statSync(target).size > MAX_BINARY_BYTES) throw new Error('文件过大，暂不支持预览')
     const buffer = await readFile(target)
     return { bytes: new Uint8Array(buffer), ext, name: doc.name }
+  }
+
+  /**
+   * 读取知识库内的图片原始字节（Markdown 相对路径插图渲染用）
+   *
+   * 只允许知识库内已登记的图片文件，路径经 normalizeRelPath + containment 校验，
+   * 渲染层仅拿到字节，拿不到真实磁盘路径。
+   */
+  async readImageBytes(
+    userId: string,
+    kbId: string,
+    relPath: string
+  ): Promise<{ ext: string; bytes: Uint8Array }> {
+    const safeRel = this.normalizeRelPath(relPath)
+    const doc = this.store.findDocument(userId, kbId, safeRel)
+    if (!doc) throw new Error('图片文件不存在')
+    const ext = extname(doc.name).toLowerCase().replace(/^\./, '')
+    if (!IMAGE_EXTS.has(ext)) throw new Error('该文件不是支持的图片格式')
+    const target = this.resolveInside(this.kbRoot(kbId), doc.storagePath)
+    if (!existsSync(target) || !statSync(target).isFile()) throw new Error('图片文件已丢失')
+    if (statSync(target).size > MAX_IMAGE_BYTES) throw new Error('图片文件过大，暂不支持预览')
+    const buffer = await readFile(target)
+    return { ext, bytes: new Uint8Array(buffer) }
   }
 
   /** 删除某知识库的全部文件（删库时调用；文档记录与目录一并清理） */

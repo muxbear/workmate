@@ -383,12 +383,16 @@ describe('WorkspaceService', () => {
       expect(result.truncated).toBe(false)
     })
 
-    it('超过 200KB 截断并置 truncated', async () => {
+    it('超过预览分页步长时截断，可携带 cursor 续读至完整', async () => {
       const ws = service.createWorkspace('large', 'u1')
-      writeFileSync(join(ws.path, 'big.log'), 'a'.repeat(250 * 1024))
+      const text = 'a'.repeat(700 * 1024)
+      writeFileSync(join(ws.path, 'big.log'), text)
       const result = await service.readFile(ws.id, 'u1', 'big.log')
       expect(result.truncated).toBe(true)
-      expect(result.content.length).toBeLessThanOrEqual(200 * 1024)
+      expect(result.cursor).toBeGreaterThan(0)
+      const rest = await service.readFile(ws.id, 'u1', 'big.log', result.cursor)
+      expect(result.content + rest.content).toBe(text)
+      expect(rest.truncated).toBe(false)
     })
 
     it('越界路径拒绝', async () => {

@@ -132,4 +132,42 @@ describe('FileLoaders.loadFileText', () => {
     writeFileSync(path, Buffer.from([0x89, 0x50, 0x00, 0x0a, 0x01]))
     await expect(loadFileText(path, 'bin')).rejects.toThrow(/二进制/)
   })
+
+  it('纯文本分页续读：按游标拼接可读完整篇且不产生乱码', async () => {
+    const path = join(dir, 'big.md')
+    const text = '汉字'.repeat(3000)
+    writeFileSync(path, text, 'utf-8')
+    const first = await loadFileText(path, 'md', { maxChars: 1000 })
+    expect(first.truncated).toBe(true)
+    expect(first.cursor).toBeGreaterThan(0)
+    let content = first.content
+    let cursor = first.cursor
+    let guard = 0
+    while (cursor !== undefined && guard < 200) {
+      guard += 1
+      const page = await loadFileText(path, 'md', { cursor, maxChars: 1000 })
+      content += page.content
+      cursor = page.cursor
+      if (!page.truncated) break
+    }
+    expect(content).toBe(text)
+    expect(content).not.toContain(String.fromCharCode(0xfffd))
+  })
+
+  it('docx 分页续读：cursor 为字符偏移，拼接后为完整文本', async () => {
+    const path = join(dir, 'paged.docx')
+    const body = 'x'.repeat(MAX_TEXT_CHARS + 512)
+    writeFileSync(path, makeDocx(body))
+    const first = await loadFileText(path, 'docx', { maxChars: 1024 })
+    expect(first.truncated).toBe(true)
+    expect(first.cursor).toBe(1024)
+    expect(first.totalChars).toBeGreaterThanOrEqual(body.length)
+    const rest = await loadFileText(path, 'docx', { cursor: first.cursor, maxChars: 1024 * 1024 })
+    expect(rest.truncated).toBe(false)
+    // docx 抽取可能附带尾部换行，这里按抽取总长度校验拼接结果完整
+    const all = first.content + rest.content
+    expect(all.length).toBe(first.totalChars)
+    expect(all.startsWith(body)).toBe(true)
+  })
+
 })

@@ -147,8 +147,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   /** 读取工作空间下文件文本内容；失败抛错（组件捕获展示） */
-  async function readFile(workspaceId: string, relPath: string): Promise<WorkspaceFileContent> {
-    const result = await window.api.readWorkspaceFile(workspaceId, relPath)
+  async function readFile(
+    workspaceId: string,
+    relPath: string,
+    cursor?: number
+  ): Promise<WorkspaceFileContent> {
+    const result = await window.api.readWorkspaceFile(workspaceId, relPath, cursor)
     if (!result.success || !result.data) {
       throw new Error(result.error || '读取文件失败')
     }

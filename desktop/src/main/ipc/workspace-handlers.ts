@@ -100,15 +100,21 @@ export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDe
     }
   })
 
-  ipc.handle('workspace:read-file', async (_event, id?: unknown, relPath?: unknown) => {
-    if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      return ok(await workspaceService.readFile(id, userId, relPath))
-    } catch (err) {
-      return fail((err as Error).message)
+  ipc.handle(
+    'workspace:read-file',
+    async (_event, id?: unknown, relPath?: unknown, cursor?: unknown) => {
+      if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
+      if (cursor !== undefined && (typeof cursor !== 'number' || !Number.isFinite(cursor))) {
+        return fail('参数错误')
+      }
+      try {
+        const userId = session.requireUserId()
+        return ok(await workspaceService.readFile(id, userId, relPath, cursor as number | undefined))
+      } catch (err) {
+        return fail((err as Error).message)
+      }
     }
-  })
+  )
 
   ipc.handle('workspace:read-file-bytes', async (_event, id?: unknown, relPath?: unknown) => {
     if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')

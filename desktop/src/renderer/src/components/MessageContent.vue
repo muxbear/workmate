@@ -2,9 +2,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { marked } from 'marked'
 import {
+  decodeImagePath,
   extractRemoteImageUrls,
   extractWorkspaceImagePaths,
-  normalizeWorkspaceImagePath
+  normalizeWorkspaceImagePath,
+  resolveMarkdownRelativePath
 } from '../util/markdown-images'
 import { extractWorkspaceVideoPaths, replaceWorkspaceVideoSrc } from '../util/markdown-videos'
 import { isDocRelPath, normalizeWorkspaceDocPath } from '../util/doc-files'
@@ -24,11 +26,17 @@ export interface MessageContentProps {
   contentType?: 'markdown' | 'text' | 'html'
   /** 会话绑定的工作空间 id；存在时把正文中的工作区相对图片读取为可显示地址 */
   workspaceId?: string
+  /** 知识库 id：Markdown 相对路径图片从知识库只读读取（文件预览用） */
+  knowledgeId?: string
+  /** 当前 Markdown 文件的相对路径：相对图片以它所在目录为基准解析 */
+  basePath?: string
 }
 
 const props = withDefaults(defineProps<MessageContentProps>(), {
   contentType: 'markdown',
-  workspaceId: undefined
+  workspaceId: undefined,
+  knowledgeId: undefined,
+  basePath: undefined
 })
 
 /** 工作区文档链接点击 → 由父级在右侧栏打开（历史与实时共用同一渲染路径） */
@@ -79,6 +87,59 @@ function mimeForImageExt(ext: string): string {
   }
 }
 
+/** 知识库预览：库内相对路径图片 → blob 地址（只读） */
+const knowledgeImageMap = ref<Record<string, string>>({})
+const resolvingKnowledgePaths = new Set<string>()
+const knowledgeImagePaths = computed(() =>
+  props.knowledgeId ? extractWorkspaceImagePaths(props.content).map(decodeImagePath) : []
+)
+
+function revokeKnowledgeBlobs(): void {
+  for (const url of Object.values(knowledgeImageMap.value)) URL.revokeObjectURL(url)
+  knowledgeImageMap.value = {}
+  resolvingKnowledgePaths.clear()
+}
+
+/**
+ * 相对图片路径的候选顺序：优先以 Markdown 文件所在目录为基准，
+ * 其次退回空间/知识库根目录（兼容老文档与根目录放图的写法）。
+ */
+function imageCandidates(rawPath: string): string[] {
+  const fileRel = resolveMarkdownRelativePath(props.basePath ?? '', rawPath)
+  if (!fileRel || fileRel === rawPath) return [rawPath]
+  return [fileRel, rawPath]
+}
+
+function toBlobUrl(bytes: Uint8Array, ext: string): string {
+  const rawBuffer = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength
+  ) as ArrayBuffer
+  return URL.createObjectURL(new Blob([rawBuffer], { type: mimeForImageExt(ext) }))
+}
+
+async function resolveWorkspaceImageBytes(
+  workspaceId: string,
+  rawPath: string
+): Promise<{ bytes: Uint8Array; ext: string } | null> {
+  for (const candidate of imageCandidates(rawPath)) {
+    const res = await window.api.readWorkspaceImageBytes(workspaceId, candidate).catch(() => null)
+    if (res?.success && res.data) return res.data
+  }
+  return null
+}
+
+async function resolveKnowledgeImageBytes(
+  knowledgeId: string,
+  rawPath: string
+): Promise<{ bytes: Uint8Array; ext: string } | null> {
+  for (const candidate of imageCandidates(rawPath)) {
+    const res = await window.api.readKnowledgeImageBytes(knowledgeId, candidate).catch(() => null)
+    if (res?.success && res.data) return res.data
+  }
+  return null
+}
+
 let workspaceEpoch = 0
 
 function revokeWorkspaceBlobs(): void {
@@ -121,16 +182,10 @@ watch(
     for (const relPath of paths) {
       if (workspaceImageMap.value[relPath] || resolvingWorkspacePaths.has(relPath)) continue
       resolvingWorkspacePaths.add(relPath)
-      window.api
-        .readWorkspaceImageBytes(workspaceId, relPath)
-        .then((res) => {
-          if (!res.success || !res.data) return
-          const rawBuffer = res.data.bytes.buffer.slice(
-            res.data.bytes.byteOffset,
-            res.data.bytes.byteOffset + res.data.bytes.byteLength
-          ) as ArrayBuffer
-          const blob = new Blob([rawBuffer], { type: mimeForImageExt(res.data.ext) })
-          const url = URL.createObjectURL(blob)
+      void resolveWorkspaceImageBytes(workspaceId, relPath)
+        .then((found) => {
+          if (!found) return
+          const url = toBlobUrl(found.bytes, found.ext)
           if (epoch !== workspaceEpoch) {
             URL.revokeObjectURL(url)
             return
@@ -149,17 +204,46 @@ watch(
 )
 
 // 切换会话/工作空间时回收旧 blob，避免泄漏
+// 知识库预览：相对路径图片按库内路径读取字节并替换为 blob 地址
 watch(
-  () => props.workspaceId,
+  [knowledgeImagePaths, () => props.knowledgeId],
+  ([paths, knowledgeId]) => {
+    if (!knowledgeId) return
+    const epoch = workspaceEpoch
+    for (const relPath of paths) {
+      if (knowledgeImageMap.value[relPath] || resolvingKnowledgePaths.has(relPath)) continue
+      resolvingKnowledgePaths.add(relPath)
+      void resolveKnowledgeImageBytes(knowledgeId, relPath)
+        .then((found) => {
+          if (!found) return
+          const url = toBlobUrl(found.bytes, found.ext)
+          if (epoch !== workspaceEpoch) {
+            URL.revokeObjectURL(url)
+            return
+          }
+          knowledgeImageMap.value = { ...knowledgeImageMap.value, [relPath]: url }
+        })
+        .finally(() => {
+          resolvingKnowledgePaths.delete(relPath)
+        })
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => [props.workspaceId, props.knowledgeId, props.basePath],
   () => {
     workspaceEpoch += 1
     revokeWorkspaceBlobs()
     revokeWorkspaceVideoBlobs()
+    revokeKnowledgeBlobs()
   }
 )
 onBeforeUnmount(() => {
   revokeWorkspaceBlobs()
   revokeWorkspaceVideoBlobs()
+  revokeKnowledgeBlobs()
 })
 
 // 工作区相对视频路径 → blob 地址（HTML5 <video> 标签内嵌本地视频渲染）
@@ -272,11 +356,14 @@ const renderedHtml = computed(() => {
         return '<a href=' + q + hrefAttr + q + titleAttr2 + '>' + text + '</a>'
       }
       renderer.image = ({ href, title, text }) => {
-        const normalized = normalizeWorkspaceImagePath(href)
+        const normalized = normalizeWorkspaceImagePath(decodeImagePath(href))
+        const knowledgePath = imageCandidates(normalized)[0] ?? normalized
         const src =
           imageSrcMap.value[href] ??
           workspaceImageMap.value[normalized] ??
           workspaceImageMap.value[href] ??
+          knowledgeImageMap.value[knowledgePath] ??
+          knowledgeImageMap.value[normalized] ??
           href
         const attrs = [`src="${escapeHtmlAttr(src)}"`, `alt="${escapeHtmlAttr(text)}"`]
         if (title) attrs.push(`title="${escapeHtmlAttr(title)}"`)

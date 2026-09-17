@@ -302,7 +302,7 @@ describe('workspace IPC handlers', () => {
       'ws-1',
       'a.txt'
     )
-    expect(readFile).toHaveBeenCalledWith('ws-1', 'real-user', 'a.txt')
+    expect(readFile).toHaveBeenCalledWith('ws-1', 'real-user', 'a.txt', undefined)
     expect(result.success).toBe(true)
     expect(result.data!.content).toBe('hello')
   })
