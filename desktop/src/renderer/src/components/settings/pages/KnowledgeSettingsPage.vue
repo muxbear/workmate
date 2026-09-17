@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
+import ConfirmDialog from '../../ConfirmDialog.vue'
 import KnowledgeConfigForm from '../../knowledge/KnowledgeConfigForm.vue'
 import { useSettingsStore, type SettingsKey } from '../../../store/settings'
 import {
@@ -90,8 +91,20 @@ async function onSave(): Promise<void> {
   showToast('知识库设置已保存')
 }
 
+/** 目录切换确认：切换后旧目录的索引库不再可见（不迁移），先确认再打开对话框 */
+const dirConfirmOpen = ref(false)
+
+function onSelectDirectory(): void {
+  dirConfirmOpen.value = true
+}
+
+async function onConfirmSelectDirectory(): Promise<void> {
+  dirConfirmOpen.value = false
+  await pickDirectory()
+}
+
 /** 选择知识库目录（系统原生对话框；取消不改动） */
-async function onSelectDirectory(): Promise<void> {
+async function pickDirectory(): Promise<void> {
   try {
     await settingsStore.changeKnowledgeDir()
     directory.value = settingsStore.knowledgeDirectory
@@ -109,6 +122,10 @@ async function onSelectDirectory(): Promise<void> {
       <div>
         <p class="kb-intro">这些配置将用于主页面“知识库”的文件处理、索引构建与问答检索。</p>
         <p class="kb-intro-sub">修改后仅影响后续新增或重新索引的文件。</p>
+        <p class="kb-intro-warn">
+          索引与检索能力开发中：当前「文件上传」「本地存储」配置已生效；「RAG
+          索引」「混合检索与重排」「知识图谱抽取」暂不生效。
+        </p>
       </div>
       <button class="s-btn s-btn--primary kb-save" :disabled="saving" @click="onSave">
         保存设置
@@ -122,6 +139,16 @@ async function onSelectDirectory(): Promise<void> {
       @change="onFieldChange"
       @update:directory="directory = $event"
       @select-directory="onSelectDirectory"
+    />
+
+    <!-- 目录切换二次确认（换目录不迁移旧索引库） -->
+    <ConfirmDialog
+      v-if="dirConfirmOpen"
+      title="切换知识库目录"
+      message="切换后新目录会成为知识库的存放位置，旧目录中的知识库不会自动迁移（需手工迁回或重新导入），确认继续选择吗？"
+      confirm-text="继续选择"
+      @confirm="onConfirmSelectDirectory"
+      @cancel="dirConfirmOpen = false"
     />
 
     <!-- 保存反馈 -->
@@ -154,6 +181,13 @@ async function onSelectDirectory(): Promise<void> {
   font-size: 14px;
   line-height: 1.7;
   color: var(--kw-color-text-muted);
+}
+
+.kb-intro-warn {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #b45309;
 }
 
 .kb-intro-sub {

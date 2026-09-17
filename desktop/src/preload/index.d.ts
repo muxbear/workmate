@@ -379,11 +379,137 @@ export type KnowledgeOverrideKey =
 /** 单个知识库的覆盖项：稀疏结构，未出现的 key 表示「跟随全局」 */
 export type KnowledgeOverrides = Partial<Record<KnowledgeOverrideKey, unknown>>
 
+/** 知识库来源分组：本地创建 / 他人共享 / 云端 */
+export type KnowledgeKind = 'local' | 'shared' | 'cloud'
+
+/** 文档索引状态：未索引 / 已建立索引 / 自定义索引 */
+export type KnowledgeIndexState = 'none' | 'default' | 'custom'
+
+/** 文档处理状态（索引管线落地前恒为 none） */
+export type KnowledgeDocStatus = 'none' | 'queued' | 'indexing' | 'indexed' | 'failed'
+
+/** 知识库摘要 */
+export interface KnowledgeBaseSummary {
+  id: string
+  userId: string
+  name: string
+  description: string
+  kind: KnowledgeKind
+  status: string
+  docsCount: number
+  sizeBytes: number
+  createdAt: number
+  updatedAt: number
+}
+
+/** 文档元信息（不含绝对路径等主进程内部字段） */
+export interface KnowledgeDocumentMeta {
+  id: string
+  kbId: string
+  name: string
+  type: string
+  sizeBytes: number
+  /** 相对知识库根目录的路径，'/' 分隔（文件树据此还原层级） */
+  relPath: string
+  indexState: KnowledgeIndexState
+  status: KnowledgeDocStatus
+  errorMessage: string | null
+  uploadedAt: number
+  updatedAt: number
+}
+
+/** 单个文件的导入结果 */
+export interface KnowledgeImportOutcome {
+  name: string
+  relPath: string
+  reason: string
+}
+
+export interface KnowledgeImportResult {
+  accepted: KnowledgeDocumentMeta[]
+  skipped: KnowledgeImportOutcome[]
+  failed: KnowledgeImportOutcome[]
+}
+
+/** 知识库概览统计（文件维度；切片/实体随索引能力提供） */
+export interface KnowledgeStats {
+  kbCount: number
+  docCount: number
+  sizeBytes: number
+  latestUpdatedAt: number
+}
+
+/** 共享记录 */
+export interface KnowledgeShare {
+  id: string
+  userId: string
+  targetKind: 'library' | 'folder' | 'file'
+  targetId: string
+  targetName: string
+  token: string
+  url: string
+  permission: string
+  expiresAt: number | null
+  revokedAt: number | null
+  createdAt: number
+}
+
 export interface KnowledgeAPI {
   /** 批量读取各知识库的覆盖项（省略 kbIds = 该用户全部；未配置的知识库返回 {}） */
   getKbSettings(kbIds?: string[]): Promise<IpcResult<Record<string, KnowledgeOverrides>>>
   /** 全量替换某知识库的覆盖项（传 {} 即恢复全部跟随全局；主进程校验白名单 + 区间 + 枚举） */
   setKbSettings(kbId: string, overrides: KnowledgeOverrides): Promise<IpcResult<KnowledgeOverrides>>
+  // ── 知识库本体（用户级）──
+  listKnowledgeBases(options?: {
+    kind?: KnowledgeKind
+    keyword?: string
+  }): Promise<IpcResult<KnowledgeBaseSummary[]>>
+  createKnowledgeBase(input: {
+    name: string
+    description?: string
+    kind?: KnowledgeKind
+  }): Promise<IpcResult<KnowledgeBaseSummary>>
+  updateKnowledgeBase(
+    id: string,
+    patch: { name?: string; description?: string }
+  ): Promise<IpcResult<KnowledgeBaseSummary>>
+  deleteKnowledgeBase(id: string): Promise<IpcResult<{ removedDocs: number; overridesCleared: boolean }>>
+  getKnowledgeStats(): Promise<IpcResult<KnowledgeStats>>
+  listKnowledgeDocuments(kbId: string): Promise<IpcResult<KnowledgeDocumentMeta[]>>
+  /** 导入文件：items 为「源绝对路径 + 库内相对路径」；索引未开放时只接受 indexState = 'none' */
+  importKnowledgeDocuments(
+    kbId: string,
+    items: Array<{ srcPath: string; relPath: string }>,
+    indexState?: KnowledgeIndexState
+  ): Promise<IpcResult<KnowledgeImportResult>>
+  renameKnowledgeDocument(
+    kbId: string,
+    relPath: string,
+    newName: string
+  ): Promise<IpcResult<{ relPath: string; renamed: number }>>
+  removeKnowledgeDocument(kbId: string, relPath: string): Promise<IpcResult<{ removed: number }>>
+  /** 读取库内文件：text 走文本加载器，bytes 返回原始字节（预览用） */
+  readKnowledgeFile(
+    kbId: string,
+    relPath: string,
+    as: 'text' | 'bytes'
+  ): Promise<
+    IpcResult<{
+      content?: string
+      truncated?: boolean
+      bytes?: Uint8Array
+      ext: string
+      name: string
+    }>
+  >
+  createKnowledgeShare(input: {
+    targetKind: 'library' | 'folder' | 'file'
+    targetId: string
+    targetName: string
+    expiresInDays?: number
+  }): Promise<IpcResult<KnowledgeShare>>
+  listKnowledgeShares(): Promise<IpcResult<KnowledgeShare[]>>
+  revokeKnowledgeShare(token: string): Promise<IpcResult<{ revoked: boolean }>>
 }
 
 /** 模型协议类型 */

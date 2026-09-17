@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useKnowledgeStore } from '../../store/knowledge'
 
 /**
  * 创建共享弹窗（知识库 / 文件夹 / 文件共用）
  *
- * 仅前端演示：共享链接在本地随机生成，不落盘、不上传；
- * 等共享链路落地后，把 buildLink 换成主进程返回的地址即可。
+ * 链接由主进程生成并落库（knowledge:create-share），渲染层只展示与复制；
+ * 本地模式链接形如 ke-work://share/<token>，云端模式由后端返回真实地址。
  */
 type ShareKind = 'library' | 'folder' | 'file'
+
+const kbStore = useKnowledgeStore()
 
 const props = defineProps<{
   open: boolean
@@ -15,6 +18,8 @@ const props = defineProps<{
   targetName: string
   /** 共享对象类型（决定文案） */
   targetKind?: ShareKind
+  /** 共享对象 ID（知识库 ID 或库内相对路径），由主进程生成真实共享链接 */
+  targetId?: string
 }>()
 
 const emit = defineEmits<{
@@ -32,25 +37,43 @@ const KIND_LABEL: Record<ShareKind, string> = {
 const visible = ref(props.open)
 const link = ref('')
 const copied = ref(false)
+const creating = ref(false)
+const error = ref('')
 
 const kindLabel = computed(() => KIND_LABEL[props.targetKind ?? 'file'])
 
 watch(
-  () => [props.open, props.targetName] as const,
-  ([open, target]) => {
+  () => [props.open, props.targetName, props.targetId] as const,
+  ([open]) => {
     visible.value = open
     if (open) {
-      link.value = buildLink(target)
       copied.value = false
+      link.value = ''
+      error.value = ''
+      void createLink()
     }
   },
   { immediate: true }
 )
 
-/** mock 共享链接：每次打开随机码不同 */
-function buildLink(name: string): string {
-  const seed = Math.random().toString(36).slice(2, 10)
-  return `ke-work://share/${seed}?name=${encodeURIComponent(name)}`
+/** 真实共享：主进程生成 token 并落库（本地模式为 ke-work://share/<token>） */
+async function createLink(): Promise<void> {
+  if (!props.targetId) {
+    error.value = '缺少共享对象，无法创建链接'
+    return
+  }
+  creating.value = true
+  const share = await kbStore.createShare({
+    targetKind: props.targetKind ?? 'file',
+    targetId: props.targetId,
+    targetName: props.targetName
+  })
+  creating.value = false
+  if (!share) {
+    error.value = kbStore.lastError || '创建共享失败'
+    return
+  }
+  link.value = share.url
 }
 
 async function copyLink(): Promise<void> {
@@ -107,10 +130,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <p class="ksh-hint">
             拿到链接的成员可以查看并下载该{{ kindLabel }}中的内容，随时都能在共享列表里取消。
           </p>
+          <p v-if="error" class="ksh-error">{{ error }}</p>
           <label class="ksh-field">
             <span class="ksh-label">共享链接</span>
             <div class="ksh-link-row">
-              <input v-model="link" class="ksh-input" readonly />
+              <input
+                v-model="link"
+                class="ksh-input"
+                readonly
+                :placeholder="creating ? '生成中…' : '链接生成失败'"
+              />
               <button class="ksh-copy" type="button" @click="copyLink">
                 {{ copied ? '已复制' : '复制' }}
               </button>
@@ -120,7 +149,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
         <footer class="ksh-footer">
           <button class="ksh-btn" type="button" @click="closeModal">取消</button>
-          <button class="ksh-btn ksh-btn--primary" type="button" @click="onConfirm">
+          <button
+            class="ksh-btn ksh-btn--primary"
+            type="button"
+            :disabled="creating || !link"
+            @click="onConfirm"
+          >
             创建共享
           </button>
         </footer>
@@ -223,6 +257,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   font-family: inherit;
   color: var(--kw-color-text);
   outline: none;
+}
+
+.ksh-error {
+  margin: 0;
+  font-size: 12px;
+  color: #cf625b;
+}
+
+.ksh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .ksh-copy {

@@ -45,6 +45,9 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { KnowledgeSettingsStore } from './knowledge/KnowledgeSettingsStore'
 import { KnowledgeSettingsService } from './knowledge/KnowledgeSettingsService'
 import { registerKnowledgeHandlers } from './ipc/knowledge-handlers'
+import { KnowledgeStore } from './knowledge/KnowledgeStore'
+import { KnowledgeFileService } from './knowledge/KnowledgeFileService'
+import { KnowledgeService } from './knowledge/KnowledgeService'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
 import { registerExpertSyncHandlers } from './ipc/expert-sync-handlers'
@@ -453,7 +456,18 @@ app.whenReady().then(() => {
   const knowledgeSettingsService = new KnowledgeSettingsService(knowledgeSettingsStore, {
     getGlobalSettings: () => settingsStore.getAll()
   })
-  registerKnowledgeHandlers(ipcMain, { knowledgeSettingsService, session })
+  // 知识库索引库（独立 index.db，位置由「知识库设置 → 本地存储」决定）
+  const knowledgeStore = new KnowledgeStore(() => settingsService.getKnowledgeDir())
+  const knowledgeFileService = new KnowledgeFileService(knowledgeStore, {
+    getDir: () => settingsService.getKnowledgeDir(),
+    getLimits: () => ({
+      maxUploadSizeMB: Number(settingsStore.get('knowledge.maxUploadSize')) || 100,
+      maxFilesPerBatch: Number(settingsStore.get('knowledge.maxFilesPerBatch')) || 20,
+      uploadTimeoutMinutes: Number(settingsStore.get('knowledge.uploadTimeout')) || 10
+    })
+  })
+  const knowledgeService = new KnowledgeService(knowledgeStore, knowledgeFileService)
+  registerKnowledgeHandlers(ipcMain, { knowledgeSettingsService, knowledgeService, session })
 
   // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
   const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)

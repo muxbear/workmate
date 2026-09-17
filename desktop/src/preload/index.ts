@@ -337,6 +337,53 @@ const api = {
   setKbSettings(kbId: string, overrides: Record<string, unknown>) {
     return ipcRenderer.invoke('knowledge:set-kb-settings', kbId, overrides)
   },
+  // ── 知识库 API（用户级：知识库/文档/共享均按登录用户隔离）──
+  /** 知识库列表（可按分组与关键词过滤） */
+  listKnowledgeBases(options?: { kind?: string; keyword?: string }) {
+    return ipcRenderer.invoke('knowledge:list-kbs', options)
+  },
+  createKnowledgeBase(input: { name: string; description?: string; kind?: string }) {
+    return ipcRenderer.invoke('knowledge:create-kb', input)
+  },
+  updateKnowledgeBase(id: string, patch: { name?: string; description?: string }) {
+    return ipcRenderer.invoke('knowledge:update-kb', id, patch)
+  },
+  deleteKnowledgeBase(id: string) {
+    return ipcRenderer.invoke('knowledge:delete-kb', id)
+  },
+  getKnowledgeStats() {
+    return ipcRenderer.invoke('knowledge:stats')
+  },
+  listKnowledgeDocuments(kbId: string) {
+    return ipcRenderer.invoke('knowledge:list-docs', kbId)
+  },
+  /** 导入文件（items 为「源绝对路径 + 库内相对路径」，保留上传目录结构） */
+  importKnowledgeDocuments(kbId: string, items: unknown[], indexState?: string) {
+    return ipcRenderer.invoke('knowledge:import', kbId, items, indexState)
+  },
+  renameKnowledgeDocument(kbId: string, relPath: string, newName: string) {
+    return ipcRenderer.invoke('knowledge:rename-doc', kbId, relPath, newName)
+  },
+  removeKnowledgeDocument(kbId: string, relPath: string) {
+    return ipcRenderer.invoke('knowledge:remove-doc', kbId, relPath)
+  },
+  readKnowledgeFile(kbId: string, relPath: string, as: 'text' | 'bytes') {
+    return ipcRenderer.invoke('knowledge:read-file', kbId, relPath, as)
+  },
+  createKnowledgeShare(input: {
+    targetKind: 'library' | 'folder' | 'file'
+    targetId: string
+    targetName: string
+    expiresInDays?: number
+  }) {
+    return ipcRenderer.invoke('knowledge:create-share', input)
+  },
+  listKnowledgeShares() {
+    return ipcRenderer.invoke('knowledge:list-shares')
+  },
+  revokeKnowledgeShare(token: string) {
+    return ipcRenderer.invoke('knowledge:revoke-share', token)
+  },
   // ── 内置运行时管理 API ──
   listRuntimes() {
     return ipcRenderer.invoke('runtime:list')

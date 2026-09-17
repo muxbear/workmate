@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { marked } from 'marked'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import KnowledgeDetailModal from '../components/knowledge/KnowledgeDetailModal.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
@@ -8,162 +9,118 @@ import KnowledgeSettingsModal from '../components/knowledge/KnowledgeSettingsMod
 import KnowledgeShareModal from '../components/knowledge/KnowledgeShareModal.vue'
 import KnowledgeUploadModal from '../components/knowledge/KnowledgeUploadModal.vue'
 import {
-  findGroupIdOf,
-  pickSelectionAfterRemoval,
-  removeLibrary,
-  renameLibrary,
   type KnowledgeFolder,
   type KnowledgeGroup
 } from '../components/knowledge/knowledgeList'
 import {
   childKey,
   collectFileNodes,
-  fileNode,
   findNode,
   flattenVisible,
   mergeUploads,
   parentKeyOf,
-  patchFile,
   remapKey,
-  removeNode,
-  renameNode,
   sortTree,
   type KnowledgeFileIcon,
-  type KnowledgeFileIndexState,
   type KnowledgeFileMeta,
   type KnowledgeNode,
   type KnowledgeSortKey
 } from '../components/knowledge/knowledgeTree'
-import { uploadResultText, type KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
+import type { KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
+import KnowledgeCreateModal from '../components/knowledge/KnowledgeCreateModal.vue'
+import KnowledgeOverviewModal from '../components/knowledge/KnowledgeOverviewModal.vue'
 import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
+import { useKnowledgeStore } from '../store/knowledge'
+import type {
+  KnowledgeBaseSummary,
+  KnowledgeDocumentMeta,
+  KnowledgeKind
+} from '../../../preload/index.d'
 
 // ── 知识库数据模型（知识库列表见 components/knowledge/knowledgeList.ts，文件树见 knowledgeTree.ts） ──
 type FileIcon = KnowledgeFileIcon
-/** 文件建立索引的方式（undefined = 页面初始数据，按「已建立索引」展示） */
-type FileIndexState = KnowledgeFileIndexState
 /** 文件元信息（列表行与右侧预览标签页共用） */
-type KnowledgeFile = KnowledgeFileMeta
-/** 列表节点：文件夹 / 文件 */
 type KnowledgeTreeNode = KnowledgeNode
 type SortKey = KnowledgeSortKey
 /** 创建共享的对象类型 */
 type ShareKind = 'library' | 'folder' | 'file'
 
-// ── 知识库分组（本地 / 共享 / 云端） ──
-const KNOWLEDGE_GROUPS: KnowledgeGroup[] = [
-  {
-    id: 'local',
-    label: '本地知识库',
-    icon: 'hard-drive',
-    items: [
-      {
-        id: 'product',
-        name: '产品资料库',
-        description: '产品规划、需求与用户研究沉淀',
-        files: 28,
-        updated: '今天 10:24',
-        tone: '#168b7a'
-      },
-      {
-        id: 'design',
-        name: '设计规范',
-        description: '界面规范、组件说明与品牌资产',
-        files: 16,
-        updated: '昨天',
-        tone: '#3b82f6'
-      }
-    ]
-  },
-  {
-    id: 'shared',
-    label: '我的共享知识',
-    icon: 'users',
-    items: [
-      {
-        id: 'market',
-        name: '增长策略研究',
-        description: '面向团队共享的市场与增长洞察',
-        files: 12,
-        updated: '9 月 10 日',
-        tone: '#d97706'
-      },
-      {
-        id: 'onboarding',
-        name: '新同事上手手册',
-        description: '团队协作流程与常见问题',
-        files: 9,
-        updated: '9 月 6 日',
-        tone: '#8b5cf6'
-      }
-    ]
-  },
-  {
-    id: 'cloud',
-    label: '云端知识库',
-    icon: 'cloud',
-    items: [
-      {
-        id: 'industry',
-        name: '行业情报中心',
-        description: '订阅报告、竞品动态与趋势资料',
-        files: 42,
-        updated: '今天 08:30',
-        tone: '#0f9f8a'
-      }
-    ]
-  }
+// ── 知识库分组（本地 / 共享 / 云端）──
+/** 三个固定分组：条目来自主进程（knowledge:list-kbs），分组只决定展示位置 */
+const KNOWLEDGE_GROUPS: Array<Pick<KnowledgeGroup, 'id' | 'label' | 'icon'>> = [
+  { id: 'local', label: '本地知识库', icon: 'hard-drive' },
+  { id: 'shared', label: '我的共享知识', icon: 'users' },
+  { id: 'cloud', label: '云端知识库', icon: 'cloud' }
 ]
 
-// ── 当前知识库文件 ──
-const KNOWLEDGE_FILES: KnowledgeFile[] = [
-  {
-    name: '2025 产品路线图 V3.pdf',
-    type: 'PDF',
-    size: '4.8 MB',
-    updated: '今天 10:24',
-    icon: 'file-text',
-    tint: '#ef4444'
-  },
-  {
-    name: '用户访谈纪要 · Q3.docx',
-    type: 'DOCX',
-    size: '832 KB',
-    updated: '昨天 16:40',
-    icon: 'file-type-2',
-    tint: '#3b82f6'
-  },
-  {
-    name: '需求优先级矩阵.xlsx',
-    type: 'XLSX',
-    size: '126 KB',
-    updated: '9 月 9 日',
-    icon: 'file-spreadsheet',
-    tint: '#16a34a'
-  },
-  {
-    name: '核心用户画像.md',
-    type: 'MD',
-    size: '24 KB',
-    updated: '9 月 8 日',
-    icon: 'file-text',
-    tint: '#168b7a'
-  },
-  {
-    name: '竞品功能对比.csv',
-    type: 'CSV',
-    size: '67 KB',
-    updated: '9 月 5 日',
-    icon: 'file-spreadsheet',
-    tint: '#d97706'
-  }
-]
+/** 知识库徽标配色：按 id 稳定取色，避免列表刷新时颜色跳动 */
+const LIBRARY_TONES = ['#168b7a', '#3b82f6', '#d97706', '#8b5cf6', '#0f9f8a', '#e8793d']
+function toneOf(id: string): string {
+  let sum = 0
+  for (const ch of id) sum += ch.charCodeAt(0)
+  return LIBRARY_TONES[sum % LIBRARY_TONES.length]
+}
 
-// ── 侧栏分组与选中知识库 ──
+/** 文件图标底色（与上传弹窗同一套色板） */
+const FILE_TINTS: Record<string, string> = {
+  pdf: '#ef4444',
+  doc: '#3b82f6',
+  docx: '#3b82f6',
+  xls: '#16a34a',
+  xlsx: '#16a34a',
+  csv: '#16a34a',
+  ppt: '#e8793d',
+  pptx: '#e8793d',
+  md: '#168b7a',
+  txt: '#168b7a'
+}
+
+// ── 侧栏分组与选中知识库（数据来自 store；渲染层只持 ID 与相对路径）──
+const kbStore = useKnowledgeStore()
 const expanded = ref<Record<string, boolean>>({ local: true, shared: true, cloud: true })
-const knowledgeGroups = ref<KnowledgeGroup[]>(KNOWLEDGE_GROUPS)
-const selectedLibrary = ref<KnowledgeFolder>(KNOWLEDGE_GROUPS[0].items[0])
 const moreGroupId = ref<string | null>(null)
 const openGroupMenu = ref<string | null>(null)
+/** 新建知识库弹窗：目标分组 */
+const createOpen = ref(false)
+const createKind = ref<KnowledgeKind>('local')
+/** 概览弹窗 */
+const overviewOpen = ref(false)
+
+/** 空态占位：没有知识库时详情区仍可渲染（只做属性读取） */
+const EMPTY_LIBRARY: KnowledgeFolder = {
+  id: '',
+  name: '知识库',
+  description: '还没有知识库，可从分组菜单新建',
+  files: 0,
+  updated: '—',
+  tone: '#168b7a'
+}
+
+/** 主进程知识库 → 侧栏条目 */
+function toFolder(base: KnowledgeBaseSummary): KnowledgeFolder {
+  return {
+    id: base.id,
+    name: base.name,
+    description: base.description,
+    files: base.docsCount,
+    updated: formatTimestamp(base.updatedAt),
+    tone: toneOf(base.id)
+  }
+}
+
+/** 按 kind 聚合的三个分组（空分组保留，便于「新建知识库」入口） */
+const knowledgeGroups = computed<KnowledgeGroup[]>(() =>
+  KNOWLEDGE_GROUPS.map((group) => ({
+    ...group,
+    items: kbStore.bases.filter((base) => base.kind === group.id).map(toFolder)
+  }))
+)
+
+/** 当前选中的知识库（详情区与所有动作都基于它） */
+const selectedLibrary = computed<KnowledgeFolder>(() => {
+  const base = kbStore.selectedBase
+  return base ? toFolder(base) : EMPTY_LIBRARY
+})
 
 // ── 知识库条目三点菜单与三个弹窗 ──
 /** 当前展开三点菜单的知识库 id（同一时刻只允许一个） */
@@ -180,8 +137,49 @@ const deleteCandidate = ref<KnowledgeFolder | null>(null)
 const knowledgeSettingsStore = useKnowledgeSettingsStore()
 
 // ── 文件列表：文件树、排序、上传、标签页 ──
-/** 文件树：上传文件夹后保留原始目录结构，key 即相对路径 */
-const fileTree = ref<KnowledgeTreeNode[]>(KNOWLEDGE_FILES.map((file) => fileNode([], file)))
+/** 文件树：由主进程文档元信息（relPath）还原层级，key 即相对路径 */
+const fileTree = ref<KnowledgeTreeNode[]>([])
+
+/** 当前选中知识库 ID（无知识库时为空串） */
+const selectedKbId = computed(() => kbStore.selectedBase?.id ?? '')
+
+/** 主进程文档元信息 → 列表条目（图标/配色与上传结果保持同一套规则） */
+function metaOf(doc: KnowledgeDocumentMeta): KnowledgeFileMeta {
+  const ext = doc.name.split('.').pop()?.toLowerCase() ?? ''
+  return {
+    name: doc.name,
+    type: doc.type,
+    size: formatSize(doc.sizeBytes),
+    updated: formatTimestamp(doc.updatedAt),
+    icon: pickFileIcon(ext),
+    tint: FILE_TINTS[ext] ?? '#64748b',
+    indexState: doc.indexState
+  }
+}
+
+/** 用文档列表重建文件树（复用 mergeUploads：文件夹是逻辑结构，来自 relPath） */
+function rebuildFileTree(docs: KnowledgeDocumentMeta[]): void {
+  const entries = docs.map((doc) => ({
+    dirs: doc.relPath.split('/').slice(0, -1),
+    file: metaOf(doc)
+  }))
+  fileTree.value = mergeUploads([], entries)
+  // 新出现的目录默认展开，上传完即可看到原始结构（已有的折叠状态不覆盖）
+  for (const entry of entries) {
+    let key = ''
+    for (const dir of entry.dirs) {
+      key = childKey(key, dir)
+      if (folderExpanded.value[key] === undefined) folderExpanded.value[key] = true
+    }
+  }
+}
+
+// 文档列表变化（切换知识库 / 上传 / 删除 / 重命名后）重建树
+watch(
+  () => kbStore.documentsOf(selectedKbId.value),
+  (docs) => rebuildFileTree(docs),
+  { immediate: true, deep: true }
+)
 /** 文件夹展开状态（缺省展开，上传完就能看到原始结构） */
 const folderExpanded = ref<Record<string, boolean>>({})
 const sortKey = ref<SortKey>('updated')
@@ -259,10 +257,11 @@ const indexedCount = computed(
   () => allFiles.value.filter((node) => node.file?.indexState !== 'none').length
 )
 
-/** 文件区副标题：文件总数与索引情况 */
+/** 文件区副标题：文件总数与索引情况（索引未开放时不做「0 份已建立索引」的误导表述） */
 const fileSummary = computed(() => {
   const total = allFiles.value.length
   if (!total) return '暂无文件'
+  if (indexedCount.value === 0) return `${total} 份文件 · 索引功能开发中`
   if (indexedCount.value === total) return `${total} 份文件已建立索引`
   return `${total} 份文件 · ${indexedCount.value} 份已建立索引`
 })
@@ -282,29 +281,8 @@ const indexStateText = (node: KnowledgeTreeNode): string => {
 }
 
 /** 「查看更多」页：当前分组下的知识库 + 两个归档卡片 */
-const moreLibraries = computed<KnowledgeFolder[]>(() => {
-  const group = moreGroup.value
-  if (!group) return []
-  const additional: KnowledgeFolder[] = [
-    {
-      id: `${group.id}-archive`,
-      name: '历史项目归档',
-      description: '已结项项目的文档、复盘与交付资料',
-      files: 34,
-      updated: '9 月 2 日',
-      tone: '#64748b'
-    },
-    {
-      id: `${group.id}-inbox`,
-      name: '待整理资料箱',
-      description: '新收集、等待分类归档的工作材料',
-      files: 7,
-      updated: '8 月 28 日',
-      tone: '#e8793d'
-    }
-  ]
-  return [...group.items, ...additional]
-})
+/** 「查看更多」页：当前分组下的全部知识库（真实数据，不再有占位卡片） */
+const moreLibraries = computed<KnowledgeFolder[]>(() => moreGroup.value?.items ?? [])
 
 // ── 轻量 toast（与页面级 toast 同视觉） ──
 const toast = ref('')
@@ -325,23 +303,29 @@ const toggleGroup = (groupId: string): void => {
   expanded.value = { ...expanded.value, [groupId]: !expanded.value[groupId] }
 }
 
+/** 新建知识库：打开弹窗（分组决定 kind），提交后由主进程落库 */
 const addKnowledgeLibrary = (groupId: string): void => {
-  const group = knowledgeGroups.value.find((item) => item.id === groupId)
-  if (!group) return
-  const library: KnowledgeFolder = {
-    id: `${groupId}-${Date.now()}`,
-    name: '未命名知识库',
-    description: '等待补充说明的知识资料',
-    files: 0,
-    updated: '刚刚',
-    tone: '#168b7a'
+  createKind.value = groupId === 'shared' || groupId === 'cloud' ? groupId : 'local'
+  createOpen.value = true
+  openGroupMenu.value = null
+}
+
+/** 新建弹窗提交 */
+const onCreateLibrary = async (payload: {
+  name: string
+  description: string
+}): Promise<void> => {
+  const created = await kbStore.createBase({
+    name: payload.name,
+    description: payload.description,
+    kind: createKind.value
+  })
+  if (!created) {
+    notify(kbStore.lastError || '创建知识库失败')
+    return
   }
-  knowledgeGroups.value = knowledgeGroups.value.map((item) =>
-    item.id === groupId ? { ...item, items: [...item.items, library] } : item
-  )
-  selectedLibrary.value = library
-  toggleGroupOpen(groupId, true)
-  notify(`已添加至「${group.label}」`)
+  toggleGroupOpen(created.kind, true)
+  notify(`已创建「${created.name}」`)
 }
 
 const toggleGroupOpen = (groupId: string, open: boolean): void => {
@@ -349,7 +333,8 @@ const toggleGroupOpen = (groupId: string, open: boolean): void => {
 }
 
 const selectLibrary = (library: KnowledgeFolder): void => {
-  selectedLibrary.value = library
+  if (!library.id) return
+  void kbStore.selectBase(library.id)
   activeTab.value = '问答'
 }
 
@@ -380,16 +365,13 @@ const openEditLibrary = (library: KnowledgeFolder): void => {
   editOpen.value = true
 }
 
-/** 编辑保存（名称 + 描述）：只改页面内列表，不落盘 */
-const saveLibraryEdit = (name: string, description: string): void => {
+/** 编辑保存（名称 + 描述）：写主进程，成功后按返回值刷新列表 */
+const saveLibraryEdit = async (name: string, description: string): Promise<void> => {
   const target = editLibrary.value
+  editLibrary.value = null
   if (!target) return
-  knowledgeGroups.value = renameLibrary(knowledgeGroups.value, target.id, { name, description })
-  // 详情区读的是同一个对象，选中项需同步为更新后的值
-  if (selectedLibrary.value.id === target.id) {
-    selectedLibrary.value = { ...selectedLibrary.value, name, description, updated: '刚刚' }
-  }
-  notify(`已更新「${name}」`)
+  const ok = await kbStore.updateBase(target.id, { name, description })
+  notify(ok ? `已更新「${name}」` : kbStore.lastError || '保存失败')
 }
 
 const openLibrarySettings = (library: KnowledgeFolder): void => {
@@ -403,21 +385,21 @@ const askDeleteLibrary = (library: KnowledgeFolder): void => {
   deleteCandidate.value = library
 }
 
-/** 删除确认：移除条目 → 切走选中 → 清理该库的按库覆盖配置 */
+/** 删除确认：主进程级联清理文档与磁盘，再清渲染层的按库配置缓存 */
 const confirmDeleteLibrary = async (): Promise<void> => {
   const target = deleteCandidate.value
   deleteCandidate.value = null
   if (!target) return
-  const groupId = findGroupIdOf(knowledgeGroups.value, target.id)
-  knowledgeGroups.value = removeLibrary(knowledgeGroups.value, target.id)
-  if (selectedLibrary.value.id === target.id) {
-    // 全部删空时返回 null，此时保留原引用（详情区只做属性读取，不会报错）
-    const next = pickSelectionAfterRemoval(knowledgeGroups.value, groupId)
-    if (next) selectedLibrary.value = next
+  const ok = await kbStore.removeBase(target.id)
+  if (!ok) {
+    notify(kbStore.lastError || '删除失败')
+    return
   }
-  // 列表本身无持久化，但按库配置有：顺手清掉，避免残留
-  const cleaned = await knowledgeSettingsStore.saveOverrides(target.id, {})
-  notify(cleaned ? `已删除「${target.name}」` : `已删除「${target.name}」，配置清理未完成`)
+  // 主进程已清 kb-settings.json；渲染层同步清缓存，避免弹窗仍显示旧覆盖
+  await knowledgeSettingsStore.saveOverrides(target.id, {})
+  openTabs.value = ['问答']
+  activeTab.value = '问答'
+  notify(`已删除「${target.name}」`)
 }
 
 const onLibrarySettingsSaved = (name: string): void => {
@@ -461,6 +443,74 @@ const openFile = (node: KnowledgeTreeNode): void => {
   if (!openTabs.value.includes(node.key)) openTabs.value = [...openTabs.value, node.key]
   activeTab.value = node.key
   libraryMenuOpen.value = false
+  void loadPreview(node.key)
+}
+
+// ── 文件预览（文本 / Markdown / 图片；其余格式给出提示）──
+type PreviewKind = 'empty' | 'text' | 'markdown' | 'image' | 'unsupported'
+const previewKind = ref<PreviewKind>('empty')
+const previewText = ref('')
+const previewUrl = ref('')
+const previewNotice = ref('')
+const TEXT_PREVIEW_EXTS = [
+  'md',
+  'markdown',
+  'txt',
+  'csv',
+  'json',
+  'log',
+  'yaml',
+  'yml',
+  'html',
+  'xml',
+  'js',
+  'ts',
+  'py',
+  'sql'
+]
+const IMAGE_PREVIEW_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif']
+
+/** Markdown → HTML（预览用；内容来自本地文件） */
+const previewHtml = computed(() =>
+  previewKind.value === 'markdown' ? (marked.parse(previewText.value) as string) : ''
+)
+
+async function loadPreview(relPath: string): Promise<void> {
+  previewKind.value = 'empty'
+  previewText.value = ''
+  previewNotice.value = '正在加载…'
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = ''
+  }
+  if (!selectedKbId.value) return
+  const ext = relPath.split('.').pop()?.toLowerCase() ?? ''
+  if (TEXT_PREVIEW_EXTS.includes(ext)) {
+    const res = await kbStore.readFile(selectedKbId.value, relPath, 'text')
+    if (!res) {
+      previewNotice.value = kbStore.lastError || '读取失败'
+      return
+    }
+    previewText.value = res.content ?? ''
+    previewKind.value = ext === 'md' || ext === 'markdown' ? 'markdown' : 'text'
+    previewNotice.value = ''
+    return
+  }
+  if (IMAGE_PREVIEW_EXTS.includes(ext)) {
+    const res = await kbStore.readFile(selectedKbId.value, relPath, 'bytes')
+    if (!res?.bytes) {
+      previewNotice.value = kbStore.lastError || '读取失败'
+      return
+    }
+    // BlobPart 是 TS 类型引用（仅用于跨 lib 的字节类型收敛），ESLint no-undef 需要显式豁免
+    // eslint-disable-next-line no-undef
+    previewUrl.value = URL.createObjectURL(new Blob([res.bytes as unknown as BlobPart]))
+    previewKind.value = 'image'
+    previewNotice.value = ''
+    return
+  }
+  previewKind.value = 'unsupported'
+  previewNotice.value = `暂不支持预览 .${ext || '未知'} 格式，可在文件详情中查看元信息`
 }
 
 const closeTab = (tab: string): void => {
@@ -487,25 +537,24 @@ const formatSize = (bytes: number): string => {
   return `${bytes} B`
 }
 
+/** 时间戳 → 列表展示（今天/昨天/日期；与旧 mock 文案风格一致） */
+function formatTimestamp(ts: number): string {
+  if (!ts) return '—'
+  const date = new Date(ts)
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const diffDay = Math.floor((startOfToday - date.getTime()) / 86400000)
+  const hm = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  if (diffDay <= 0) return `今天 ${hm}`
+  if (diffDay === 1) return `昨天 ${hm}`
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
 /** 扩展名 → 表格里的三套文件图标 */
 const pickFileIcon = (ext: string): FileIcon => {
   if (['csv', 'xls', 'xlsx'].includes(ext)) return 'file-spreadsheet'
   if (['doc', 'docx'].includes(ext)) return 'file-type-2'
   return 'file-text'
-}
-
-/** File → 列表条目（保留 File 对象，同时记下这次上传的索引方式） */
-const toKnowledgeFile = (file: File, indexState: FileIndexState): KnowledgeFile => {
-  const ext = file.name.split('.').pop()?.toLowerCase() || ''
-  return {
-    name: file.name,
-    type: ext ? ext.toUpperCase() : '文件',
-    size: formatSize(file.size),
-    updated: '刚刚',
-    icon: pickFileIcon(ext),
-    tint: '#168b7a',
-    indexState
-  }
 }
 
 /** 上传文件夹：只允许选文件夹，按 webkitRelativePath 还原原始目录结构 */
@@ -515,35 +564,27 @@ const onFolderChange = (event: Event): void => {
   // 复位，同一个文件夹可以再次选择
   input.value = ''
   if (!picked.length) return
-  addFolderUpload(picked)
+  void addFolderUpload(picked)
 }
 
-const addFolderUpload = (picked: File[]): void => {
-  const entries = picked.map((file) => ({
-    dirs: folderSegments(file),
-    file: toKnowledgeFile(file, 'none')
-  }))
-  fileTree.value = mergeUploads(fileTree.value, entries)
-  // 新上传的目录默认展开，保证「原始结构」一眼可见
-  for (const entry of entries) {
-    let key = ''
-    for (const dir of entry.dirs) {
-      key = childKey(key, dir)
-      folderExpanded.value[key] = true
-    }
+/** 上传文件夹：按 webkitRelativePath 还原目录结构，绝对路径交主进程落盘 */
+const addFolderUpload = async (picked: File[]): Promise<void> => {
+  if (!selectedKbId.value) {
+    notify('请先创建或选择一个知识库')
+    return
   }
-  const root = entries[0]?.dirs[0]
-  notify(
-    root
-      ? `已上传文件夹「${root}」（${entries.length} 个文件，未建立索引）`
-      : `已上传 ${entries.length} 个文件（未建立索引）`
-  )
-}
-
-/** File → 目录层级（webkitRelativePath 形如「设计规范/组件/按钮.md」） */
-const folderSegments = (file: File): string[] => {
-  const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-  return relative.split('/').filter(Boolean).slice(0, -1)
+  const items = picked
+    .map((file) => ({
+      srcPath: window.api.getPathForFile(file),
+      relPath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+    }))
+    .filter((item) => !!item.srcPath)
+  if (!items.length) {
+    notify('未能解析文件路径，请重新选择文件夹')
+    return
+  }
+  const result = await kbStore.importDocuments(selectedKbId.value, items)
+  notify(result ? result.message : kbStore.lastError || '上传失败')
 }
 
 /** 「上传文件」按钮：打开上传弹窗 */
@@ -551,15 +592,26 @@ const openUploadModal = (): void => {
   uploadOpen.value = true
 }
 
-/** 上传弹窗确定后的落地：按所选方式把文件加入文件树（索引链路待主进程实现） */
-const onUploadSubmit = (payload: KnowledgeUploadPayload): void => {
-  const indexState: FileIndexState =
-    payload.mode === 'none' ? 'none' : payload.mode === 'custom' ? 'custom' : 'default'
-  fileTree.value = mergeUploads(
-    fileTree.value,
-    payload.files.map((file) => ({ dirs: [], file: toKnowledgeFile(file, indexState) }))
-  )
-  notify(uploadResultText(payload.mode, payload.files.length, payload.sourceLabel))
+/**
+ * 上传弹窗确定后的落地：渲染层把 `File` 转成「绝对路径 + 相对路径」交主进程落盘。
+ *
+ * - Electron 39 起 `File.path` 已移除，必须走 preload 暴露的 `getPathForFile`；
+ * - 索引能力未开放，统一按「只上传文件」提交（indexState = 'none'）。
+ */
+const onUploadSubmit = async (payload: KnowledgeUploadPayload): Promise<void> => {
+  if (!selectedKbId.value) {
+    notify('请先创建或选择一个知识库')
+    return
+  }
+  const items = payload.files
+    .map((file) => ({ srcPath: window.api.getPathForFile(file), relPath: file.name }))
+    .filter((item) => !!item.srcPath)
+  if (!items.length) {
+    notify('未能解析文件路径，请重新选择文件')
+    return
+  }
+  const result = await kbStore.importDocuments(selectedKbId.value, items)
+  notify(result ? result.message : kbStore.lastError || '上传失败')
 }
 
 /** 「上传文件夹」按钮：只打开目录选择器（webkitdirectory 挂在输入框上） */
@@ -629,25 +681,27 @@ const openFileRename = (node: KnowledgeTreeNode): void => {
   fileRenameOpen.value = true
 }
 
-const submitFileRename = (name: string): void => {
+const submitFileRename = async (name: string): Promise<void> => {
   const target = renameTarget.value
   renameTarget.value = null
   if (!target || name === target.name) return
-  const newKey = childKey(parentKeyOf(target.key), name)
-  fileTree.value = renameNode(fileTree.value, target.key, name)
+  if (!selectedKbId.value) return
+  const result = await kbStore.renameDocument(selectedKbId.value, target.key, name)
+  if (!result) {
+    notify(kbStore.lastError || '重命名失败')
+    return
+  }
   // 已打开的标签页跟着改名，避免指向不存在的 key
-  const remap = (tab: string): string => remapKey(tab, target.key, newKey)
+  const remap = (tab: string): string => remapKey(tab, target.key, result.relPath)
   openTabs.value = openTabs.value.map(remap)
   if (activeTab.value !== '问答') activeTab.value = remap(activeTab.value)
   notify(`已重命名为「${name}」`)
 }
 
-// ── 重建索引（前端演示：直接把该文件标记为已建立索引）──
+// ── 重建索引（索引能力未开放：明确提示，不再做本地标记假象）──
 const rebuildIndex = (node: KnowledgeTreeNode): void => {
   closeFileMenu()
-  if (node.kind !== 'file') return
-  fileTree.value = patchFile(fileTree.value, node.key, { indexState: 'default', updated: '刚刚' })
-  notify(`已为「${node.name}」重建索引`)
+  notify(`「${node.name}」的索引功能开发中，敬请期待`)
 }
 
 // ── 创建共享（知识库 / 文件夹 / 文件共用同一个弹窗）──
@@ -655,11 +709,14 @@ const shareOpen = ref(false)
 const shareName = ref('')
 const shareKind = ref<ShareKind>('file')
 
-const openShare = (name: string, kind: ShareKind): void => {
+const shareTargetId = ref('')
+
+const openShare = (name: string, kind: ShareKind, targetId = ''): void => {
   closeFileMenu()
   libraryMenuOpen.value = false
   shareName.value = name
   shareKind.value = kind
+  shareTargetId.value = targetId || selectedKbId.value
   shareOpen.value = true
 }
 
@@ -675,11 +732,16 @@ const askDeleteFile = (node: KnowledgeTreeNode): void => {
   deleteFileNode.value = node
 }
 
-const confirmDeleteFile = (): void => {
+const confirmDeleteFile = async (): Promise<void> => {
   const target = deleteFileNode.value
   deleteFileNode.value = null
   if (!target) return
-  fileTree.value = removeNode(fileTree.value, target.key)
+  if (!selectedKbId.value) return
+  const ok = await kbStore.removeDocument(selectedKbId.value, target.key)
+  if (!ok) {
+    notify(kbStore.lastError || '删除失败')
+    return
+  }
   openTabs.value = openTabs.value.filter((tab) => !tabBelongsTo(tab, target.key))
   if (tabBelongsTo(activeTab.value, target.key)) activeTab.value = '问答'
   notify(`已删除「${target.name}」`)
@@ -699,16 +761,12 @@ const openLibraryRename = (): void => {
 }
 
 /** 只改名称，描述沿用原值（描述编辑仍在「知识库编辑」弹窗里） */
-const submitLibraryRename = (name: string): void => {
+const submitLibraryRename = async (name: string): Promise<void> => {
   libraryRenameOpen.value = false
   const target = selectedLibrary.value
-  if (name === target.name) return
-  knowledgeGroups.value = renameLibrary(knowledgeGroups.value, target.id, {
-    name,
-    description: target.description
-  })
-  selectedLibrary.value = { ...target, name, updated: '刚刚' }
-  notify(`已重命名为「${name}」`)
+  if (!target.id || name === target.name) return
+  const ok = await kbStore.updateBase(target.id, { name })
+  notify(ok ? `已重命名为「${name}」` : kbStore.lastError || '重命名失败')
 }
 
 const openLibrarySettingsFromHeader = (): void => {
@@ -807,11 +865,19 @@ const resizePanels = (event: MouseEvent): void => {
   window.addEventListener('mouseup', onUp)
 }
 
-// ── 问答提交 ──
+// ── 问答提交（检索与问答能力尚未实现：明确提示，不做假回答）──
 const ask = (): void => {
   if (!question.value.trim()) return
-  answer.value = `已基于「${selectedLibrary.value.name}」中的 ${allFiles.value.length} 份资料开始检索。关于“${question.value.trim()}”，建议先查看《${allFiles.value[0]?.name || '资料索引'}》中的相关章节；如需，我可以继续归纳要点或形成行动清单。`
+  answer.value =
+    '知识库问答（检索）功能开发中：需要先完成文档解析、切片、向量化与检索链路。' +
+    '当前版本可以先上传并管理资料，索引与问答将在后续版本开放。'
   question.value = ''
+}
+
+// ── 概览：统计 + 文件维度汇总（切片/实体随索引能力提供）──
+const openOverview = async (): Promise<void> => {
+  await kbStore.loadStats()
+  overviewOpen.value = true
 }
 
 // ── 标签栏滚动按钮显隐 ──
@@ -829,16 +895,21 @@ const moveTabs = (direction: -1 | 1): void => {
   window.setTimeout(updateTabScroll, 250)
 }
 
-onMounted(() => {
+onMounted(async () => {
   updateTabScroll()
   window.addEventListener('resize', updateTabScroll)
   document.addEventListener('mousedown', onDocumentMousedown)
   document.addEventListener('keydown', onDocumentKeydown)
+  // 首屏拉取知识库列表，并加载当前选中库的文件列表
+  await kbStore.loadBases()
+  if (selectedKbId.value) await kbStore.loadDocuments(selectedKbId.value)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateTabScroll)
   document.removeEventListener('mousedown', onDocumentMousedown)
   document.removeEventListener('keydown', onDocumentKeydown)
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  if (toastTimer) clearTimeout(toastTimer)
 })
 watch(openTabs, () => {
   nextTick(updateTabScroll)
@@ -874,7 +945,7 @@ watch(openTabs, () => {
             <h1 class="kb-more-title">{{ moreGroup.label }}</h1>
             <p class="kb-more-desc">浏览、整理并调用这个分类下的全部知识库。</p>
           </div>
-          <button class="kb-more-create">
+          <button class="kb-more-create" @click="addKnowledgeLibrary(moreGroup?.id ?? 'local')">
             <svg
               width="14"
               height="14"
@@ -957,7 +1028,7 @@ watch(openTabs, () => {
     >
       <!-- ── 知识库分组侧栏 ── -->
       <aside class="kb-groups" :style="{ width: `${groupsWidth}px` }">
-        <button class="kb-overview">
+        <button class="kb-overview" @click="openOverview">
           <svg
             width="15"
             height="15"
@@ -1716,7 +1787,11 @@ watch(openTabs, () => {
                   <button
                     class="kb-lib-menu-item"
                     @click="
-                      openShare(row.node.name, row.node.kind === 'folder' ? 'folder' : 'file')
+                      openShare(
+                        row.node.name,
+                        row.node.kind === 'folder' ? 'folder' : 'file',
+                        row.node.key
+                      )
                     "
                   >
                     <svg
@@ -1918,7 +1993,7 @@ watch(openTabs, () => {
             <div class="kb-qa-banner">
               <p class="kb-qa-eyebrow">KNOWLEDGE Q&amp;A</p>
               <h2 class="kb-qa-title">向 {{ selectedLibrary.name }} 提问</h2>
-              <p class="kb-qa-desc">答案会基于当前知识库中的文件生成。</p>
+              <p class="kb-qa-desc">检索与问答功能开发中，将在索引能力完成后开放。</p>
             </div>
 
             <div v-if="answer" class="kb-answer">{{ answer }}</div>
@@ -2045,7 +2120,15 @@ watch(openTabs, () => {
               {{ activeFile?.type }} · {{ activeFile?.size }} · 更新于 {{ activeFile?.updated }}
             </p>
             <div class="kb-file-tab-preview">
-              文件预览区域<br /><br />已在右侧以独立标签打开。可切换至“问答”标签，针对当前知识库继续提问。
+              <p v-if="previewNotice" class="kb-preview-notice">{{ previewNotice }}</p>
+              <pre v-else-if="previewKind === 'text'" class="kb-preview-text">{{ previewText }}</pre>
+              <!-- eslint-disable-next-line vue/no-v-html -->
+              <div
+                v-else-if="previewKind === 'markdown'"
+                class="kb-preview-markdown"
+                v-html="previewHtml"
+              ></div>
+              <img v-else-if="previewKind === 'image'" class="kb-preview-image" :src="previewUrl" />
             </div>
           </div>
         </aside>
@@ -2145,8 +2228,23 @@ watch(openTabs, () => {
       :open="shareOpen"
       :target-name="shareName"
       :target-kind="shareKind"
+      :target-id="shareTargetId"
       @close="shareOpen = false"
       @created="onShareCreated"
+    />
+
+    <!-- 新建知识库 / 概览 -->
+    <KnowledgeCreateModal
+      :open="createOpen"
+      :kind="createKind"
+      @close="createOpen = false"
+      @submit="onCreateLibrary"
+    />
+    <KnowledgeOverviewModal
+      :open="overviewOpen"
+      :stats="kbStore.stats"
+      :libraries="kbStore.bases"
+      @close="overviewOpen = false"
     />
 
     <!-- 轻量 toast -->
@@ -3284,4 +3382,39 @@ watch(openTabs, () => {
     gap: 6px;
   }
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+   文件预览（文本 / Markdown / 图片）
+   ═══════════════════════════════════════════════════════════════════════════ */
+.kb-preview-notice {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--kw-color-text-muted);
+}
+
+.kb-preview-text {
+  margin: 0;
+  max-height: 100%;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--kw-color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.kb-preview-markdown {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--kw-color-text-secondary);
+  word-break: break-word;
+}
+
+.kb-preview-image {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--kw-color-border-soft);
+}
+
 </style>

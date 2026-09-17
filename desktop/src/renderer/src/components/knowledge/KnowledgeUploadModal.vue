@@ -64,7 +64,8 @@ type UploadStage = 'files' | 'index'
 const visible = ref(props.open)
 const displayName = ref('')
 const stage = ref<UploadStage>('files')
-const mode = ref<KnowledgeUploadMode>('default')
+// 索引能力未开放：默认且仅支持「只上传文件」
+const mode = ref<KnowledgeUploadMode>('none')
 const queue = ref<UploadQueueItem[]>([])
 const dragging = ref(false)
 const error = ref('')
@@ -276,7 +277,7 @@ watch(
     if (!open) return
     displayName.value = props.library?.name ?? ''
     stage.value = 'files'
-    mode.value = 'default'
+    mode.value = 'none'
     queue.value = []
     error.value = ''
     stepIndex.value = 0
@@ -505,15 +506,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <p v-else class="ku-empty">还没有待上传文件，拖入或选择文件后会显示在这里。</p>
             </section>
 
-            <!-- 上传后处理：三选一 -->
+            <!-- 上传后处理：三选一（索引未开放时仅「只上传文件」可选） -->
             <section class="ku-section">
               <p class="ku-section-title">上传后处理</p>
+              <p class="ku-index-notice">
+                索引功能开发中：本次仅支持「只上传文件」，创建索引与自定义索引将在后续版本开放。
+              </p>
               <div class="ku-options">
                 <label
                   v-for="option in KNOWLEDGE_UPLOAD_OPTIONS"
                   :key="option.value"
                   class="ku-option"
-                  :class="{ 'ku-option--active': mode === option.value }"
+                  :class="{
+                    'ku-option--active': mode === option.value,
+                    'ku-option--disabled': option.value !== 'none'
+                  }"
                 >
                   <input
                     class="ku-radio-input"
@@ -521,6 +528,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                     name="ku-upload-mode"
                     :value="option.value"
                     :checked="mode === option.value"
+                    :disabled="option.value !== 'none'"
                     @change="mode = option.value"
                   />
                   <span class="ku-radio" aria-hidden="true"></span>
@@ -950,6 +958,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .ku-option:hover {
   border-color: var(--kw-color-border-strong);
 }
+.ku-option--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ku-index-notice {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--kw-color-text-muted);
+}
+
 .ku-option--active {
   border-color: var(--kw-color-brand);
   background: var(--kw-color-brand-subtle);
