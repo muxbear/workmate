@@ -77,6 +77,7 @@ import { SkillSyncService } from './skills/SkillSyncService'
 import { ExpertSyncService } from './experts/ExpertSyncService'
 import { ModelSyncService } from './models/ModelSyncService'
 import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
+import { OAuth2AuthorizationProvider } from './oauth2/OAuth2AuthorizationProvider'
 
 import icon from '../../resources/icon.png?asset'
 
@@ -296,46 +297,38 @@ app.whenReady().then(() => {
     // 授权回跳页展示当前系统名称（authorize 调用时读取，此时设置已加载）
     getSystemName: readSystemName
   })
+  // 统一授权提供者：登录 / 专家 / 技能 / 模型共用一份会话 token（一次授权，处处复用）
+  const authorization = new OAuth2AuthorizationProvider({
+    oauth2Client,
+    secureStorage
+  })
   registerOAuth2Handlers(ipcMain, {
     authService,
     oauth2Client,
+    authorization,
     session,
     secureStorage,
     agentManager
   })
 
+  const webApiBaseUrl = process.env.WORKMATE_WEB_API_BASE_URL ?? ''
   const skillSyncService = new SkillSyncService({
-    secureStorage,
-    openExternal: (url) =>
-      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
-        ? openOAuthWindow(url)
-        : shell.openExternal(url),
-    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
-    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+    authorization,
+    apiBaseUrl: webApiBaseUrl
   })
   registerSkillSyncHandlers(ipcMain, { skillSyncService, session })
 
   const expertSyncService = new ExpertSyncService({
+    authorization,
     expertsDir: join(dataDir.getBaseDir(), 'experts'),
-    secureStorage,
-    openExternal: (url) =>
-      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
-        ? openOAuthWindow(url)
-        : shell.openExternal(url),
-    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
-    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+    apiBaseUrl: webApiBaseUrl
   })
   registerExpertSyncHandlers(ipcMain, { expertSyncService, session })
 
   const modelSyncService = new ModelSyncService({
-    secureStorage,
-    openExternal: (url) =>
-      process.env.WORKMATE_OAUTH_INTERNAL_BROWSER === '1'
-        ? openOAuthWindow(url)
-        : shell.openExternal(url),
+    authorization,
     modelService,
-    apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
-    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+    apiBaseUrl: webApiBaseUrl
   })
   registerModelSyncHandlers(ipcMain, { modelSyncService, session })
 

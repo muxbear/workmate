@@ -2,6 +2,7 @@ import request from './request'
 import type { ApiResponse } from '@/types/api'
 import type {
   AuthorizationUrlRequest,
+  AuthorizeApproveResult,
   AuthorizeContextResponse,
   TokenRequest,
   TokenResponse,
@@ -21,11 +22,15 @@ export const oauth2Api = {
       { params: { state } },
     ),
 
-  /** 确认授权 */
-  approve: (state: string) =>
-    request.post<ApiResponse<{ redirectUrl: string }>>(
+  /**
+   * 确认授权。
+   * scopes 缺省表示按请求范围全量授权；传入数组表示按用户开关收窄
+   * （服务端会校验子集，并自动保留必选 scope）。
+   */
+  approve: (state: string, scopes?: string[]) =>
+    request.post<ApiResponse<AuthorizeApproveResult>>(
       '/oauth2/authorize/approve',
-      { state },
+      { state, scopes },
     ),
 
   /**

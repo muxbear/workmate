@@ -147,6 +147,18 @@ export class OAuth2ClientService {
     }
   }
 
+  /**
+   * 撤销用户授权记忆（服务端 consent + 该客户端的 refresh token）。
+   * scopes 缺省表示撤销整份授权；需要携带有效 access token。
+   */
+  async revokeConsent(accessToken: string, scopes?: string[]): Promise<void> {
+    await this.http.post(
+      '/api/oauth2/consents/revoke',
+      { clientId: this.clientId, scopes: scopes ?? null },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    )
+  }
+
   // ── token 存取 ──
 
   saveToken(key: string, token: OAuth2Token): void {

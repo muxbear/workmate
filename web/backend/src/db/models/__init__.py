@@ -1,3 +1,5 @@
+"""数据库 ORM 模型集合（导入即注册到 Base.metadata）."""
+
 from db.models.agent import Agent
 from db.models.agent_mcp_config import AgentMcpConfig
 from db.models.agent_skill import AgentSkill
@@ -24,6 +26,7 @@ from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
 from db.models.notification import Notification
 from db.models.oauth2_client import OAuth2Client
+from db.models.oauth2_consent import OAuth2Consent
 from db.models.oauth2_refresh_token import OAuth2RefreshToken
 from db.models.permission_resource import PermissionResource
 from db.models.personnel import Personnel
@@ -66,6 +69,7 @@ __all__ = [
     "McpInstallation",
     "McpTool",
     "OAuth2Client",
+    "OAuth2Consent",
     "OAuth2RefreshToken",
     "PermissionResource",
     "Personnel",

@@ -489,6 +489,15 @@ const api = {
   oauth2: {
     getStatus() {
       return ipcRenderer.invoke('oauth2:status')
+    },
+    getScopeCatalog() {
+      return ipcRenderer.invoke('oauth2:scope-catalog')
+    },
+    authorize(scopes?: string[]) {
+      return ipcRenderer.invoke('oauth2:authorize', scopes)
+    },
+    revoke(scopes?: string[]) {
+      return ipcRenderer.invoke('oauth2:revoke', scopes)
     }
   },
   skillSync: {

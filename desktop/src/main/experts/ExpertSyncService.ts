@@ -6,8 +6,8 @@ import type {
   ExpertSyncStatus,
   WebUser
 } from '../../preload/index.d'
-import type { ISecureStorage } from '../security/secure-storage'
-import { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
+import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import { SCOPE_EXPERT_READ } from '../oauth2/scopes'
 import { ExpertJsonStore } from './ExpertJsonStore'
 
 interface WebApiEnvelope<T> {
@@ -73,18 +73,14 @@ interface ExpertSyncListData {
 }
 
 interface ExpertSyncServiceDeps {
-  secureStorage: ISecureStorage
-  openExternal: (url: string) => Promise<void>
+  /** 统一 OAuth2 授权提供者（所有 Web 能力共用一份会话 token） */
+  authorization: OAuth2AuthorizationProvider
   /** ~/.ke-work/experts 目录（由主进程 DataDirectory 解析后注入） */
   expertsDir: string
   apiBaseUrl?: string
-  clientId?: string
 }
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
-const DEFAULT_CLIENT_ID = 'ke-work-desktop'
-const TOKEN_KEY_PREFIX = 'expert-sync:'
-const EXPERT_SCOPE = 'expert:read'
 const JSON_FILE_VERSION = 1
 
 function mapExpert(item: ExpertSyncItem): DesktopExpert {
@@ -132,45 +128,32 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
  */
 export class ExpertSyncService {
   private readonly http: AxiosInstance
-  private readonly apiBaseUrl: string
-  private readonly clientId: string
-  private readonly oauth2: OAuth2ClientService
+  private readonly authorization: OAuth2AuthorizationProvider
   private readonly store: ExpertJsonStore
   private cachedExperts: DesktopExpert[] = []
   private lastSyncedAt: number | null = null
 
   constructor(deps: ExpertSyncServiceDeps) {
-    this.apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
-    this.clientId = deps.clientId || DEFAULT_CLIENT_ID
+    const apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
+    this.authorization = deps.authorization
     this.store = new ExpertJsonStore(deps.expertsDir)
-    this.oauth2 = new OAuth2ClientService({
-      secureStorage: deps.secureStorage,
-      openExternal: deps.openExternal,
-      apiBaseUrl: this.apiBaseUrl,
-      clientId: this.clientId
-    })
-    this.http = axios.create({ baseURL: this.apiBaseUrl, timeout: 15_000 })
+    this.http = axios.create({ baseURL: apiBaseUrl, timeout: 15_000 })
   }
 
   getStatus(localUserId: string): ExpertSyncStatus {
-    const status = this.oauth2.getStatus(this.tokenKey(localUserId))
-    if (status.status !== 'authorized') {
-      return { status: 'unauthorized', webUser: null }
-    }
+    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_EXPERT_READ])
     return {
-      status: 'authorized',
-      webUser: {
-        id: status.webUser?.id ?? '',
-        nickname: status.webUser?.nickname ?? '',
-        avatar: status.webUser?.avatar
-      }
+      status: snapshot.status,
+      webUser: toWebUser(snapshot.webUser)
     }
   }
 
+  /** 确保 expert:read 已授权；已授权时不打开浏览器 */
   async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    const token = await this.oauth2.authorize(EXPERT_SCOPE)
-    this.oauth2.saveToken(this.tokenKey(localUserId), token)
-    return { webUser: token.webUser }
+    await this.authorization.ensureAuthorization(localUserId, [SCOPE_EXPERT_READ], {
+      reason: 'expert-sync'
+    })
+    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
   }
 
   /**
@@ -182,8 +165,8 @@ export class ExpertSyncService {
     onProgress?: (p: ExpertSyncProgress) => void
   ): Promise<{ experts: DesktopExpert[]; syncedAt: number }> {
     this.report(onProgress, 'authorize', 5, '正在校验专家同步授权…')
-    const accessToken = await this.oauth2.ensureValidAccessToken(this.tokenKey(localUserId))
-    const webUser = this.getStatus(localUserId).webUser
+    const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_EXPERT_READ])
+    const webUser = toWebUser(this.authorization.getWebUser(localUserId))
 
     this.report(onProgress, 'fetch', 12, '正在从服务器拉取专家数据…')
     const data = await this.request<ExpertSyncListData>('get', '/api/expert-sync/list', undefined, {
@@ -222,12 +205,9 @@ export class ExpertSyncService {
     return { experts: data.experts, syncedAt: data.syncedAt }
   }
 
+  /** 断开同步：仅清理本地缓存与本地会话 token（决策 D1） */
   async disconnect(localUserId: string): Promise<void> {
-    const token = this.oauth2.loadToken(this.tokenKey(localUserId))
-    if (token) {
-      await this.oauth2.revoke(token.refreshToken)
-    }
-    this.oauth2.deleteToken(this.tokenKey(localUserId))
+    await this.authorization.clear(localUserId)
     this.cachedExperts = []
     this.lastSyncedAt = null
   }
@@ -239,10 +219,6 @@ export class ExpertSyncService {
     message: string
   ): void {
     onProgress?.({ phase, percent, message })
-  }
-
-  private tokenKey(localUserId: string): string {
-    return `${TOKEN_KEY_PREFIX}${localUserId}:tokens`
   }
 
   private async request<T>(

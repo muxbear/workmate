@@ -6,24 +6,28 @@ import MockAdapter from 'axios-mock-adapter'
 import { describe, expect, it, vi } from 'vitest'
 import { ExpertSyncService } from '../../../src/main/experts/ExpertSyncService'
 import { ExpertJsonStore } from '../../../src/main/experts/ExpertJsonStore'
-import type { ISecureStorage } from '../../../src/main/security/secure-storage'
+import type { OAuth2AuthorizationProvider } from '../../../src/main/oauth2/OAuth2AuthorizationProvider'
 import type { DesktopExpert, ExpertSyncProgress } from '../../../src/preload/index.d'
 
 function createBaseDir(): string {
   return mkdtempSync(join(tmpdir(), 'kw-expert-sync-'))
 }
 
-function createSecureStorage(): ISecureStorage {
-  const map = new Map<string, string>()
+/** 统一授权提供者替身（专家同步只用到这几个方法） */
+function fakeAuthorization(): OAuth2AuthorizationProvider {
+  const webUser = { id: 'u1', nickname: 'demo' }
   return {
-    get: (key) => map.get(key) ?? null,
-    set: (key, value) => {
-      map.set(key, value)
-    },
-    delete: (key) => {
-      map.delete(key)
-    }
-  }
+    getSnapshot: vi.fn(() => ({
+      status: 'authorized',
+      webUser,
+      grantedScopes: ['expert:read'],
+      missingScopes: []
+    })),
+    getWebUser: vi.fn(() => webUser),
+    ensureAuthorization: vi.fn(async () => ({ grantedScopes: ['expert:read'] })),
+    ensureAccessToken: vi.fn(async () => 'access-token'),
+    clear: vi.fn(async () => undefined)
+  } as unknown as OAuth2AuthorizationProvider
 }
 
 function makeSyncItem(id = 'e1'): Record<string, unknown> {
@@ -89,23 +93,11 @@ interface ServiceHarness {
 
 function setup(expertsDir: string): ServiceHarness {
   const service = new ExpertSyncService({
-    secureStorage: createSecureStorage(),
-    openExternal: async () => undefined,
+    authorization: fakeAuthorization(),
     expertsDir
   })
   const http = (service as unknown as { http: AxiosInstance }).http
   const mock = new MockAdapter(http)
-  const oauth2 = {
-    ensureValidAccessToken: vi.fn(async () => 'access-token'),
-    getStatus: vi.fn(() => ({
-      status: 'authorized',
-      webUser: { id: 'u1', nickname: 'demo', avatar: null }
-    })),
-    revoke: vi.fn(async () => undefined),
-    deleteToken: vi.fn(),
-    loadToken: vi.fn(() => null)
-  }
-  ;(service as unknown as { oauth2: unknown }).oauth2 = oauth2
   return { service, mock }
 }
 

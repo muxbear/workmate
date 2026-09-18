@@ -24,11 +24,7 @@ const syncModels = async (): Promise<void> => {
   syncError.value = ''
   syncMessage.value = ''
   try {
-    const statusRes = await window.api.modelSync.getStatus()
-    if (statusRes.success && statusRes.data && statusRes.data.status !== 'authorized') {
-      const authRes = await window.api.modelSync.authorize()
-      if (!authRes.success) throw new Error(authRes.error || '授权失败')
-    }
+    // 统一授权：需要的 model:read 已授权时静默复用，缺失时主进程会先拉起（增量）授权
     const res = await window.api.modelSync.sync()
     if (!res.success) throw new Error(res.error || '同步失败')
     await modelStore.load()

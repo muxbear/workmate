@@ -215,6 +215,7 @@ async def init_db():
     from db.models.system_event import SystemEvent  # noqa: F401
     from db.models.data_scope import DataScope  # noqa: F401
     from db.models.oauth2_client import OAuth2Client  # noqa: F401
+    from db.models.oauth2_consent import OAuth2Consent  # noqa: F401
     from db.models.oauth2_refresh_token import OAuth2RefreshToken  # noqa: F401
     from db.models.permission_resource import PermissionResource  # noqa: F401
     from db.models.role import Role  # noqa: F401

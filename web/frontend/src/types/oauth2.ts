@@ -13,9 +13,18 @@ export interface OAuth2ClientInfo {
   client_name: string
 }
 
+/**
+ * 授权页 scope 信息。
+ * required 为 true 的项不可关闭；defaultGranted 决定开关初始状态（默认开启）。
+ */
 export interface OAuth2ScopeInfo {
   key: string
   label: string
+  description?: string
+  group?: string
+  required?: boolean
+  defaultGranted?: boolean
+  granted?: boolean
 }
 
 export interface OAuth2UserInfo {
@@ -30,6 +39,15 @@ export interface AuthorizeContextResponse {
   client: OAuth2ClientInfo
   scopes: OAuth2ScopeInfo[]
   user: OAuth2UserInfo
+  /** 本次请求范围内已授权的 scope */
+  grantedScopes?: string[]
+  /** 请求 scope 均已授权时为 true，页面应免交互直接回跳 */
+  autoApprove?: boolean
+}
+
+export interface AuthorizeApproveResult {
+  redirectUrl: string
+  grantedScopes: string[]
 }
 
 export interface TokenRequest {

@@ -68,6 +68,32 @@ export interface OAuth2StatusResponse {
   linked: boolean
   webAccountId: string | null
   webUser?: WebUser | null
+  /** 当前已授予的 scope（统一会话 token 的 scope 并集） */
+  grantedScopes?: string[]
+}
+
+/** 桌面端可见的 OAuth2 scope 元数据（授权管理界面用） */
+export interface OAuth2ScopeDescriptor {
+  key: string
+  label: string
+  description: string
+  group: string
+  /** 必选 scope 不可关闭（服务端会强制保留） */
+  required: boolean
+  granted: boolean
+}
+
+/** 统一 OAuth2 授权 API */
+export interface OAuth2API {
+  getStatus(): Promise<IpcResult<OAuth2StatusResponse>>
+  /** scope 目录 + 当前授予状态（设置-账号-授权管理） */
+  getScopeCatalog(): Promise<IpcResult<OAuth2ScopeDescriptor[]>>
+  /** 按需授权；缺省请求桌面默认全部权限，已授权时静默返回 */
+  authorize(
+    scopes?: string[]
+  ): Promise<IpcResult<{ webUser: WebUser | null; grantedScopes: string[] }>>
+  /** 撤销指定 scope 或整份授权（服务端 consent + 本地 token） */
+  revoke(scopes?: string[]): Promise<IpcResult<{ grantedScopes: string[] }>>
 }
 
 export interface AgentAPI {
@@ -958,6 +984,7 @@ export interface KeWorkWindowApi
     BrowserAPI,
     RuntimeAPI,
     KnowledgeAPI {
+  oauth2: OAuth2API
   skillSync: SkillSyncAPI
   expert: ExpertSyncAPI
   modelSync: ModelSyncAPI

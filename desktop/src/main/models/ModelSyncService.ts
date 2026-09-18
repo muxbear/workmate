@@ -1,9 +1,9 @@
 import axios, { type AxiosInstance } from 'axios'
 import type { CustomModel, ModelSyncStatus, WebUser } from '../../preload/index.d'
 import type { ProviderPlanType, ProviderRecord } from '../model/types'
-import type { ISecureStorage } from '../security/secure-storage'
 import type { ModelService } from '../model/ModelService'
-import { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
+import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import { SCOPE_MODEL_READ } from '../oauth2/scopes'
 
 interface WebApiEnvelope<T> {
   code: number
@@ -42,17 +42,13 @@ interface WebSyncPayload {
 }
 
 interface ModelSyncServiceDeps {
-  secureStorage: ISecureStorage
-  openExternal: (url: string) => Promise<void>
+  /** 统一 OAuth2 授权提供者（所有 Web 能力共用一份会话 token） */
+  authorization: OAuth2AuthorizationProvider
   modelService: ModelService
   apiBaseUrl?: string
-  clientId?: string
 }
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
-const DEFAULT_CLIENT_ID = 'ke-work-desktop'
-const TOKEN_KEY_PREFIX = 'model-sync:'
-const MODEL_SCOPE = 'model:read'
 const MASKED_API_KEY = '**********'
 
 function mapProvider(item: WebSyncProvider): ProviderRecord {
@@ -93,55 +89,36 @@ function mapModel(item: WebSyncModel): CustomModel {
  */
 export class ModelSyncService {
   private readonly http: AxiosInstance
-  private readonly apiBaseUrl: string
-  private readonly clientId: string
-  private readonly oauth2: OAuth2ClientService
+  private readonly authorization: OAuth2AuthorizationProvider
   private readonly modelService: ModelService
 
   constructor(deps: ModelSyncServiceDeps) {
-    this.apiBaseUrl = deps.apiBaseUrl || DEFAULT_API_BASE_URL
-    this.clientId = deps.clientId || DEFAULT_CLIENT_ID
+    const apiBaseUrl = deps.apiBaseUrl || DEFAULT_API_BASE_URL
+    this.authorization = deps.authorization
     this.modelService = deps.modelService
-    this.oauth2 = new OAuth2ClientService({
-      secureStorage: deps.secureStorage,
-      openExternal: deps.openExternal,
-      apiBaseUrl: this.apiBaseUrl,
-      clientId: this.clientId
-    })
-    this.http = axios.create({ baseURL: this.apiBaseUrl, timeout: 15_000 })
+    this.http = axios.create({ baseURL: apiBaseUrl, timeout: 15_000 })
   }
 
   getStatus(localUserId: string): ModelSyncStatus {
-    const token = this.oauth2.loadToken(this.tokenKey(localUserId))
-    const scopes = (token?.scope ?? '').split(' ')
-    if (!token?.accessToken || !scopes.includes(MODEL_SCOPE)) {
-      return { status: 'unauthorized', webUser: token?.webUser ?? null }
-    }
+    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_MODEL_READ])
     return {
-      status: 'authorized',
-      webUser: {
-        id: token.webUser?.id ?? '',
-        nickname: token.webUser?.nickname ?? '',
-        avatar: token.webUser?.avatar
-      }
+      status: snapshot.status,
+      webUser: toWebUser(snapshot.webUser)
     }
   }
 
+  /** 确保 model:read 已授权；已授权时不打开浏览器 */
   async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    const token = await this.oauth2.authorize(MODEL_SCOPE)
-    this.oauth2.saveToken(this.tokenKey(localUserId), token)
-    return { webUser: token.webUser }
+    await this.authorization.ensureAuthorization(localUserId, [SCOPE_MODEL_READ], {
+      reason: 'model-sync'
+    })
+    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
   }
 
   async sync(
     localUserId: string
   ): Promise<{ providerCount: number; modelCount: number; syncedAt: number }> {
-    const token = this.oauth2.loadToken(this.tokenKey(localUserId))
-    const scopes = (token?.scope ?? '').split(' ')
-    if (!token?.accessToken || !scopes.includes(MODEL_SCOPE)) {
-      throw new Error('尚未授权模型同步权限')
-    }
-    const accessToken = await this.oauth2.ensureValidAccessToken(this.tokenKey(localUserId))
+    const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_MODEL_READ])
     const data = await this.request<WebSyncPayload>('get', '/api/model-sync/list', undefined, {
       headers: { Authorization: 'Bearer ' + accessToken }
     })
@@ -172,16 +149,9 @@ export class ModelSyncService {
     }
   }
 
+  /** 断开同步：仅清理本地会话 token（决策 D1） */
   async disconnect(localUserId: string): Promise<void> {
-    const token = this.oauth2.loadToken(this.tokenKey(localUserId))
-    if (token) {
-      await this.oauth2.revoke(token.refreshToken)
-    }
-    this.oauth2.deleteToken(this.tokenKey(localUserId))
-  }
-
-  private tokenKey(localUserId: string): string {
-    return TOKEN_KEY_PREFIX + localUserId + ':tokens'
+    await this.authorization.clear(localUserId)
   }
 
   private async request<T>(

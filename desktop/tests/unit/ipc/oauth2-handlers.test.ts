@@ -3,16 +3,28 @@ import { registerOAuth2Handlers } from '../../../src/main/ipc/oauth2-handlers'
 import { SessionService } from '../../../src/main/services/SessionService'
 import { InMemorySecureStorage } from '../../../src/main/security/secure-storage'
 
-function deps(
-  overrides: Record<string, unknown> = {}
-): Record<string, unknown> {
+function deps(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     authService: {} as never,
     oauth2Client: {} as never,
+    authorization: fakeAuthorization(),
     session: new SessionService(),
     secureStorage: new InMemorySecureStorage(),
     ...overrides
   } as never
+}
+
+/** 统一授权提供者替身（只覆盖 handler 使用到的方法） */
+function fakeAuthorization(): {
+  saveSessionToken: ReturnType<typeof vi.fn>
+  getGrantedScopes: ReturnType<typeof vi.fn>
+  revokeAndClear: ReturnType<typeof vi.fn>
+} {
+  return {
+    saveSessionToken: vi.fn(),
+    getGrantedScopes: vi.fn(() => ['skill:read']),
+    revokeAndClear: vi.fn(async () => undefined)
+  }
 }
 
 function createFakeIpcMain(): {
@@ -45,11 +57,7 @@ describe('OAuth2 IPC handlers', () => {
   it('注册 auth:login-oauth2 / auth:confirm-oauth2-link / oauth2:status 通道', () => {
     const ipc = createFakeIpcMain()
     registerOAuth2Handlers(ipc as never, deps() as never)
-    for (const channel of [
-      'auth:login-oauth2',
-      'auth:confirm-oauth2-link',
-      'oauth2:status'
-    ]) {
+    for (const channel of ['auth:login-oauth2', 'auth:confirm-oauth2-link', 'oauth2:status']) {
       expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
   })
@@ -58,6 +66,7 @@ describe('OAuth2 IPC handlers', () => {
     const ipc = createFakeIpcMain()
     const secureStorage = new InMemorySecureStorage()
     const session = new SessionService()
+    const authorization = fakeAuthorization()
     const oauth2Client = {
       authorize: vi.fn(async () => TOKEN),
       saveToken: vi.fn(),
@@ -71,13 +80,17 @@ describe('OAuth2 IPC handlers', () => {
         user: { id: 'local-1', username: 'web_web-1' }
       }))
     }
-    registerOAuth2Handlers(ipc as never, {
-      authService,
-      oauth2Client,
-      session,
-      secureStorage,
-      agentManager
-    } as never)
+    registerOAuth2Handlers(
+      ipc as never,
+      {
+        authService,
+        oauth2Client,
+        authorization,
+        session,
+        secureStorage,
+        agentManager
+      } as never
+    )
 
     const result = await ipc.invoke<{ success: boolean; data: { status: string } }>(
       'auth:login-oauth2'
@@ -86,10 +99,7 @@ describe('OAuth2 IPC handlers', () => {
     expect(result.data.status).toBe('logged-in')
     expect(session.getCurrentUserId()).toBe('local-1')
     expect(session.getWebAccountId()).toBe('web-1')
-    expect(oauth2Client.saveToken).toHaveBeenCalledWith(
-      'oauth2-session:local-1:tokens',
-      TOKEN
-    )
+    expect(authorization.saveSessionToken).toHaveBeenCalledWith('local-1', TOKEN)
     expect(agentManager.switchMode).toHaveBeenCalledWith('cloud')
     expect(secureStorage.get('oauth2-pending:link')).toBeNull()
   })
@@ -98,6 +108,7 @@ describe('OAuth2 IPC handlers', () => {
     const ipc = createFakeIpcMain()
     const secureStorage = new InMemorySecureStorage()
     const session = new SessionService()
+    const authorization = fakeAuthorization()
     const oauth2Client = {
       authorize: vi.fn(async () => TOKEN),
       saveToken: vi.fn(),
@@ -113,13 +124,17 @@ describe('OAuth2 IPC handlers', () => {
         user: { id: 'local-1', username: 'web_web-1' }
       }))
     }
-    registerOAuth2Handlers(ipc as never, {
-      authService,
-      oauth2Client,
-      session,
-      secureStorage,
-      agentManager
-    } as never)
+    registerOAuth2Handlers(
+      ipc as never,
+      {
+        authService,
+        oauth2Client,
+        authorization,
+        session,
+        secureStorage,
+        agentManager
+      } as never
+    )
 
     const result = await ipc.invoke<{ success: boolean; data: { status: string } }>(
       'auth:login-oauth2'
@@ -132,6 +147,7 @@ describe('OAuth2 IPC handlers', () => {
     const ipc = createFakeIpcMain()
     const secureStorage = new InMemorySecureStorage()
     const session = new SessionService()
+    const authorization = fakeAuthorization()
     const oauth2Client = {
       authorize: vi.fn(async () => TOKEN),
       saveToken: vi.fn(),
@@ -145,12 +161,16 @@ describe('OAuth2 IPC handlers', () => {
         message: '确认换绑？'
       }))
     }
-    registerOAuth2Handlers(ipc as never, {
-      authService,
-      oauth2Client,
-      session,
-      secureStorage
-    } as never)
+    registerOAuth2Handlers(
+      ipc as never,
+      {
+        authService,
+        oauth2Client,
+        authorization,
+        session,
+        secureStorage
+      } as never
+    )
 
     const result = await ipc.invoke<{
       success: boolean
@@ -168,6 +188,7 @@ describe('OAuth2 IPC handlers', () => {
     const secureStorage = new InMemorySecureStorage()
     secureStorage.set('oauth2-pending:link', JSON.stringify(TOKEN))
     const session = new SessionService()
+    const authorization = fakeAuthorization()
     const oauth2Client = {
       authorize: vi.fn(),
       saveToken: vi.fn(),
@@ -180,12 +201,16 @@ describe('OAuth2 IPC handlers', () => {
         user: { id: 'local-2', username: 'web_web-1' }
       }))
     }
-    registerOAuth2Handlers(ipc as never, {
-      authService,
-      oauth2Client,
-      session,
-      secureStorage
-    } as never)
+    registerOAuth2Handlers(
+      ipc as never,
+      {
+        authService,
+        oauth2Client,
+        authorization,
+        session,
+        secureStorage
+      } as never
+    )
 
     const result = await ipc.invoke<{ success: boolean; data: { status: string } }>(
       'auth:confirm-oauth2-link',

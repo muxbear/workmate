@@ -11,6 +11,8 @@ from api.oauth2.oauth2_schemas import (
     AuthorizeApproveRequest,
     AuthorizeApproveResponse,
     AuthorizeContextResponse,
+    ConsentResponse,
+    ConsentRevokeRequest,
     RefreshTokenRequest,
     RevokeTokenRequest,
     TokenRequest,
@@ -22,7 +24,9 @@ from api.oauth2.oauth2_service import (
     create_authorization_url,
     exchange_token,
     get_authorize_context,
+    get_consent_state,
     refresh_token_exchange,
+    revoke_consent,
     revoke_token,
 )
 from core.cache import KeyValueCache
@@ -58,7 +62,7 @@ async def authorize_context(
     db: AsyncSession = Depends(get_db),
     cache: KeyValueCache = Depends(get_cache),
 ) -> ApiResponse[AuthorizeContextResponse]:
-    """获取通用授权页上下文."""
+    """获取通用授权页上下文（含已授权 scope 与免交互标记）."""
     result = await get_authorize_context(state, user_id, db, cache)
     return ok(result)
 
@@ -74,9 +78,49 @@ async def authorize_approve(
     db: AsyncSession = Depends(get_db),
     cache: KeyValueCache = Depends(get_cache),
 ) -> ApiResponse[AuthorizeApproveResponse]:
-    """用户确认授权并生成授权码."""
-    result = await approve_authorization(req.state, user_id, db, cache)
+    """用户确认授权并生成授权码（支持按用户开关收窄 scope）."""
+    result = await approve_authorization(req.state, user_id, req.scopes, db, cache)
     return ok(result)
+
+
+@router.get("/consents", response_model=ApiResponse[ConsentResponse])
+@handle_errors  # type: ignore
+async def consent_detail(
+    client_id: str = Query(..., min_length=1, max_length=64),
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ConsentResponse]:
+    """查询当前用户在某客户端下的授权记忆."""
+    consent, granted, denied = await get_consent_state(db, client_id, user_id)
+    return ok(
+        ConsentResponse(
+            clientId=client_id,
+            grantedScopes=granted,
+            deniedScopes=denied,
+            deniedExpiresAt=(
+                consent.denied_expires_at.isoformat()
+                if consent is not None and consent.denied_expires_at is not None
+                else None
+            ),
+            updatedAt=(
+                consent.updated_at.isoformat()
+                if consent is not None and consent.updated_at is not None
+                else None
+            ),
+        )
+    )
+
+
+@router.post("/consents/revoke", response_model=ApiResponse[None])
+@handle_errors  # type: ignore
+async def consent_revoke(
+    req: ConsentRevokeRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """撤销指定 scope 或整份授权，并同步撤销 refresh token."""
+    await revoke_consent(db, req.clientId, user_id, req.scopes)
+    return ok(None)
 
 
 @router.post("/token", response_model=TokenResponse)

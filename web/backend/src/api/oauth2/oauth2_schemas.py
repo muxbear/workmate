@@ -28,10 +28,15 @@ class OAuth2ClientInfo(BaseModel):
 
 
 class OAuth2ScopeInfo(BaseModel):
-    """OAuth2 scope 信息."""
+    """OAuth2 scope 信息（授权页开关列表的数据来源）."""
 
     key: str
     label: str
+    description: str = ""
+    group: str = ""
+    required: bool = False
+    defaultGranted: bool = True
+    granted: bool = False
 
 
 class OAuth2UserInfo(BaseModel):
@@ -50,18 +55,39 @@ class AuthorizeContextResponse(BaseModel):
     client: OAuth2ClientInfo
     scopes: list[OAuth2ScopeInfo]
     user: OAuth2UserInfo
+    grantedScopes: list[str] = []
+    autoApprove: bool = False
 
 
 class AuthorizeApproveRequest(BaseModel):
-    """授权确认请求."""
+    """授权确认请求（scopes 缺省表示按请求范围全量授权）."""
 
     state: str = Field(min_length=1)
+    scopes: list[str] | None = None
 
 
 class AuthorizeApproveResponse(BaseModel):
     """授权确认响应."""
 
     redirectUrl: str
+    grantedScopes: list[str] = []
+
+
+class ConsentResponse(BaseModel):
+    """用户授权记忆响应."""
+
+    clientId: str
+    grantedScopes: list[str]
+    deniedScopes: list[str]
+    deniedExpiresAt: str | None = None
+    updatedAt: str | None = None
+
+
+class ConsentRevokeRequest(BaseModel):
+    """撤销授权请求（scopes 缺省表示撤销整份授权）."""
+
+    clientId: str = Field(min_length=1, max_length=64)
+    scopes: list[str] | None = None
 
 
 class TokenRequest(BaseModel):

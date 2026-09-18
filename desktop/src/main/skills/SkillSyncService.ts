@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance } from 'axios'
 import type { DesktopSkill, SkillSyncStatus, WebUser } from '../../preload/index.d'
-import type { ISecureStorage } from '../security/secure-storage'
-import { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
+import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import { SCOPE_SKILL_READ } from '../oauth2/scopes'
 
 interface WebApiEnvelope<T> {
   code: number
@@ -28,15 +28,12 @@ interface SkillListData {
 }
 
 interface SkillSyncServiceDeps {
-  secureStorage: ISecureStorage
-  openExternal: (url: string) => Promise<void>
+  /** 统一 OAuth2 授权提供者（所有 Web 能力共用一份会话 token） */
+  authorization: OAuth2AuthorizationProvider
   apiBaseUrl?: string
-  clientId?: string
 }
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
-const DEFAULT_CLIENT_ID = 'ke-work-desktop'
-const TOKEN_KEY_PREFIX = 'skill-sync:'
 
 function colorForCategory(category: string): string {
   const colors: Record<string, string> = {
@@ -69,55 +66,42 @@ function mapSkill(item: WebSkillInfo): DesktopSkill {
 /**
  * 桌面端 Web 技能同步服务。
  *
- * 负责 OAuth2 Authorization Code + PKCE、loopback 回调、token 安全存储、
- * access token 刷新和技能列表同步。token 不暴露给渲染层。
+ * 复用统一 OAuth2 授权提供者（skill:read scope）：已授权时静默使用会话 token，
+ * 缺少 scope 时才触发（增量）授权；token 不暴露给渲染层。
  */
 export class SkillSyncService {
   private readonly http: AxiosInstance
-  private readonly apiBaseUrl: string
-  private readonly clientId: string
-  private readonly oauth2: OAuth2ClientService
+  private readonly authorization: OAuth2AuthorizationProvider
   private cachedSkills: DesktopSkill[] = []
   private lastSyncedAt: number | null = null
 
   constructor(deps: SkillSyncServiceDeps) {
-    this.apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
-    this.clientId = deps.clientId || DEFAULT_CLIENT_ID
-    this.oauth2 = new OAuth2ClientService({
-      secureStorage: deps.secureStorage,
-      openExternal: deps.openExternal,
-      apiBaseUrl: this.apiBaseUrl,
-      clientId: this.clientId
-    })
+    const apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
+    this.authorization = deps.authorization
     this.http = axios.create({
-      baseURL: this.apiBaseUrl,
+      baseURL: apiBaseUrl,
       timeout: 15_000
     })
   }
 
   getStatus(localUserId: string): SkillSyncStatus {
-    const status = this.oauth2.getStatus(this.tokenKey(localUserId))
-    if (status.status !== 'authorized') {
-      return { status: 'unauthorized', webUser: null }
-    }
+    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_SKILL_READ])
     return {
-      status: 'authorized',
-      webUser: {
-        id: status.webUser?.id ?? '',
-        nickname: status.webUser?.nickname ?? '',
-        avatar: status.webUser?.avatar
-      }
+      status: snapshot.status,
+      webUser: toWebUser(snapshot.webUser)
     }
   }
 
+  /** 确保 skill:read 已授权；已授权时不打开浏览器 */
   async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    const token = await this.oauth2.authorize('skill:read')
-    this.oauth2.saveToken(this.tokenKey(localUserId), token)
-    return { webUser: token.webUser }
+    await this.authorization.ensureAuthorization(localUserId, [SCOPE_SKILL_READ], {
+      reason: 'skill-sync'
+    })
+    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
   }
 
   async sync(localUserId: string): Promise<{ skills: DesktopSkill[]; syncedAt: number }> {
-    const accessToken = await this.oauth2.ensureValidAccessToken(this.tokenKey(localUserId))
+    const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_SKILL_READ])
     const data = await this.request<SkillListData>('get', '/api/skill/list', undefined, {
       params: { page: 1, page_size: 100 },
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -132,18 +116,11 @@ export class SkillSyncService {
     return this.cachedSkills
   }
 
+  /** 断开同步：仅清理本地缓存与本地会话 token（决策 D1） */
   async disconnect(localUserId: string): Promise<void> {
-    const token = this.oauth2.loadToken(this.tokenKey(localUserId))
-    if (token) {
-      await this.oauth2.revoke(token.refreshToken)
-    }
-    this.oauth2.deleteToken(this.tokenKey(localUserId))
+    await this.authorization.clear(localUserId)
     this.cachedSkills = []
     this.lastSyncedAt = null
-  }
-
-  private tokenKey(localUserId: string): string {
-    return `${TOKEN_KEY_PREFIX}${localUserId}:tokens`
   }
 
   private async request<T>(

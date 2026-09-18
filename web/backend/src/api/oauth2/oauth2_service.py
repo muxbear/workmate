@@ -30,6 +30,7 @@ from api.oauth2.oauth2_schemas import (
     TokenResponse,
 )
 from api.oauth2.scope_service import (
+    REQUIRED_SCOPES,
     join_scopes,
     parse_scopes,
     to_scope_infos,
@@ -37,12 +38,14 @@ from api.oauth2.scope_service import (
 )
 from core.cache import KeyValueCache
 from core.security import create_token_pair
-from db.models import Account, OAuth2RefreshToken
+from db.models import Account, OAuth2Consent, OAuth2RefreshToken
 
 logger = logging.getLogger(__name__)
 
 STATE_TTL = 600
 CODE_TTL = 300
+# 被用户关闭的 scope 到期后恢复「默认开启」（决策 D4）
+DENIED_SCOPE_TTL_DAYS = 90
 
 
 class OAuth2TokenError(Exception):
@@ -121,6 +124,118 @@ async def _get_active_account(db: AsyncSession, user_id: str) -> Account:
     return user
 
 
+# ── 授权记忆（consent） ──
+
+
+async def _get_consent(
+    db: AsyncSession, client_id: str, user_id: str
+) -> OAuth2Consent | None:
+    """查询用户在指定客户端下的授权记忆."""
+    result = await db.execute(
+        select(OAuth2Consent).where(
+            OAuth2Consent.client_id == client_id,
+            OAuth2Consent.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _expire_denied(consent: OAuth2Consent, now: datetime) -> bool:
+    """关闭项到期后恢复默认开启，返回是否发生变更."""
+    if consent.denied_expires_at is None or consent.denied_expires_at >= now:
+        return False
+    consent.denied_scope = ""
+    consent.denied_expires_at = None
+    consent.updated_at = now
+    return True
+
+
+async def get_consent_state(
+    db: AsyncSession, client_id: str, user_id: str
+) -> tuple[OAuth2Consent | None, list[str], list[str]]:
+    """读取授权记忆，返回 (记录, 已授权 scope, 已关闭 scope)，含过期重置."""
+    consent = await _get_consent(db, client_id, user_id)
+    if consent is None:
+        return None, [], []
+    if _expire_denied(consent, _utcnow()):
+        await db.flush()
+    return consent, parse_scopes(consent.scope), parse_scopes(consent.denied_scope)
+
+
+async def _save_consent(
+    db: AsyncSession,
+    client_id: str,
+    user_id: str,
+    granted: list[str],
+    denied: list[str],
+    now: datetime,
+) -> OAuth2Consent:
+    """写入/更新授权记忆（granted 并集 + denied 集合）."""
+    consent = await _get_consent(db, client_id, user_id)
+    if consent is None:
+        consent = OAuth2Consent(
+            client_id=client_id,
+            user_id=user_id,
+            scope="",
+            denied_scope="",
+            granted_at=now,
+            updated_at=now,
+        )
+        db.add(consent)
+    consent.scope = join_scopes(granted)
+    consent.denied_scope = join_scopes(denied)
+    consent.denied_expires_at = (
+        now + timedelta(days=DENIED_SCOPE_TTL_DAYS) if denied else None
+    )
+    consent.updated_at = now
+    await db.flush()
+    return consent
+
+
+async def _revoke_consent_refresh_tokens(
+    db: AsyncSession, client_id: str, user_id: str, now: datetime
+) -> int:
+    """撤销该客户端 + 用户下全部未撤销的 refresh token，返回撤销条数."""
+    result = await db.execute(
+        update(OAuth2RefreshToken)
+        .where(
+            OAuth2RefreshToken.client_id == client_id,
+            OAuth2RefreshToken.user_id == user_id,
+            OAuth2RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+async def revoke_consent(
+    db: AsyncSession,
+    client_id: str,
+    user_id: str,
+    scopes: list[str] | None,
+) -> None:
+    """撤销指定 scope 或整份授权，并同步撤销 refresh token（决策 D1）."""
+    now = _utcnow()
+    consent = await _get_consent(db, client_id, user_id)
+    if consent is not None:
+        if scopes is None:
+            await db.delete(consent)
+        else:
+            _expire_denied(consent, now)
+            granted = parse_scopes(consent.scope)
+            denied = parse_scopes(consent.denied_scope)
+            removed = [scope for scope in dict.fromkeys(scopes) if scope]
+            consent.scope = join_scopes([s for s in granted if s not in removed])
+            consent.denied_scope = join_scopes([*denied, *removed])
+            consent.denied_expires_at = now + timedelta(days=DENIED_SCOPE_TTL_DAYS)
+            consent.updated_at = now
+    await _revoke_consent_refresh_tokens(db, client_id, user_id, now)
+    await db.flush()
+
+
+# ── 授权端点 ──
+
+
 async def create_authorization_url(
     req: AuthorizationUrlRequest,
     db: AsyncSession,
@@ -179,7 +294,7 @@ async def get_authorize_context(
     db: AsyncSession,
     store: KeyValueCache,
 ) -> AuthorizeContextResponse:
-    """获取授权页展示所需的上下文."""
+    """获取授权页展示所需的上下文（含已授权 scope 与免交互标记）."""
     data = await _get_cache_json(store, _state_key(state))
     if data is None:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -191,6 +306,11 @@ async def get_authorize_context(
     user = await _get_active_account(db, user_id)
     scopes = [str(scope) for scope in data.get("scopes", [])]
 
+    _, granted, _denied = await get_consent_state(db, client.client_id, user_id)
+    granted_set = set(granted)
+    granted_requested = [scope for scope in scopes if scope in granted_set]
+    auto_approve = bool(scopes) and set(scopes).issubset(granted_set)
+
     return AuthorizeContextResponse(
         state=state,
         redirectUri=str(data["redirect_uri"]),
@@ -198,22 +318,25 @@ async def get_authorize_context(
             client_id=client.client_id,
             client_name=client.client_name,
         ),
-        scopes=to_scope_infos(scopes),
+        scopes=to_scope_infos(scopes, granted=granted_requested),
         user=OAuth2UserInfo(
             id=user.id,
             nickname=user.nickname or "",
             avatar=user.avatar or "",
         ),
+        grantedScopes=granted_requested,
+        autoApprove=auto_approve,
     )
 
 
 async def approve_authorization(
     state: str,
     user_id: str,
+    scopes: list[str] | None,
     db: AsyncSession,
     store: KeyValueCache,
 ) -> AuthorizeApproveResponse:
-    """确认授权，生成一次性授权码."""
+    """确认授权，生成一次性授权码（支持按用户开关收窄 scope）."""
     data = await _get_cache_json(store, _state_key(state))
     if data is None:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -224,8 +347,37 @@ async def approve_authorization(
 
     await _get_active_account(db, user_id)
 
+    requested = [str(scope) for scope in data.get("scopes", [])]
+    if scopes is None:
+        approved = list(requested)
+    else:
+        selected = parse_scopes(join_scopes([str(scope) for scope in scopes if scope]))
+        if not set(selected).issubset(set(requested)):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_scope: 提交的权限超出本次请求范围",
+            )
+        # 必选 scope 不可关闭：按请求顺序保留「用户勾选 + 必选」
+        approved = [
+            scope for scope in requested if scope in selected or scope in REQUIRED_SCOPES
+        ]
+        if not approved:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_scope: 至少保留一项权限",
+            )
+
+    now = _utcnow()
+    _consent, granted, denied = await get_consent_state(db, client.client_id, user_id)
+    final_scopes = list(dict.fromkeys([*granted, *approved]))
+    new_denied = [scope for scope in denied if scope not in approved]
+    for scope in requested:
+        if scope not in final_scopes and scope not in new_denied:
+            new_denied.append(scope)
+    await _save_consent(db, client.client_id, user_id, final_scopes, new_denied, now)
+
     code = secrets.token_urlsafe(32)
-    now = int(time.time())
+    now_ts = int(time.time())
     await store.set(
         _code_key(code),
         json.dumps(
@@ -235,11 +387,11 @@ async def approve_authorization(
                 "client_id": client.client_id,
                 "redirect_uri": str(data["redirect_uri"]),
                 "user_id": user_id,
-                "scopes": [str(scope) for scope in data.get("scopes", [])],
+                "scopes": final_scopes,
                 "code_challenge": str(data["code_challenge"]),
                 "code_challenge_method": str(data["code_challenge_method"]),
-                "created_at": now,
-                "expires_at": now + CODE_TTL,
+                "created_at": now_ts,
+                "expires_at": now_ts + CODE_TTL,
             }
         ),
         ttl=CODE_TTL,
@@ -249,7 +401,10 @@ async def approve_authorization(
     redirect_uri = str(data["redirect_uri"])
     query = urlencode({"code": code, "state": state})
     separator = "&" if "?" in redirect_uri else "?"
-    return AuthorizeApproveResponse(redirectUrl=f"{redirect_uri}{separator}{query}")
+    return AuthorizeApproveResponse(
+        redirectUrl=f"{redirect_uri}{separator}{query}",
+        grantedScopes=final_scopes,
+    )
 
 
 def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
@@ -349,7 +504,7 @@ async def _revoke_family(db: AsyncSession, family_id: str, now: datetime) -> int
         )
         .values(revoked_at=now)
     )
-    return result.rowcount or 0
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def refresh_token_exchange(

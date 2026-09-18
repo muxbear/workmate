@@ -2,6 +2,12 @@ import type { IpcMain } from 'electron'
 import type { AuthService } from '../services/AuthService'
 import type { SessionService } from '../services/SessionService'
 import type { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
+import {
+  OAuth2AuthorizationProvider,
+  oauth2SessionTokenKey,
+  toWebUser
+} from '../oauth2/OAuth2AuthorizationProvider'
+import { DESKTOP_DEFAULT_SCOPES, DESKTOP_SCOPE_CATALOG } from '../oauth2/scopes'
 import type { OAuth2Token } from '../oauth2/types'
 import type { ISecureStorage } from '../security/secure-storage'
 import type { AgentManager } from '../agent/AgentManager'
@@ -9,22 +15,22 @@ import type { AgentManager } from '../agent/AgentManager'
 interface OAuth2HandlerDeps {
   authService: AuthService
   oauth2Client: OAuth2ClientService
+  /** 统一 OAuth2 授权提供者：登录成功后写入统一会话 token */
+  authorization: OAuth2AuthorizationProvider
   session: SessionService
   secureStorage: ISecureStorage
   /** Agent 管理器：OAuth2 登录成功后重建 cloud Agent（构建失败不阻断登录） */
   agentManager?: AgentManager
 }
 
-/** 云端登录申请的 scope（与 ke-work-desktop 客户端注册保持一致） */
-export const OAUTH2_LOGIN_SCOPE =
-  'skill:read user:read agent:read conversation:read conversation:write workspace:read'
+/** 云端登录申请的 scope：桌面默认权限集合，一次授权覆盖专家 / 技能 / 模型等全部入口 */
+export const OAUTH2_LOGIN_SCOPE = DESKTOP_DEFAULT_SCOPES.join(' ')
 
 export const OAUTH2_SESSION_TOKEN_PREFIX = 'oauth2-session:'
-const PENDING_LINK_KEY = 'oauth2-pending:link'
 
-export function oauth2SessionTokenKey(localUserId: string): string {
-  return `${OAUTH2_SESSION_TOKEN_PREFIX}${localUserId}:tokens`
-}
+export { oauth2SessionTokenKey }
+
+const PENDING_LINK_KEY = 'oauth2-pending:link'
 
 function ok<T>(data: T): { success: true; data: T } {
   return { success: true, data }
@@ -45,7 +51,7 @@ function parseToken(raw: string | null): OAuth2Token | null {
 
 /** 注册 OAuth2 登录 IPC 通道。 */
 export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): void {
-  const { authService, oauth2Client, session, secureStorage } = deps
+  const { authService, oauth2Client, authorization, session, secureStorage } = deps
 
   ipc.handle('auth:login-oauth2', async () => {
     try {
@@ -54,12 +60,7 @@ export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): v
       // 2. 暂存 pending 链接信息（确认分支从 secureStorage 读取，防渲染层伪造）
       secureStorage.set(PENDING_LINK_KEY, JSON.stringify(token))
       const currentUserId = session.getCurrentUserId()
-      const result = await authService.loginByOAuth2(
-        token.webUser,
-        token,
-        currentUserId,
-        false
-      )
+      const result = await authService.loginByOAuth2(token.webUser, token, currentUserId, false)
 
       if (result.status === 'needs-confirmation') {
         return ok({
@@ -70,12 +71,13 @@ export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): v
         })
       }
 
-      await completeLogin(token, result.user!, session, oauth2Client, secureStorage)
+      await completeLogin(token, result.user!, session, authorization, secureStorage)
       await ensureCloudAgent(deps.agentManager)
       return ok({
         status: 'logged-in',
         user: result.user,
-        webUser: token.webUser
+        webUser: token.webUser,
+        grantedScopes: authorization.getGrantedScopes(result.user!.id)
       })
     } catch (err) {
       secureStorage.delete(PENDING_LINK_KEY)
@@ -93,30 +95,21 @@ export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): v
 
       // 换绑：先撤销旧 Web 账号的 refresh token 并清理旧 token 存储
       if (action === 'rebind' && currentUserId) {
-        const oldKey = oauth2SessionTokenKey(currentUserId)
-        const oldToken = oauth2Client.loadToken(oldKey)
-        if (oldToken) {
-          await oauth2Client.revoke(oldToken.refreshToken)
-          oauth2Client.deleteToken(oldKey)
-        }
+        await authorization.revokeAndClear(currentUserId)
       }
 
-      const result = await authService.loginByOAuth2(
-        token.webUser,
-        token,
-        currentUserId,
-        true
-      )
+      const result = await authService.loginByOAuth2(token.webUser, token, currentUserId, true)
       if (result.status !== 'logged-in' || !result.user) {
         return fail(result.message || '登录失败')
       }
 
-      await completeLogin(token, result.user, session, oauth2Client, secureStorage)
+      await completeLogin(token, result.user, session, authorization, secureStorage)
       await ensureCloudAgent(deps.agentManager)
       return ok({
         status: 'logged-in',
         user: result.user,
-        webUser: token.webUser
+        webUser: token.webUser,
+        grantedScopes: authorization.getGrantedScopes(result.user.id)
       })
     } catch (err) {
       return fail((err as Error).message || '确认登录失败')
@@ -127,15 +120,79 @@ export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): v
     try {
       const localUserId = session.getCurrentUserId()
       if (!localUserId) {
-        return ok({ linked: false, webAccountId: null })
+        return ok({ linked: false, webAccountId: null, grantedScopes: [] })
       }
       const status = await authService.getOAuth2Status(localUserId)
       const token = oauth2Client.loadToken(oauth2SessionTokenKey(localUserId))
       return ok({
         linked: status.linked,
         webAccountId: status.webAccountId,
-        webUser: token?.webUser ?? null
+        webUser: token?.webUser ?? null,
+        grantedScopes: authorization.getGrantedScopes(localUserId)
       })
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  /** 授权管理：scope 目录 + 当前授予状态 */
+  ipc.handle('oauth2:scope-catalog', async () => {
+    try {
+      const localUserId = session.getCurrentUserId()
+      const granted = new Set(localUserId ? authorization.getGrantedScopes(localUserId) : [])
+      return ok(
+        DESKTOP_SCOPE_CATALOG.map((scope) => ({
+          ...scope,
+          granted: granted.has(scope.key)
+        }))
+      )
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  /** 按需授权（缺省请求桌面默认集合）；已授权时静默返回，不打开浏览器 */
+  ipc.handle('oauth2:authorize', async (_event, scopes?: unknown) => {
+    try {
+      const localUserId = session.requireUserId()
+      const required = Array.isArray(scopes)
+        ? scopes.filter((item): item is string => typeof item === 'string' && item.length > 0)
+        : [...DESKTOP_DEFAULT_SCOPES]
+      const result = await authorization.ensureAuthorization(localUserId, required, {
+        reason: 'manual'
+      })
+      return ok({
+        webUser: toWebUser(authorization.getWebUser(localUserId)),
+        grantedScopes: result.grantedScopes
+      })
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  /** 撤销指定 scope 或整份授权（服务端 consent + refresh token，本地同步清理） */
+  ipc.handle('oauth2:revoke', async (_event, scopes?: unknown) => {
+    try {
+      const localUserId = session.requireUserId()
+      const scopeList = Array.isArray(scopes)
+        ? scopes.filter((item): item is string => typeof item === 'string' && item.length > 0)
+        : undefined
+      try {
+        const accessToken = await oauth2Client.ensureValidAccessToken(
+          oauth2SessionTokenKey(localUserId)
+        )
+        await oauth2Client.revokeConsent(accessToken, scopeList)
+      } catch (err) {
+        // 服务端撤销失败不阻断本地清理（本地 token 会在下次同步时重新授权）
+        console.warn('[oauth2] revoke consent on server failed:', err)
+      }
+      // 决策 D3：关闭单项后本地 token 立即收缩，其余能力不受影响；
+      // 整份撤销则清空本地会话。
+      const grantedScopes = scopeList ? authorization.shrinkScopes(localUserId, scopeList) : []
+      if (!scopeList) {
+        await authorization.clear(localUserId)
+      }
+      return ok({ grantedScopes })
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -146,10 +203,10 @@ async function completeLogin(
   token: OAuth2Token,
   user: { id: string; username: string },
   session: SessionService,
-  oauth2Client: OAuth2ClientService,
+  authorization: OAuth2AuthorizationProvider,
   secureStorage: ISecureStorage
 ): Promise<void> {
-  oauth2Client.saveToken(oauth2SessionTokenKey(user.id), token)
+  authorization.saveSessionToken(user.id, token)
   secureStorage.delete(PENDING_LINK_KEY)
   session.setCurrentUser(user.id, token.webUser.id)
 }
