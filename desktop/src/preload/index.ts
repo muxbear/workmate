@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { DesktopExpert, ExpertSyncProgress } from './index.d'
+import type { BrandLogoUploadPayload, DesktopExpert, ExpertSyncProgress } from './index.d'
 
 // Custom APIs for renderer
 const api = {
@@ -327,6 +327,15 @@ const api = {
   },
   openDataDir() {
     return ipcRenderer.invoke('config:open-data-dir')
+  },
+  getBrandLogo() {
+    return ipcRenderer.invoke('config:get-brand-logo')
+  },
+  uploadBrandLogo(payload: BrandLogoUploadPayload) {
+    return ipcRenderer.invoke('config:upload-brand-logo', payload)
+  },
+  resetBrandLogo() {
+    return ipcRenderer.invoke('config:reset-brand-logo')
   },
   // ── 知识库设置 API（用户级：配置按登录用户隔离，未登录返回失败）──
   /** 批量读取各知识库的覆盖项（省略 kbIds = 该用户全部） */

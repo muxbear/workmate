@@ -13,14 +13,14 @@ export type SettingsKey =
   | 'ui.language'
   | 'ui.fontSize'
   | 'ui.theme'
+  | 'ui.systemName'
+  | 'ui.brandLogo'
   | 'skills.autoUpdate'
   | 'skills.safeInstall'
-  | 'plugins.autoUpdate'
   | 'lockScreen.remoteLock'
   | 'network.proxyMode'
   | 'network.proxyUrl'
   | 'workspace.defaultWorkspaceDir'
-  | 'privacy.experienceImprovement'
   | 'notification.clientNotifications'
   | 'notification.sound'
   | 'runtime.enabled'
@@ -60,6 +60,28 @@ const THEME_OPTIONS = ['light', 'dark']
 const PROXY_MODES = ['direct', 'system', 'manual']
 const SOUND_OPTIONS = ['none', 'crisp', 'soft']
 
+/** 系统名称（品牌名）默认值与长度上限（「系统设置 → 系统标识」） */
+export const DEFAULT_SYSTEM_NAME = 'Ke-Work'
+export const SYSTEM_NAME_MAX_LENGTH = 24
+/** 自定义 LOGO 文件名（存放于 ~/.ke-work/branding/；空串 = 使用内置默认 LOGO） */
+export const BRAND_LOGO_FILE_RE = /^logo-\d+\.(png|jpe?g|webp|svg)$/
+
+/**
+ * 系统名称校验：trim 后非空、不超过上限、不含换行/制表/控制字符。
+ * 主进程为校验权威，渲染层只做即时提示。
+ */
+export function isValidSystemName(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const name = value.trim()
+  if (!name || name.length > SYSTEM_NAME_MAX_LENGTH) return false
+  // 控制字符（含换行/制表）会破坏窗口标题与单行展示，按码点逐字符拒绝
+  for (const ch of name) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code < 0x20 || code === 0x7f) return false
+  }
+  return true
+}
+
 /** 知识库：切片算法 / 向量维度枚举（对齐设置页下拉项） */
 const CHUNK_STRATEGIES = ['semantic', 'fixed', 'markdown', 'recursive']
 const VECTOR_DIMENSIONS = [1024, 1536, 3072]
@@ -86,9 +108,20 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     applyTiming: 'instant',
     validate: (v) => THEME_OPTIONS.includes(v as string)
   },
+  'ui.systemName': {
+    type: 'string',
+    default: DEFAULT_SYSTEM_NAME,
+    applyTiming: 'instant',
+    validate: (v) => isValidSystemName(v)
+  },
+  'ui.brandLogo': {
+    type: 'string',
+    default: '',
+    applyTiming: 'instant',
+    validate: (v) => typeof v === 'string' && (v === '' || BRAND_LOGO_FILE_RE.test(v))
+  },
   'skills.autoUpdate': { type: 'boolean', default: true, applyTiming: 'pending' },
   'skills.safeInstall': { type: 'boolean', default: false, applyTiming: 'pending' },
-  'plugins.autoUpdate': { type: 'boolean', default: true, applyTiming: 'pending' },
   'lockScreen.remoteLock': { type: 'boolean', default: false, applyTiming: 'instant' },
   'network.proxyMode': {
     type: 'string',
@@ -108,7 +141,6 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     applyTiming: 'instant',
     validate: (v) => typeof v === 'string' && (v === '' || isAbsolute(v))
   },
-  'privacy.experienceImprovement': { type: 'boolean', default: true, applyTiming: 'pending' },
   'notification.clientNotifications': { type: 'boolean', default: true, applyTiming: 'pending' },
   'notification.sound': {
     type: 'string',

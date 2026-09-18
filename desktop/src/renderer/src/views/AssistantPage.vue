@@ -1,6 +1,9 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useModelStore } from '@store/models'
+import { useSettingsStore } from '@store/settings'
+
+const settingsStore = useSettingsStore()
 
 // ── Types ──
 interface Assistant {
@@ -23,7 +26,9 @@ interface ChatMessage {
 const assistants: Assistant[] = [
   {
     id: 'qingluan',
-    name: 'KE-WORK助手',
+    get name(): string {
+      return settingsStore.systemName + '助手'
+    },
     desc: '全能 AI 工作助手，支持多场景任务调度与智能对话',
     tags: ['通用', '已部署'],
     color: 'linear-gradient(135deg, #0891b2, #0e7490)',

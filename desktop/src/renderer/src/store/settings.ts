@@ -8,14 +8,14 @@ export type SettingsKey =
   | 'ui.language'
   | 'ui.fontSize'
   | 'ui.theme'
+  | 'ui.systemName'
+  | 'ui.brandLogo'
   | 'skills.autoUpdate'
   | 'skills.safeInstall'
-  | 'plugins.autoUpdate'
   | 'lockScreen.remoteLock'
   | 'network.proxyMode'
   | 'network.proxyUrl'
   | 'workspace.defaultWorkspaceDir'
-  | 'privacy.experienceImprovement'
   | 'notification.clientNotifications'
   | 'notification.sound'
   | 'runtime.enabled'
@@ -70,6 +70,11 @@ interface StorageStats {
 /** 渲染层首帧默认值（与主进程 schema 一致；load() 后以主进程为准） */
 const DEFAULT_FONT_SIZE = 17
 
+/** 系统名称默认值（与主进程 schema 的 DEFAULT_SYSTEM_NAME 对齐） */
+export const DEFAULT_SYSTEM_NAME = 'Ke-Work'
+/** 窗口标题后缀（与主进程 index.ts 的 WINDOW_TITLE_SUFFIX 对齐） */
+const WINDOW_TITLE_SUFFIX = '桌面'
+
 /**
  * 系统设置（渲染层，对齐 workMode.ts 的 "store ↔ IPC 同步" 范本）
  * - load：App 挂载后调用，主进程默认值合并快照回填 12 字段 + 应用运行时效果
@@ -80,14 +85,18 @@ export const useSettingsStore = defineStore('settings', () => {
   const language = ref<Language>('zh-CN')
   const fontSize = ref(DEFAULT_FONT_SIZE)
   const theme = ref<ThemeName>('light')
+  // ── 系统标识（「系统设置 → 系统标识」）──
+  const systemName = ref(DEFAULT_SYSTEM_NAME)
+  /** 自定义 LOGO 文件名（空 = 使用内置默认 LOGO；仅作展示与判重） */
+  const brandLogoFileName = ref('')
+  /** 自定义 LOGO 的 data URL（空 = 使用内置默认 LOGO） */
+  const brandLogoDataUrl = ref('')
   const skillAutoUpdate = ref(true)
-  const pluginAutoUpdate = ref(true)
   const safeSkillInstall = ref(false)
   const remoteLock = ref(false)
   const proxyMode = ref<ProxyMode>('direct')
   const proxyUrl = ref('')
   const defaultWorkspaceDir = ref('')
-  const experienceImprovement = ref(true)
   const clientNotifications = ref(true)
   const notificationSound = ref<NotificationSound>('none')
   const runtimeEnabled = ref(true)
@@ -155,14 +164,17 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'ui.theme':
         theme.value = value as ThemeName
         break
+      case 'ui.systemName':
+        systemName.value = typeof value === 'string' && value.trim() ? value : DEFAULT_SYSTEM_NAME
+        break
+      case 'ui.brandLogo':
+        brandLogoFileName.value = (value as string) ?? ''
+        break
       case 'skills.autoUpdate':
         skillAutoUpdate.value = value as boolean
         break
       case 'skills.safeInstall':
         safeSkillInstall.value = value as boolean
-        break
-      case 'plugins.autoUpdate':
-        pluginAutoUpdate.value = value as boolean
         break
       case 'lockScreen.remoteLock':
         remoteLock.value = value as boolean
@@ -175,9 +187,6 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'workspace.defaultWorkspaceDir':
         defaultWorkspaceDir.value = value as string
-        break
-      case 'privacy.experienceImprovement':
-        experienceImprovement.value = value as boolean
         break
       case 'notification.clientNotifications':
         clientNotifications.value = value as boolean
@@ -254,10 +263,18 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  /** 运行时效果：字体缩放（经 preload 的 webFrame.setZoomFactor 封装，默认 17 → 1.0；语言 i18n 同步 P2 接入） */
+  /** 运行时效果：字体缩放（默认 17 → 1.0）+ 主题根节点 + 窗口标题（系统名称） */
   function applyRuntimeEffects(): void {
     window.api.setZoomFactor(fontSize.value / DEFAULT_FONT_SIZE)
     applyThemeToDom()
+    applySystemNameToTitle()
+  }
+
+  /** 窗口标题跟随系统名称（Electron 以页面标题为准，主进程另有一份兜底设置） */
+  function applySystemNameToTitle(): void {
+    if (typeof document === 'undefined') return
+    const name = systemName.value.trim() || DEFAULT_SYSTEM_NAME
+    document.title = name + WINDOW_TITLE_SUFFIX
   }
 
   /** 运行时效果：主题根节点标记 + localStorage 启动缓存 */
@@ -283,7 +300,19 @@ export const useSettingsStore = defineStore('settings', () => {
     }
     meta.value = snapshotMeta
     loaded.value = true
+    await loadBrandLogo()
     applyRuntimeEffects()
+  }
+
+  /** 拉取系统 LOGO（主进程读文件转 data URL；未自定义时为空串，UI 回退内置默认 LOGO） */
+  async function loadBrandLogo(): Promise<void> {
+    const result = await window.api.getBrandLogo()
+    if (!result.success || !result.data) {
+      console.warn('[settings] load brand logo failed:', result.error)
+      return
+    }
+    brandLogoFileName.value = result.data.fileName
+    brandLogoDataUrl.value = result.data.dataUrl
   }
 
   /** 写入待防抖队列（key 级：同一 key 连续写只落最后值） */
@@ -361,6 +390,34 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /** 是否已自定义 LOGO（UI 据此决定是否显示「恢复默认」） */
+  const hasCustomLogo = computed(() => !!brandLogoDataUrl.value)
+
+  /**
+   * 上传系统 LOGO（「系统设置 → 系统标识」）。
+   * 渲染层只做快速前置校验，主进程按魔数复检类型与体积后落盘，并回填新快照。
+   * @throws 主进程校验失败时抛错（调用方展示错误文案）
+   */
+  async function uploadBrandLogo(file: File): Promise<void> {
+    const bytes = await file.arrayBuffer()
+    const result = await window.api.uploadBrandLogo({ name: file.name, bytes })
+    if (!result.success || !result.data) {
+      throw new Error(result.error ?? 'LOGO 上传失败')
+    }
+    brandLogoFileName.value = result.data.fileName
+    brandLogoDataUrl.value = result.data.dataUrl
+  }
+
+  /** 恢复内置默认 LOGO（主进程删除自定义文件并清空设置） */
+  async function resetBrandLogo(): Promise<void> {
+    const result = await window.api.resetBrandLogo()
+    if (!result.success || !result.data) {
+      throw new Error(result.error ?? '恢复默认 LOGO 失败')
+    }
+    brandLogoFileName.value = ''
+    brandLogoDataUrl.value = ''
+  }
+
   /** 系统目录选择对话框更改默认工作空间路径（非空则保存并同步 meta） */
   async function changeWorkspaceDir(): Promise<void> {
     const result = await window.api.selectDefaultWorkspaceDir()
@@ -376,14 +433,16 @@ export const useSettingsStore = defineStore('settings', () => {
     language,
     fontSize,
     theme,
+    systemName,
+    brandLogoFileName,
+    brandLogoDataUrl,
+    hasCustomLogo,
     skillAutoUpdate,
-    pluginAutoUpdate,
     safeSkillInstall,
     remoteLock,
     proxyMode,
     proxyUrl,
     defaultWorkspaceDir,
-    experienceImprovement,
     clientNotifications,
     notificationSound,
     runtimeEnabled,
@@ -415,6 +474,8 @@ export const useSettingsStore = defineStore('settings', () => {
     load,
     set,
     setTheme,
+    uploadBrandLogo,
+    resetBrandLogo,
     saveMany,
     refreshStorageStats,
     changeWorkspaceDir,

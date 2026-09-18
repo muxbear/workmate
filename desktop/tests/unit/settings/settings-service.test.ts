@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsStore } from '../../../src/main/settings/SettingsStore'
@@ -8,6 +8,10 @@ import {
   SettingsService,
   type SettingsServiceDeps
 } from '../../../src/main/settings/SettingsService'
+import { BrandLogoService } from '../../../src/main/settings/BrandLogoService'
+
+/** 最小 PNG 头（BrandLogoService 只按魔数识别类型，不解析图像内容） */
+const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 let baseDir: string
 let store: SettingsStore
@@ -16,10 +20,12 @@ let deps: SettingsServiceDeps
 function createDeps(): SettingsServiceDeps {
   return {
     applyTheme: vi.fn(),
+    applySystemName: vi.fn(),
     applyProxy: vi.fn().mockResolvedValue(undefined),
     setLockScreen: vi.fn(),
     selectDir: vi.fn().mockResolvedValue(null),
     openPath: vi.fn().mockResolvedValue(undefined),
+    brandLogoService: new BrandLogoService(baseDir),
     onDefaultWorkspaceDirChange: vi.fn().mockResolvedValue(undefined)
   }
 }
@@ -70,6 +76,21 @@ describe('SettingsService', () => {
     expect(deps.applyTheme).toHaveBeenLastCalledWith('dark')
     await service.set('ui.theme', 'light')
     expect(deps.applyTheme).toHaveBeenLastCalledWith('light')
+  })
+
+  it('set：系统名称 trim 后落盘并分发 applySystemName', async () => {
+    const service = new SettingsService(store, baseDir, deps)
+    await service.set('ui.systemName', '  My Work  ')
+    expect(store.get('ui.systemName')).toBe('My Work')
+    expect(deps.applySystemName).toHaveBeenLastCalledWith('My Work')
+  })
+
+  it('set：系统名称空值/超长被拒绝且不分发', async () => {
+    const service = new SettingsService(store, baseDir, deps)
+    await expect(service.set('ui.systemName', '   ')).rejects.toThrow()
+    await expect(service.set('ui.systemName', 'a'.repeat(25))).rejects.toThrow()
+    expect(deps.applySystemName).not.toHaveBeenCalled()
+    expect(store.get('ui.systemName')).toBe('Ke-Work')
   })
 
   it('set：默认工作空间路径先迁移成功再持久化（空值回退默认目录）', async () => {
@@ -125,6 +146,30 @@ describe('SettingsService', () => {
     expect(stats.usedBytes).toBeGreaterThanOrEqual(0)
     expect(stats.diskTotal).toBeGreaterThan(0)
     expect(stats.diskFree).toBeGreaterThan(0)
+  })
+
+  it('品牌 LOGO：默认空快照 → 上传落盘 → 替换清理旧文件 → 恢复默认', async () => {
+    const service = new SettingsService(store, baseDir, deps)
+    expect(service.getBrandLogo()).toEqual({ fileName: '', dataUrl: '', customized: false })
+
+    const first = await service.uploadBrandLogo({ name: 'logo.png', bytes: PNG_HEADER })
+    expect(first.customized).toBe(true)
+    expect(first.dataUrl.startsWith('data:image/png;base64,')).toBe(true)
+    expect(store.get('ui.brandLogo')).toBe(first.fileName)
+
+    // 伪装扩展名：内容不是图片 → 拒绝
+    await expect(
+      service.uploadBrandLogo({ name: 'evil.png', bytes: Buffer.from('not an image') })
+    ).rejects.toThrow()
+
+    const second = await service.uploadBrandLogo({ name: 'logo2.png', bytes: PNG_HEADER })
+    expect(store.get('ui.brandLogo')).toBe(second.fileName)
+    expect(existsSync(join(deps.brandLogoService.getDir(), first.fileName))).toBe(false)
+
+    await service.resetBrandLogo()
+    expect(store.get('ui.brandLogo')).toBe('')
+    expect(service.getBrandLogo()).toEqual({ fileName: '', dataUrl: '', customized: false })
+    expect(existsSync(join(deps.brandLogoService.getDir(), second.fileName))).toBe(false)
   })
 
   it('openDataDir：转发 openPath', async () => {

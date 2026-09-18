@@ -3,6 +3,7 @@ import { homedir } from 'os'
 import { isAbsolute } from 'path'
 import type { SettingsStore } from './SettingsStore'
 import { isSettingsKey, isValidSettingsValue } from './schema'
+import type { BrandLogoService, BrandLogoSnapshot, BrandLogoUpload } from './BrandLogoService'
 import { getDiskUsage, type StorageStats } from './DiskUsageService'
 
 export type ProxyMode = 'direct' | 'system' | 'manual'
@@ -20,6 +21,10 @@ export interface SettingsServiceDeps {
   selectDir: () => Promise<string | null>
   /** 打开目录（shell.openPath） */
   openPath: (p: string) => Promise<void>
+  /** 应用系统名称（同步窗口标题等主进程侧品牌展示） */
+  applySystemName: (name: string) => void
+  /** 系统 LOGO 存储（读写清理 ~/.ke-work/branding） */
+  brandLogoService: BrandLogoService
   /**
    * 默认工作空间目录变更通知：
    * 实现方负责把旧目录内容迁移到新目录并更新 workspaces 记录，
@@ -88,6 +93,13 @@ export class SettingsService {
     if (!isValidSettingsValue(key, value)) {
       throw new Error('设置值非法: ' + key + '=' + JSON.stringify(value))
     }
+    // 系统名称：统一落盘 trim 后的值，并同步主进程侧品牌展示（窗口标题）
+    if (key === 'ui.systemName') {
+      const name = (value as string).trim()
+      this.store.set(key, name)
+      this.deps.applySystemName(name)
+      return
+    }
     if (key === 'workspace.defaultWorkspaceDir') {
       await this.applyDefaultWorkspaceDirChange(value as string)
       return
@@ -149,6 +161,38 @@ export class SettingsService {
     if (!isAbsolute(dir)) throw new Error('路径必须为绝对路径')
     await this.set('knowledge.directory', dir)
     return dir
+  }
+
+  /** 读取当前系统 LOGO（未自定义 / 文件不可读时返回空快照，由 UI 回退内置默认 LOGO） */
+  getBrandLogo(): BrandLogoSnapshot {
+    return this.deps.brandLogoService.load(this.store.get('ui.brandLogo') as string)
+  }
+
+  /**
+   * 上传系统 LOGO：先落盘图片再持久化文件名，随后清理旧文件。
+   * 图片写入失败会直接抛错，此时配置保持原值，不会出现指向缺失文件的设置。
+   */
+  async uploadBrandLogo(upload: BrandLogoUpload): Promise<BrandLogoSnapshot> {
+    const previous = this.store.get('ui.brandLogo') as string
+    const snapshot = this.deps.brandLogoService.save(upload)
+    this.store.set('ui.brandLogo', snapshot.fileName)
+    if (previous && previous !== snapshot.fileName) {
+      this.deps.brandLogoService.remove(previous)
+    }
+    return snapshot
+  }
+
+  /** 恢复默认 LOGO：先清空设置再删除文件（即使删除失败，展示也已回退默认） */
+  async resetBrandLogo(): Promise<BrandLogoSnapshot> {
+    const previous = this.store.get('ui.brandLogo') as string
+    this.store.set('ui.brandLogo', '')
+    if (previous) this.deps.brandLogoService.remove(previous)
+    return { fileName: '', dataUrl: '', customized: false }
+  }
+
+  /** 启动清理：删除 branding 目录内未被当前设置引用的历史残留文件 */
+  pruneBrandLogos(): void {
+    this.deps.brandLogoService.pruneExcept(this.store.get('ui.brandLogo') as string)
   }
 
   /** 打开 ~/.ke-work 数据目录 */

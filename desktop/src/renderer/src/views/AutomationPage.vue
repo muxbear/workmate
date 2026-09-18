@@ -9,6 +9,9 @@ import type {
 } from '../../../preload/index.d'
 import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
 import ConfirmDialog from '@components/ConfirmDialog.vue'
+import { useSettingsStore } from '@store/settings'
+
+const settingsStore = useSettingsStore()
 
 type Tab = 'tasks' | 'logs'
 
@@ -878,7 +881,7 @@ onBeforeUnmount(() => {
               </svg>
             </div>
             <p class="empty-title">开启你的第一个自动化任务吧</p>
-            <p class="empty-desc">从模版选择或自定义定时任务，让KE-WORK自动帮你完成重复工作</p>
+            <p class="empty-desc">从模版选择或自定义定时任务，让{{ settingsStore.systemName }}自动帮你完成重复工作</p>
             <button class="auto-create-btn" @click="openAddModal">
               <svg
                 width="15"

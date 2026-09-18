@@ -12,6 +12,8 @@ import DataManagementPage from './pages/DataManagementPage.vue'
 import ShortcutsPage from './pages/ShortcutsPage.vue'
 import SecurityPage from './pages/SecurityPage.vue'
 import HelpFeedbackPage from './pages/HelpFeedbackPage.vue'
+import BrandMark from '../brand/BrandMark.vue'
+import { useSettingsStore } from '../../store/settings'
 
 type PageKey =
   | 'system'
@@ -30,6 +32,8 @@ type PageKey =
 const props = defineProps<{
   open: boolean
 }>()
+
+const settingsStore = useSettingsStore()
 
 const emit = defineEmits<{
   close: []
@@ -87,57 +91,11 @@ const subtitles: Partial<Record<PageKey, string>> = {
         <!-- 左侧导航 -->
         <aside class="settings-aside">
           <div class="settings-brand">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 64 64"
-              fill="none"
-            >
-              <defs>
-                <linearGradient
-                  id="stg1"
-                  x1="0"
-                  y1="0"
-                  x2="1"
-                  y2="1"
-                >
-                  <stop
-                    offset="0%"
-                    stop-color="#06b6d4"
-                  />
-                  <stop
-                    offset="100%"
-                    stop-color="#0e7490"
-                  />
-                </linearGradient>
-              </defs>
-              <ellipse
-                cx="32"
-                cy="38"
-                rx="12"
-                ry="14"
-                fill="url(#stg1)"
-              />
-              <circle
-                cx="32"
-                cy="20"
-                r="9"
-                fill="url(#stg1)"
-              />
-              <circle
-                cx="29"
-                cy="19"
-                r="2.5"
-                fill="white"
-              />
-              <circle
-                cx="29.5"
-                cy="19"
-                r="1.2"
-                fill="#0e7490"
-              />
-            </svg>
-            <span class="settings-brand-text">Ke-Work设置</span>
+            <BrandMark
+              :size="22"
+              variant="mark"
+            />
+            <span class="settings-brand-text">{{ settingsStore.systemName }}设置</span>
           </div>
           <nav class="settings-nav">
             <button

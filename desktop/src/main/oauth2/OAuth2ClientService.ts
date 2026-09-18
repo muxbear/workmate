@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto'
 import axios, { type AxiosInstance } from 'axios'
 import type { ISecureStorage } from '../security/secure-storage'
 import { DesktopOAuthCallbackServer } from './DesktopOAuthCallbackServer'
+import { DEFAULT_SYSTEM_NAME } from '../settings/schema'
 import type { OAuth2Token, OAuth2WebUser } from './types'
 
 interface WebApiEnvelope<T> {
@@ -41,6 +42,8 @@ export interface OAuth2ClientServiceDeps {
   http?: AxiosInstance
   /** 回调服务器工厂（测试注入 fake；默认真实 loopback 服务器） */
   callbackServerFactory?: () => DesktopOAuthCallbackServer
+  /** 回调页展示的系统名称（缺省回退内置默认名） */
+  getSystemName?: () => string
 }
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
@@ -81,7 +84,7 @@ export class OAuth2ClientService {
     const challenge = base64Url(createHash('sha256').update(verifier).digest())
     const callbackServer = this.deps.callbackServerFactory
       ? this.deps.callbackServerFactory()
-      : new DesktopOAuthCallbackServer()
+      : new DesktopOAuthCallbackServer(this.deps.getSystemName ?? (() => DEFAULT_SYSTEM_NAME))
 
     try {
       await callbackServer.start()

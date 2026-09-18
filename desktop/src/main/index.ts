@@ -43,6 +43,8 @@ import { registerWorkspaceHandlers } from './ipc/workspace-handlers'
 import { MIGRATIONS_DIR } from './database/local/SqlMigrationRunner'
 import { SettingsStore } from './settings/SettingsStore'
 import { SettingsService, type ProxyMode, type ThemeName } from './settings/SettingsService'
+import { BrandLogoService } from './settings/BrandLogoService'
+import { DEFAULT_SYSTEM_NAME } from './settings/schema'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { KnowledgeSettingsStore } from './knowledge/KnowledgeSettingsStore'
 import { KnowledgeSettingsService } from './knowledge/KnowledgeSettingsService'
@@ -92,6 +94,14 @@ const abortControllers = new Map<number, AbortController>()
 const browserManagers = new Map<number, BrowserViewManager>()
 let browserPreviewServer: WorkspacePreviewServer | null = null
 
+/** 窗口标题后缀（与渲染层 document.title 拼接规则保持一致） */
+const WINDOW_TITLE_SUFFIX = '桌面'
+/**
+ * 跟随系统名称变化的窗口集合（仅主窗口）。
+ * OAuth 授权窗等固定标题窗口不登记，避免改名把它们一并覆盖。
+ */
+const brandWindows = new Set<BrowserWindow>()
+
 /** 取消所有正在执行中的 agent 任务（登出时停止全部任务/后台会话） */
 function cancelAllAgents(): void {
   for (const controller of abortControllers.values()) {
@@ -121,6 +131,8 @@ function createWindow(backgroundColor = '#ffffff'): BrowserWindow {
   })
 
   mainWindow.maximize()
+  brandWindows.add(mainWindow)
+  mainWindow.on('closed', () => brandWindows.delete(mainWindow))
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -203,6 +215,14 @@ app.whenReady().then(() => {
   const dataDir = getDataDirectory()
   migrateLegacyConfigFiles(dataDir.getBaseDir())
 
+  // 系统设置存储：提前构造，供 OAuth 回调页等主进程侧品牌展示读取系统名称
+  const settingsStore = new SettingsStore(dataDir.getBaseDir())
+  /** 当前系统名称（主进程侧读取；设置缺失/异常时回退默认值） */
+  const readSystemName = (): string => {
+    const name = settingsStore.get('ui.systemName')
+    return typeof name === 'string' && name.trim() ? name : DEFAULT_SYSTEM_NAME
+  }
+
   // ── 远程图片缓存服务（ke-img:// 协议 + 落盘缓存；解决外链图片 CSP 拦截与 URL 过期）──
   const remoteImageService = new RemoteImageService(
     join(dataDir.getDir('cache'), 'remote-images'),
@@ -271,7 +291,9 @@ app.whenReady().then(() => {
         ? openOAuthWindow(url)
         : shell.openExternal(url),
     apiBaseUrl: process.env.WORKMATE_WEB_API_BASE_URL ?? '',
-    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop'
+    clientId: process.env.WORKMATE_OAUTH_CLIENT_ID ?? 'ke-work-desktop',
+    // 授权回跳页展示当前系统名称（authorize 调用时读取，此时设置已加载）
+    getSystemName: readSystemName
   })
   registerOAuth2Handlers(ipcMain, {
     authService,
@@ -393,14 +415,22 @@ app.whenReady().then(() => {
     if (err) throw new Error(err)
   }
 
-  const settingsStore = new SettingsStore(dataDir.getBaseDir())
   // eslint-disable-next-line prefer-const
   let workspaceService: WorkspaceService
   const applyTheme = (theme: ThemeName): void => {
     nativeTheme.themeSource = theme === 'dark' ? 'dark' : 'light'
   }
+  const applySystemName = (name: string): void => {
+    const title = name + WINDOW_TITLE_SUFFIX
+    for (const win of brandWindows) {
+      if (!win.isDestroyed()) win.setTitle(title)
+    }
+  }
+  const brandLogoService = new BrandLogoService(dataDir.getBaseDir())
   const settingsService = new SettingsService(settingsStore, dataDir.getBaseDir(), {
     applyTheme,
+    applySystemName,
+    brandLogoService,
     applyProxy: applyProxy as (mode: ProxyMode, url: string) => Promise<void>,
     setLockScreen,
     selectDir,
@@ -410,6 +440,8 @@ app.whenReady().then(() => {
     }
   })
   const initialSettings = settingsService.getAll()
+  // LOGO 目录历史残留清理（保留当前设置引用的文件，避免多次替换后堆积）
+  settingsService.pruneBrandLogos()
 
   // ── 工作空间服务（按登录用户隔离；目录创建/校验集中在主进程）──
   // 默认工作空间目录默认 ~/KeWork（与 ~/.ke-work 应用数据目录不同）；可由系统设置更改
@@ -795,11 +827,16 @@ app.whenReady().then(() => {
   }
 
   createWindow(getThemeBackground(initialSettings.settings['ui.theme']))
+  // 窗口标题按系统名称初始化（渲染层加载后由 document.title 接管同一文案）
+  applySystemName(readSystemName())
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+      applySystemName(readSystemName())
+    }
   })
 })
 

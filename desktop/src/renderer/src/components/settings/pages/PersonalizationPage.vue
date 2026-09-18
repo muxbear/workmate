@@ -1,36 +1,39 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
+import { useSettingsStore } from '../../../store/settings'
+
+const settingsStore = useSettingsStore()
 
 const responseTone = ref('默认')
 const welcomeMessage = ref(true)
 const customInstructions = ref('')
-const editingMemoryFile = ref('KeWork 的名字')
+const editingMemoryFile = ref(settingsStore.systemName + ' 的名字')
 
 const instructionsLength = computed(() => customInstructions.value.length)
 
-const memoryFiles = [
+const memoryFiles = computed(() => [
   {
-    name: 'KeWork 对你的称呼',
+    name: settingsStore.systemName + ' 对你的称呼',
     content: '- **What to call them:',
     empty: false,
   },
   {
-    name: 'KeWork 的名字',
+    name: settingsStore.systemName + ' 的名字',
     content: '暂无内容，点击编辑添加',
     empty: true,
   },
   {
-    name: 'KeWork 的人设 / 人格描述',
+    name: settingsStore.systemName + ' 的人设 / 人格描述',
     content: "You're not a chatbot. You're becoming someone.\n\nCore Truths...",
     empty: false,
   },
   {
-    name: 'KeWork 的长期记忆记录',
+    name: settingsStore.systemName + ' 的长期记忆记录',
     content: '暂无内容，点击编辑添加',
     empty: true,
   },
-]
+])
 </script>
 
 <template>
@@ -43,7 +46,7 @@ const memoryFiles = [
             基本风格和语调
           </h2>
           <p class="s-desc s-desc--lg">
-            设置 KeWork 回复你的风格和语调。这不会影响 KeWork 的功能。
+            设置 {{ settingsStore.systemName }} 回复你的风格和语调。这不会影响 {{ settingsStore.systemName }} 的功能。
           </p>
         </div>
         <div class="s-select-wrap s-shrink">
@@ -81,7 +84,7 @@ const memoryFiles = [
             加载过程欢迎语
           </h2>
           <p class="s-desc s-desc--lg">
-            在 KeWork 生成等待过程中展示辅助提示。关闭后可在这里重新打开。
+            在 {{ settingsStore.systemName }} 生成等待过程中展示辅助提示。关闭后可在这里重新打开。
           </p>
         </div>
         <SettingToggle
@@ -97,7 +100,7 @@ const memoryFiles = [
         自定义指令
       </h2>
       <p class="s-desc s-desc--lg">
-        告诉 KeWork 你希望它始终遵循的规则和偏好，这会直接影响所有对话。
+        告诉 {{ settingsStore.systemName }} 你希望它始终遵循的规则和偏好，这会直接影响所有对话。
       </p>
       <textarea
         v-model="customInstructions"
@@ -122,7 +125,7 @@ const memoryFiles = [
         本地长期记忆文件
       </h2>
       <p class="s-desc s-desc--mt">
-        以下 4 个文件存储在本地，你可直接编辑内容，也可由 KeWork 根据提示词自动更新。
+        以下 4 个文件存储在本地，你可直接编辑内容，也可由 {{ settingsStore.systemName }} 根据提示词自动更新。
       </p>
       <div class="s-memory-list">
         <article

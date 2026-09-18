@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { connectorItems, useCatalogStore, type ConnectorItem } from '@store/catalog'
+import { useSettingsStore } from '@store/settings'
 
+const settingsStore = useSettingsStore()
 const catalog = useCatalogStore()
 const search = ref('')
 
@@ -60,7 +62,7 @@ watch(
     <div class="page-body">
       <div class="sec-intro">
         <h2 class="sec-title">连接器</h2>
-        <p class="sec-desc">将外部服务接入KE-WORK，让 AI 直接读写你的数据与工具</p>
+        <p class="sec-desc">将外部服务接入{{ settingsStore.systemName }}，让 AI 直接读写你的数据与工具</p>
       </div>
 
       <div class="skill-grid">

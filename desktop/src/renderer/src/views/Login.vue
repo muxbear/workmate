@@ -4,8 +4,11 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '../store/user'
 import { useWorkModeStore } from '../store/workMode'
 import SlideCaptcha from '../components/SlideCaptcha.vue'
+import BrandMark from '../components/brand/BrandMark.vue'
+import { useSettingsStore } from '../store/settings'
 
 const router = useRouter()
+const settingsStore = useSettingsStore()
 const userStore = useUserStore()
 const workModeStore = useWorkModeStore()
 
@@ -286,34 +289,14 @@ const handleOAuth2Login = async (): Promise<void> => {
     <div class="login-card">
       <!-- Header: Logo + Title -->
       <div class="card-header">
-        <svg class="logo" width="68" height="68" viewBox="0 0 64 64" fill="none">
-          <defs>
-            <linearGradient id="qlg1" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#06b6d4" />
-              <stop offset="100%" stop-color="#0e7490" />
-            </linearGradient>
-            <linearGradient id="qlg2" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#22d3ee" />
-              <stop offset="100%" stop-color="#0891b2" />
-            </linearGradient>
-          </defs>
-          <ellipse cx="32" cy="38" rx="12" ry="14" fill="url(#qlg1)" />
-          <circle cx="32" cy="20" r="9" fill="url(#qlg1)" />
-          <path d="M32 11 C28 5 24 3 22 6 C26 7 29 9 32 11Z" fill="url(#qlg2)" />
-          <path d="M32 11 C32 4 35 1 38 4 C35 6 33 8 32 11Z" fill="#06b6d4" />
-          <path d="M20 34 C10 26 8 32 10 38 C14 36 17 35 20 34Z" fill="url(#qlg2)" opacity="0.9" />
-          <path d="M20 34 C8 30 6 24 10 22 C13 28 16 31 20 34Z" fill="#22d3ee" opacity="0.7" />
-          <path d="M44 34 C54 26 56 32 54 38 C50 36 47 35 44 34Z" fill="url(#qlg2)" opacity="0.9" />
-          <path d="M44 34 C56 30 58 24 54 22 C51 28 48 31 44 34Z" fill="#22d3ee" opacity="0.7" />
-          <path d="M28 50 C24 56 20 60 18 58 C20 54 24 52 28 50Z" fill="#0891b2" opacity="0.8" />
-          <path d="M32 52 C32 58 30 63 28 62 C29 58 30 55 32 52Z" fill="#06b6d4" opacity="0.9" />
-          <path d="M36 50 C40 56 44 60 46 58 C44 54 40 52 36 50Z" fill="#0891b2" opacity="0.8" />
-          <circle cx="29" cy="19" r="2.5" fill="white" />
-          <circle cx="29.5" cy="19" r="1.2" fill="#0e7490" />
-          <path d="M32 25 L29 28 L35 28Z" fill="#f0fdff" />
-        </svg>
-        <h1 class="title">KE-WORK</h1>
-        <p class="subtitle">ke-work · 和你一起工作</p>
+        <BrandMark
+          :size="68"
+          variant="full"
+        />
+        <h1 class="title">
+          {{ settingsStore.systemName }}
+        </h1>
+        <p class="subtitle">{{ settingsStore.systemName }} · 和你一起工作</p>
       </div>
 
       <!-- Work mode selector -->

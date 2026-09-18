@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
-import { useSettingsStore, type SettingsKey } from '../../../store/settings'
+import BrandMark from '../../brand/BrandMark.vue'
+import { DEFAULT_SYSTEM_NAME, useSettingsStore, type SettingsKey } from '../../../store/settings'
 import { formatBytes } from '../../../util/format'
 
 const settingsStore = useSettingsStore()
@@ -35,6 +36,68 @@ function onFontSizeChange(): void {
 }
 function onProxyUrlChange(): void {
   void settingsStore.set('network.proxyUrl', settingsStore.proxyUrl)
+}
+
+// ── 系统标识（LOGO + 系统名称）──
+/** 系统名称长度上限（与主进程 schema 的 SYSTEM_NAME_MAX_LENGTH 对齐） */
+const SYSTEM_NAME_MAX_LENGTH = 24
+/** LOGO 体积上限（与主进程 BrandLogoService 的 BRAND_LOGO_MAX_BYTES 对齐） */
+const LOGO_MAX_BYTES = 1024 * 1024
+
+const logoInputRef = ref<HTMLInputElement | null>(null)
+const logoPending = ref(false)
+const logoError = ref('')
+
+function onPickLogo(): void {
+  logoError.value = ''
+  logoInputRef.value?.click()
+}
+
+/** 上传 LOGO：渲染层先做体积快检（主进程仍会按魔数复检类型与体积） */
+async function onLogoChange(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 复位：同一文件可以再次选择
+  if (!file) return
+  if (file.size > LOGO_MAX_BYTES) {
+    logoError.value = 'LOGO 大小不能超过 1MB'
+    return
+  }
+  logoError.value = ''
+  logoPending.value = true
+  try {
+    await settingsStore.uploadBrandLogo(file)
+  } catch (err) {
+    logoError.value = err instanceof Error ? err.message : 'LOGO 上传失败'
+  } finally {
+    logoPending.value = false
+  }
+}
+
+async function onResetLogo(): Promise<void> {
+  logoError.value = ''
+  logoPending.value = true
+  try {
+    await settingsStore.resetBrandLogo()
+  } catch (err) {
+    logoError.value = err instanceof Error ? err.message : '恢复默认 LOGO 失败'
+  } finally {
+    logoPending.value = false
+  }
+}
+
+/** 系统名称：输入即生效；空值先不落盘（主进程拒绝空名），交由失焦回退默认名 */
+function onSystemNameInput(): void {
+  const name = settingsStore.systemName
+  if (!name.trim()) return
+  void settingsStore.set('ui.systemName', name)
+}
+
+/** 失焦兜底：名称为空时回退默认名，避免出现「无系统名」状态 */
+function onSystemNameBlur(): void {
+  if (settingsStore.systemName.trim()) return
+  settingsStore.systemName = DEFAULT_SYSTEM_NAME
+  void settingsStore.set('ui.systemName', DEFAULT_SYSTEM_NAME)
 }
 
 /** 存储区块：占比与文案由真实统计计算 */
@@ -73,6 +136,74 @@ onMounted(() => {
 
 <template>
   <div class="s-page">
+    <!-- 系统标识 -->
+    <section class="s-card">
+      <h2 class="s-sec-title">
+        系统标识
+      </h2>
+      <p class="s-desc s-desc--mt">
+        设置系统 LOGO 与系统名称；桌面端所有展示系统名称的位置都会跟随此处设置。
+      </p>
+      <div class="s-hairline" />
+      <div class="s-brand-row">
+        <div class="s-brand-preview">
+          <BrandMark
+            :size="52"
+            variant="mark"
+          />
+        </div>
+        <div class="s-brand-actions">
+          <button
+            class="s-btn"
+            type="button"
+            :disabled="logoPending"
+            @click="onPickLogo"
+          >
+            {{ logoPending ? '处理中…' : '上传图片' }}
+          </button>
+          <button
+            v-if="settingsStore.hasCustomLogo"
+            class="s-btn"
+            type="button"
+            :disabled="logoPending"
+            @click="onResetLogo"
+          >
+            恢复默认
+          </button>
+          <input
+            ref="logoInputRef"
+            class="s-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            @change="onLogoChange"
+          >
+        </div>
+      </div>
+      <p class="s-desc s-desc--mt">
+        支持 PNG / JPG / WEBP / SVG，建议使用 1:1 正方形图片，大小不超过 1MB。
+      </p>
+      <p
+        v-if="logoError"
+        class="s-error"
+      >
+        {{ logoError }}
+      </p>
+      <div class="s-brand-name">
+        <span class="s-brand-name-label">系统名称</span>
+        <input
+          v-model="settingsStore.systemName"
+          class="s-input s-input--flex"
+          :maxlength="SYSTEM_NAME_MAX_LENGTH"
+          placeholder="请输入系统名称"
+          @input="onSystemNameInput"
+          @blur="onSystemNameBlur"
+        >
+      </div>
+      <p class="s-desc s-desc--mt">
+        修改后立即生效，并同步到登录页、侧边栏、设置窗口与窗口标题。
+      </p>
+    </section>
+
     <!-- 显示语言 -->
     <section class="s-card">
       <div class="s-row">
@@ -146,30 +277,13 @@ onMounted(() => {
             技能自动更新
           </h2>
           <p class="s-desc s-desc--mt">
-            开启后将自动更新已安装的技能为最新版本，不会更新你在 KeWork 中编辑过的技能
+            开启后将自动更新已安装的技能为最新版本，不会更新你在 {{ settingsStore.systemName }} 中编辑过的技能
           </p>
           <span class="s-badge">该功能将在后续版本生效</span>
         </div>
         <SettingToggle
           :model-value="settingsStore.skillAutoUpdate"
           @update:model-value="onToggle('skills.autoUpdate', $event)"
-        />
-      </div>
-    </section>
-    <section class="s-card">
-      <div class="s-row">
-        <div>
-          <h2 class="s-sec-title">
-            套件自动更新
-          </h2>
-          <p class="s-desc s-desc--mt">
-            开启后将自动更新已安装的套件为最新版本
-          </p>
-          <span class="s-badge">该功能将在后续版本生效</span>
-        </div>
-        <SettingToggle
-          :model-value="settingsStore.pluginAutoUpdate"
-          @update:model-value="onToggle('plugins.autoUpdate', $event)"
         />
       </div>
     </section>
@@ -214,7 +328,7 @@ onMounted(() => {
         网络代理
       </h2>
       <p class="s-desc s-desc--mt">
-        配置Ke-Work访问网络的方式。修改后立即生效，无需重启。
+        配置{{ settingsStore.systemName }}访问网络的方式。修改后立即生效，无需重启。
       </p>
       <div class="s-hairline" />
       <div class="s-proxy-row">
@@ -343,28 +457,6 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- 体验优化计划 -->
-    <section class="s-card">
-      <div class="s-row">
-        <div>
-          <h3 class="s-sec-title">
-            体验优化计划
-          </h3>
-          <p class="s-desc s-desc--mt">
-            允许我们使用您的数据进行模型优化，提升产品使用体验。我们将采取措施保护您的数据。
-            <button class="s-link">
-              了解更多
-            </button>
-          </p>
-          <span class="s-badge">该功能将在后续版本生效</span>
-        </div>
-        <SettingToggle
-          :model-value="settingsStore.experienceImprovement"
-          @update:model-value="onToggle('privacy.experienceImprovement', $event)"
-        />
-      </div>
-    </section>
-
     <!-- 通知 -->
     <h2 class="s-group-title">
       通知
@@ -435,6 +527,57 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
   padding-bottom: 32px;
+}
+
+/* ── 系统标识（LOGO + 系统名称）── */
+.s-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.s-brand-preview {
+  display: flex;
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  border: 1px solid var(--kw-color-border);
+  background: var(--kw-color-surface);
+}
+
+.s-brand-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 文件选择器隐藏，由「上传图片」按钮触发 */
+.s-file-input {
+  display: none;
+}
+
+.s-brand-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.s-brand-name-label {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: #59636b;
+}
+
+.s-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--kw-color-danger-strong);
 }
 
 .s-select--lang {

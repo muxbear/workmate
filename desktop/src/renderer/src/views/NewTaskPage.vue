@@ -7,10 +7,13 @@ import MessageContent from '@components/MessageContent.vue'
 import ChatSidePanel from '@components/ChatSidePanel.vue'
 import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
 import { useCatalogStore, type CatalogTab } from '@store/catalog'
+import { useSettingsStore } from '@store/settings'
+import BrandMark from '@components/brand/BrandMark.vue'
 
 const agentStore = useAgentStore()
 const catalog = useCatalogStore()
 const modelStore = useModelStore()
+const settingsStore = useSettingsStore()
 type CatalogNavTarget = '专家' | '技能' | '连接器'
 const emit = defineEmits<{ navigate: [tab: CatalogNavTarget] }>()
 
@@ -581,7 +584,7 @@ watch(
   <div class="new-task-page">
     <!-- Welcome state -->
     <div v-if="currentMessages.length === 0" class="welcome-area">
-      <h2 class="welcome-heading">KE-WORK，<span class="welcome-highlight">我帮你</span></h2>
+      <h2 class="welcome-heading">{{ settingsStore.systemName }}，<span class="welcome-highlight">我帮你</span></h2>
 
       <!-- Category pills -->
       <div class="category-pills">
@@ -996,14 +999,12 @@ watch(
             <template v-if="msg.role === 'assistant'">
               <div class="chat-bubble-head">
                 <div class="chat-avatar chat-avatar--ai chat-avatar--sm">
-                  <svg width="16" height="16" viewBox="0 0 64 64" fill="none">
-                    <ellipse cx="32" cy="38" rx="12" ry="14" fill="#0891b2" />
-                    <circle cx="32" cy="20" r="9" fill="#0891b2" />
-                    <circle cx="29" cy="19" r="2.5" fill="white" />
-                    <circle cx="29.5" cy="19" r="1.2" fill="#0e7490" />
-                  </svg>
+                  <BrandMark
+                    :size="16"
+                    variant="mark"
+                  />
                 </div>
-                <span class="chat-bubble-head-name">KeWork</span>
+                <span class="chat-bubble-head-name">{{ settingsStore.systemName }}</span>
               </div>
               <div class="chat-bubble-wrapper">
                 <!-- 深度思考块 -->
@@ -1832,7 +1833,7 @@ watch(
   background: var(--kw-gradient-brand);
 }
 
-/* AI 消息头部行：头像 + "KeWork" 文字 */
+/* AI 消息头部行：头像 + 系统名称 */
 .chat-bubble-head {
   display: flex;
   align-items: center;

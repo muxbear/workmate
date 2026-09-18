@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
+import { useSettingsStore } from '../../../store/settings'
+
+const settingsStore = useSettingsStore()
 
 const miniProgramEnabled = ref(true)
 const autoSyncToMiniProgram = ref(false)
@@ -77,7 +80,7 @@ const qrCenterCell = 24
           }"
         />
         <div class="s-qr-center">
-          Ke-Work
+          {{ settingsStore.systemName }}
         </div>
       </div>
     </section>

@@ -2,7 +2,9 @@
 import { onMounted, ref } from 'vue'
 import { useCatalogStore, type SkillItem } from '@store/catalog'
 import { useSkillSyncStore } from '@store/skillSync'
+import { useSettingsStore } from '@store/settings'
 
+const settingsStore = useSettingsStore()
 const search = ref('')
 const catalog = useCatalogStore()
 const skillSync = useSkillSyncStore()
@@ -89,7 +91,7 @@ onMounted(() => {
         <div class="sec-intro">
           <div>
             <h2 class="sec-title">技能广场</h2>
-            <p class="sec-desc">为KE-WORK扩展专项能力，一键调用即可赋能任意对话</p>
+            <p class="sec-desc">为{{ settingsStore.systemName }}扩展专项能力，一键调用即可赋能任意对话</p>
           </div>
           <button class="resync-btn" type="button" @click="resync">重新同步</button>
         </div>

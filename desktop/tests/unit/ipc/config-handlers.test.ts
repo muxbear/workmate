@@ -34,12 +34,19 @@ function createSettingsServiceMock(
     })),
     selectWorkspaceDir: vi.fn(async () => null),
     openDataDir: vi.fn(async () => undefined),
+    getBrandLogo: vi.fn(() => ({ fileName: '', dataUrl: '', customized: false })),
+    uploadBrandLogo: vi.fn(async () => ({
+      fileName: 'logo-1.png',
+      dataUrl: 'data:image/png;base64,AA==',
+      customized: true
+    })),
+    resetBrandLogo: vi.fn(async () => ({ fileName: '', dataUrl: '', customized: false })),
     ...overrides
   }
 }
 
 describe('config IPC handlers', () => {
-  it('注册 5 个通道', () => {
+  it('注册 8 个通道', () => {
     const ipc = createFakeIpcMain()
     registerConfigHandlers(ipc as never, {
       settingsService: createSettingsServiceMock() as never
@@ -49,6 +56,9 @@ describe('config IPC handlers', () => {
     expect(ipc.handle).toHaveBeenCalledWith('config:storage-stats', expect.any(Function))
     expect(ipc.handle).toHaveBeenCalledWith('config:select-workspace-dir', expect.any(Function))
     expect(ipc.handle).toHaveBeenCalledWith('config:open-data-dir', expect.any(Function))
+    expect(ipc.handle).toHaveBeenCalledWith('config:get-brand-logo', expect.any(Function))
+    expect(ipc.handle).toHaveBeenCalledWith('config:upload-brand-logo', expect.any(Function))
+    expect(ipc.handle).toHaveBeenCalledWith('config:reset-brand-logo', expect.any(Function))
   })
 
   it('config:get-all 返回设置快照 + meta', async () => {
@@ -117,6 +127,73 @@ describe('config IPC handlers', () => {
     )
     expect(result.success).toBe(true)
     expect(result.data).toBeNull()
+  })
+
+  it('config:get-brand-logo 返回 LOGO 快照', async () => {
+    const ipc = createFakeIpcMain()
+    registerConfigHandlers(ipc as never, {
+      settingsService: createSettingsServiceMock() as never
+    })
+    const result = await ipc.invoke<{ success: boolean; data?: { customized: boolean } }>(
+      'config:get-brand-logo'
+    )
+    expect(result.success).toBe(true)
+    expect(result.data?.customized).toBe(false)
+  })
+
+  it('config:upload-brand-logo 透传字节并返回新快照', async () => {
+    const ipc = createFakeIpcMain()
+    const settingsService = createSettingsServiceMock()
+    registerConfigHandlers(ipc as never, { settingsService: settingsService as never })
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const result = await ipc.invoke<{ success: boolean; data?: { fileName: string } }>(
+      'config:upload-brand-logo',
+      { name: 'logo.png', bytes }
+    )
+    expect(result.success).toBe(true)
+    expect(result.data?.fileName).toBe('logo-1.png')
+    expect(settingsService.uploadBrandLogo).toHaveBeenCalledWith({ name: 'logo.png', bytes })
+  })
+
+  it('config:upload-brand-logo 非法入参拒绝（bytes 非字节）', async () => {
+    const ipc = createFakeIpcMain()
+    const settingsService = createSettingsServiceMock()
+    registerConfigHandlers(ipc as never, { settingsService: settingsService as never })
+    const result = await ipc.invoke<{ success: boolean; error?: string }>(
+      'config:upload-brand-logo',
+      { name: 'logo.png', bytes: 'not-bytes' }
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('参数错误')
+    expect(settingsService.uploadBrandLogo).not.toHaveBeenCalled()
+  })
+
+  it('config:upload-brand-logo 业务校验失败转 { success: false }', async () => {
+    const ipc = createFakeIpcMain()
+    const settingsService = createSettingsServiceMock({
+      uploadBrandLogo: vi.fn(() => {
+        throw new Error('仅支持 PNG / JPG / WEBP / SVG 格式的图片')
+      })
+    })
+    registerConfigHandlers(ipc as never, { settingsService: settingsService as never })
+    const result = await ipc.invoke<{ success: boolean; error?: string }>(
+      'config:upload-brand-logo',
+      { name: 'evil.png', bytes: new Uint8Array([1, 2, 3]) }
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('仅支持 PNG')
+  })
+
+  it('config:reset-brand-logo 恢复默认', async () => {
+    const ipc = createFakeIpcMain()
+    const settingsService = createSettingsServiceMock()
+    registerConfigHandlers(ipc as never, { settingsService: settingsService as never })
+    const result = await ipc.invoke<{ success: boolean; data?: { customized: boolean } }>(
+      'config:reset-brand-logo'
+    )
+    expect(result.success).toBe(true)
+    expect(result.data?.customized).toBe(false)
+    expect(settingsService.resetBrandLogo).toHaveBeenCalled()
   })
 
   it('config:open-data-dir 返回 ok', async () => {

@@ -296,6 +296,23 @@ export interface SettingsSnapshot {
   meta: { dataBaseDir: string; defaultWorkspaceDir: string; defaultKnowledgeDir: string }
 }
 
+/** 系统 LOGO 上传入参（config:upload-brand-logo；bytes 为图片原始字节） */
+export interface BrandLogoUploadPayload {
+  /** 原始文件名（仅作提示，类型判定以字节为准） */
+  name?: string
+  bytes: ArrayBuffer | Uint8Array
+}
+
+/** 系统 LOGO 快照（config:get-brand-logo / upload / reset） */
+export interface BrandLogoSnapshot {
+  /** settings.json 持久化值（文件名）；空串 = 未自定义 */
+  fileName: string
+  /** 可直接用于 <img src>；未自定义为空串 */
+  dataUrl: string
+  /** 是否已自定义（UI 据此决定是否显示「恢复默认」） */
+  customized: boolean
+}
+
 /** 内置运行时类型标识 */
 export type RuntimeId = 'python' | 'node' | 'git'
 
@@ -358,6 +375,12 @@ export interface ConfigAPI {
   selectKnowledgeDir(): Promise<IpcResult<string | null>>
   /** 在系统资源管理器中打开 ~/.ke-work */
   openDataDir(): Promise<IpcResult<null>>
+  /** 读取当前系统 LOGO（未自定义时 fileName/dataUrl 为空串） */
+  getBrandLogo(): Promise<IpcResult<BrandLogoSnapshot>>
+  /** 上传系统 LOGO（主进程按魔数校验类型与体积后落盘） */
+  uploadBrandLogo(payload: BrandLogoUploadPayload): Promise<IpcResult<BrandLogoSnapshot>>
+  /** 恢复内置默认 LOGO（删除自定义文件并清空设置） */
+  resetBrandLogo(): Promise<IpcResult<BrandLogoSnapshot>>
 }
 
 /**

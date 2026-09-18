@@ -34,6 +34,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useCatalogStore, type CatalogTab, type Mode, type SkillItem } from '@store/catalog'
 import { useWorkspaceStore } from '@store/workspace'
 import { useModelStore } from '@store/models'
+import { useSettingsStore } from '@store/settings'
 import PlusMenu from './PlusMenu.vue'
 import type { MessagePart } from '../../../preload/index.d'
 
@@ -46,6 +47,8 @@ import type { MessagePart } from '../../../preload/index.d'
  * - 模型选择、工作空间选择、权限开关、发送按钮
  * 不含「新建任务」页输入框上方的分类行（文档处理 / 金融服务 等）。
  */
+
+const settingsStore = useSettingsStore()
 
 const props = withDefaults(
   defineProps<{
@@ -76,6 +79,11 @@ const props = withDefaults(
     maxHeight: 0,
     cleanupOnUnmount: false
   }
+)
+
+/** 占位文案中的内置品牌名替换为「系统设置 → 系统标识」中的系统名称 */
+const brandPlaceholder = computed(() =>
+  props.placeholder.replace('KE-WORK', settingsStore.systemName)
 )
 
 /** 草稿文本（与父级双向绑定；父级发送失败回填也走这里） */
@@ -885,7 +893,7 @@ onBeforeUnmount(() => {
           { 'task-textarea--compact': compact }
         ]"
         contenteditable="true"
-        :data-placeholder="placeholder"
+        :data-placeholder="brandPlaceholder"
         :style="textareaStyle"
         @input="onInputSync"
         @click="onInputClick"

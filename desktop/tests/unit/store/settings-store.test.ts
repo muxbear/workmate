@@ -7,7 +7,8 @@ import { useSettingsStore } from '../../../src/renderer/src/store/settings'
 function createMockWindowApi() {
   const store = new Map<string, unknown>([
     ['ui.language', 'zh-CN'],
-    ['ui.fontSize', 17]
+    ['ui.fontSize', 17],
+    ['ui.systemName', 'Ke-Work']
   ])
   const api = {
     setZoomFactor: vi.fn(),
@@ -28,7 +29,20 @@ function createMockWindowApi() {
       data: { baseDir: '/tmp', usedBytes: 1024, diskTotal: 1024 * 1024, diskFree: 512 * 1024 }
     })),
     selectDefaultWorkspaceDir: vi.fn(async () => ({ success: true, data: null })),
-    openDataDir: vi.fn(async () => ({ success: true, data: null }))
+    openDataDir: vi.fn(async () => ({ success: true, data: null })),
+    // ── 系统标识（「系统设置 → 系统标识」）──
+    getBrandLogo: vi.fn(async () => ({
+      success: true,
+      data: { fileName: '', dataUrl: '', customized: false }
+    })),
+    uploadBrandLogo: vi.fn(async () => ({
+      success: true,
+      data: { fileName: 'logo-1.png', dataUrl: 'data:image/png;base64,AA==', customized: true }
+    })),
+    resetBrandLogo: vi.fn(async () => ({
+      success: true,
+      data: { fileName: '', dataUrl: '', customized: false }
+    }))
   }
   return { api, store }
 }
@@ -45,6 +59,11 @@ describe('useSettingsStore（渲染层系统设置）', () => {
       removeItem: vi.fn()
     }
     ;(globalThis as Record<string, unknown>).window = { api: mock.api }
+    // 主题根节点标记与窗口标题都写 DOM，这里给出最小 document 替身
+    ;(globalThis as Record<string, unknown>).document = {
+      title: '',
+      documentElement: { dataset: {} as Record<string, string> }
+    }
     mock.api.setZoomFactor.mockClear()
   })
 
@@ -103,6 +122,51 @@ describe('useSettingsStore（渲染层系统设置）', () => {
     await s.set('ui.language', 'fr-FR')
     await vi.advanceTimersByTimeAsync(300)
     expect(s.language).toBe('zh-CN') // 回滚为已持久化值
+  })
+
+  it('系统名称：默认回退内置名，set 后即时更新窗口标题', async () => {
+    const s = useSettingsStore()
+    await s.load()
+    expect(s.systemName).toBe('Ke-Work')
+    await s.set('ui.systemName', 'My Work')
+    expect(s.systemName).toBe('My Work')
+    const doc = (globalThis as Record<string, unknown>).document as { title: string }
+    expect(doc.title).toBe('My Work桌面')
+  })
+
+  it('系统标识：load 回填 LOGO 快照，上传/恢复默认同步状态', async () => {
+    const s = useSettingsStore()
+    await s.load()
+    expect(s.hasCustomLogo).toBe(false)
+
+    mock.api.uploadBrandLogo.mockResolvedValue({
+      success: true,
+      data: { fileName: 'logo-1.png', dataUrl: 'data:image/png;base64,AA==', customized: true }
+    } as never)
+    await s.uploadBrandLogo(new File([new Uint8Array([1])], 'logo.png'))
+    expect(s.hasCustomLogo).toBe(true)
+    expect(s.brandLogoFileName).toBe('logo-1.png')
+    expect(mock.api.uploadBrandLogo).toHaveBeenCalledWith({
+      name: 'logo.png',
+      bytes: expect.any(ArrayBuffer)
+    })
+
+    await s.resetBrandLogo()
+    expect(s.hasCustomLogo).toBe(false)
+    expect(s.brandLogoDataUrl).toBe('')
+  })
+
+  it('系统标识：上传失败抛出主进程错误文案（调用方展示）', async () => {
+    mock.api.uploadBrandLogo.mockResolvedValue({
+      success: false,
+      error: '仅支持 PNG / JPG / WEBP / SVG 格式的图片'
+    } as never)
+    const s = useSettingsStore()
+    await s.load()
+    await expect(
+      s.uploadBrandLogo(new File([new Uint8Array([1])], 'logo.gif'))
+    ).rejects.toThrow('仅支持 PNG / JPG / WEBP / SVG 格式的图片')
+    expect(s.hasCustomLogo).toBe(false)
   })
 
   it('refreshStorageStats：回填存储统计', async () => {

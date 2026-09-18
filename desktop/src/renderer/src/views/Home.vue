@@ -11,6 +11,7 @@ import KnowledgePage from './KnowledgePage.vue'
 import AutomationPage from './AutomationPage.vue'
 import NewTaskPage from './NewTaskPage.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import BrandMark from '../components/brand/BrandMark.vue'
 import NavIcon from '../components/NavIcon.vue'
 import SettingsWindow from '../components/settings/SettingsWindow.vue'
 import { useAgentStore } from '@renderer/store/agent'
@@ -34,7 +35,10 @@ const expertSyncStore = useExpertSyncStore()
 // ── 当前登录用户展示 ──
 /** 显示名：用户名 → 手机号 → 兜底文案 */
 const displayName = computed(
-  () => userStore.userInfo?.username || userStore.userInfo?.mobile || 'KE-WORK用户'
+  () =>
+    userStore.userInfo?.username ||
+    userStore.userInfo?.mobile ||
+    settingsStore.systemName + '用户'
 )
 /** 头像取显示名首字符 */
 const avatarInitial = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'K')
@@ -506,20 +510,14 @@ const adjustMenuDirection = (): void => {
       <!-- Header: Logo + title -->
       <div class="sidebar-header">
         <div class="sidebar-brand">
-          <svg width="28" height="28" viewBox="0 0 64 64" fill="none">
-            <defs>
-              <linearGradient id="hsg2" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stop-color="#06b6d4" />
-                <stop offset="100%" stop-color="#0e7490" />
-              </linearGradient>
-            </defs>
-            <ellipse cx="32" cy="38" rx="12" ry="14" fill="url(#hsg2)" />
-            <circle cx="32" cy="20" r="9" fill="url(#hsg2)" />
-            <circle cx="29" cy="19" r="2.5" fill="white" />
-            <circle cx="29.5" cy="19" r="1.2" fill="#0e7490" />
-          </svg>
+          <BrandMark
+            :size="28"
+            variant="mark"
+          />
           <div class="sidebar-brand-text">
-            <p class="sidebar-title">KE-WORK</p>
+            <p class="sidebar-title">
+              {{ settingsStore.systemName }}
+            </p>
             <p class="sidebar-version">v1.0.0</p>
           </div>
           <button class="sidebar-collapse-btn" title="收缩侧栏" @click="sidebarCollapsed = true">

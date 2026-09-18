@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useUserStore } from '@store/user'
+import { useSettingsStore } from '../../../store/settings'
 
 defineEmits<{
   logout: []
 }>()
 
 const userStore = useUserStore()
+const settingsStore = useSettingsStore()
 
 /** 显示名：用户名 → 手机号 → 兜底文案（与主页侧栏用户信息一致） */
 const displayName = computed(
-  () => userStore.userInfo?.username || userStore.userInfo?.mobile || 'KE-WORK用户'
+  () =>
+    userStore.userInfo?.username ||
+    userStore.userInfo?.mobile ||
+    settingsStore.systemName + '用户'
 )
 
 /** 头像取显示名首字符 */
