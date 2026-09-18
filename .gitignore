@@ -15,7 +15,10 @@ Desktop.ini
 .codex/
 
 # Docs
-/docs/
+/desktop/docs/
+/web/docs/
+/web/backend/docs/
+/web/frontend/docs/
 
 # resume
 /resume/
