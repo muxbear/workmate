@@ -558,6 +558,9 @@ const api = {
     runNow(id: string) {
       return ipcRenderer.invoke('automation:run-now', id)
     },
+    getRun(id: string) {
+      return ipcRenderer.invoke('automation:get-run', id)
+    },
     listRuns(opts?: { taskId?: string; limit?: number; cursor?: number }) {
       return ipcRenderer.invoke('automation:list-runs', opts)
     },

@@ -157,6 +157,14 @@ export class AutomationService {
     return this.deps.enqueueRun(task, 'manual')
   }
 
+  /** 单条运行记录（运行结果详情用） */
+  getRun(userId: string, rawId: unknown): AutomationRunRecord {
+    const id = asTaskId(rawId)
+    const run = this.runs.getById(userId, id)
+    if (!run) throw new Error('运行记录不存在')
+    return run
+  }
+
   /** 运行记录分页 */
   listRuns(
     userId: string,

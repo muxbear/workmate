@@ -243,6 +243,15 @@ CREATE TABLE IF NOT EXISTS automation_runs (
 CREATE INDEX IF NOT EXISTS idx_auto_runs_task ON automation_runs(task_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_auto_runs_user ON automation_runs(user_id, started_at DESC);
 `
+  },
+  {
+    // 自动化运行记录：保存完整输出正文与本次使用的模型，供运行结果详情查看
+    version: 12,
+    name: 'automation_run_output',
+    sql: `
+ALTER TABLE automation_runs ADD COLUMN output_text TEXT;
+ALTER TABLE automation_runs ADD COLUMN model TEXT;
+`
   }
 ]
 

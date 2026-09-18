@@ -874,6 +874,10 @@ export interface AutomationRun {
   conversationId: string | null
   threadId: string | null
   outputPreview: string | null
+  /** 完整输出正文（运行结果详情） */
+  outputText: string | null
+  /** 本次运行使用的模型 */
+  model: string | null
   errorCode: AutomationErrorCode | null
   errorMessage: string | null
   artifacts: unknown[]
@@ -899,6 +903,7 @@ export interface AutomationAPI {
   deleteTask(id: string): Promise<IpcResult<number>>
   setEnabled(id: string, enabled: boolean): Promise<IpcResult<AutomationTask>>
   runNow(id: string): Promise<IpcResult<{ runId: string }>>
+  getRun(id: string): Promise<IpcResult<AutomationRun>>
   listRuns(opts?: {
     taskId?: string
     limit?: number

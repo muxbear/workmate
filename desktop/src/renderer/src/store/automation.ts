@@ -65,6 +65,13 @@ export const useAutomationStore = defineStore('automation', () => {
     }
   }
 
+  /** 运行结果详情（点击运行记录时加载） */
+  async function loadRunDetail(id: string): Promise<AutomationRun> {
+    const detail = unwrap(await window.api.automation.getRun(id))
+    runs.value = runs.value.map((run) => (run.id === detail.id ? detail : run))
+    return detail
+  }
+
   /** 拉取本周统计 */
   async function loadStats(since?: number): Promise<void> {
     try {
@@ -147,6 +154,7 @@ export const useAutomationStore = defineStore('automation', () => {
     loadTasks,
     loadRuns,
     loadMoreRuns,
+    loadRunDetail,
     loadStats,
     createTask,
     updateTask,

@@ -22,6 +22,8 @@ interface RunRow {
   conversation_id: string | null
   thread_id: string | null
   output_preview: string | null
+  output_text: string | null
+  model: string | null
   error_code: string | null
   error_message: string | null
   artifacts: string | null
@@ -45,6 +47,8 @@ export interface FinishRunPatch {
   finishedAt: number
   durationMs: number
   outputPreview?: string | null
+  outputText?: string | null
+  model?: string | null
   errorCode?: RunErrorCode | null
   errorMessage?: string | null
   artifacts?: unknown[] | null
@@ -74,6 +78,8 @@ function toRecord(row: RunRow): AutomationRunRecord {
     conversationId: row.conversation_id,
     threadId: row.thread_id,
     outputPreview: row.output_preview,
+    outputText: row.output_text,
+    model: row.model,
     errorCode: (row.error_code as RunErrorCode | null) ?? null,
     errorMessage: row.error_message,
     artifacts: parseJson<unknown[]>(row.artifacts) ?? [],
@@ -118,13 +124,16 @@ export class AutomationRunRepository {
     this.db
       .prepare(
         'UPDATE automation_runs SET status = ?, finished_at = ?, duration_ms = ?, output_preview = ?, ' +
-          'error_code = ?, error_message = ?, artifacts = ?, token_usage = ? WHERE id = ?'
+          'output_text = ?, model = ?, error_code = ?, error_message = ?, ' +
+          'artifacts = ?, token_usage = ? WHERE id = ?'
       )
       .run(
         patch.status,
         patch.finishedAt,
         patch.durationMs,
         patch.outputPreview ?? null,
+        patch.outputText ?? null,
+        patch.model ?? null,
         patch.errorCode ?? null,
         patch.errorMessage ?? null,
         patch.artifacts ? JSON.stringify(patch.artifacts) : null,

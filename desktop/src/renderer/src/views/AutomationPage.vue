@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAutomationStore } from '@store/automation'
 import type {
+  AutomationRun,
   AutomationSchedule,
   AutomationTask,
   AutomationTaskDraft
@@ -696,6 +697,16 @@ function formatNextRun(task: AutomationTask): string {
   return '下次 ' + formatRunTime(task.nextRunAt)
 }
 
+/** 运行状态文案 */
+function runStatusLabel(status: AutomationRun['status']): string {
+  return (RUN_STATUS_META[status] ?? RUN_STATUS_META.running).label
+}
+
+/** 运行状态颜色 */
+function runStatusColor(status: AutomationRun['status']): string {
+  return (RUN_STATUS_META[status] ?? RUN_STATUS_META.running).color
+}
+
 /** 运行记录展示行 */
 const runRows = computed(() =>
   automation.runs.map((run) => {
@@ -742,6 +753,35 @@ const statsCards = computed(() => {
     }
   ]
 })
+
+/** 运行结果详情 */
+const runDetail = ref<AutomationRun | null>(null)
+
+/** 触发来源文案 */
+function runTriggerLabel(trigger: AutomationRun['trigger']): string {
+  if (trigger === 'manual') return '手动运行'
+  if (trigger === 'catchup') return '错过后补跑'
+  if (trigger === 'retry') return '重试'
+  return '定时触发'
+}
+
+/** 产物条目文案（DocArtifactFile：name / relPath） */
+function artifactLabel(item: unknown): string {
+  if (!item || typeof item !== 'object') return String(item)
+  const row = item as { name?: unknown; relPath?: unknown }
+  const name = typeof row.name === 'string' ? row.name : ''
+  const relPath = typeof row.relPath === 'string' ? row.relPath : ''
+  return name || relPath || '未命名产物'
+}
+
+/** 打开运行结果详情（拉取完整输出） */
+const openRunDetail = async (id: string): Promise<void> => {
+  try {
+    runDetail.value = await automation.loadRunDetail(id)
+  } catch (err) {
+    automation.error = err instanceof Error ? err.message : '加载运行结果失败'
+  }
+}
 
 /** 失败重试：等价于对该任务立即运行一次（保留原失败记录） */
 const retryRun = async (taskId: string): Promise<void> => {
@@ -1018,7 +1058,8 @@ onBeforeUnmount(() => {
               v-for="(log, i) in runRows"
               :key="log.id"
               class="logs-row"
-              :title="log.reason"
+              @click="openRunDetail(log.id)"
+              :title="log.reason || '查看运行结果'"
               :style="{
                 borderBottom: i < runRows.length - 1 ? '1px solid rgba(8,145,178,0.07)' : 'none'
               }"
@@ -1029,6 +1070,7 @@ onBeforeUnmount(() => {
               <div class="logs-status-cell">
                 <span class="status-dot" :style="{ background: log.color }"></span>
                 <span :style="{ color: log.color, fontWeight: 500 }">{{ log.status }}</span>
+                <button class="logs-view" @click.stop="openRunDetail(log.id)">结果</button>
                 <span v-if="log.reason" class="logs-reason">{{ log.reason }}</span>
                 <button
                   v-if="log.status === '失败'"
@@ -1283,6 +1325,53 @@ onBeforeUnmount(() => {
             >
               {{ editingId ? '保存' : '创建任务' }}
             </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 运行结果详情 -->
+    <Transition name="modal">
+      <div v-if="runDetail" class="modal-mask" @click.self="runDetail = null">
+        <div class="modal-card modal-card--run">
+          <div class="modal-header">
+            <span>运行结果</span>
+            <button class="modal-close" aria-label="关闭" @click="runDetail = null">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="run-meta">
+              <span
+                >状态：<b :style="{ color: runStatusColor(runDetail.status) }">{{
+                  runStatusLabel(runDetail.status)
+                }}</b></span
+              >
+              <span>触发：{{ runTriggerLabel(runDetail.trigger) }}</span>
+              <span>开始：{{ formatRunTime(runDetail.startedAt) }}</span>
+              <span
+                >耗时：{{
+                  runDetail.durationMs == null
+                    ? '-'
+                    : (runDetail.durationMs / 1000).toFixed(1) + 's'
+                }}</span
+              >
+              <span v-if="runDetail.model">模型：{{ runDetail.model }}</span>
+            </div>
+            <p v-if="runDetail.errorMessage" class="run-detail-error">
+              失败原因：{{ runDetail.errorMessage }}
+            </p>
+            <pre v-if="runDetail.outputText" class="run-output">{{ runDetail.outputText }}</pre>
+            <p v-else-if="!runDetail.errorMessage" class="run-detail-hint">
+              本次运行没有输出内容。
+            </p>
+            <div v-if="runDetail.artifacts.length > 0" class="run-artifacts">
+              <p class="run-artifacts-title">产出文件</p>
+              <p v-for="(item, index) in runDetail.artifacts" :key="index" class="run-artifact">
+                {{ artifactLabel(item) }}
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="modal-btn modal-btn--cancel" @click="runDetail = null">关闭</button>
           </div>
         </div>
       </div>
@@ -1974,6 +2063,89 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+/* 运行结果详情 */
+.modal-card--run {
+  width: 640px;
+  max-width: 100%;
+}
+
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--kw-color-text-secondary);
+}
+
+.run-detail-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--kw-color-danger-soft);
+  color: var(--kw-color-danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.run-detail-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--kw-color-text-faint);
+}
+
+.run-output {
+  margin: 0;
+  max-height: 380px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--kw-color-border-brand);
+  border-radius: 10px;
+  background: var(--kw-color-surface-soft);
+  color: var(--kw-color-text);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+.run-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.run-artifacts-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kw-color-text-secondary);
+}
+
+.run-artifact {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-text-secondary);
+  font-size: 12px;
+}
+
+.logs-view {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.logs-view:hover {
+  background: var(--kw-color-brand-hover);
 }
 
 /* 运行记录：加载更多与失败原因 */

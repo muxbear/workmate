@@ -99,6 +99,15 @@ export function registerAutomationHandlers(ipc: IpcMain, deps: AutomationHandler
     }
   )
 
+  ipc.handle('automation:get-run', async (_event, id?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      return ok(automationService.getRun(userId, id))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   ipc.handle('automation:run-stats', async (_event, since?: unknown) => {
     try {
       const userId = session.requireUserId()

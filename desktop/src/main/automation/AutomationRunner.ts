@@ -16,6 +16,8 @@ import type { AutomationTaskRecord, RunErrorCode, RunStatus, RunTrigger } from '
 const RUN_TIMEOUT_MS = 10 * 60 * 1000
 /** 输出摘要落库长度上限 */
 const OUTPUT_PREVIEW_LIMIT = 2000
+/** 完整输出正文落库上限（约 200KB，避免异常长输出撑爆数据库） */
+const OUTPUT_TEXT_LIMIT = 200000
 
 /** 带错误分类的业务异常 */
 class RunnerError extends Error {
@@ -169,6 +171,10 @@ export class AutomationRunner {
       finishedAt,
       durationMs: finishedAt - startedAt,
       outputPreview: output ? output.slice(0, OUTPUT_PREVIEW_LIMIT) : null,
+      outputText: output ? output.slice(0, OUTPUT_TEXT_LIMIT) : null,
+      model: task.customModelId
+        ? (this.deps.modelService.getCredential(task.customModelId)?.name ?? task.customModelId)
+        : task.model,
       errorCode,
       errorMessage,
       artifacts

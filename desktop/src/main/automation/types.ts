@@ -107,6 +107,10 @@ export interface AutomationRunRecord {
   conversationId: string | null
   threadId: string | null
   outputPreview: string | null
+  /** 完整输出正文（上限见 OUTPUT_TEXT_LIMIT） */
+  outputText: string | null
+  /** 本次运行使用的模型（展示用） */
+  model: string | null
   errorCode: RunErrorCode | null
   errorMessage: string | null
   artifacts: unknown[] | null
