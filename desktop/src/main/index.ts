@@ -8,6 +8,8 @@ import {
   session as electronSession,
   powerSaveBlocker,
   nativeTheme,
+  Notification,
+  powerMonitor,
   net,
   protocol,
   type IpcMainInvokeEvent
@@ -45,6 +47,13 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { KnowledgeSettingsStore } from './knowledge/KnowledgeSettingsStore'
 import { KnowledgeSettingsService } from './knowledge/KnowledgeSettingsService'
 import { registerKnowledgeHandlers } from './ipc/knowledge-handlers'
+import { AutomationRepository } from './automation/AutomationRepository'
+import { AutomationRunRepository } from './automation/AutomationRunRepository'
+import { AutomationService } from './automation/AutomationService'
+import { AuditLogRepository } from './automation/AuditLogRepository'
+import { registerAutomationHandlers } from './ipc/automation-handlers'
+import { AutomationRunner } from './automation/AutomationRunner'
+import { AutomationScheduler } from './automation/AutomationScheduler'
 import { KnowledgeStore } from './knowledge/KnowledgeStore'
 import { KnowledgeFileService } from './knowledge/KnowledgeFileService'
 import { KnowledgeService } from './knowledge/KnowledgeService'
@@ -526,6 +535,65 @@ app.whenReady().then(() => {
   ipcMain.handle('web:open-home', async () => {
     const webFrontendUrl = process.env.WORKMATE_WEB_FRONTEND_URL ?? 'http://localhost:5173'
     await shell.openExternal(webFrontendUrl)
+  })
+
+  // 自动化：任务定义与运行记录（本地库，按用户隔离）
+  const automationRepository = new AutomationRepository(dataSourceFactory.getLocalDb())
+  const automationRunRepository = new AutomationRunRepository(dataSourceFactory.getLocalDb())
+  const automationAuditRepository = new AuditLogRepository(dataSourceFactory.getLocalDb())
+  const automationService = new AutomationService(automationRepository, automationRunRepository, {
+    audit: automationAuditRepository
+  })
+  // 启动清理：悬挂运行标记为中断 + 清理过期运行记录
+  automationService.onStartup()
+  registerAutomationHandlers(ipcMain, { automationService, session })
+
+  // 自动化执行器：独立 AgentManager，避免与交互式对话共享实例被 setExperts 重建
+  const automationAgentManager = new AgentManager(
+    dataDir.getDir('workspace'),
+    appDbPath,
+    appDbPath,
+    modelService
+  )
+  void automationAgentManager.init(mode)
+  const automationRunner = new AutomationRunner({
+    tasks: automationRepository,
+    runs: automationRunRepository,
+    service: automationService,
+    conversationStore,
+    workspaceService,
+    modelService,
+    agentManager: automationAgentManager,
+    resolveExperts: async () => (await expertSyncService.loadLocal())?.experts ?? [],
+    broadcast: (channel, payload) => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
+    },
+    notify: (payload) => {
+      try {
+        if (!settingsStore.get('notification.clientNotifications')) return
+        if (!Notification.isSupported()) return
+        new Notification({
+          title: '自动化任务：' + payload.title,
+          body: payload.message,
+          silent: !settingsStore.get('notification.sound')
+        }).show()
+      } catch (err) {
+        console.warn('[automation] notification failed:', err)
+      }
+    }
+  })
+  const automationScheduler = new AutomationScheduler({
+    service: automationService,
+    runner: automationRunner
+  })
+  automationService.setRunHandler((task, trigger) => automationRunner.run(task, trigger))
+  void automationScheduler.start()
+  // 休眠唤醒后立即检查一次到期任务
+  powerMonitor.on('resume', () => {
+    void automationScheduler.handleResume()
+  })
+  app.on('before-quit', () => {
+    automationScheduler.stop()
   })
 
   // Agent message handler

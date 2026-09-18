@@ -110,4 +110,57 @@ describe('ElectronSafeStorage', () => {
     expect(warnSpy).toHaveBeenCalled()
     warnSpy.mockRestore()
   })
+  it('单条密钥解密失败时保留其余密钥，不隔离整个文件', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kw-sec-'))
+    const file = join(dir, 'secrets.bin')
+    const good = Buffer.from('enc:good').toString('base64')
+    const bad = Buffer.from('enc:bad').toString('base64')
+    writeFileSync(
+      file,
+      JSON.stringify([
+        { k: 'keep', v: good },
+        { k: 'lost', v: bad }
+      ]),
+      'utf-8'
+    )
+    const fake: SafeStorageLike = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain: string) => Buffer.from('enc:' + plain),
+      decryptString: (buffer: Buffer) => {
+        const text = buffer.toString()
+        if (text === 'enc:good') return 'good-value'
+        throw new Error('cannot decrypt')
+      }
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const storage = new ElectronSafeStorage(file, fake)
+    expect(storage.get('keep')).toBe('good-value')
+    expect(storage.get('lost')).toBeNull()
+    // 文件仍在（未整体隔离），也没有产生损坏备份
+    expect(existsSync(file)).toBe(true)
+    expect(storage.getLastCorruptBackup()).toBeNull()
+    warnSpy.mockRestore()
+  })
+
+  it('全部记录解密失败时把文件隔离成 .corrupt 备份而不是直接删除', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kw-sec-'))
+    const file = join(dir, 'secrets.bin')
+    const bad = Buffer.from('enc:bad').toString('base64')
+    writeFileSync(file, JSON.stringify([{ k: 'a', v: bad }]), 'utf-8')
+    const fake: SafeStorageLike = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain: string) => Buffer.from('enc:' + plain),
+      decryptString: () => {
+        throw new Error('cannot decrypt')
+      }
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const storage = new ElectronSafeStorage(file, fake)
+    expect(storage.get('a')).toBeNull()
+    const backup = storage.getLastCorruptBackup()
+    expect(backup).not.toBeNull()
+    expect(existsSync(backup as string)).toBe(true)
+    expect(existsSync(file)).toBe(false)
+    warnSpy.mockRestore()
+  })
 })

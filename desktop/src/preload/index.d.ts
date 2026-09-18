@@ -491,9 +491,14 @@ export interface KnowledgeAPI {
     id: string,
     patch: { name?: string; description?: string }
   ): Promise<IpcResult<KnowledgeBaseSummary>>
-  deleteKnowledgeBase(id: string): Promise<IpcResult<{ removedDocs: number; overridesCleared: boolean }>>
+  deleteKnowledgeBase(
+    id: string
+  ): Promise<IpcResult<{ removedDocs: number; overridesCleared: boolean }>>
   /** 拖拽排序：ids 为该分类下全部知识库 id（顺序可变），返回排序后的全量列表 */
-  reorderKnowledgeBases(kind: KnowledgeKind, ids: string[]): Promise<IpcResult<KnowledgeBaseSummary[]>>
+  reorderKnowledgeBases(
+    kind: KnowledgeKind,
+    ids: string[]
+  ): Promise<IpcResult<KnowledgeBaseSummary[]>>
   /** 置顶 / 取消置顶：返回排序后的全量列表 */
   setKnowledgeBasePinned(id: string, pinned: boolean): Promise<IpcResult<KnowledgeBaseSummary[]>>
   getKnowledgeStats(): Promise<IpcResult<KnowledgeStats>>
@@ -528,10 +533,7 @@ export interface KnowledgeAPI {
     }>
   >
   /** 读取知识库内图片原始字节（Markdown 相对路径插图渲染用） */
-  readKnowledgeImageBytes(
-    kbId: string,
-    relPath: string
-  ): Promise<IpcResult<KnowledgeImageBytes>>
+  readKnowledgeImageBytes(kbId: string, relPath: string): Promise<IpcResult<KnowledgeImageBytes>>
   /** 在系统文件管理器中打开知识库目录（目录不存在时主进程会先创建） */
   openKnowledgeBaseDir(kbId: string): Promise<IpcResult<null>>
   /** 在系统文件管理器中打开文件所在目录，并尽量选中该文件 */
@@ -770,6 +772,151 @@ export interface ModelSyncAPI {
 }
 
 /** 渲染层可见的完整 API 形状 */
+/** 自动化：频率与有效期配置（与前端 AutomationPage 的 TaskSchedule 一致） */
+export interface AutomationSchedule {
+  freqGroup: 'cycle' | 'interval'
+  cycleKind: 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+  intervalKind: 'weekly' | 'hourly'
+  onceDate: string
+  onceTime: string
+  weekDays: number[]
+  monthDay: number
+  yearMonth: number
+  yearDay: number
+  weekIntervalDays: number[]
+  hourInterval: number
+  validityMode: 'forever' | 'range'
+  validFrom: string
+  validFromTime: string
+  validTo: string
+  validToTime: string
+}
+
+/** 自动化运行状态 / 触发来源 / 失败分类 */
+export type AutomationRunStatus =
+  'running' | 'success' | 'failed' | 'skipped' | 'canceled' | 'interrupted'
+export type AutomationRunTrigger = 'schedule' | 'manual' | 'catchup' | 'retry'
+export type AutomationErrorCode =
+  | 'model_not_configured'
+  | 'workspace_unavailable'
+  | 'file_missing'
+  | 'timeout'
+  | 'agent_error'
+  | 'interrupted'
+
+/** 自动化任务（列表 + 编辑回填） */
+export interface AutomationTask {
+  id: string
+  userId: string
+  title: string
+  promptText: string
+  promptParts: MessagePart[]
+  icon: string
+  source: 'custom' | 'template'
+  templateId: string | null
+  schedule: AutomationSchedule
+  freqSummary: string
+  validitySummary: string
+  validFromTs: number | null
+  validToTs: number | null
+  model: string | null
+  customModelId: string | null
+  expertId: string | null
+  expertName: string | null
+  contextMode: 'default' | 'local' | 'knowledge'
+  skillIds: string[]
+  workspaceId: string | null
+  workspaceName: string | null
+  fullAccess: boolean
+  enabled: boolean
+  status: 'enabled' | 'paused' | 'expired' | 'finished'
+  nextRunAt: number | null
+  lastRunAt: number | null
+  lastRunStatus: AutomationRunStatus | null
+  runCount: number
+  failCount: number
+  createdAt: number
+  updatedAt: number
+  deletedAt: number | null
+}
+
+/** 自动化任务草稿（新建 / 编辑提交，除提示词与频率外都可省略） */
+export interface AutomationTaskDraft {
+  title?: string
+  promptText: string
+  promptParts: MessagePart[]
+  icon?: string
+  source?: 'custom' | 'template'
+  templateId?: string | null
+  schedule: AutomationSchedule
+  model?: string | null
+  customModelId?: string | null
+  expertId?: string | null
+  expertName?: string | null
+  contextMode?: 'default' | 'local' | 'knowledge'
+  skillIds?: string[]
+  workspaceId?: string | null
+  workspaceName?: string | null
+  fullAccess?: boolean
+}
+
+/** 自动化运行记录 */
+export interface AutomationRun {
+  id: string
+  taskId: string
+  userId: string
+  trigger: AutomationRunTrigger
+  status: AutomationRunStatus
+  scheduledAt: number | null
+  startedAt: number
+  finishedAt: number | null
+  durationMs: number | null
+  conversationId: string | null
+  threadId: string | null
+  outputPreview: string | null
+  errorCode: AutomationErrorCode | null
+  errorMessage: string | null
+  artifacts: unknown[]
+  tokenUsage: Record<string, number> | null
+}
+
+/** 自动化运行统计（本周） */
+export interface AutomationRunStats {
+  total: number
+  success: number
+  failed: number
+  skipped: number
+  running: number
+  avgDurationMs: number | null
+}
+
+/** 自动化 API（任务 CRUD、运行记录与统计） */
+export interface AutomationAPI {
+  listTasks(): Promise<IpcResult<AutomationTask[]>>
+  getTask(id: string): Promise<IpcResult<AutomationTask>>
+  createTask(draft: AutomationTaskDraft): Promise<IpcResult<AutomationTask>>
+  updateTask(id: string, draft: AutomationTaskDraft): Promise<IpcResult<AutomationTask>>
+  deleteTask(id: string): Promise<IpcResult<number>>
+  setEnabled(id: string, enabled: boolean): Promise<IpcResult<AutomationTask>>
+  runNow(id: string): Promise<IpcResult<{ runId: string }>>
+  listRuns(opts?: {
+    taskId?: string
+    limit?: number
+    cursor?: number
+  }): Promise<IpcResult<AutomationRun[]>>
+  runStats(since?: number): Promise<IpcResult<AutomationRunStats>>
+  /** 订阅任务 / 运行状态变化（主进程广播） */
+  onChanged(callback: (payload: AutomationChangedEvent) => void): () => void
+}
+
+/** 自动化状态变化事件 */
+export interface AutomationChangedEvent {
+  taskId: string
+  runId?: string
+  phase: 'started' | 'finished'
+  status?: AutomationRunStatus
+}
+
 export interface KeWorkWindowApi
   extends
     AgentAPI,
@@ -785,6 +932,7 @@ export interface KeWorkWindowApi
   skillSync: SkillSyncAPI
   expert: ExpertSyncAPI
   modelSync: ModelSyncAPI
+  automation: AutomationAPI
 }
 
 declare global {

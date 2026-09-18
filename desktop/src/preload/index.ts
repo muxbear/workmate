@@ -535,6 +535,42 @@ const api = {
     disconnect() {
       return ipcRenderer.invoke('model-sync:disconnect')
     }
+  },
+  automation: {
+    listTasks() {
+      return ipcRenderer.invoke('automation:list-tasks')
+    },
+    getTask(id: string) {
+      return ipcRenderer.invoke('automation:get-task', id)
+    },
+    createTask(draft: unknown) {
+      return ipcRenderer.invoke('automation:create-task', draft)
+    },
+    updateTask(id: string, draft: unknown) {
+      return ipcRenderer.invoke('automation:update-task', id, draft)
+    },
+    deleteTask(id: string) {
+      return ipcRenderer.invoke('automation:delete-task', id)
+    },
+    setEnabled(id: string, enabled: boolean) {
+      return ipcRenderer.invoke('automation:set-enabled', id, enabled)
+    },
+    runNow(id: string) {
+      return ipcRenderer.invoke('automation:run-now', id)
+    },
+    listRuns(opts?: { taskId?: string; limit?: number; cursor?: number }) {
+      return ipcRenderer.invoke('automation:list-runs', opts)
+    },
+    runStats(since?: number) {
+      return ipcRenderer.invoke('automation:run-stats', since)
+    },
+    onChanged(callback: (payload: unknown) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+        callback(payload)
+      }
+      ipcRenderer.on('automation:changed', handler)
+      return () => ipcRenderer.removeListener('automation:changed', handler)
+    }
   }
 }
 

@@ -173,6 +173,76 @@ CREATE TABLE IF NOT EXISTS conversation_doc_artifacts (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_doc_artifacts_uniq
   ON conversation_doc_artifacts(user_id, conversation_id, turn_index, rel_path);
 `
+  },
+  {
+    // 自动化任务定义（频率、提示词快照、模型 / 专家 / 工作空间 / 权限）
+    version: 10,
+    name: 'automation_tasks',
+    sql: `
+CREATE TABLE IF NOT EXISTS automation_tasks (
+  id                TEXT PRIMARY KEY,
+  user_id           TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  prompt_text       TEXT NOT NULL DEFAULT '',
+  prompt_parts      TEXT NOT NULL DEFAULT '[]',
+  icon              TEXT,
+  source            TEXT NOT NULL DEFAULT 'custom',
+  template_id       TEXT,
+  schedule          TEXT NOT NULL,
+  freq_summary      TEXT,
+  validity_summary  TEXT,
+  valid_from_ts     INTEGER,
+  valid_to_ts       INTEGER,
+  model             TEXT,
+  custom_model_id   TEXT,
+  expert_id         TEXT,
+  expert_name       TEXT,
+  context_mode      TEXT NOT NULL DEFAULT 'default',
+  skill_ids         TEXT NOT NULL DEFAULT '[]',
+  workspace_id      TEXT,
+  workspace_name    TEXT,
+  full_access       INTEGER NOT NULL DEFAULT 0,
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  status            TEXT NOT NULL DEFAULT 'enabled',
+  next_run_at       INTEGER,
+  last_run_at       INTEGER,
+  last_run_status   TEXT,
+  run_count         INTEGER NOT NULL DEFAULT 0,
+  fail_count        INTEGER NOT NULL DEFAULT 0,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  deleted_at        INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_auto_tasks_due ON automation_tasks(user_id, enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_auto_tasks_user ON automation_tasks(user_id, created_at DESC);
+`
+  },
+  {
+    // 自动化运行记录（状态、耗时、输出摘要、失败原因、产物）
+    version: 11,
+    name: 'automation_runs',
+    sql: `
+CREATE TABLE IF NOT EXISTS automation_runs (
+  id              TEXT PRIMARY KEY,
+  task_id         TEXT NOT NULL,
+  user_id         TEXT NOT NULL,
+  trigger         TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  scheduled_at    INTEGER,
+  started_at      INTEGER NOT NULL,
+  finished_at     INTEGER,
+  duration_ms     INTEGER,
+  conversation_id TEXT,
+  thread_id       TEXT,
+  output_preview  TEXT,
+  error_code      TEXT,
+  error_message   TEXT,
+  artifacts       TEXT,
+  token_usage     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auto_runs_task ON automation_runs(task_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auto_runs_user ON automation_runs(user_id, started_at DESC);
+`
   }
 ]
 

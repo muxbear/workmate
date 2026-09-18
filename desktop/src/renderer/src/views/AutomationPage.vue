@@ -1,216 +1,375 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useAutomationStore } from '@store/automation'
+import type {
+  AutomationSchedule,
+  AutomationTask,
+  AutomationTaskDraft
+} from '../../../preload/index.d'
 import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
 import ConfirmDialog from '@components/ConfirmDialog.vue'
-import type { MessagePart } from '../../../preload/index.d'
 
 type Tab = 'tasks' | 'logs'
 
-/** 自动化任务（我的任务列表项） */
-interface AutomationTask {
+const automation = useAutomationStore()
+
+/** 运行记录是否还有更多（上一页拿满一页则有） */
+const hasMoreRuns = ref(true)
+const loadingMore = ref(false)
+
+/** 加载更多运行记录 */
+const loadMoreRuns = async (): Promise<void> => {
+  if (loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const got = await automation.loadMoreRuns(50)
+    if (got < 50) hasMoreRuns.value = false
+  } catch {
+    hasMoreRuns.value = false
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+const tab = ref<Tab>('tasks')
+const myTasks = computed(() => automation.tasks)
+const showAdd = ref(false)
+/** 保存中（避免重复提交） */
+const saving = ref(false)
+/** 主进程事件取消订阅 */
+let unsubscribe: (() => void) | null = null
+
+interface AutomationTemplate {
   id: number
   icon: string
   title: string
   desc: string
-  /** 执行频率摘要（如「每天 08:00」） */
   freq: string
-  /** 有效期摘要（如「长期有效」） */
-  validity?: string
-  /** 提示词快照（文本段 + 文件引用段） */
-  parts?: MessagePart[]
-  model?: string
-  expertName?: string | null
-  workspaceName?: string | null
-  fullAccess?: boolean
-  /** 执行频率 / 有效期结构化配置（编辑时回填表单；模板快捷添加的任务没有） */
-  schedule?: TaskSchedule
+  schedule: AutomationSchedule
 }
 
-/** 新建 / 编辑自动化表单中的频率与有效期配置 */
-interface TaskSchedule {
-  freqGroup: FreqGroup
-  cycleKind: CycleKind
-  intervalKind: IntervalKind
-  onceDate: string
-  onceTime: string
-  weekDays: number[]
-  monthDay: number
-  yearMonth: number
-  yearDay: number
-  weekIntervalDays: number[]
-  hourInterval: number
-  validityMode: 'forever' | 'range'
-  validFrom: string
-  validFromTime: string
-  validTo: string
-  validToTime: string
-}
-
-const tab = ref<Tab>('tasks')
-const myTasks = ref<AutomationTask[]>([])
-const showAdd = ref(false)
-
-const automationTemplates = [
+const automationTemplates: AutomationTemplate[] = [
   {
     id: 1,
     icon: '📰',
     title: '每日 AI 新闻推送',
     desc: '关注当天 AI 领域的重要动态，侧重产品与技术突破',
-    freq: '每天 08:00'
+    freq: '每天 08:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '08:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 2,
     icon: '🔤',
     title: '每日 5 个英语单词',
     desc: '每天推荐 5 个高频实用英语单词，配例句与记忆技巧',
-    freq: '每天 07:30'
+    freq: '每天 07:30',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '07:30',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 3,
     icon: '🌙',
     title: '每日儿童睡前故事',
     desc: '生成 3-5 分钟可读的温和睡前故事，适合亲子共读',
-    freq: '每天 20:30'
+    freq: '每天 20:30',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '20:30',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 4,
     icon: '📋',
     title: '每周工作周报',
     desc: '每周五汇总仓库 PR 与 Issue 进展，自动生成周报草稿',
-    freq: '每周五 18:00'
+    freq: '每周五 18:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'weekly',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '18:00',
+      weekDays: [5],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 5,
     icon: '🎬',
     title: '经典电影推荐',
     desc: '推荐一部高分经典电影，简要介绍背景与观影理由',
-    freq: '每周三 12:00'
+    freq: '每周三 12:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'weekly',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '12:00',
+      weekDays: [3],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 6,
     icon: '📅',
     title: '历史上的今天',
     desc: '从科技、电影、音乐等领域挑选一件有趣的历史事件',
-    freq: '每天 09:00'
+    freq: '每天 09:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '09:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 7,
     icon: '💡',
     title: '每日一个为什么',
     desc: '每天提出一个有趣问题，先提问再揭晓答案，启发思考',
-    freq: '每天 10:00'
+    freq: '每天 10:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '10:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 8,
     icon: '📞',
     title: '父母联系提醒',
     desc: '每周日 10:00 提醒你给家人打电话，珍惜家人时光',
-    freq: '每周日 10:00'
+    freq: '每周日 10:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'weekly',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '10:00',
+      weekDays: [7],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 9,
     icon: '🏥',
     title: '体检预约提醒',
     desc: '在指定时间提醒你确认体检预约，提前做好准备',
-    freq: '单次 07:00'
+    freq: '单次 07:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '07:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 10,
     icon: '💼',
     title: '面试准备提醒',
     desc: '工作日每 2 小时提醒你复习大模型相关知识点',
-    freq: '工作日 每2h'
+    freq: '工作日 每2h',
+    schedule: {
+      freqGroup: 'interval',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '08:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 11,
     icon: '📝',
     title: '会议前准备',
     desc: '在会议开始前提醒你整理议题，目标与所需材料',
-    freq: '会前 15min'
+    freq: '会前 15min',
+    schedule: {
+      freqGroup: 'interval',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '08:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 1,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   },
   {
     id: 12,
     icon: '🐱',
     title: '可爱萌宠手机壁纸',
     desc: '随机从 7 种风格中挑选一种，生成今日专属萌宠壁纸',
-    freq: '每天 07:00'
+    freq: '每天 07:00',
+    schedule: {
+      freqGroup: 'cycle',
+      cycleKind: 'daily',
+      intervalKind: 'hourly',
+      onceDate: '',
+      onceTime: '07:00',
+      weekDays: [1],
+      monthDay: 1,
+      yearMonth: 1,
+      yearDay: 1,
+      weekIntervalDays: [1],
+      hourInterval: 2,
+      validityMode: 'forever',
+      validFrom: '',
+      validFromTime: '00:00',
+      validTo: '',
+      validToTime: '23:59'
+    }
   }
 ]
 
-const runLogs = [
-  {
-    id: 1,
-    name: '每日 AI 新闻推送',
-    status: '成功',
-    time: '今天 08:00',
-    duration: '3.2s',
-    color: '#10b981'
-  },
-  {
-    id: 2,
-    name: '每日 5 个英语单词',
-    status: '成功',
-    time: '今天 07:30',
-    duration: '1.8s',
-    color: '#10b981'
-  },
-  {
-    id: 3,
-    name: '每日一个为什么',
-    status: '成功',
-    time: '今天 10:00',
-    duration: '2.1s',
-    color: '#10b981'
-  },
-  {
-    id: 4,
-    name: '历史上的今天',
-    status: '失败',
-    time: '今天 09:00',
-    duration: '—',
-    color: '#ef4444'
-  },
-  {
-    id: 5,
-    name: '每日 AI 新闻推送',
-    status: '成功',
-    time: '昨天 08:00',
-    duration: '2.9s',
-    color: '#10b981'
-  },
-  {
-    id: 6,
-    name: '每日儿童睡前故事',
-    status: '成功',
-    time: '昨天 20:30',
-    duration: '4.5s',
-    color: '#10b981'
-  },
-  {
-    id: 7,
-    name: '每周工作周报',
-    status: '成功',
-    time: '周五 18:00',
-    duration: '6.1s',
-    color: '#10b981'
-  },
-  {
-    id: 8,
-    name: '父母联系提醒',
-    status: '跳过',
-    time: '周日 10:00',
-    duration: '—',
-    color: '#f59e0b'
+/** 模版快捷添加：落库（source 记为 template，便于回显已添加状态） */
+const addTask = async (tpl: AutomationTemplate): Promise<void> => {
+  if (myTasks.value.some((t) => t.templateId === String(tpl.id))) return
+  try {
+    await automation.createTask({
+      title: tpl.title,
+      promptText: tpl.desc,
+      promptParts: [{ type: 'text', text: tpl.desc }],
+      icon: tpl.icon,
+      source: 'template',
+      templateId: String(tpl.id),
+      schedule: tpl.schedule,
+      contextMode: 'default',
+      fullAccess: false
+    })
+    await automation.loadStats()
+  } catch (err) {
+    automation.error = err instanceof Error ? err.message : '添加失败'
   }
-]
-
-const stats = [
-  { label: '本周运行次数', value: '24', sub: '较上周 +3', color: '#0891b2' },
-  { label: '成功率', value: '87.5%', sub: '7 次成功 / 1 次失败', color: '#10b981' },
-  { label: '平均耗时', value: '3.4s', sub: '最长 6.1s', color: '#f59e0b' }
-]
-const addTask = (tpl: (typeof automationTemplates)[0]): void => {
-  if (!myTasks.value.find((t) => t.id === tpl.id)) myTasks.value.push(tpl)
 }
 
 // ── 新建自动化：表单状态 ──
@@ -218,7 +377,7 @@ const taskName = ref('')
 const promptHasContent = ref(false)
 const promptRef = ref<InstanceType<typeof PromptInput> | null>(null)
 /** 正在编辑的任务 id（null 表示新建） */
-const editingId = ref<number | null>(null)
+const editingId = ref<string | null>(null)
 /** 待删除确认的任务 */
 const pendingDelete = ref<AutomationTask | null>(null)
 const formError = ref('')
@@ -340,7 +499,7 @@ const validitySummary = computed(() => {
 })
 
 /** 采集当前表单的频率 / 有效期配置（存到任务上，供编辑回填） */
-const captureSchedule = (): TaskSchedule => ({
+const captureSchedule = (): AutomationSchedule => ({
   freqGroup: freqGroup.value,
   cycleKind: cycleKind.value,
   intervalKind: intervalKind.value,
@@ -360,7 +519,7 @@ const captureSchedule = (): TaskSchedule => ({
 })
 
 /** 用任务上的配置回填表单（模板快捷添加的任务没有配置，保持默认值） */
-const applySchedule = (plan?: TaskSchedule): void => {
+const applySchedule = (plan?: AutomationSchedule): void => {
   if (!plan) return
   freqGroup.value = plan.freqGroup
   cycleKind.value = plan.cycleKind
@@ -421,8 +580,8 @@ const openEditModal = async (task: AutomationTask): Promise<void> => {
   showAdd.value = true
   // 输入卡挂在弹窗内，等渲染完成再回填提示词与文件 token
   await nextTick()
-  if (task.parts && task.parts.length > 0) promptRef.value?.setParts(task.parts)
-  else if (task.desc) promptRef.value?.setText(task.desc)
+  if (task.promptParts.length > 0) promptRef.value?.setParts(task.promptParts)
+  else if (task.promptText) promptRef.value?.setText(task.promptText)
 }
 
 /** 关闭「新建自动化」弹窗并清理草稿 */
@@ -443,58 +602,188 @@ const cancelDelete = (): void => {
 }
 
 /** 确认删除：从我的任务中移除（模板卡片同步恢复为可添加） */
-const confirmDelete = (): void => {
+/** 确认删除：主进程软删除（运行历史保留） */
+const confirmDelete = async (): Promise<void> => {
   const target = pendingDelete.value
-  if (target) myTasks.value = myTasks.value.filter((t) => t.id !== target.id)
   pendingDelete.value = null
+  if (!target) return
+  try {
+    await automation.deleteTask(target.id)
+  } catch (err) {
+    automation.error = err instanceof Error ? err.message : '删除失败'
+  }
 }
 
 /** 用输入卡快照创建任务；提示词为空时给出内联提示 */
-/** 保存表单为自动化任务：编辑中则更新原任务，否则新建 */
-const createTaskFrom = (payload: PromptPayload): void => {
+/** 保存表单为自动化任务：编辑中则更新原任务，否则新建（主进程落库并重算排期） */
+const createTaskFrom = async (payload: PromptPayload): Promise<void> => {
   const hasBody = payload.text.length > 0 || payload.parts.some((p) => p.type === 'file')
   if (!hasBody) {
     formError.value = '请先填写任务描述 / 提示词'
     return
   }
-  const editing = editingId.value
-  const title = taskName.value.trim() || payload.text.slice(0, 18) || '未命名自动化任务'
-  const base = {
-    title,
-    desc: payload.text || '（含文件引用）',
-    freq: freqSummary.value,
-    validity: validitySummary.value,
-    parts: payload.parts,
+  const draft: AutomationTaskDraft = {
+    title: taskName.value.trim() || payload.text.slice(0, 18) || '未命名自动化任务',
+    promptText: payload.text,
+    promptParts: payload.parts,
+    icon: '⏰',
+    source: 'custom',
+    templateId: null,
+    schedule: captureSchedule(),
     model: payload.model,
+    customModelId: payload.customModelId ?? null,
+    expertId: payload.expertId,
     expertName: payload.expertName,
+    contextMode: payload.mode,
+    skillIds: payload.skillIds,
+    workspaceId: payload.workspaceId,
     workspaceName: payload.workspaceName,
-    fullAccess: payload.fullAccess,
-    schedule: captureSchedule()
+    fullAccess: payload.fullAccess
   }
-  if (editing !== null) {
-    const index = myTasks.value.findIndex((t) => t.id === editing)
-    if (index >= 0) myTasks.value[index] = { ...myTasks.value[index], ...base }
-  } else {
-    myTasks.value.unshift({ id: Date.now(), icon: '⏰', ...base })
+  saving.value = true
+  try {
+    if (editingId.value !== null) await automation.updateTask(editingId.value, draft)
+    else await automation.createTask(draft)
+    formError.value = ''
+    await automation.loadStats()
+    closeAddModal()
+  } catch (err) {
+    formError.value = err instanceof Error ? err.message : '保存失败'
+  } finally {
+    saving.value = false
   }
-  formError.value = ''
-  closeAddModal()
 }
 
-/** 输入卡回车 / 发送按钮：直接创建任务 */
 const onPromptSubmit = (payload: PromptPayload): void => {
-  createTaskFrom(payload)
+  void createTaskFrom(payload)
 }
 
 /** 弹窗底部「创建任务」：读取输入卡当前内容 */
 const createTask = (): void => {
   const payload = promptRef.value?.buildPayload()
   if (!payload) return
-  createTaskFrom(payload)
+  void createTaskFrom(payload)
 }
+
+/** 运行状态展示元信息 */
+const RUN_STATUS_META: Record<string, { label: string; color: string }> = {
+  running: { label: '运行中', color: '#0891b2' },
+  success: { label: '成功', color: '#10b981' },
+  failed: { label: '失败', color: '#ef4444' },
+  skipped: { label: '跳过', color: '#f59e0b' },
+  canceled: { label: '已取消', color: '#94a3b8' },
+  interrupted: { label: '已中断', color: '#f97316' }
+}
+
+/** 时间文案：今天 08:00 / 昨天 20:30 / 9月18日 08:00 */
+function formatRunTime(ts: number): string {
+  const date = new Date(ts)
+  const now = new Date()
+  const hh = String(date.getHours()).padStart(2, '0')
+  const mm = String(date.getMinutes()).padStart(2, '0')
+  if (date.toDateString() === now.toDateString()) return '今天 ' + hh + ':' + mm
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return '昨天 ' + hh + ':' + mm
+  return String(date.getMonth() + 1) + '月' + date.getDate() + '日 ' + hh + ':' + mm
+}
+
+/** 任务排期文案 */
+function formatNextRun(task: AutomationTask): string {
+  if (!task.enabled) return '已暂停'
+  if (task.status === 'expired') return '已过期'
+  if (task.status === 'finished') return '已完成'
+  if (task.nextRunAt == null) return '未排期'
+  return '下次 ' + formatRunTime(task.nextRunAt)
+}
+
+/** 运行记录展示行 */
+const runRows = computed(() =>
+  automation.runs.map((run) => {
+    const meta = RUN_STATUS_META[run.status] ?? RUN_STATUS_META.running
+    return {
+      id: run.id,
+      taskId: run.taskId,
+      name: automation.taskNameById[run.taskId] ?? '已删除的任务',
+      status: meta.label,
+      color: meta.color,
+      time: formatRunTime(run.startedAt),
+      duration: run.durationMs == null ? '-' : (run.durationMs / 1000).toFixed(1) + 's',
+      reason: run.errorMessage ?? ''
+    }
+  })
+)
+
+/** 统计卡片（本周） */
+const statsCards = computed(() => {
+  const current = automation.stats
+  const total = current?.total ?? 0
+  const success = current?.success ?? 0
+  const failed = current?.failed ?? 0
+  const rate = total > 0 ? Math.round((success / total) * 1000) / 10 : 0
+  const skipped = current?.skipped ?? 0
+  return [
+    {
+      label: '本周运行次数',
+      value: String(total),
+      sub: '成功 ' + success + ' 次 / 失败 ' + failed + ' 次',
+      color: '#0891b2'
+    },
+    {
+      label: '成功率',
+      value: rate + '%',
+      sub: total > 0 ? '按全部运行统计' : '暂无数据',
+      color: '#10b981'
+    },
+    {
+      label: '平均耗时',
+      value: current?.avgDurationMs == null ? '-' : (current.avgDurationMs / 1000).toFixed(1) + 's',
+      sub: skipped > 0 ? '跳过 ' + skipped + ' 次' : '按已完成运行统计',
+      color: '#f59e0b'
+    }
+  ]
+})
+
+/** 失败重试：等价于对该任务立即运行一次（保留原失败记录） */
+const retryRun = async (taskId: string): Promise<void> => {
+  try {
+    await automation.runNow(taskId)
+  } catch (err) {
+    automation.error = err instanceof Error ? err.message : '重试失败'
+  }
+}
+
+/** 暂停 / 继续 */
+const toggleEnabled = async (task: AutomationTask): Promise<void> => {
+  try {
+    await automation.setEnabled(task.id, !task.enabled)
+  } catch (err) {
+    automation.error = err instanceof Error ? err.message : '操作失败'
+  }
+}
+
+/** 首屏加载：任务列表 + 运行记录 + 统计 */
+const loadAll = async (): Promise<void> => {
+  try {
+    await automation.loadTasks()
+    await Promise.all([automation.loadRuns({ limit: 50 }), automation.loadStats()])
+  } catch {
+    // 错误已写入 store.error，页面顶部展示
+  }
+}
+
+onMounted(() => {
+  void loadAll()
+  /** 运行状态变化时刷新（主进程广播） */
+  unsubscribe = automation.subscribe()
+})
+
+onBeforeUnmount(() => {
+  unsubscribe?.()
+})
 </script>
 <template>
   <div class="auto-page">
+    <p v-if="automation.error" class="auto-error">{{ automation.error }}</p>
     <!-- Tabs -->
     <div class="auto-tabs">
       <button
@@ -592,17 +881,43 @@ const createTask = (): void => {
                 <span class="task-icon">{{ task.icon }}</span>
                 <div class="task-info">
                   <p class="task-name">{{ task.title }}</p>
-                  <p class="task-desc">{{ task.desc }}</p>
+                  <p class="task-desc">{{ task.promptText }}</p>
                   <div class="task-foot">
                     <span class="task-meta"
-                      ><span class="task-freq">{{ task.freq }}</span
-                      ><span class="task-validity">{{ task.validity ?? '长期有效' }}</span></span
+                      ><span class="task-freq">{{ task.freqSummary }}</span
+                      ><span class="task-validity">{{ task.validitySummary }}</span
+                      ><span class="task-next">{{ formatNextRun(task) }}</span
+                      ><span v-if="task.runCount > 0" class="task-runs"
+                        >运行 {{ task.runCount }} 次 / 失败 {{ task.failCount }} 次</span
+                      ></span
                     >
                     <div class="task-status">
                       <span class="status-dot status-dot--green"></span>
                       运行中
                     </div>
                     <div class="task-actions">
+                      <button
+                        class="task-action-btn"
+                        type="button"
+                        :title="task.enabled ? '暂停' : '继续'"
+                        @click="toggleEnabled(task)"
+                      >
+                        <svg
+                          v-if="task.enabled"
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <rect x="6" y="5" width="4" height="14" rx="1" />
+                          <rect x="14" y="5" width="4" height="14" rx="1" />
+                        </svg>
+                        <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                          <polygon points="6 4 20 12 6 20 6 4" />
+                        </svg>
+                      </button>
                       <button
                         class="task-action-btn"
                         type="button"
@@ -657,7 +972,7 @@ const createTask = (): void => {
                 :key="tpl.id"
                 :class="[
                   'task-card task-card--tpl',
-                  { 'task-card--added': myTasks.some((t) => t.id === tpl.id) }
+                  { 'task-card--added': myTasks.some((t) => t.templateId === String(tpl.id)) }
                 ]"
               >
                 <span class="task-icon">{{ tpl.icon }}</span>
@@ -669,11 +984,17 @@ const createTask = (): void => {
                     <button
                       :class="[
                         'task-add-btn',
-                        { 'task-add-btn--added': myTasks.some((t) => t.id === tpl.id) }
+                        {
+                          'task-add-btn--added': myTasks.some(
+                            (t) => t.templateId === String(tpl.id)
+                          )
+                        }
                       ]"
                       @click="addTask(tpl)"
                     >
-                      {{ myTasks.some((t) => t.id === tpl.id) ? '✓ 已添加' : '+ 添加' }}
+                      {{
+                        myTasks.some((t) => t.templateId === String(tpl.id)) ? '✓ 已添加' : '+ 添加'
+                      }}
                     </button>
                   </div>
                 </div>
@@ -686,18 +1007,20 @@ const createTask = (): void => {
         <div v-else key="logs">
           <div class="logs-header">
             <h2 class="sec-title">运行记录</h2>
-            <span class="logs-range">最近 7 天</span>
+            <span class="logs-range">已加载 {{ runRows.length }} 条</span>
+            <button v-if="hasMoreRuns" class="logs-more" @click="loadMoreRuns">加载更多</button>
           </div>
           <div class="logs-table">
             <div class="logs-table-head">
               <span>任务名称</span><span>运行时间</span><span>耗时</span><span>状态</span>
             </div>
             <div
-              v-for="(log, i) in runLogs"
+              v-for="(log, i) in runRows"
               :key="log.id"
               class="logs-row"
+              :title="log.reason"
               :style="{
-                borderBottom: i < runLogs.length - 1 ? '1px solid rgba(8,145,178,0.07)' : 'none'
+                borderBottom: i < runRows.length - 1 ? '1px solid rgba(8,145,178,0.07)' : 'none'
               }"
             >
               <span class="logs-name">{{ log.name }}</span>
@@ -706,13 +1029,23 @@ const createTask = (): void => {
               <div class="logs-status-cell">
                 <span class="status-dot" :style="{ background: log.color }"></span>
                 <span :style="{ color: log.color, fontWeight: 500 }">{{ log.status }}</span>
-                <button v-if="log.status === '失败'" class="logs-retry">重试</button>
+                <span v-if="log.reason" class="logs-reason">{{ log.reason }}</span>
+                <button
+                  v-if="log.status === '失败'"
+                  class="logs-retry"
+                  @click="retryRun(log.taskId)"
+                >
+                  重试
+                </button>
               </div>
             </div>
+            <p v-if="runRows.length === 0" class="run-empty">
+              暂无运行记录，创建任务并等待触发后这里会显示结果。
+            </p>
           </div>
           <!-- Stats -->
           <div class="stats-grid">
-            <div v-for="stat in stats" :key="stat.label" class="stat-card">
+            <div v-for="stat in statsCards" :key="stat.label" class="stat-card">
               <p class="stat-label">{{ stat.label }}</p>
               <p class="stat-value" :style="{ color: stat.color }">{{ stat.value }}</p>
               <p class="stat-sub">{{ stat.sub }}</p>
@@ -1641,6 +1974,71 @@ const createTask = (): void => {
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+/* 运行记录：加载更多与失败原因 */
+.logs-more {
+  padding: 4px 10px;
+  border: 1px solid var(--kw-color-border-brand);
+  border-radius: 8px;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-brand);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.logs-more:hover {
+  background: var(--kw-color-brand-soft);
+}
+
+.logs-reason {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--kw-color-text-faint);
+}
+
+/* 任务卡片：运行次数 */
+.task-runs {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--kw-color-bg-tint);
+  color: var(--kw-color-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* 下次运行时间 */
+.task-next {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-brand);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* 运行记录空态 */
+.run-empty {
+  margin: 0;
+  padding: 24px 16px;
+  font-size: 12px;
+  color: var(--kw-color-text-faint);
+  text-align: center;
+}
+
+/* 错误提示条 */
+.auto-error {
+  margin: 12px 24px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--kw-color-danger-soft);
+  color: var(--kw-color-danger);
+  font-size: 12px;
 }
 
 .task-validity {

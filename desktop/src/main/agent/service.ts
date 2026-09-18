@@ -124,11 +124,13 @@ function delay(ms: number): Promise<void> {
 
 export async function invokeSendMessage(
   messages: BaseMessage[],
-  win: BrowserWindow,
+  win: BrowserWindow | null,
   agent: DeepAgent,
   config: AgentRunConfig,
   signal?: AbortSignal,
-  onArtifacts?: (artifacts: DocArtifactFile[]) => void
+  onArtifacts?: (artifacts: DocArtifactFile[]) => void,
+  /** 无窗口调用方（自动化执行）用：逐段汇总输出 */
+  onToken?: (text: string) => void
 ): Promise<void> {
   console.log('[service] invokeSendMessage called, messages count:', messages.length)
   console.log('[service] signal aborted?:', signal?.aborted)
@@ -169,7 +171,7 @@ export async function invokeSendMessage(
     while (offset < text.length) {
       if (signal?.aborted) break
       const piece = text.slice(offset, offset + CHUNK_CHARS)
-      win.webContents.send('agent:artifact-chunk', { artifactId, text: piece })
+      win?.webContents.send('agent:artifact-chunk', { artifactId, text: piece })
       offset += piece.length
       if (offset >= text.length) break
       if (totalDelay >= MAX_TOTAL_DELAY_MS) break
@@ -178,7 +180,7 @@ export async function invokeSendMessage(
     }
     // 超时上限后一次性推送剩余内容，避免超长文档拖慢整体完成信号
     if (offset < text.length) {
-      win.webContents.send('agent:artifact-chunk', { artifactId, text: text.slice(offset) })
+      win?.webContents.send('agent:artifact-chunk', { artifactId, text: text.slice(offset) })
     }
   }
 
@@ -191,16 +193,16 @@ export async function invokeSendMessage(
       return
     const artifactId = randomUUID()
     const meta: AgentArtifactMeta = buildArtifactMeta(artifactId, artifact)
-    win.webContents.send('agent:artifact-start', meta)
+    win?.webContents.send('agent:artifact-start', meta)
     try {
       if (meta.preview === 'text' && content) {
         await streamArtifactText(artifactId, content)
       }
       if (done) await done
-      win.webContents.send('agent:artifact-end', { artifactId, ok: true })
+      win?.webContents.send('agent:artifact-end', { artifactId, ok: true })
       artifacts.push(artifact)
     } catch (err) {
-      win.webContents.send('agent:artifact-error', {
+      win?.webContents.send('agent:artifact-error', {
         artifactId,
         error: err instanceof Error ? err.message : String(err)
       })
@@ -253,11 +255,11 @@ export async function invokeSendMessage(
       let reasoningCount = 0
       for await (const token of chunk.reasoning) {
         reasoningCount++
-        win.webContents.send('agent:stream-thinking', token)
+        win?.webContents.send('agent:stream-thinking', token)
       }
       if (reasoningCount > 0) {
         console.log('[service] reasoning done, tokens:', reasoningCount)
-        win.webContents.send('agent:stream-thinking-done')
+        win?.webContents.send('agent:stream-thinking-done')
       }
 
       // 再处理 text（正式回复）流
@@ -265,7 +267,8 @@ export async function invokeSendMessage(
       for await (const text of chunk.text) {
         textCount++
         chunkCount++
-        win.webContents.send('agent:stream-chunk', text)
+        win?.webContents.send('agent:stream-chunk', text)
+        onToken?.(text)
       }
       console.log(
         '[service] message chunk done, text pieces:',
@@ -282,7 +285,7 @@ export async function invokeSendMessage(
   await Promise.all([messagesTask, toolTask])
 
   // 流结束信号
-  win.webContents.send('agent:stream-done')
+  win?.webContents.send('agent:stream-done')
   console.log('[service] stream-done sent')
   // 通知调用方（agent:send）持久化产物清单，供历史回显恢复文件链接
   onArtifacts?.(artifacts)
