@@ -11,6 +11,7 @@ import KnowledgePage from './KnowledgePage.vue'
 import AutomationPage from './AutomationPage.vue'
 import NewTaskPage from './NewTaskPage.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import NavIcon from '../components/NavIcon.vue'
 import SettingsWindow from '../components/settings/SettingsWindow.vue'
 import { useAgentStore } from '@renderer/store/agent'
 import { useWorkspaceStore } from '@renderer/store/workspace'
@@ -18,6 +19,7 @@ import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
 import { useSkillSyncStore } from '@renderer/store/skillSync'
 import { useExpertSyncStore } from '@renderer/store/expertSync'
 import type { ThemeName } from '@renderer/store/settings'
+import type { NavIconName } from '../components/navIcon'
 import type { Conversation } from '@renderer/store/agent'
 import type { Workspace } from '../../../preload/index.d'
 
@@ -190,13 +192,20 @@ type AgentNavKey = '专家' | '技能' | '连接器'
 type AppNav = NavKey | AgentNavKey
 const activeNav = ref<AppNav>('新建任务')
 
-const navItems = [
-  { label: '助理' as NavKey, icon: 'bot' },
-  { label: '项目' as NavKey, icon: 'folder' },
+/** 侧栏一级菜单（收起态只显示 icon，图形见 NavIcon.vue） */
+interface NavEntry {
+  label: NavKey
+  icon: NavIconName
+  tag?: string
+}
+
+const navItems: NavEntry[] = [
+  { label: '助理', icon: 'bot' },
+  { label: '项目', icon: 'folder' },
   // 知识库位于「智能体」分组之后（分组由下方模板在「项目」后插入）
-  { label: '知识库' as NavKey, icon: 'book' },
-  { label: '自动化' as NavKey, icon: 'workflow' },
-  { label: '更多' as NavKey, icon: 'more', tag: '资库·灵感' }
+  { label: '知识库', icon: 'book' },
+  { label: '自动化', icon: 'workflow' },
+  { label: '更多', icon: 'more', tag: '资库·灵感' }
 ]
 
 /** 智能体子菜单（父菜单位于“项目”下方，可折叠展开） */
@@ -405,6 +414,12 @@ const switchNav = (nav: AppNav): void => {
   }
 }
 
+/** 收起侧栏点击「智能体」：先展开侧栏并展开分组（收起态放不下子菜单） */
+const openAgentGroupFromCollapsed = (): void => {
+  sidebarCollapsed.value = false
+  agentMenuOpen.value = true
+}
+
 /** 悬浮全名：仅当文本溢出容器被截断时才设置 title（未截断不弹提示） */
 const bindTruncatedTitle = (e: MouseEvent): void => {
   const el = e.currentTarget as HTMLElement
@@ -430,18 +445,6 @@ const adjustMenuDirection = (): void => {
     <!-- ═══════════════════════════════════════════════════ SIDEBAR ═══════════════════════════════════════════════════ -->
     <!-- Collapsed sidebar -->
     <aside v-if="sidebarCollapsed" class="sidebar sidebar--collapsed">
-      <svg class="sidebar-logo-sm" width="26" height="26" viewBox="0 0 64 64" fill="none">
-        <defs>
-          <linearGradient id="hsg1" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#06b6d4" />
-            <stop offset="100%" stop-color="#0e7490" />
-          </linearGradient>
-        </defs>
-        <ellipse cx="32" cy="38" rx="12" ry="14" fill="url(#hsg1)" />
-        <circle cx="32" cy="20" r="9" fill="url(#hsg1)" />
-        <circle cx="29" cy="19" r="2.5" fill="white" />
-        <circle cx="29.5" cy="19" r="1.2" fill="#0e7490" />
-      </svg>
       <button class="sidebar-collapse-btn" title="展开侧栏" @click="sidebarCollapsed = false">
         <svg
           width="15"
@@ -457,6 +460,45 @@ const adjustMenuDirection = (): void => {
           <path d="M14 9l3 3-3 3" />
         </svg>
       </button>
+
+      <!-- 收起态：一级菜单只显示图标，名称由悬浮 title 提供 -->
+      <nav class="sidebar-nav sidebar-nav--collapsed">
+        <button
+          :class="['nav-item', 'nav-item--icon', { 'nav-item--active': activeNav === '新建任务' }]"
+          title="新建任务"
+          @click="switchNav('新建任务')"
+        >
+          <span class="nav-icon">
+            <NavIcon name="plus" />
+          </span>
+        </button>
+        <template v-for="item in navItems" :key="item.label">
+          <button
+            :class="[
+              'nav-item',
+              'nav-item--icon',
+              { 'nav-item--active': activeNav === item.label }
+            ]"
+            :title="item.label"
+            @click="switchNav(item.label)"
+          >
+            <span class="nav-icon">
+              <NavIcon :name="item.icon" />
+            </span>
+          </button>
+          <template v-if="item.label === '项目'">
+            <button
+              :class="['nav-item', 'nav-item--icon', { 'nav-item--active': isAgentSectionActive }]"
+              title="智能体"
+              @click="openAgentGroupFromCollapsed"
+            >
+              <span class="nav-icon">
+                <NavIcon name="agent" />
+              </span>
+            </button>
+          </template>
+        </template>
+      </nav>
     </aside>
 
     <!-- Expanded sidebar -->
@@ -505,18 +547,7 @@ const adjustMenuDirection = (): void => {
           @click="switchNav('新建任务')"
         >
           <span class="nav-icon">
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
+            <NavIcon name="plus" />
           </span>
           <span class="nav-label">新建任务</span>
         </button>
@@ -526,74 +557,7 @@ const adjustMenuDirection = (): void => {
             @click="switchNav(item.label)"
           >
             <span class="nav-icon">
-              <svg
-                v-if="item.icon === 'bot'"
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="3" y="3" width="18" height="14" rx="3" />
-                <path d="M8 21h8M12 17v4" />
-              </svg>
-              <svg
-                v-else-if="item.icon === 'folder'"
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-                />
-              </svg>
-              <svg
-                v-else-if="item.icon === 'book'"
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M12 7v14" />
-                <path
-                  d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
-                />
-              </svg>
-              <svg
-                v-else-if="item.icon === 'workflow'"
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="2" y="3" width="6" height="6" rx="1" />
-                <rect x="9" y="2" width="6" height="8" rx="1" />
-                <rect x="16" y="3" width="6" height="6" rx="1" />
-                <path d="M5 9v4a2 2 0 0 0 2 2h3M12 6v2M19 9v4a2 2 0 0 1-2 2h-2" />
-              </svg>
-              <svg
-                v-else
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <circle cx="12" cy="12" r="1" />
-                <circle cx="19" cy="12" r="1" />
-                <circle cx="5" cy="12" r="1" />
-              </svg>
+              <NavIcon :name="item.icon" />
             </span>
             <span class="nav-label">{{ item.label }}</span>
             <span v-if="item.tag" class="nav-tag">{{ item.tag }}</span>
@@ -608,25 +572,7 @@ const adjustMenuDirection = (): void => {
               @click="agentMenuOpen = !agentMenuOpen"
             >
               <span class="nav-icon">
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                  <rect x="9" y="9" width="6" height="6" />
-                  <line x1="9" y1="1" x2="9" y2="4" />
-                  <line x1="15" y1="1" x2="15" y2="4" />
-                  <line x1="9" y1="20" x2="9" y2="23" />
-                  <line x1="15" y1="20" x2="15" y2="23" />
-                  <line x1="20" y1="9" x2="23" y2="9" />
-                  <line x1="20" y1="14" x2="23" y2="14" />
-                  <line x1="1" y1="9" x2="4" y2="9" />
-                  <line x1="1" y1="14" x2="4" y2="14" />
-                </svg>
+                <NavIcon name="agent" />
               </span>
               <span class="nav-label">智能体</span>
               <svg
@@ -648,7 +594,10 @@ const adjustMenuDirection = (): void => {
                 <button
                   v-for="sub in agentSubItems"
                   :key="sub.label"
-                  :class="['nav-item nav-item--sub', { 'nav-item--active': activeNav === sub.label }]"
+                  :class="[
+                    'nav-item nav-item--sub',
+                    { 'nav-item--active': activeNav === sub.label }
+                  ]"
                   @click="switchNav(sub.label)"
                 >
                   <span class="nav-label">{{ sub.label }}</span>
@@ -721,7 +670,10 @@ const adjustMenuDirection = (): void => {
                 <span class="space-header-name" @mouseenter="bindTruncatedTitle">{{
                   group.ws.name
                 }}</span>
-                <span v-if="group.ws.id === workspaceStore.currentId" class="space-header-dot"></span>
+                <span
+                  v-if="group.ws.id === workspaceStore.currentId"
+                  class="space-header-dot"
+                ></span>
                 <div class="space-header-right">
                   <div class="space-header-actions">
                     <button
@@ -1336,8 +1288,26 @@ const adjustMenuDirection = (): void => {
   user-select: none;
 }
 
-.sidebar-logo-sm {
-  display: block;
+/* 收起态菜单：只显示图标，尺寸与间距按展开态行高对齐 */
+.sidebar--collapsed .sidebar-nav {
+  width: 100%;
+  padding: 0;
+  margin-bottom: 0;
+  gap: 4px;
+  align-items: center;
+}
+
+.sidebar--collapsed .nav-item--icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+
+/* 收起态没有文字标签承载颜色，图标直接继承按钮前景色 */
+.sidebar--collapsed .nav-icon {
+  color: inherit;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
