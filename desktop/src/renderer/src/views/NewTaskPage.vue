@@ -430,8 +430,7 @@ const isLastAssistant = (msgId: string): boolean => {
 // ── Constants ──
 const categories = [
   { key: 'work', label: '日常办公', icon: '☀️' },
-  { key: 'code', label: '代码开发', icon: '</>' },
-  { key: 'design', label: '设计创意', icon: '🎨' }
+  { key: 'code', label: '代码开发', icon: '</>' }
 ]
 
 const quickChips = [
