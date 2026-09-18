@@ -558,7 +558,9 @@ const changeSort = (key: SortKey): void => {
 }
 
 /** 文件大小展示（与上传弹窗保持一致） */
-const formatSize = (bytes: number): string => {
+// 说明：这里必须用函数声明（可提升）：本文件上方的 watch(..., { immediate: true }) 会在 setup 阶段同步执行 rebuildFileTree → metaOf，
+// 若用 const 箭头函数，重进页面（store 已有缓存文档）会抛 TDZ 错误（Cannot access before initialization），导致整页白屏。
+function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   if (bytes >= 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${bytes} B`
@@ -578,7 +580,8 @@ function formatTimestamp(ts: number): string {
 }
 
 /** 扩展名 → 表格里的三套文件图标 */
-const pickFileIcon = (ext: string): FileIcon => {
+// 同上：metaOf 会调用它，需与 formatSize 一样是可提升的函数声明
+function pickFileIcon(ext: string): FileIcon {
   if (['csv', 'xls', 'xlsx'].includes(ext)) return 'file-spreadsheet'
   if (['doc', 'docx'].includes(ext)) return 'file-type-2'
   return 'file-text'
