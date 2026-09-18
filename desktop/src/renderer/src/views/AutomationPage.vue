@@ -1,10 +1,51 @@
-﻿<script setup lang="ts">
-import { computed, ref } from 'vue'
-import PromptInput from '@components/PromptInput.vue'
-import type { Mode } from '@store/catalog'
+<script setup lang="ts">
+import { computed, nextTick, ref } from 'vue'
+import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
+import ConfirmDialog from '@components/ConfirmDialog.vue'
 import type { MessagePart } from '../../../preload/index.d'
 
 type Tab = 'tasks' | 'logs'
+
+/** 自动化任务（我的任务列表项） */
+interface AutomationTask {
+  id: number
+  icon: string
+  title: string
+  desc: string
+  /** 执行频率摘要（如「每天 08:00」） */
+  freq: string
+  /** 有效期摘要（如「长期有效」） */
+  validity?: string
+  /** 提示词快照（文本段 + 文件引用段） */
+  parts?: MessagePart[]
+  model?: string
+  expertName?: string | null
+  workspaceName?: string | null
+  fullAccess?: boolean
+  /** 执行频率 / 有效期结构化配置（编辑时回填表单；模板快捷添加的任务没有） */
+  schedule?: TaskSchedule
+}
+
+/** 新建 / 编辑自动化表单中的频率与有效期配置 */
+interface TaskSchedule {
+  freqGroup: FreqGroup
+  cycleKind: CycleKind
+  intervalKind: IntervalKind
+  onceDate: string
+  onceTime: string
+  weekDays: number[]
+  monthDay: number
+  yearMonth: number
+  yearDay: number
+  weekIntervalDays: number[]
+  hourInterval: number
+  validityMode: 'forever' | 'range'
+  validFrom: string
+  validFromTime: string
+  validTo: string
+  validToTime: string
+}
+
 const tab = ref<Tab>('tasks')
 const myTasks = ref<AutomationTask[]>([])
 const showAdd = ref(false)
@@ -168,51 +209,24 @@ const stats = [
   { label: '成功率', value: '87.5%', sub: '7 次成功 / 1 次失败', color: '#10b981' },
   { label: '平均耗时', value: '3.4s', sub: '最长 6.1s', color: '#f59e0b' }
 ]
-
-/** 自动化任务（我的任务列表项） */
-interface AutomationTask {
-  id: number
-  icon: string
-  title: string
-  desc: string
-  /** 执行频率摘要（如「每天 08:00」） */
-  freq: string
-  /** 有效期摘要（如「长期有效」） */
-  validity?: string
-  /** 提示词快照（文本段 + 文件引用段） */
-  parts?: MessagePart[]
-  model?: string
-  expertName?: string | null
-  workspaceName?: string | null
-  fullAccess?: boolean
-}
-
-/** 输入卡提交上来的快照（与 PromptInput 的 PromptPayload 结构一致） */
-interface PromptPayload {
-  parts: MessagePart[]
-  text: string
-  model: string
-  customModelId?: string
-  expertId: string | null
-  expertName: string | null
-  mode: Mode
-  skillIds: string[]
-  fileCount: number
-  workspaceId: string | null
-  workspaceName: string | null
-  fullAccess: boolean
-}
-
-/** 把输入卡的内容标记同步到表单状态（用于「创建任务」按钮可用态） */
-const onPromptHasContent = (value: boolean): void => {
-  promptHasContent.value = value
+const addTask = (tpl: (typeof automationTemplates)[0]): void => {
+  if (!myTasks.value.find((t) => t.id === tpl.id)) myTasks.value.push(tpl)
 }
 
 // ── 新建自动化：表单状态 ──
 const taskName = ref('')
 const promptHasContent = ref(false)
 const promptRef = ref<InstanceType<typeof PromptInput> | null>(null)
+/** 正在编辑的任务 id（null 表示新建） */
+const editingId = ref<number | null>(null)
+/** 待删除确认的任务 */
+const pendingDelete = ref<AutomationTask | null>(null)
 const formError = ref('')
+
+/** 把输入卡内容标记同步到表单状态（控制「创建任务」按钮可用态） */
+const onPromptHasContent = (value: boolean): void => {
+  promptHasContent.value = value
+}
 
 type FreqGroup = 'cycle' | 'interval'
 type CycleKind = 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly'
@@ -324,6 +338,48 @@ const validitySummary = computed(() => {
     validFrom.value + ' ' + validFromTime.value + ' 至 ' + validTo.value + ' ' + validToTime.value
   )
 })
+
+/** 采集当前表单的频率 / 有效期配置（存到任务上，供编辑回填） */
+const captureSchedule = (): TaskSchedule => ({
+  freqGroup: freqGroup.value,
+  cycleKind: cycleKind.value,
+  intervalKind: intervalKind.value,
+  onceDate: onceDate.value,
+  onceTime: onceTime.value,
+  weekDays: [...weekDays.value],
+  monthDay: monthDay.value,
+  yearMonth: yearMonth.value,
+  yearDay: yearDay.value,
+  weekIntervalDays: [...weekIntervalDays.value],
+  hourInterval: hourInterval.value,
+  validityMode: validityMode.value,
+  validFrom: validFrom.value,
+  validFromTime: validFromTime.value,
+  validTo: validTo.value,
+  validToTime: validToTime.value
+})
+
+/** 用任务上的配置回填表单（模板快捷添加的任务没有配置，保持默认值） */
+const applySchedule = (plan?: TaskSchedule): void => {
+  if (!plan) return
+  freqGroup.value = plan.freqGroup
+  cycleKind.value = plan.cycleKind
+  intervalKind.value = plan.intervalKind
+  onceDate.value = plan.onceDate
+  onceTime.value = plan.onceTime
+  weekDays.value = [...plan.weekDays]
+  monthDay.value = plan.monthDay
+  yearMonth.value = plan.yearMonth
+  yearDay.value = plan.yearDay
+  weekIntervalDays.value = [...plan.weekIntervalDays]
+  hourInterval.value = plan.hourInterval
+  validityMode.value = plan.validityMode
+  validFrom.value = plan.validFrom
+  validFromTime.value = plan.validFromTime
+  validTo.value = plan.validTo
+  validToTime.value = plan.validToTime
+}
+
 /** 重置新建表单（每次打开弹窗都是干净状态） */
 const resetForm = (): void => {
   taskName.value = ''
@@ -350,27 +406,60 @@ const resetForm = (): void => {
 
 /** 打开「新建自动化」弹窗 */
 const openAddModal = (): void => {
+  editingId.value = null
   resetForm()
   showAdd.value = true
+}
+
+/** 打开「编辑自动化」弹窗：回填名称 / 提示词 / 频率 / 有效期 */
+const openEditModal = async (task: AutomationTask): Promise<void> => {
+  editingId.value = task.id
+  resetForm()
+  taskName.value = task.title
+  applySchedule(task.schedule)
+  formError.value = ''
+  showAdd.value = true
+  // 输入卡挂在弹窗内，等渲染完成再回填提示词与文件 token
+  await nextTick()
+  if (task.parts && task.parts.length > 0) promptRef.value?.setParts(task.parts)
+  else if (task.desc) promptRef.value?.setText(task.desc)
 }
 
 /** 关闭「新建自动化」弹窗并清理草稿 */
 const closeAddModal = (): void => {
   showAdd.value = false
+  editingId.value = null
   resetForm()
 }
 
+/** 打开删除确认 */
+const askDelete = (task: AutomationTask): void => {
+  pendingDelete.value = task
+}
+
+/** 取消删除 */
+const cancelDelete = (): void => {
+  pendingDelete.value = null
+}
+
+/** 确认删除：从我的任务中移除（模板卡片同步恢复为可添加） */
+const confirmDelete = (): void => {
+  const target = pendingDelete.value
+  if (target) myTasks.value = myTasks.value.filter((t) => t.id !== target.id)
+  pendingDelete.value = null
+}
+
 /** 用输入卡快照创建任务；提示词为空时给出内联提示 */
+/** 保存表单为自动化任务：编辑中则更新原任务，否则新建 */
 const createTaskFrom = (payload: PromptPayload): void => {
   const hasBody = payload.text.length > 0 || payload.parts.some((p) => p.type === 'file')
   if (!hasBody) {
     formError.value = '请先填写任务描述 / 提示词'
     return
   }
+  const editing = editingId.value
   const title = taskName.value.trim() || payload.text.slice(0, 18) || '未命名自动化任务'
-  myTasks.value.unshift({
-    id: Date.now(),
-    icon: '⏰',
+  const base = {
     title,
     desc: payload.text || '（含文件引用）',
     freq: freqSummary.value,
@@ -379,8 +468,15 @@ const createTaskFrom = (payload: PromptPayload): void => {
     model: payload.model,
     expertName: payload.expertName,
     workspaceName: payload.workspaceName,
-    fullAccess: payload.fullAccess
-  })
+    fullAccess: payload.fullAccess,
+    schedule: captureSchedule()
+  }
+  if (editing !== null) {
+    const index = myTasks.value.findIndex((t) => t.id === editing)
+    if (index >= 0) myTasks.value[index] = { ...myTasks.value[index], ...base }
+  } else {
+    myTasks.value.unshift({ id: Date.now(), icon: '⏰', ...base })
+  }
   formError.value = ''
   closeAddModal()
 }
@@ -396,11 +492,7 @@ const createTask = (): void => {
   if (!payload) return
   createTaskFrom(payload)
 }
-const addTask = (tpl: (typeof automationTemplates)[0]): void => {
-  if (!myTasks.value.find((t) => t.id === tpl.id)) myTasks.value.push(tpl)
-}
 </script>
-
 <template>
   <div class="auto-page">
     <!-- Tabs -->
@@ -510,6 +602,46 @@ const addTask = (tpl: (typeof automationTemplates)[0]): void => {
                       <span class="status-dot status-dot--green"></span>
                       运行中
                     </div>
+                    <div class="task-actions">
+                      <button
+                        class="task-action-btn"
+                        type="button"
+                        title="编辑"
+                        @click="openEditModal(task)"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path d="M12 20h9" />
+                          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                      </button>
+                      <button
+                        class="task-action-btn task-action-btn--danger"
+                        type="button"
+                        title="删除"
+                        @click="askDelete(task)"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -595,7 +727,7 @@ const addTask = (tpl: (typeof automationTemplates)[0]): void => {
       <div v-if="showAdd" class="modal-mask" @click.self="closeAddModal">
         <div class="modal-card modal-card--form">
           <div class="modal-header">
-            <span>新建自动化</span>
+            <span>{{ editingId ? '编辑自动化' : '新建自动化' }}</span>
             <button @click="closeAddModal" class="modal-close">
               <svg
                 width="16"
@@ -626,7 +758,10 @@ const addTask = (tpl: (typeof automationTemplates)[0]): void => {
               <PromptInput
                 ref="promptRef"
                 placeholder="描述你希望 KE-WORK 每次执行的内容…  @ 引用文件，/ 调用技能"
-                submit-label="创建任务"
+                :submit-label="editingId ? '保存' : '创建任务'"
+                menu-placement="down"
+                :min-height="68"
+                :max-height="220"
                 @submit="onPromptSubmit"
                 @update:has-content="onPromptHasContent"
               />
@@ -813,12 +948,23 @@ const addTask = (tpl: (typeof automationTemplates)[0]): void => {
               :disabled="!promptHasContent"
               @click="createTask"
             >
-              创建任务
+              {{ editingId ? '保存' : '创建任务' }}
             </button>
           </div>
         </div>
       </div>
     </Transition>
+
+    <!-- 删除确认 -->
+    <ConfirmDialog
+      v-if="pendingDelete"
+      title="删除自动化任务"
+      :message="'确定要删除「' + pendingDelete.title + '」吗？删除后无法恢复。'"
+      confirm-text="删除"
+      cancel-text="取消"
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
+    />
   </div>
 </template>
 
@@ -1026,6 +1172,53 @@ const addTask = (tpl: (typeof automationTemplates)[0]): void => {
   border-radius: 50%;
   display: inline-block;
 }
+/* 任务卡片操作：hover 时替换「运行中」状态，露出编辑 / 删除 */
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.task-card:hover .task-actions {
+  opacity: 1;
+}
+
+.task-card:hover .task-status {
+  display: none;
+}
+
+.task-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-brand);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.task-action-btn:hover {
+  background: var(--kw-color-brand-soft);
+}
+
+.task-action-btn--danger {
+  background: var(--kw-color-danger-soft);
+  color: var(--kw-color-danger);
+}
+
+.task-action-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.16);
+}
+
 .status-dot--green {
   background: #10b981;
 }
@@ -1295,11 +1488,6 @@ const addTask = (tpl: (typeof automationTemplates)[0]): void => {
 
 .modal-body {
   gap: 12px;
-}
-
-/* 弹窗内压缩提示词输入框高度，保证表单在一屏内可完成 */
-.modal-card--form :deep(.task-textarea) {
-  min-height: 68px;
 }
 
 .modal-card--form .modal-body {

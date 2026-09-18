@@ -1,3 +1,34 @@
+<script lang="ts">
+import type { Mode as CatalogMode } from '@store/catalog'
+import type { MessagePart as PromptPart } from '../../../preload/index.d'
+
+/** 发送时交给父级的输入快照（正文 + 附件 + 选中项） */
+export interface PromptPayload {
+  /** 保序消息部件：文本段 + 文件段 */
+  parts: PromptPart[]
+  /** 纯文本内容（不含文件路径） */
+  text: string
+  /** 选中的模型名 */
+  model: string
+  /** 自定义模型 id（内置模型为 undefined） */
+  customModelId?: string
+  /** 选中的专家（无则 null） */
+  expertId: string | null
+  expertName: string | null
+  /** 「+」菜单选中的模式 */
+  mode: CatalogMode
+  /** 输入框中引用的技能 id 列表 */
+  skillIds: string[]
+  /** 引用文件数量 */
+  fileCount: number
+  /** 选中的工作空间 */
+  workspaceId: string | null
+  workspaceName: string | null
+  /** 是否开启「允许完全访问」 */
+  fullAccess: boolean
+}
+</script>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useCatalogStore, type CatalogTab, type Mode, type SkillItem } from '@store/catalog'
@@ -16,47 +47,45 @@ import type { MessagePart } from '../../../preload/index.d'
  * 不含「新建任务」页输入框上方的分类行（文档处理 / 金融服务 等）。
  */
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     /** 输入框占位文案 */
     placeholder?: string
     /** 发送按钮的无障碍标题 */
     submitLabel?: string
+    /** 紧凑样式（对话态输入框） */
+    compact?: boolean
+    /** 流式输出中：发送按钮变停止按钮 */
+    streaming?: boolean
+    /** 模型下拉展开方向（弹窗内空间不足时向下展开） */
+    menuPlacement?: 'up' | 'down'
+    /** 输入区最小高度（px） */
+    minHeight?: number
+    /** 输入区最大高度（px，0 表示随内容增长） */
+    maxHeight?: number
+    /** 卸载时是否清掉未提交草稿的技能勾选 */
+    cleanupOnUnmount?: boolean
   }>(),
   {
     placeholder: '描述希望 KE-WORK 执行的内容…  @ 引用文件，/ 调用技能',
-    submitLabel: '发送'
+    submitLabel: '发送',
+    compact: false,
+    streaming: false,
+    menuPlacement: 'up',
+    minHeight: 84,
+    maxHeight: 0,
+    cleanupOnUnmount: false
   }
 )
 
-/** 发送时交给父级的输入快照（正文 + 附件 + 选中项） */
-interface PromptPayload {
-  /** 保序消息部件：文本段 + 文件段 */
-  parts: MessagePart[]
-  /** 纯文本内容（不含文件路径） */
-  text: string
-  /** 选中的模型名 */
-  model: string
-  /** 自定义模型 id（内置模型为 undefined） */
-  customModelId?: string
-  /** 选中的专家（无则 null） */
-  expertId: string | null
-  expertName: string | null
-  /** 「+」菜单选中的模式 */
-  mode: Mode
-  /** 输入框中引用的技能 id 列表 */
-  skillIds: string[]
-  /** 引用文件数量 */
-  fileCount: number
-  /** 选中的工作空间 */
-  workspaceId: string | null
-  workspaceName: string | null
-  /** 是否开启「允许完全访问」 */
-  fullAccess: boolean
-}
+/** 草稿文本（与父级双向绑定；父级发送失败回填也走这里） */
+const taskInput = defineModel<string>('text', { default: '' })
+/** 当前选中的模型（父级发送 / 重新生成时读取） */
+const model = defineModel<string>('model', { default: 'Auto' })
 
 const emit = defineEmits<{
   submit: [payload: PromptPayload]
+  stop: []
   'update:hasContent': [value: boolean]
   navigate: [tab: CatalogTab]
 }>()
@@ -67,8 +96,6 @@ const modelStore = useModelStore()
 
 // ── State ──
 const inputRef = ref<HTMLElement | null>(null)
-const taskInput = ref('')
-const model = ref('Auto')
 const modelOpen = ref(false)
 const showInputPlusMenu = ref(false)
 const polishing = ref(false)
@@ -175,18 +202,8 @@ const insertSkillTokenAtCaret = (el: HTMLElement, skill: SkillItem): void => {
   taskInput.value = el.innerText
 }
 
-/** 在光标处插入文件 token（图标 + 文件名；title 原生提示绝对路径），光标移到 token 后 */
-const insertFileTokenAtCaret = (el: HTMLElement, filePath: string): void => {
-  const sel = window.getSelection()
-  let range: Range
-  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
-    range = sel.getRangeAt(0)
-    range.collapse(false)
-  } else {
-    range = document.createRange()
-    range.selectNodeContents(el)
-    range.collapse(false)
-  }
+/** 构造文件 token（图标 + 文件名；title 原生提示绝对路径） */
+const createFileToken = (filePath: string): HTMLElement => {
   const token = document.createElement('span')
   token.className = 'file-token'
   token.dataset.path = filePath
@@ -235,6 +252,22 @@ const insertFileTokenAtCaret = (el: HTMLElement, filePath: string): void => {
   name.textContent = filePath.split(/[\\/]/).pop() || filePath
   token.appendChild(icon)
   token.appendChild(name)
+  return token
+}
+
+/** 在光标处插入文件 token（图标 + 文件名；title 原生提示绝对路径），光标移到 token 后 */
+const insertFileTokenAtCaret = (el: HTMLElement, filePath: string): void => {
+  const sel = window.getSelection()
+  let range: Range
+  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+    range = sel.getRangeAt(0)
+    range.collapse(false)
+  } else {
+    range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+  }
+  const token = createFileToken(filePath)
   range.insertNode(token)
   range.setStartAfter(token)
   range.collapse(true)
@@ -582,7 +615,7 @@ const onPlusNavigate = (tab: CatalogTab): void => {
 const BUILTIN_MODELS = ['Auto']
 
 /** 当前选中的自定义模型 id（内置模型为 null） */
-const selectedCustomId = ref<string | null>(null)
+const selectedCustomId = defineModel<string | null>('customModelId', { default: null })
 
 /** 模型下拉分组：内置 + 自定义（自定义模型名可重复，id 唯一，故按 id 传参） */
 const modelGroups = computed(() => [
@@ -760,14 +793,34 @@ const onSend = (): void => {
 }
 
 /** 清空输入框（正文 + 技能 / 文件 token + 技能勾选 + 专家提示词） */
+/** 用消息部件重建输入框内容（编辑任务时回填文本与文件 token） */
+const setParts = (parts: MessagePart[]): void => {
+  const el = getInputEl()
+  if (!el) return
+  el.textContent = ''
+  for (const part of parts) {
+    if (part.type === 'text') {
+      el.appendChild(document.createTextNode(part.text))
+    } else if (part.type === 'file') {
+      el.appendChild(createFileToken(part.path))
+    }
+  }
+  taskInput.value = el.innerText
+}
+
+/** 清空输入框（正文 + 文件 / 技能 token + 技能勾选；保留专家与模式选择） */
 const clear = (): void => {
   const el = getInputEl()
   if (el) el.textContent = ''
   taskInput.value = ''
   catalog.clearSkills()
-  const holder = el ?? document.createElement('div')
-  if (catalog.selectedExpertPrompt) removePromptFromDom(holder, catalog.selectedExpertPrompt)
-  catalog.clearExpert()
+}
+
+/** 外部写回文本（父级发送失败回填等） */
+const setText = (value: string): void => {
+  const el = getInputEl()
+  if (el) el.textContent = value
+  taskInput.value = value
 }
 
 /** 聚焦输入框（弹窗打开后可直接输入） */
@@ -775,18 +828,33 @@ const focus = (): void => {
   inputRef.value?.focus()
 }
 
-defineExpose({ clear, focus, buildPayload })
+defineExpose({ clear, setText, setParts, focus, buildPayload })
 
 // ── 点击外部关闭菜单 ──
+/** 父级改写草稿（发送后清空 / 失败回填）时同步 DOM；带 token 时不打断用户输入 */
+watch(taskInput, (value) => {
+  const el = inputRef.value
+  if (!el) return
+  if (el.querySelector('.skill-token, .file-token')) return
+  if (el.innerText !== value) el.textContent = value
+})
+
+/** 输入区高度：页面随内容增长，弹窗内限制最大高度 */
+const textareaStyle = computed(() => {
+  const style: Record<string, string> = { minHeight: props.minHeight + 'px' }
+  if (props.maxHeight > 0) style.maxHeight = props.maxHeight + 'px'
+  return style
+})
+
 const handleDocumentClick = (e: MouseEvent): void => {
   const target = e.target as HTMLElement
-  if (!target.closest('[data-prompt-plus-trigger]') && !target.closest('.plus-menu')) {
+  if (!target.closest('[data-plus-menu-trigger]') && !target.closest('.plus-menu')) {
     showInputPlusMenu.value = false
   }
-  if (!target.closest('[data-prompt-ws-trigger]') && !target.closest('.workspace-menu')) {
+  if (!target.closest('[data-workspace-menu-trigger]') && !target.closest('.workspace-menu')) {
     wsMenuOpen.value = false
   }
-  if (!target.closest('[data-prompt-perm-trigger]') && !target.closest('.perm-menu')) {
+  if (!target.closest('[data-perm-menu-trigger]') && !target.closest('.perm-menu')) {
     permMenuOpen.value = false
   }
 }
@@ -800,22 +868,25 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', handleDocumentClick)
   if (toastTimer) clearTimeout(toastTimer)
-  // 弹窗关闭时丢弃未提交草稿的技能勾选，避免污染下次打开
-  if (taskInput.value.trim()) catalog.clearSkills()
-  catalog.clearExpert()
+  // 卸载时丢弃未提交草稿的技能勾选，避免污染下一次挂载（弹窗 / 欢迎态输入框不复用）
+  if (props.cleanupOnUnmount && taskInput.value.trim()) catalog.clearSkills()
 })
 </script>
 
 <template>
   <div class="prompt-input">
     <!-- 输入卡 -->
-    <div class="input-card">
+    <div :class="compact ? 'chat-input-card' : 'input-card'">
       <div
         ref="inputRef"
         class="task-textarea"
-        :class="{ 'task-textarea--dragging': inputDragging }"
+        :class="[
+          { 'task-textarea--dragging': inputDragging },
+          { 'task-textarea--compact': compact }
+        ]"
         contenteditable="true"
         :data-placeholder="placeholder"
+        :style="textareaStyle"
         @input="onInputSync"
         @click="onInputClick"
         @keydown.enter.exact.prevent="onSend"
@@ -824,7 +895,10 @@ onBeforeUnmount(() => {
         @dragleave="onInputDragLeave"
         @drop="onInputDrop"
       ></div>
-      <div v-if="selectionChips.length" class="selection-chips">
+      <div
+        v-if="selectionChips.length"
+        :class="['selection-chips', { 'selection-chips--compact': compact }]"
+      >
         <span
           v-for="chip in selectionChips"
           :key="chip.key"
@@ -847,10 +921,10 @@ onBeforeUnmount(() => {
           <span class="selection-chip-name">{{ chip.label }}</span>
         </span>
       </div>
-      <div class="input-toolbar">
+      <div :class="['input-toolbar', { 'input-toolbar--compact': compact }]">
         <button
           class="toolbar-btn"
-          data-prompt-plus-trigger
+          data-plus-menu-trigger
           title="添加文件 / 专家 / 技能 / 连接器"
           @mouseenter="plusMenuHover.open"
           @mouseleave="plusMenuHover.scheduleClose"
@@ -902,7 +976,7 @@ onBeforeUnmount(() => {
         </button>
         <div class="toolbar-spacer"></div>
         <!-- 模型选择 -->
-        <div class="model-selector">
+        <div :class="['model-selector', { 'model-selector--compact': compact }]">
           <button
             class="model-btn"
             @mouseenter="modelMenuHover.open"
@@ -933,7 +1007,7 @@ onBeforeUnmount(() => {
           <Transition name="dropdown">
             <div
               v-if="modelOpen"
-              class="model-dropdown"
+              :class="['model-dropdown', { 'model-dropdown--down': menuPlacement === 'down' }]"
               @mouseenter="modelMenuHover.cancelClose"
               @mouseleave="modelMenuHover.closeNow"
             >
@@ -982,6 +1056,7 @@ onBeforeUnmount(() => {
         </button>
         <!-- 发送按钮 -->
         <button
+          v-if="!streaming"
           class="send-btn"
           :class="{ 'send-btn--active': hasContent }"
           :title="submitLabel"
@@ -999,6 +1074,11 @@ onBeforeUnmount(() => {
             <polygon points="22 2 15 22 11 13 2 9 22 2" />
           </svg>
         </button>
+        <button v-else class="send-btn send-btn--stop" :title="'停止生成'" @click="emit('stop')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
+        </button>
         <!-- 「+」菜单 -->
         <Transition name="plus-menu-slide">
           <PlusMenu
@@ -1014,7 +1094,11 @@ onBeforeUnmount(() => {
       </div>
       <div class="input-footer">
         <div class="workspace-selector">
-          <button class="footer-action" data-prompt-ws-trigger @click="wsMenuOpen = !wsMenuOpen">
+          <button
+            class="footer-action"
+            data-workspace-menu-trigger
+            @click="wsMenuOpen = !wsMenuOpen"
+          >
             <svg
               width="11"
               height="11"
@@ -1157,7 +1241,7 @@ onBeforeUnmount(() => {
         <div class="perm-selector">
           <button
             class="footer-action"
-            data-prompt-perm-trigger
+            data-perm-menu-trigger
             @click="permMenuOpen = !permMenuOpen"
           >
             <svg
@@ -1330,12 +1414,25 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+/* 欢迎态输入卡：与「新建任务」页一致，居中限宽 720px */
 .input-card {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  border-radius: 16px;
+  border: 1.5px solid var(--kw-color-border-brand);
+  box-shadow: 0 4px 24px rgba(8, 145, 178, 0.08);
+  background: var(--kw-color-surface);
+}
+
+/* 对话态输入卡：宽度由外层 .chat-input-bar 限制 */
+.chat-input-card {
   position: relative;
   width: 100%;
   border-radius: 16px;
   border: 1.5px solid var(--kw-color-border-brand);
-  box-shadow: 0 4px 24px rgba(8, 145, 178, 0.08);
+  box-shadow: 0 2px 12px rgba(8, 145, 178, 0.06);
   background: var(--kw-color-surface);
 }
 
@@ -1351,7 +1448,6 @@ onBeforeUnmount(() => {
   color: #1e293b;
   box-sizing: border-box;
   min-height: 84px;
-  max-height: 220px;
   line-height: 1.6;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -1451,9 +1547,7 @@ onBeforeUnmount(() => {
 
 .model-dropdown {
   position: absolute;
-  /* 弹窗内空间有限：向下展开，避免菜单顶部被窗口裁切 */
-  top: calc(100% + 4px);
-  bottom: auto;
+  bottom: calc(100% + 4px);
   right: 0;
   min-width: 160px;
   max-height: 320px;
@@ -1503,6 +1597,12 @@ onBeforeUnmount(() => {
   width: 10px;
 }
 
+/* 弹窗内空间不足时向下展开 */
+.model-dropdown--down {
+  top: calc(100% + 4px);
+  bottom: auto;
+}
+
 /* 发送按钮 */
 .send-btn {
   display: flex;
@@ -1529,6 +1629,17 @@ onBeforeUnmount(() => {
 
 .send-btn:active {
   transform: scale(0.9);
+}
+
+/* 流式输出中：停止生成 */
+.send-btn--stop {
+  background: var(--kw-color-danger);
+  color: var(--kw-color-on-accent);
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
+}
+
+.send-btn--stop:hover {
+  background: var(--kw-color-danger-strong);
 }
 
 /* 输入卡底部 */
@@ -2201,6 +2312,25 @@ onBeforeUnmount(() => {
 .ws-modal-btn--confirm:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 紧凑变体（对话态） */
+.task-textarea--compact {
+  padding: 12px 12px 4px;
+  min-height: 60px;
+}
+
+.input-toolbar--compact {
+  padding: 0 8px 10px;
+}
+
+.selection-chips--compact {
+  padding: 0 12px 2px;
+}
+
+.model-selector--compact .model-btn {
+  padding: 2px 8px;
+  font-size: 11px;
 }
 
 /* 轻量提示 */
