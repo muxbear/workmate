@@ -87,6 +87,7 @@ export interface AgentAPI {
       regenerate?: boolean
       model?: string
       customModelId?: string
+      backendKind?: 'filesystem' | 'shell'
       turnIndex?: number
       createdAt?: number
     }

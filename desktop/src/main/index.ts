@@ -32,6 +32,7 @@ import { SessionService } from './services/SessionService'
 import { ElectronSafeStorage } from './security/secure-storage'
 import { registerAuthHandlers } from './ipc/auth-handlers'
 import { AgentManager } from './agent/AgentManager'
+import { normalizeBackendKind } from './agent/AgentBuilder'
 import { ConversationStore } from './agent/ConversationStore'
 import { RemoteImageService, registerRemoteImageScheme } from './images/RemoteImageService'
 import { registerRemoteImageHandlers } from './ipc/image-handlers'
@@ -660,6 +661,8 @@ app.whenReady().then(() => {
       // 自定义模型 id（渲染层不可信：经 getCredential 校验归属，伪造/已删除则忽略回退默认模型）
       const customModelId =
         typeof optsObj.customModelId === 'string' ? optsObj.customModelId : undefined
+      // 主智能体后端类型（渲染层不可信）：白名单校验，非法/缺省回退默认 shell 后端
+      const backendKind = normalizeBackendKind(optsObj.backendKind)
 
       // 消息内容归一：字符串（regenerate 历史文本）→ 单文本段；数组 → 形状校验（主进程权威）
       // 校验失败/无有效内容返回错误对象（错误信息直达渲染层，避免 handle 拒绝丢失消息）
@@ -718,6 +721,7 @@ app.whenReady().then(() => {
             user_id: userId,
             workspace_dir: ws?.dir,
             workspace: ws,
+            backendKind,
             // 自定义模型：仅当记录存在时生效（校验防伪造），否则走默认模型
             ...(customModelId && modelService.getCredential(customModelId)
               ? { modelOverride: customModelId }

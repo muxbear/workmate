@@ -245,6 +245,8 @@ export const useAgentStore = defineStore('agent', () => {
       mode: 'append' | 'regenerate'
       customModelId?: string
       model?: string
+      /** 主智能体后端类型（filesystem=仅文件读写；shell=允许本地 shell） */
+      backendKind?: 'filesystem' | 'shell'
       turnIndex?: number
     }
   ): Promise<void> {
@@ -359,6 +361,7 @@ export const useAgentStore = defineStore('agent', () => {
           regenerate: opts.mode === 'regenerate',
           customModelId: opts.customModelId,
           model: opts.model,
+          backendKind: opts.backendKind,
           turnIndex: opts.turnIndex,
           createdAt: startedAt
         }
@@ -415,7 +418,7 @@ export const useAgentStore = defineStore('agent', () => {
    */
   async function sendMessage(
     parts: MessagePart[],
-    opts?: { model?: string; customModelId?: string }
+    opts?: { model?: string; customModelId?: string; backendKind?: 'filesystem' | 'shell' }
   ): Promise<void> {
     const conv = await ensureConversation()
     const content = displayText(parts)
@@ -449,6 +452,7 @@ export const useAgentStore = defineStore('agent', () => {
       mode: 'append',
       customModelId: opts?.customModelId,
       model: opts?.model,
+      backendKind: opts?.backendKind,
       turnIndex: selectedMessages.value.filter((m) => m.role === 'user').length
     })
   }
@@ -458,7 +462,11 @@ export const useAgentStore = defineStore('agent', () => {
    * @param opts.model 生成所用模型
    * @param opts.customModelId 自定义模型 id
    */
-  async function regenerate(opts?: { model?: string; customModelId?: string }): Promise<void> {
+  async function regenerate(opts?: {
+    model?: string
+    customModelId?: string
+    backendKind?: 'filesystem' | 'shell'
+  }): Promise<void> {
     if (isStreaming.value) return
     const conv = currentConversation.value
     if (!conv) return
@@ -483,6 +491,7 @@ export const useAgentStore = defineStore('agent', () => {
       mode: 'regenerate',
       customModelId: opts?.customModelId,
       model: opts?.model,
+      backendKind: opts?.backendKind,
       turnIndex: selectedMessages.value.filter((m) => m.role === 'user').length
     })
   }

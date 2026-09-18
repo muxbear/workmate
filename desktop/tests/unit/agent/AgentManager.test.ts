@@ -16,6 +16,9 @@ vi.mock('deepagents', () => ({
     createDeepAgentMock(config)
     return { id: 'mock-agent', dispose: vi.fn().mockResolvedValue(undefined) }
   },
+  FilesystemBackend: class {
+    constructor(public opts: unknown) {}
+  },
   LocalShellBackend: class {
     constructor(public opts: unknown) {}
   },

@@ -1,4 +1,4 @@
-import { createDeepAgent, LocalShellBackend, StoreBackend } from 'deepagents'
+import { createDeepAgent, FilesystemBackend, LocalShellBackend, StoreBackend } from 'deepagents'
 import type { SubAgent, DeepAgent } from 'deepagents'
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
@@ -10,6 +10,18 @@ import type { ChatModel } from './ModelFactory'
 /** 云端 PostgreSQL 连接串（每次读取，测试可动态设置；为空时云端模式回退本地记忆） */
 function getCloudPostgresConnString(): string {
   return process.env.CLOUD_POSTGRES_CONN_STRING ?? ''
+}
+
+/**
+ * 主智能体后端类型：
+ * - filesystem：FilesystemBackend，仅文件读写（没有 execute 工具）
+ * - shell：LocalShellBackend，文件读写 + 本地 shell 执行
+ */
+export type BackendKind = 'filesystem' | 'shell'
+
+/** 归一化 backend_kind（渲染层不可信：非法值返回 undefined，走默认 shell 后端） */
+export function normalizeBackendKind(value: unknown): BackendKind | undefined {
+  return value === 'filesystem' || value === 'shell' ? value : undefined
 }
 
 /**
@@ -27,12 +39,18 @@ function createBackend(mode: WorkMode, defaultWorkspaceDir: string) {
     return (runtime: {
       configurable?: Record<string, unknown>
       config?: { configurable?: Record<string, unknown> }
-    }): LocalShellBackend => {
+    }): FilesystemBackend | LocalShellBackend => {
       const dir = String(
         runtime.configurable?.workspace_dir ??
           runtime.config?.configurable?.workspace_dir ??
           defaultWorkspaceDir
       )
+      // backend_kind：由「新建任务」页分类决定（主进程白名单校验后经 configurable 注入）
+      // filesystem = 仅文件读写；缺省 / shell = 文件读写 + 本地 shell 执行（保持既有默认行为）
+      const kind = normalizeBackendKind(
+        runtime.configurable?.backend_kind ?? runtime.config?.configurable?.backend_kind
+      )
+      if (kind === 'filesystem') return new FilesystemBackend({ rootDir: dir, virtualMode: true })
       return new LocalShellBackend({ rootDir: dir, virtualMode: true, inheritEnv: true })
     }
   }

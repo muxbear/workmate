@@ -8,6 +8,7 @@ import {
   RemoveMessage
 } from '@langchain/core/messages'
 import type { DeepAgent } from 'deepagents'
+import type { BackendKind } from './AgentBuilder'
 import type { RawConversationMessage } from './ConversationStore'
 import type { DocArtifactFile, AgentArtifactMeta } from '../../preload/index.d'
 import { randomUUID } from 'crypto'
@@ -34,6 +35,8 @@ export interface AgentRunConfig {
   workspace?: WorkspaceBinding | null
   /** 自定义模型 id（进 configurable，模型覆盖中间件读取；缺省用默认模型） */
   modelOverride?: string
+  /** 主智能体后端：filesystem=仅文件读写；shell=文件读写 + 本地 shell（缺省走 shell） */
+  backendKind?: BackendKind
 }
 
 /** 会话消息转 LangChain 消息（带 DB/checkpoint id，addMessages reducer 按 id 去重防重复累积） */
@@ -146,7 +149,9 @@ export async function invokeSendMessage(
         // workspace_dir 进入 configurable：backend 工厂运行时据此创建 LocalShellBackend
         ...(config.workspace_dir ? { workspace_dir: config.workspace_dir } : {}),
         // model_override 进入 configurable：模型覆盖中间件运行期替换模型（只传 id，凭据不进 checkpoint）
-        ...(config.modelOverride ? { model_override: config.modelOverride } : {})
+        ...(config.modelOverride ? { model_override: config.modelOverride } : {}),
+        // backend_kind 进入 configurable：backend 工厂运行时据此创建 FilesystemBackend / LocalShellBackend
+        ...(config.backendKind ? { backend_kind: config.backendKind } : {})
       },
       // workspace 绑定写入 checkpoint metadata（langgraph 持久化，会话列表据此分组）
       ...(config.workspace ? { metadata: { workspace: config.workspace } } : {})

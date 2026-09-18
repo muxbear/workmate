@@ -104,6 +104,25 @@ describe('invokeSendMessage（configurable 注入）', () => {
     expect(config.configurable.workspace_dir).toBe('/ws')
     expect(config.configurable.model_override).toBe('m1')
   })
+
+  it('SVC-04: backendKind 注入 configurable.backend_kind（缺省不注入）', async () => {
+    const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
+    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
+      thread_id: 't1',
+      user_id: 'u1',
+      backendKind: 'filesystem'
+    })
+    const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
+    expect(config.configurable.backend_kind).toBe('filesystem')
+
+    const noKind = vi.fn().mockResolvedValue(createEmptyStream())
+    await invokeSendMessage([], createFakeWin(), createFakeAgent(noKind), {
+      thread_id: 't1',
+      user_id: 'u1'
+    })
+    const noKindConfig = noKind.mock.calls[0][1] as { configurable: Record<string, unknown> }
+    expect('backend_kind' in noKindConfig.configurable).toBe(false)
+  })
 })
 
 describe('toLangChainMessages（rawContent 透传）', () => {

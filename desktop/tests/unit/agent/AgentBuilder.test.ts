@@ -10,6 +10,9 @@ vi.mock('deepagents', () => ({
     createDeepAgentMock(config)
     return { id: 'mock-agent' }
   },
+  FilesystemBackend: class {
+    constructor(public opts: unknown) {}
+  },
   LocalShellBackend: class {
     constructor(public opts: unknown) {}
   },
@@ -85,6 +88,25 @@ describe('AgentBuilder', () => {
     // runtime 仅 config.configurable 提供 workspace_dir 也生效
     const viaConfig = factory({ config: { configurable: { workspace_dir: '/cfg/dir' } } })
     expect(viaConfig.opts.rootDir).toBe('/cfg/dir')
+  })
+
+  it('AG-08: backend_kind 选择后端类型（filesystem / shell，非法值回退 shell）', async () => {
+    await createAgentBuilder('local', workDir, checkpointPath, storePath).setModel('m').build()
+    const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
+    type Factory = (r: unknown) => { constructor: { name: string }; opts: Record<string, unknown> }
+    const factory = config.backend as unknown as Factory
+    const office = factory({ configurable: { workspace_dir: workDir, backend_kind: 'filesystem' } })
+    expect(office.constructor.name).toBe('FilesystemBackend')
+    expect(office.opts.rootDir).toBe(workDir)
+    expect(office.opts.virtualMode).toBe(true)
+    expect(office.opts.inheritEnv).toBeUndefined()
+    const dev = factory({ configurable: { workspace_dir: workDir, backend_kind: 'shell' } })
+    expect(dev.constructor.name).toBe('LocalShellBackend')
+    expect(dev.opts.inheritEnv).toBe(true)
+    const fallback = factory({
+      configurable: { workspace_dir: workDir, backend_kind: 'shell; rm -rf /' }
+    })
+    expect(fallback.constructor.name).toBe('LocalShellBackend')
   })
 
   it('AG-06: local checkpointer 路径为数据库文件而非工作目录（与业务库共用 ke-work.db）', async () => {

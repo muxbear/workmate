@@ -389,7 +389,8 @@ const regenerateLast = (): void => {
   atBottom.value = true
   agentStore.regenerate({
     model: model.value,
-    customModelId: selectedCustomId.value ?? undefined
+    customModelId: selectedCustomId.value ?? undefined,
+    backendKind: CATEGORY_BACKEND[category.value] ?? 'filesystem'
   })
 }
 
@@ -432,6 +433,12 @@ const categories = [
   { key: 'work', label: '日常办公', icon: '☀️' },
   { key: 'code', label: '代码开发', icon: '</>' }
 ]
+
+/** 分类 → 主智能体 backend：日常办公=仅文件读写（无 shell），代码开发=文件读写 + 本地 shell */
+const CATEGORY_BACKEND: Record<string, 'filesystem' | 'shell'> = {
+  work: 'filesystem',
+  code: 'shell'
+}
 
 const quickChips = [
   { icon: 'doc', label: '文档处理' },
@@ -479,7 +486,8 @@ const sendMessage = async (payload: PromptPayload): Promise<void> => {
   agentStore
     .sendMessage(payload.parts, {
       model: payload.model,
-      customModelId: payload.customModelId
+      customModelId: payload.customModelId,
+      backendKind: CATEGORY_BACKEND[category.value] ?? 'filesystem'
     })
     .catch((err: unknown) => {
       console.error('[NewTaskPage] sendMessage failed:', err)
