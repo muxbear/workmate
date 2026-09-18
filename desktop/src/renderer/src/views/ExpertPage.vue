@@ -13,41 +13,6 @@ const expertFilter = ref('全部')
 const sort = ref<'综合' | '最新'>('综合')
 const search = ref('')
 
-const featuredScenes = [
-  {
-    id: 'content',
-    label: '内容创作',
-    color: 'linear-gradient(135deg,#f59e0b,#d97706)',
-    bg: 'rgba(245,158,11,0.08)',
-    border: 'rgba(245,158,11,0.2)',
-    items: ['内容创作专家团队', '内容创作专家', '小红书创作专家']
-  },
-  {
-    id: 'invest',
-    label: '投资分析',
-    color: 'linear-gradient(135deg,#0891b2,#0e7490)',
-    bg: 'rgba(8,145,178,0.08)',
-    border: 'rgba(8,145,178,0.2)',
-    items: ['分众分析图团队', '股权投资研究专家', '腾讯投研配置策略']
-  },
-  {
-    id: 'legal',
-    label: '法律查查',
-    color: 'linear-gradient(135deg,#6366f1,#4f46e5)',
-    bg: 'rgba(99,102,241,0.08)',
-    border: 'rgba(99,102,241,0.2)',
-    items: ['深海律法专家团队', '合同审查专家', '财务合同专家']
-  },
-  {
-    id: 'sme',
-    label: '小微企业',
-    color: 'linear-gradient(135deg,#10b981,#059669)',
-    bg: 'rgba(16,185,129,0.08)',
-    border: 'rgba(16,185,129,0.2)',
-    items: ['小微企业经营顾问', '财税合规专家', '企业增长策略师']
-  }
-]
-
 const expertFilters = ['全部', 'SPC', 'AI工具专家', '产品设计', '技术研发', '创业投资', '法律财税']
 
 const filteredExperts = computed(() =>
@@ -128,42 +93,6 @@ async function handleSync(): Promise<void> {
     <div v-if="expertSync.error" class="sync-error">{{ expertSync.error }}</div>
 
     <div class="page-body">
-      <section class="scene-section">
-        <h2 class="sec-title">精选场景</h2>
-        <div class="scene-grid">
-          <div
-            v-for="scene in featuredScenes"
-            :key="scene.id"
-            class="scene-card"
-            :style="{ background: scene.bg, borderColor: scene.border }"
-          >
-            <div class="scene-card-head">
-              <div class="scene-card-icon" :style="{ background: scene.color }">
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="white"
-                  stroke-width="2"
-                >
-                  <path
-                    d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2z"
-                  />
-                </svg>
-              </div>
-              <span class="scene-card-label">{{ scene.label }}</span>
-            </div>
-            <div class="scene-items">
-              <div v-for="item in scene.items" :key="item" class="scene-item">
-                <div class="scene-item-dot" :style="{ background: scene.color }"></div>
-                <span>{{ item }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section>
         <div class="sec-header">
           <h2 class="sec-title">专家 · 专家园</h2>
@@ -379,79 +308,6 @@ async function handleSync(): Promise<void> {
   font-weight: 600;
 }
 
-.scene-section {
-  margin-bottom: 24px;
-}
-
-.scene-section .sec-title {
-  margin-bottom: 12px;
-}
-
-.scene-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.scene-card {
-  border-radius: 12px;
-  padding: 14px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: box-shadow 0.15s;
-}
-
-.scene-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-}
-
-.scene-card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.scene-card-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.scene-card-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-.scene-items {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.scene-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--kw-color-text-secondary);
-}
-
-.scene-item-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
 .filter-chips {
   display: flex;
   gap: 6px;
@@ -639,7 +495,6 @@ async function handleSync(): Promise<void> {
 }
 
 @media (max-width: 1200px) {
-  .scene-grid,
   .expert-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -654,7 +509,6 @@ async function handleSync(): Promise<void> {
     padding: 16px;
   }
 
-  .scene-grid,
   .expert-grid {
     grid-template-columns: 1fr;
   }
