@@ -1,1410 +1,1155 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+/**
+ * 定时任务页面（对齐桌面版「自动化」菜单）
+ *
+ * 两个页签：「定时任务」展示我的任务与任务模版，「运行记录」展示执行历史与本周统计。
+ */
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Pencil, Pause, Play, Plus, RefreshCw, Search, Trash2, X, Zap } from 'lucide-vue-next'
+import AutomationTaskDialog from '@/components/automation/AutomationTaskDialog.vue'
+import { useAutomationStore } from '@/stores/automation'
 import {
-  Play, Pause, Trash2, Plus, RefreshCw, Clock, CheckCircle2,
-  XCircle, AlertCircle, ChevronDown, ChevronRight, Search,
-  Filter, Calendar, Zap, Bot, Wrench, Edit3, Copy, Terminal,
-  Activity, TrendingUp, X, Info,
-} from 'lucide-vue-next'
-import { useScheduledTaskStore } from '@/stores/scheduledTask'
-import type { CronTask, RunRecord, TaskStatus, RunStatus, TargetType, CreateTaskRequest } from '@/types/scheduledTask'
-import {
-  TASK_STATUS_META, RUN_STATUS_META, TARGET_TYPE_LABELS,
-  TARGET_TYPE_COLORS, CRON_PRESETS,
-} from '@/types/scheduledTask'
+  AUTOMATION_TEMPLATES,
+  RUN_STATUS_META,
+  RUN_TRIGGER_LABEL,
+  TASK_STATUS_META,
+} from '@/types/automation'
+import type { AutomationRun, AutomationTask } from '@/types/automation'
 
-const store = useScheduledTaskStore()
+type Tab = 'tasks' | 'logs'
 
-/* ---- Local state ---- */
-const showCreate = ref(false)
-const selectedRun = ref<RunRecord | null>(null)
+const automation = useAutomationStore()
+
+const tab = ref<Tab>('tasks')
 const refreshing = ref(false)
-const currentTime = ref(new Date())
+const loadingMore = ref(false)
+const hasMoreRuns = ref(true)
+const showDialog = ref(false)
+const editingTask = ref<AutomationTask | null>(null)
+const runDetail = ref<AutomationRun | null>(null)
+const keyword = ref('')
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-let clockTimer: ReturnType<typeof setInterval> | null = null
-
-/* ---- Create form ---- */
-const form = ref<CreateTaskRequest>({
-  name: '', description: '', cron: '0 * * * *',
-  cronLabel: '每小时', target: '', targetType: 'agent', tags: '',
+/** 任务列表：按名称 / 提示词过滤 */
+const myTasks = computed(() => {
+  const text = keyword.value.trim().toLowerCase()
+  if (!text) return automation.tasks
+  return automation.tasks.filter(
+    (task) =>
+      task.title.toLowerCase().includes(text) || task.promptText.toLowerCase().includes(text),
+  )
 })
 
-/* ---- Helpers ---- */
-function targetIcon(type: TargetType) {
-  const map: Record<TargetType, typeof Bot> = { agent: Bot, skill: Zap, tool: Wrench, prompt: Terminal }
-  return map[type]
+/** 已添加的模版 id 集合，模版卡片据此显示「已添加」 */
+const addedTemplateIds = computed(
+  () => new Set(automation.tasks.map((task) => task.templateId).filter(Boolean) as string[]),
+)
+
+/** 运行记录展示行 */
+const runRows = computed(() =>
+  automation.runs.map((run) => {
+    const meta = RUN_STATUS_META[run.status] ?? RUN_STATUS_META.running
+    return {
+      id: run.id,
+      taskId: run.taskId,
+      name: automation.taskNameById[run.taskId] ?? '已删除的任务',
+      status: run.status,
+      statusLabel: meta.label,
+      color: meta.color,
+      trigger: RUN_TRIGGER_LABEL[run.trigger] ?? '定时触发',
+      time: formatRunTime(run.startedAt),
+      duration: formatDuration(run.durationMs),
+      reason: run.errorMessage ?? '',
+    }
+  }),
+)
+
+/** 本周统计卡片 */
+const statsCards = computed(() => {
+  const current = automation.stats
+  const total = current?.total ?? 0
+  const success = current?.success ?? 0
+  const failed = current?.failed ?? 0
+  const skipped = current?.skipped ?? 0
+  const rate = total > 0 ? Math.round((success / total) * 1000) / 10 : 0
+  return [
+    {
+      label: '本周运行次数',
+      value: String(total),
+      sub: '成功 ' + success + ' 次 / 失败 ' + failed + ' 次',
+      color: '#22d3ee',
+    },
+    {
+      label: '成功率',
+      value: rate + '%',
+      sub: total > 0 ? '按全部运行统计' : '暂无数据',
+      color: '#6ee7b7',
+    },
+    {
+      label: '平均耗时',
+      value: formatDuration(current?.avgDurationMs ?? null),
+      sub: skipped > 0 ? '跳过 ' + skipped + ' 次' : '按已完成运行统计',
+      color: '#fbbf24',
+    },
+  ]
+})
+
+/** 时间文案：今天 08:00 / 昨天 20:30 / 9月18日 08:00 */
+function formatRunTime(ts: number | null): string {
+  if (ts == null) return '-'
+  const date = new Date(ts)
+  const now = new Date()
+  const hh = String(date.getHours()).padStart(2, '0')
+  const mm = String(date.getMinutes()).padStart(2, '0')
+  if (date.toDateString() === now.toDateString()) return '今天 ' + hh + ':' + mm
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return '昨天 ' + hh + ':' + mm
+  return String(date.getMonth() + 1) + '月' + date.getDate() + '日 ' + hh + ':' + mm
 }
 
-function targetColor(type: TargetType) {
-  return TARGET_TYPE_COLORS[type]
+/** 耗时文案 */
+function formatDuration(ms: number | null): string {
+  if (ms == null) return '-'
+  if (ms < 1000) return ms + 'ms'
+  return (ms / 1000).toFixed(1) + 's'
 }
 
-function statusClass(status: RunStatus) {
-  return RUN_STATUS_META[status].color
+/** 任务排期文案 */
+function formatNextRun(task: AutomationTask): string {
+  if (!task.enabled) return '已暂停'
+  if (task.status === 'expired') return '已过期'
+  if (task.status === 'finished') return '已完成'
+  if (task.nextRunAt == null) return '未排期'
+  return '下次 ' + formatRunTime(task.nextRunAt)
 }
 
-function runIcon(status: RunStatus) {
-  const map: Record<string, typeof CheckCircle2> = {
-    success: CheckCircle2, failed: XCircle, running: Activity, skipped: AlertCircle,
+/** 任务状态元信息（暂停优先展示） */
+function taskStatusKey(task: AutomationTask): keyof typeof TASK_STATUS_META {
+  if (!task.enabled) return 'paused'
+  if (task.status === 'expired') return 'expired'
+  if (task.status === 'finished') return 'finished'
+  return 'enabled'
+}
+
+/** 产物文案（后端 artifacts 条目） */
+function artifactLabel(item: Record<string, unknown>): string {
+  const name = typeof item.name === 'string' ? item.name : ''
+  const path = typeof item.path === 'string' ? item.path : ''
+  return name || path || '未命名产物'
+}
+
+async function loadAll(): Promise<void> {
+  try {
+    await automation.loadTasks()
+    await Promise.all([automation.loadRuns({ limit: 50 }), automation.loadStats()])
+    hasMoreRuns.value = automation.runs.length >= 50
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载定时任务失败')
   }
-  return map[status]
 }
 
-function successRateColor(rate: number) {
-  if (rate >= 95) return '#10B981'
-  if (rate >= 80) return '#F59E0B'
-  return '#EF4444'
-}
-
-/* ---- Actions ---- */
-async function handleRefresh() {
+async function handleRefresh(): Promise<void> {
+  if (refreshing.value) return
   refreshing.value = true
-  await store.fetchAll()
-  setTimeout(() => { refreshing.value = false }, 500)
-}
-
-function openCreate() {
-  form.value = { name: '', description: '', cron: '0 * * * *', cronLabel: '每小时', target: '', targetType: 'agent', tags: '' }
-  showCreate.value = true
-}
-
-async function handleCreate() {
-  if (!form.value.name.trim() || !form.value.target.trim()) return
   try {
-    await store.createTask({ ...form.value })
-    ElMessage.success('定时任务已创建')
-    showCreate.value = false
-  } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '创建失败')
+    await loadAll()
+  } finally {
+    setTimeout(() => (refreshing.value = false), 400)
   }
 }
 
-function handlePreset(preset: { label: string; value: string }) {
-  form.value.cron = preset.value
-  form.value.cronLabel = preset.label
+function openCreate(): void {
+  editingTask.value = null
+  showDialog.value = true
 }
 
-async function handleToggle(id: string) {
+function openEdit(task: AutomationTask): void {
+  editingTask.value = task
+  showDialog.value = true
+}
+
+function closeDialog(): void {
+  showDialog.value = false
+  editingTask.value = null
+}
+
+async function handleDialogSaved(): Promise<void> {
+  closeDialog()
+}
+
+/** 模版快捷添加：落库并标记为模版来源，便于回显「已添加」 */
+async function addTemplate(templateId: number): Promise<void> {
+  const template = AUTOMATION_TEMPLATES.find((item) => item.id === templateId)
+  if (!template || addedTemplateIds.value.has(String(template.id))) return
   try {
-    await store.toggleTaskStatus(id)
-  } catch (err: unknown) {
+    await automation.createTask({
+      title: template.title,
+      promptText: template.desc,
+      promptParts: [{ type: 'text', text: template.desc }],
+      icon: template.icon,
+      source: 'template',
+      templateId: String(template.id),
+      schedule: template.schedule,
+      model: null,
+      customModelId: null,
+      providerId: null,
+      modelId: null,
+      expertId: null,
+      expertName: null,
+      contextMode: 'default',
+      skillIds: [],
+      kbIds: [],
+      workspaceId: null,
+      workspaceName: null,
+      allowNetwork: false,
+      allowShell: false,
+      fullAccess: false,
+    })
+    await automation.loadStats()
+    ElMessage.success('已添加「' + template.title + '」')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '添加失败')
+  }
+}
+
+async function handleToggle(task: AutomationTask): Promise<void> {
+  try {
+    await automation.setEnabled(task.id, !task.enabled)
+  } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '操作失败')
   }
 }
 
-async function handleClone(id: string) {
+async function handleRunNow(task: AutomationTask): Promise<void> {
   try {
-    await store.cloneTask(id)
-    ElMessage.success('已复制')
-  } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '复制失败')
+    await automation.runNow(task.id)
+    ElMessage.success('已开始运行「' + task.title + '」')
+    setTimeout(() => {
+      void automation.loadRuns({ limit: 50 })
+    }, 1500)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '运行失败')
   }
 }
 
-async function handleDelete(id: string) {
+async function handleDelete(task: AutomationTask): Promise<void> {
   try {
-    await ElMessageBox.confirm('确定要删除此定时任务吗？', '确认删除', {
-      confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning',
-    })
-    await store.deleteTask(id)
+    await ElMessageBox.confirm(
+      '确定要删除「' + task.title + '」吗？删除后无法恢复。',
+      '删除自动化任务',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await automation.deleteTask(task.id)
     ElMessage.success('已删除')
-  } catch (err: unknown) {
-    if (err instanceof Error && err.message !== 'cancel') {
-      ElMessage.error(err.message)
-    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '删除失败')
   }
 }
 
-/* ---- Lifecycle ---- */
+async function loadMoreRuns(): Promise<void> {
+  if (loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const got = await automation.loadMoreRuns(50)
+    if (got < 50) hasMoreRuns.value = false
+  } catch {
+    hasMoreRuns.value = false
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+async function openRunDetail(id: string): Promise<void> {
+  try {
+    runDetail.value = await automation.loadRunDetail(id)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载运行结果失败')
+  }
+}
+
+async function retryRun(taskId: string): Promise<void> {
+  try {
+    await automation.runNow(taskId)
+    ElMessage.success('已重新触发运行')
+    setTimeout(() => {
+      void automation.loadRuns({ limit: 50 })
+    }, 1500)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '重试失败')
+  }
+}
+
 onMounted(() => {
-  store.fetchAll()
-  clockTimer = setInterval(() => { currentTime.value = new Date() }, 1000)
+  void loadAll()
+  // 后台调度没有推送通道，运行中时每 5 秒刷新一次记录与统计。
+  refreshTimer = setInterval(() => {
+    if (automation.runs.some((run) => run.status === 'running')) {
+      void Promise.all([automation.loadRuns({ limit: 50 }), automation.loadStats()])
+    }
+  }, 5000)
 })
 
 onUnmounted(() => {
-  if (clockTimer) clearInterval(clockTimer)
+  if (refreshTimer) clearInterval(refreshTimer)
 })
 </script>
-
 <template>
-  <div class="scheduled-tasks-page">
-    <!-- ═══ Page Header ═══ -->
-    <div class="page-header">
-      <div class="header-left">
-        <h1 class="page-title">定时任务</h1>
-        <p class="page-subtitle">唤醒和重复运行 · 周期性自动化执行</p>
+  <div class="auto-page">
+    <div class="auto-header">
+      <div>
+        <h1 class="auto-title">定时任务</h1>
+        <p class="auto-subtitle">按计划唤醒智能体，自动完成重复工作</p>
       </div>
-      <div class="header-right">
-        <button class="btn-secondary" @click="handleRefresh">
+      <div class="auto-header-actions">
+        <button class="auto-btn auto-btn--ghost" @click="handleRefresh">
           <RefreshCw :size="14" :class="{ spinning: refreshing }" />
           刷新
         </button>
-        <button class="btn-primary" @click="openCreate">
-          <Plus :size="16" />
+        <button class="auto-btn auto-btn--primary" @click="openCreate">
+          <Plus :size="15" />
           新建任务
         </button>
       </div>
     </div>
 
-    <!-- ═══ Status Bar ═══ -->
-    <div class="status-grid">
-      <div class="status-card status-card--green">
-        <p class="status-card-label">已启用</p>
-        <div class="status-card-row">
-          <span class="status-dot status-dot--green" />
-          <span class="status-card-value status-card-value--green">是</span>
-        </div>
-        <p class="status-card-sub">调度器运行中</p>
-      </div>
+    <p v-if="automation.error" class="auto-error">{{ automation.error }}</p>
 
-      <div class="status-card status-card--default">
-        <p class="status-card-label">任务总数</p>
-        <p class="status-card-big">{{ store.taskStats.total }}</p>
-        <div class="status-card-tags">
-          <span class="tag tag--green">{{ store.taskStats.active }} 运行中</span>
-          <span class="tag tag--amber">{{ store.taskStats.paused }} 已暂停</span>
-          <span class="tag tag--red">{{ store.taskStats.error }} 异常</span>
-        </div>
-      </div>
-
-      <div class="status-card status-card--indigo">
-        <p class="status-card-label">下次唤醒</p>
-        <p class="status-card-value status-card-value--indigo">
-          {{ store.nextTask?.nextRun ?? '不适用' }}
-        </p>
-        <p v-if="store.nextTask" class="status-card-sub">{{ store.nextTask.name }}</p>
-      </div>
-
-      <div class="status-card status-card--purple">
-        <p class="status-card-label">今日执行次数</p>
-        <p class="status-card-big">{{ store.runStats.total }}</p>
-        <div class="status-card-tags">
-          <span class="tag tag--green">{{ store.runStats.success }} 成功</span>
-          <span class="tag tag--red">{{ store.runStats.failed }} 失败</span>
-        </div>
-      </div>
+    <div class="auto-tabs">
+      <button
+        v-for="item in [
+          ['tasks', '定时任务'],
+          ['logs', '运行记录'],
+        ] as const"
+        :key="item[0]"
+        class="auto-tab"
+        :class="{ 'auto-tab--active': tab === item[0] }"
+        @click="tab = item[0]"
+      >
+        {{ item[1] }}
+      </button>
     </div>
 
-    <!-- ═══ Task List ═══ -->
-    <div class="section-card">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">任务列表</h2>
-          <p class="section-desc">所有已配置的定时任务</p>
-        </div>
-        <span class="section-count">显示 {{ store.filteredTasks.length }} / 共 {{ store.tasks.length }}</span>
-      </div>
-
-      <!-- Filters -->
-      <div class="section-filters">
-        <div class="search-wrap">
-          <Search :size="14" class="search-icon" />
-          <input
-            v-model="store.taskSearch"
-            type="text"
-            placeholder="搜索任务名称、目标…"
-            class="search-input"
-          />
-        </div>
-        <div class="filter-tabs">
-          <button
-            v-for="f in (['all', 'active', 'paused', 'error'] as const)"
-            :key="f"
-            class="filter-tab"
-            :class="{ active: store.taskFilter === f }"
-            @click="store.taskFilter = f"
-          >
-            {{ f === 'all' ? '全部' : TASK_STATUS_META[f].label }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Desktop table header -->
-      <div class="task-table-header">
-        <span class="col-name">任务</span>
-        <span class="col-cron">Cron 周期</span>
-        <span class="col-last">上次执行</span>
-        <span class="col-next">下次执行</span>
-        <span class="col-rate">成功率</span>
-        <span class="col-actions">操作</span>
-      </div>
-
-      <!-- Empty state -->
-      <div v-if="store.filteredTasks.length === 0" class="empty-state">
-        <Calendar :size="40" class="empty-icon" />
-        <p class="empty-title">暂无定时任务</p>
-        <p class="empty-desc">尚未创建任何任务，或筛选条件无匹配结果</p>
-        <button class="btn-primary" @click="openCreate">
-          <Plus :size="16" />
-          新建任务
+    <!-- 定时任务 -->
+    <div v-if="tab === 'tasks'" class="auto-body">
+      <div v-if="automation.tasks.length === 0" class="auto-empty">
+        <div class="auto-empty-icon">⏰</div>
+        <p class="auto-empty-title">开启你的第一个自动化任务吧</p>
+        <p class="auto-empty-desc">从模版选择或自定义定时任务，让智能体自动帮你完成重复工作</p>
+        <button class="auto-btn auto-btn--primary" @click="openCreate">
+          <Plus :size="15" />
+          添加自动化
         </button>
       </div>
 
-      <!-- Task rows -->
-      <div class="task-rows">
-        <div v-for="task in store.filteredTasks" :key="task.id" class="task-row-wrap">
-          <div class="task-row" @click="store.toggleExpand(task.id)">
-            <div class="task-name-cell">
-              <button class="expand-btn" @click.stop="store.toggleExpand(task.id)">
-                <ChevronDown v-if="store.expandedTaskId === task.id" :size="14" />
-                <ChevronRight v-else :size="14" />
-              </button>
-              <div class="task-name-content">
-                <div class="task-name-row">
-                  <span class="task-name">{{ task.name }}</span>
-                  <span
-                    class="status-badge"
-                    :style="{ color: TASK_STATUS_META[task.status].color, background: TASK_STATUS_META[task.status].bg }"
-                  >
-                    <span class="status-badge-dot" :style="{ background: TASK_STATUS_META[task.status].dot }" />
-                    {{ TASK_STATUS_META[task.status].label }}
-                  </span>
-                </div>
-                <div class="task-target-row">
-                  <component :is="targetIcon(task.targetType)" :size="12" :color="targetColor(task.targetType)" />
-                  <span class="task-target">{{ task.target }}</span>
-                  <span v-for="tag in task.tags" :key="tag" class="task-tag">{{ tag }}</span>
-                </div>
-              </div>
+      <template v-else>
+        <div class="auto-section-head">
+          <h2 class="auto-section-title">
+            我的任务 <span class="auto-count">{{ automation.tasks.length }} 个</span>
+          </h2>
+          <div class="auto-section-tools">
+            <div class="auto-search">
+              <Search :size="13" />
+              <input v-model="keyword" type="text" placeholder="搜索任务名称或提示词" />
             </div>
-
-            <div class="task-cron-cell">
-              <p class="cron-expr">{{ task.cron }}</p>
-              <p class="cron-label">{{ task.cronLabel }}</p>
-            </div>
-
-            <div class="task-cell task-last-cell">{{ task.lastRun ?? '从未执行' }}</div>
-            <div class="task-cell task-next-cell">{{ task.nextRun }}</div>
-
-            <div class="task-rate-cell">
-              <div class="rate-top">
-                <span class="rate-value" :style="{ color: successRateColor(task.successRate) }">
-                  {{ task.successRate }}%
-                </span>
-                <span class="rate-count">{{ task.totalRuns }}次</span>
-              </div>
-              <div class="rate-bar-track">
-                <div
-                  class="rate-bar-fill"
-                  :style="{ width: `${task.successRate}%`, background: successRateColor(task.successRate) }"
-                />
-              </div>
-            </div>
-
-            <div class="task-actions-cell" @click.stop>
-              <button :title="task.status === 'active' ? '暂停' : '启用'" class="action-btn" @click="handleToggle(task.id)">
-                <Pause v-if="task.status === 'active'" :size="14" />
-                <Play v-else :size="14" />
-              </button>
-              <button title="编辑" class="action-btn">
-                <Edit3 :size="14" />
-              </button>
-              <button title="复制" class="action-btn" @click="handleClone(task.id)">
-                <Copy :size="14" />
-              </button>
-              <button title="删除" class="action-btn action-btn--danger" @click="handleDelete(task.id)">
-                <Trash2 :size="14" />
-              </button>
-            </div>
-          </div>
-
-          <!-- Expanded detail -->
-          <div v-if="store.expandedTaskId === task.id" class="task-detail">
-            <div class="detail-grid">
-              <div>
-                <p class="detail-label">任务描述</p>
-                <p class="detail-value">{{ task.description || '无描述' }}</p>
-              </div>
-              <div>
-                <p class="detail-label">目标类型</p>
-                <div class="detail-target">
-                  <component :is="targetIcon(task.targetType)" :size="14" :color="targetColor(task.targetType)" />
-                  <span>{{ TARGET_TYPE_LABELS[task.targetType] }}</span>
-                </div>
-              </div>
-              <div>
-                <p class="detail-label">平均耗时</p>
-                <p class="detail-value">{{ task.avgDuration }}</p>
-              </div>
-              <div>
-                <p class="detail-label">历史执行</p>
-                <p class="detail-value">{{ task.totalRuns }} 次</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ═══ Run History ═══ -->
-    <div class="section-card">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">运行历史</h2>
-          <p class="section-desc">所有任务的最近执行记录</p>
-        </div>
-        <span class="section-count">显示 {{ store.filteredRuns.length }} / 共 {{ store.runs.length }}</span>
-      </div>
-
-      <!-- Run filters -->
-      <div class="section-filters">
-        <Filter :size="14" class="filter-icon" />
-        <div class="filter-tabs">
-          <button
-            v-for="f in (['all', 'success', 'running', 'failed', 'skipped'] as const)"
-            :key="f"
-            class="filter-tab"
-            :class="{ active: store.runFilter === f }"
-            @click="store.runFilter = f"
-          >
-            {{ f === 'all' ? '全部' : RUN_STATUS_META[f].label }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Desktop table header -->
-      <div class="run-table-header">
-        <span class="col-name">任务</span>
-        <span class="col-status">状态</span>
-        <span class="col-time">开始时间</span>
-        <span class="col-dur">耗时</span>
-        <span class="col-detail">详情</span>
-      </div>
-
-      <div v-if="store.filteredRuns.length === 0" class="empty-state-sm">
-        没有匹配的运行记录。
-      </div>
-
-      <div class="run-rows">
-        <div
-          v-for="run in store.filteredRuns"
-          :key="run.id"
-          class="run-row"
-          @click="selectedRun = run"
-        >
-          <div class="run-name-cell">
-            <p class="run-task-name">{{ run.taskName }}</p>
-            <p class="run-trigger">{{ run.trigger === 'manual' ? '👆 手动触发' : '⏰ 定时触发' }}</p>
-          </div>
-          <div class="run-status-cell" :style="{ color: RUN_STATUS_META[run.status].color }">
-            <component :is="runIcon(run.status)" :size="14" :class="{ spinning: run.status === 'running' }" />
-            <span>{{ RUN_STATUS_META[run.status].label }}</span>
-          </div>
-          <span class="run-time">{{ run.startTime }}</span>
-          <span class="run-dur">{{ run.duration }}</span>
-          <button class="info-btn">
-            <Info :size="14" />
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ═══ Create Task Modal ═══ -->
-    <Teleport to="body">
-      <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
-        <div class="modal-card">
-          <div class="modal-header">
-            <div>
-              <h2 class="modal-title">新建定时任务</h2>
-              <p class="modal-desc">配置一个周期性执行的任务</p>
-            </div>
-            <button class="modal-close" @click="showCreate = false">
-              <X :size="16" />
+            <button class="auto-btn auto-btn--primary auto-btn--sm" @click="openCreate">
+              <Plus :size="13" />
+              添加自动化
             </button>
           </div>
+        </div>
 
-          <div class="modal-body">
-            <!-- Name -->
-            <div class="form-group">
-              <label class="form-label">任务名称 *</label>
-              <input v-model="form.name" placeholder="例：每日报告生成" class="form-input" />
-            </div>
+        <div v-if="myTasks.length === 0" class="auto-empty auto-empty--sm">
+          <p class="auto-empty-desc">没有匹配的任务，试试其他关键词。</p>
+        </div>
 
-            <!-- Description -->
-            <div class="form-group">
-              <label class="form-label">描述</label>
-              <textarea v-model="form.description" placeholder="简要描述任务用途…" rows="2" class="form-textarea" />
-            </div>
-
-            <!-- Cron -->
-            <div class="form-group">
-              <label class="form-label">Cron 表达式 *</label>
-              <input v-model="form.cron" placeholder="* * * * *" class="form-input form-input--mono" />
-              <div class="cron-presets">
-                <button
-                  v-for="p in CRON_PRESETS"
-                  :key="p.value"
-                  class="preset-btn"
-                  :class="{ active: form.cron === p.value }"
-                  @click="handlePreset(p)"
+        <div class="auto-grid">
+          <div v-for="task in myTasks" :key="task.id" class="auto-card">
+            <span class="auto-card-icon">{{ task.icon }}</span>
+            <div class="auto-card-main">
+              <p class="auto-card-title">{{ task.title }}</p>
+              <p class="auto-card-desc">{{ task.promptText }}</p>
+              <div class="auto-card-meta">
+                <span class="auto-meta-freq">{{ task.freqSummary }}</span>
+                <span class="auto-meta">{{ task.validitySummary }}</span>
+                <span class="auto-meta">{{ formatNextRun(task) }}</span>
+                <span v-if="task.runCount > 0" class="auto-meta">
+                  运行 {{ task.runCount }} 次 / 失败 {{ task.failCount }} 次
+                </span>
+              </div>
+              <div class="auto-card-foot">
+                <span
+                  class="auto-status"
+                  :style="{
+                    color: TASK_STATUS_META[taskStatusKey(task)].color,
+                    background: TASK_STATUS_META[taskStatusKey(task)].bg,
+                  }"
                 >
-                  {{ p.label }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Target -->
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label">目标类型</label>
-                <select v-model="form.targetType" class="form-select">
-                  <option value="agent">代理 Agent</option>
-                  <option value="skill">技能 Skill</option>
-                  <option value="tool">工具 Tool</option>
-                  <option value="prompt">提示词 Prompt</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">目标名称 *</label>
-                <input v-model="form.target" placeholder="例：main-alpha" class="form-input" />
-              </div>
-            </div>
-
-            <!-- Tags -->
-            <div class="form-group">
-              <label class="form-label">标签（逗号分隔）</label>
-              <input v-model="form.tags" placeholder="报告, 通知, 数据" class="form-input" />
-            </div>
-          </div>
-
-          <div class="modal-footer">
-            <button class="btn-cancel" @click="showCreate = false">取消</button>
-            <button
-              class="btn-primary"
-              :disabled="!form.name.trim() || !form.target.trim()"
-              @click="handleCreate"
-            >
-              创建任务
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- ═══ Run Detail Drawer ═══ -->
-    <Teleport to="body">
-      <div v-if="selectedRun" class="drawer-overlay" @click.self="selectedRun = null">
-        <div class="drawer-panel">
-          <div class="drawer-header">
-            <h3 class="drawer-title">执行详情</h3>
-            <button class="drawer-close" @click="selectedRun = null">
-              <X :size="16" />
-            </button>
-          </div>
-          <div class="drawer-body">
-            <div class="drawer-info-card">
-              <div class="drawer-info-row">
-                <span class="drawer-label">任务名称</span>
-                <span class="drawer-value">{{ selectedRun.taskName }}</span>
-              </div>
-              <div class="drawer-info-row">
-                <span class="drawer-label">触发方式</span>
-                <span class="drawer-value">{{ selectedRun.trigger === 'manual' ? '👆 手动触发' : '⏰ 定时触发' }}</span>
-              </div>
-              <div class="drawer-info-row">
-                <span class="drawer-label">开始时间</span>
-                <span class="drawer-value">{{ selectedRun.startTime }}</span>
-              </div>
-              <div class="drawer-info-row">
-                <span class="drawer-label">耗时</span>
-                <span class="drawer-value">{{ selectedRun.duration }}</span>
-              </div>
-              <div class="drawer-info-row">
-                <span class="drawer-label">状态</span>
-                <span class="drawer-value" :style="{ color: RUN_STATUS_META[selectedRun.status].color }">
-                  <component :is="runIcon(selectedRun.status)" :size="14" />
-                  {{ RUN_STATUS_META[selectedRun.status].label }}
+                  <span
+                    class="auto-status-dot"
+                    :style="{ background: TASK_STATUS_META[taskStatusKey(task)].dot }"
+                  />
+                  {{ TASK_STATUS_META[taskStatusKey(task)].label }}
                 </span>
-              </div>
-            </div>
-            <div class="drawer-output">
-              <p class="drawer-label">输出 / 日志</p>
-              <div class="drawer-code">
-                <pre>{{ selectedRun.output }}</pre>
+                <div class="auto-card-actions">
+                  <button class="auto-icon-btn" title="立即运行" @click="handleRunNow(task)">
+                    <Zap :size="13" />
+                  </button>
+                  <button
+                    class="auto-icon-btn"
+                    :title="task.enabled ? '暂停' : '继续'"
+                    @click="handleToggle(task)"
+                  >
+                    <Pause v-if="task.enabled" :size="13" />
+                    <Play v-else :size="13" />
+                  </button>
+                  <button class="auto-icon-btn" title="编辑" @click="openEdit(task)">
+                    <Pencil :size="13" />
+                  </button>
+                  <button
+                    class="auto-icon-btn auto-icon-btn--danger"
+                    title="删除"
+                    @click="handleDelete(task)"
+                  >
+                    <Trash2 :size="13" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
+      </template>
+
+      <div class="auto-section-head auto-section-head--tpl">
+        <h2 class="auto-section-title">自动化任务模版</h2>
       </div>
-    </Teleport>
+      <div class="auto-grid">
+        <div
+          v-for="template in AUTOMATION_TEMPLATES"
+          :key="template.id"
+          class="auto-card auto-card--template"
+          :class="{ 'auto-card--added': addedTemplateIds.has(String(template.id)) }"
+        >
+          <span class="auto-card-icon">{{ template.icon }}</span>
+          <div class="auto-card-main">
+            <p class="auto-card-title">{{ template.title }}</p>
+            <p class="auto-card-desc">{{ template.desc }}</p>
+            <div class="auto-card-foot">
+              <span class="auto-meta-freq">{{ template.freq }}</span>
+              <button
+                class="auto-btn auto-btn--sm"
+                :class="
+                  addedTemplateIds.has(String(template.id))
+                    ? 'auto-btn--ghost'
+                    : 'auto-btn--primary'
+                "
+                :disabled="addedTemplateIds.has(String(template.id))"
+                @click="addTemplate(template.id)"
+              >
+                {{ addedTemplateIds.has(String(template.id)) ? '✓ 已添加' : '+ 添加' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 运行记录 -->
+    <div v-else class="auto-body">
+      <div class="auto-section-head">
+        <h2 class="auto-section-title">
+          运行记录 <span class="auto-count">已加载 {{ runRows.length }} 条</span>
+        </h2>
+        <button
+          v-if="hasMoreRuns"
+          class="auto-btn auto-btn--ghost auto-btn--sm"
+          :disabled="loadingMore"
+          @click="loadMoreRuns"
+        >
+          {{ loadingMore ? '加载中…' : '加载更多' }}
+        </button>
+      </div>
+
+      <div class="auto-table">
+        <div class="auto-table-head">
+          <span>任务名称</span>
+          <span>运行时间</span>
+          <span>耗时</span>
+          <span>状态</span>
+          <span class="auto-col-right">操作</span>
+        </div>
+        <div
+          v-for="row in runRows"
+          :key="row.id"
+          class="auto-table-row"
+          @click="openRunDetail(row.id)"
+        >
+          <span class="auto-cell-name">{{ row.name }}</span>
+          <span class="auto-cell-mono">{{ row.time }}</span>
+          <span class="auto-cell-mono">{{ row.duration }}</span>
+          <div class="auto-cell-status">
+            <span class="auto-status-dot" :style="{ background: row.color }" />
+            <span :style="{ color: row.color }">{{ row.statusLabel }}</span>
+            <span class="auto-cell-trigger">{{ row.trigger }}</span>
+            <span v-if="row.reason" class="auto-cell-reason" :title="row.reason">{{
+              row.reason
+            }}</span>
+          </div>
+          <div class="auto-cell-actions" @click.stop>
+            <button class="auto-btn auto-btn--ghost auto-btn--sm" @click="openRunDetail(row.id)">
+              结果
+            </button>
+            <button
+              v-if="row.status === 'failed'"
+              class="auto-btn auto-btn--ghost auto-btn--sm"
+              @click="retryRun(row.taskId)"
+            >
+              重试
+            </button>
+          </div>
+        </div>
+        <p v-if="runRows.length === 0" class="auto-empty-desc auto-empty-desc--center">
+          暂无运行记录，创建任务并等待触发后这里会显示结果。
+        </p>
+      </div>
+
+      <div class="auto-stats">
+        <div v-for="stat in statsCards" :key="stat.label" class="auto-stat-card">
+          <p class="auto-stat-label">{{ stat.label }}</p>
+          <p class="auto-stat-value" :style="{ color: stat.color }">{{ stat.value }}</p>
+          <p class="auto-stat-sub">{{ stat.sub }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新建 / 编辑任务 -->
+    <AutomationTaskDialog
+      v-if="showDialog"
+      :task="editingTask"
+      @close="closeDialog"
+      @saved="handleDialogSaved"
+    />
+
+    <!-- 运行结果详情 -->
+    <div v-if="runDetail" class="auto-mask" @click.self="runDetail = null">
+      <div class="auto-dialog">
+        <div class="auto-dialog-head">
+          <p class="auto-dialog-title">运行结果</p>
+          <button class="auto-icon-btn" title="关闭" @click="runDetail = null">
+            <X :size="15" />
+          </button>
+        </div>
+        <div class="auto-dialog-body">
+          <div class="auto-dialog-meta">
+            <span :style="{ color: RUN_STATUS_META[runDetail.status].color }">
+              {{ RUN_STATUS_META[runDetail.status].label }}
+            </span>
+            <span>触发：{{ RUN_TRIGGER_LABEL[runDetail.trigger] }}</span>
+            <span>开始：{{ formatRunTime(runDetail.startedAt) }}</span>
+            <span>耗时：{{ formatDuration(runDetail.durationMs) }}</span>
+            <span v-if="runDetail.model">模型：{{ runDetail.model }}</span>
+          </div>
+          <p v-if="runDetail.errorMessage" class="auto-dialog-error">
+            失败原因：{{ runDetail.errorMessage }}
+          </p>
+          <pre v-if="runDetail.outputText" class="auto-dialog-output">{{
+            runDetail.outputText
+          }}</pre>
+          <p v-else-if="!runDetail.errorMessage" class="auto-empty-desc">本次运行没有输出内容。</p>
+          <div v-if="runDetail.artifacts.length > 0" class="auto-artifacts">
+            <p class="auto-artifacts-title">产出文件</p>
+            <p v-for="(item, index) in runDetail.artifacts" :key="index" class="auto-artifact">
+              {{ artifactLabel(item) }}
+            </p>
+          </div>
+        </div>
+        <div class="auto-dialog-foot">
+          <button class="auto-btn auto-btn--ghost" @click="runDetail = null">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
-
 <style scoped>
-.scheduled-tasks-page {
-  padding: 24px;
+.auto-page {
   height: 100%;
   overflow-y: auto;
+  padding: 24px;
   background: var(--surface-primary);
 }
 
-/* ---- Page Header ---- */
-.page-header {
+.auto-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 24px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
-.page-title {
-  font-size: 28px;
-  font-weight: 700;
-  background: linear-gradient(90deg, #818CF8, #A78BFA, #60A5FA);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.auto-title {
+  font-size: 26px;
+  font-weight: var(--font-weight-bold);
+  color: var(--foreground-primary);
 }
 
-.page-subtitle {
+.auto-subtitle {
   margin-top: 4px;
   font-size: var(--font-size-sm);
   color: var(--foreground-muted);
 }
 
-.header-right {
+.auto-header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.btn-secondary {
-  display: flex;
+.auto-btn {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 7px 14px;
+  border: 1px solid transparent;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border-medium);
-  background: var(--surface-card);
-  color: var(--foreground-muted);
   font-size: var(--font-size-sm);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.btn-secondary:hover {
-  background: var(--surface-secondary);
+.auto-btn--ghost {
+  border-color: var(--border-medium);
+  background: var(--surface-card);
+  color: var(--foreground-secondary);
+}
+
+.auto-btn--ghost:hover:not(:disabled) {
   color: var(--foreground-primary);
+  background: var(--surface-secondary);
 }
 
-.btn-primary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  border-radius: var(--radius-lg);
-  border: none;
-  background: #4f46e5;
+.auto-btn--primary {
+  background: var(--accent-primary);
   color: #fff;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: background 0.15s ease;
-  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
+  box-shadow: var(--shadow-button);
 }
 
-.btn-primary:hover {
-  background: #4338ca;
+.auto-btn--primary:hover:not(:disabled) {
+  background: var(--color-accent-dark);
 }
 
-.btn-primary:disabled {
-  opacity: 0.4;
+.auto-btn--sm {
+  padding: 5px 10px;
+  font-size: var(--font-size-xs);
+}
+
+.auto-btn:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
 .spinning {
-  animation: spin 1s linear infinite;
+  animation: auto-spin 1s linear infinite;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+@keyframes auto-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-/* ---- Status Bar ---- */
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.status-card {
-  border-radius: var(--radius-xl);
-  padding: 16px;
-  border: 1px solid;
-}
-
-.status-card--green {
-  border-color: rgba(16, 185, 129, 0.2);
-  background: rgba(16, 185, 129, 0.05);
-}
-
-.status-card--default {
-  border-color: var(--border-subtle);
-  background: var(--surface-card);
-}
-
-.status-card--indigo {
-  border-color: rgba(99, 102, 241, 0.2);
-  background: rgba(99, 102, 241, 0.05);
-}
-
-.status-card--purple {
-  border-color: rgba(139, 92, 246, 0.2);
-  background: rgba(139, 92, 246, 0.05);
-}
-
-.status-card-label {
+.auto-error {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: var(--radius-lg);
+  background: rgba(248, 113, 113, 0.1);
+  color: #f87171;
   font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
 }
 
-.status-card-row {
+.auto-tabs {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 18px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.status-dot--green {
-  background: #10B981;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.status-card-value {
-  font-weight: 600;
+.auto-tab {
+  position: relative;
+  padding: 8px 2px 10px;
+  border: none;
+  background: transparent;
+  color: var(--foreground-muted);
   font-size: var(--font-size-md);
+  cursor: pointer;
 }
 
-.status-card-value--green { color: #6ee7b7; }
-.status-card-value--indigo { color: #a5b4fc; }
-
-.status-card-big {
-  font-size: 28px;
-  font-weight: 700;
+.auto-tab--active {
   color: var(--foreground-primary);
-  margin-top: 8px;
+  font-weight: var(--font-weight-medium);
 }
 
-.status-card-sub {
-  margin-top: 4px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.auto-tab--active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent-primary);
 }
 
-.status-card-tags {
+.auto-body {
   display: flex;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: var(--font-size-xs);
+  flex-direction: column;
+  gap: 16px;
 }
 
-.tag--green { color: #6ee7b7; }
-.tag--amber { color: #fbbf24; }
-.tag--red { color: #f87171; }
-
-/* ---- Section Card ---- */
-.section-card {
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xl);
-  margin-bottom: 24px;
-  overflow: hidden;
-}
-
-.section-header {
+.auto-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.section-title {
-  font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--foreground-primary);
-}
-
-.section-desc {
-  margin-top: 2px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.section-count {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-/* ---- Filters ---- */
-.section-filters {
-  display: flex;
-  align-items: center;
   gap: 12px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border-subtle);
 }
 
-.search-wrap {
-  position: relative;
-  flex: 1;
-  max-width: 280px;
+.auto-section-head--tpl {
+  margin-top: 8px;
 }
 
-.search-icon {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--foreground-muted);
-}
-
-.search-input {
-  width: 100%;
-  padding: 6px 12px 6px 30px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-medium);
-  background: var(--surface-secondary);
+.auto-section-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--foreground-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  transition: border-color 0.15s ease;
 }
 
-.search-input::placeholder { color: var(--foreground-muted); }
-.search-input:focus { border-color: var(--color-accent); }
-
-.filter-icon {
-  color: var(--foreground-muted);
-  flex-shrink: 0;
-}
-
-.filter-tabs {
-  display: flex;
-  gap: 2px;
-  background: var(--surface-secondary);
-  padding: 3px;
-  border-radius: var(--radius-lg);
-}
-
-.filter-tab {
-  padding: 4px 12px;
+.auto-count {
+  margin-left: 6px;
   font-size: var(--font-size-xs);
-  border: none;
-  background: none;
-  color: var(--foreground-muted);
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.15s ease;
-}
-
-.filter-tab:hover { color: var(--foreground-primary); }
-
-.filter-tab.active {
-  background: #4f46e5;
-  color: #fff;
-}
-
-/* ---- Table Headers ---- */
-.task-table-header,
-.run-table-header {
-  display: grid;
-  gap: 16px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
   color: var(--foreground-muted);
 }
 
-.task-table-header {
-  grid-template-columns: 2fr 1.2fr 1fr 1fr 1fr auto;
-}
-
-.run-table-header {
-  grid-template-columns: 2fr 1fr 1fr 1fr auto;
-}
-
-/* ---- Task Rows ---- */
-.task-rows,
-.run-rows {
+.auto-section-tools {
   display: flex;
-  flex-direction: column;
-}
-
-.task-row-wrap {
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.task-row {
-  display: grid;
-  grid-template-columns: 2fr 1.2fr 1fr 1fr 1fr auto;
-  gap: 16px;
   align-items: center;
-  padding: 14px 20px;
-  cursor: pointer;
-  transition: background 0.1s ease;
-}
-
-.task-row:hover { background: var(--surface-secondary); }
-
-.task-name-cell {
-  display: flex;
-  align-items: flex-start;
   gap: 10px;
 }
 
-.expand-btn {
-  margin-top: 2px;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: none;
-  color: var(--foreground-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.expand-btn:hover { color: var(--foreground-primary); }
-
-.task-name-content { min-width: 0; }
-
-.task-name-row {
+.auto-search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-full);
+  background: var(--surface-card);
+  color: var(--foreground-muted);
 }
 
-.task-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+.auto-search input {
+  width: 200px;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--foreground-primary);
+  font-size: var(--font-size-xs);
+}
+
+.auto-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 56px 16px;
+  border: 1px dashed var(--border-medium);
+  border-radius: var(--radius-xl);
+  background: var(--surface-card);
+  text-align: center;
+}
+
+.auto-empty--sm {
+  padding: 28px 16px;
+}
+
+.auto-empty-icon {
+  font-size: 32px;
+}
+
+.auto-empty-title {
+  font-size: var(--font-size-md);
   color: var(--foreground-primary);
 }
 
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 8px;
-  border-radius: var(--radius-full);
+.auto-empty-desc {
+  margin: 0;
   font-size: var(--font-size-xs);
-  border: 1px solid;
+  color: var(--foreground-muted);
 }
 
-.status-badge-dot {
+.auto-empty-desc--center {
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.auto-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.auto-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--surface-card);
+  transition: border-color 0.15s ease;
+}
+
+.auto-card:hover {
+  border-color: var(--border-medium);
+}
+
+.auto-card--added {
+  opacity: 0.72;
+}
+
+.auto-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.auto-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auto-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--foreground-primary);
+}
+
+.auto-card-desc {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--foreground-muted);
+}
+
+.auto-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
+
+.auto-meta-freq {
+  color: #67e8f9;
+}
+
+.auto-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.auto-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+}
+
+.auto-status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.task-target-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.task-target {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.task-tag {
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-secondary);
-  font-size: 10px;
-  color: var(--foreground-muted);
-}
-
-.task-cron-cell {
-  display: flex;
-  flex-direction: column;
-}
-
-.cron-expr {
-  font-family: 'Courier New', monospace;
-  font-size: var(--font-size-xs);
-  color: #a5b4fc;
-}
-
-.cron-label {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.task-cell {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.task-next-cell { color: var(--foreground-secondary); }
-
-.task-rate-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.rate-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.rate-value {
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-}
-
-.rate-count {
-  font-size: 10px;
-  color: var(--foreground-muted);
-}
-
-.rate-bar-track {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface-secondary);
-  overflow: hidden;
-}
-
-.rate-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-
-.task-actions-cell {
+.auto-card-actions {
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
-.action-btn {
-  width: 28px;
-  height: 28px;
+.auto-icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  width: 26px;
+  height: 26px;
   border: none;
-  background: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--foreground-muted);
   cursor: pointer;
-  transition: all 0.15s ease;
 }
 
-.action-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
-.action-btn--danger:hover { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-
-/* ---- Task Detail (expanded) ---- */
-.task-detail {
-  border-top: 1px solid var(--border-subtle);
+.auto-icon-btn:hover {
   background: var(--surface-secondary);
-  padding: 14px 20px 14px 48px;
+  color: var(--foreground-primary);
 }
 
-.detail-grid {
+.auto-icon-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
+}
+.auto-table {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--surface-card);
+  overflow: hidden;
+}
+
+.auto-table-head,
+.auto-table-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
-}
-
-.detail-label {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.detail-value {
-  margin-top: 4px;
-  font-size: var(--font-size-sm);
-  color: var(--foreground-secondary);
-}
-
-.detail-target {
-  display: flex;
+  grid-template-columns: 1.6fr 1fr 0.7fr 1.6fr 1fr;
+  gap: 12px;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  font-size: var(--font-size-sm);
-  color: var(--foreground-secondary);
+  padding: 10px 16px;
 }
 
-/* ---- Run Rows ---- */
-.run-row {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr auto;
-  gap: 16px;
-  align-items: center;
-  padding: 12px 20px;
-  cursor: pointer;
-  transition: background 0.1s ease;
+.auto-table-head {
   border-bottom: 1px solid var(--border-subtle);
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
 }
 
-.run-row:hover { background: var(--surface-secondary); }
+.auto-table-row {
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
 
-.run-name-cell { min-width: 0; }
+.auto-table-row:last-child {
+  border-bottom: none;
+}
 
-.run-task-name {
+.auto-table-row:hover {
+  background: var(--surface-secondary);
+}
+
+.auto-cell-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-sm);
   color: var(--foreground-primary);
 }
 
-.run-trigger {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.run-status-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-}
-
-.run-time,
-.run-dur {
+.auto-cell-mono {
   font-family: 'Courier New', monospace;
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
 }
 
-.info-btn {
-  width: 28px;
-  height: 28px;
+.auto-cell-status {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: none;
-  color: var(--foreground-muted);
-  cursor: pointer;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--font-size-xs);
 }
 
-.info-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
-
-/* ---- Empty State ---- */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 64px 16px;
-  text-align: center;
-}
-
-.empty-icon {
-  color: var(--border-medium);
-  margin-bottom: 12px;
-}
-
-.empty-title {
-  font-size: var(--font-size-md);
-  font-weight: 500;
+.auto-cell-trigger {
   color: var(--foreground-muted);
 }
 
-.empty-desc {
+.auto-cell-reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f87171;
+}
+
+.auto-cell-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.auto-col-right {
+  text-align: right;
+}
+
+.auto-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.auto-stat-card {
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--surface-card);
+}
+
+.auto-stat-label {
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
+
+.auto-stat-value {
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: var(--font-weight-bold);
+}
+
+.auto-stat-sub {
   margin-top: 4px;
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
-  margin-bottom: 16px;
 }
 
-.empty-state-sm {
-  padding: 40px 16px;
-  text-align: center;
-  font-size: var(--font-size-sm);
-  color: var(--foreground-muted);
-}
-
-/* ---- Modal ---- */
-.modal-overlay {
+.auto-mask {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 880;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-overlay);
-  backdrop-filter: blur(4px);
-}
-
-.modal-card {
-  width: 100%;
-  max-width: 480px;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-medium);
-  background: var(--color-bg-card);
   padding: 24px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  background: var(--color-overlay);
+  backdrop-filter: blur(3px);
 }
 
-.modal-header {
+.auto-dialog {
+  width: 100%;
+  max-width: 560px;
+  max-height: 84vh;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 20px;
+  flex-direction: column;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xl);
+  background: var(--color-modal-bg);
+  box-shadow: var(--shadow-modal);
 }
 
-.modal-title {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+.auto-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.auto-dialog-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--foreground-primary);
 }
 
-.modal-desc {
-  margin-top: 2px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.modal-close {
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: none;
-  color: var(--foreground-muted);
-  cursor: pointer;
-}
-
-.modal-close:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
-
-.modal-body {
+.auto-dialog-body {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  padding: 16px 20px;
+  overflow-y: auto;
 }
 
-.form-group {
+.auto-dialog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: var(--font-size-xs);
+  color: var(--foreground-secondary);
+}
+
+.auto-dialog-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: var(--radius-lg);
+  background: rgba(248, 113, 113, 0.08);
+  color: #f87171;
+  font-size: var(--font-size-xs);
+}
+
+.auto-dialog-output {
+  margin: 0;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+  font-family: 'Courier New', monospace;
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.auto-artifacts {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.form-label {
+.auto-artifacts-title {
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
 }
 
-.form-input {
-  padding: 8px 12px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-medium);
-  background: var(--surface-secondary);
-  color: var(--foreground-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-
-.form-input::placeholder { color: var(--foreground-muted); }
-.form-input:focus { border-color: var(--color-accent); }
-
-.form-input--mono {
-  font-family: 'Courier New', monospace;
-  color: #a5b4fc;
-}
-
-.form-textarea {
-  padding: 8px 12px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-medium);
-  background: var(--surface-secondary);
-  color: var(--foreground-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  resize: none;
-  transition: border-color 0.15s ease;
-}
-
-.form-textarea::placeholder { color: var(--foreground-muted); }
-.form-textarea:focus { border-color: var(--color-accent); }
-
-.form-select {
-  padding: 8px 12px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-medium);
-  background: var(--surface-secondary);
-  color: var(--foreground-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  cursor: pointer;
-}
-
-.form-select:focus { border-color: var(--color-accent); }
-
-.form-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.cron-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.preset-btn {
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: none;
-  background: var(--surface-secondary);
-  color: var(--foreground-muted);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.preset-btn:hover { background: var(--border-medium); color: var(--foreground-primary); }
-
-.preset-btn.active {
-  background: #4f46e5;
-  color: #fff;
-}
-
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 24px;
-}
-
-.btn-cancel {
-  padding: 8px 16px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-medium);
-  background: none;
-  color: var(--foreground-muted);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-cancel:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
-
-/* ---- Drawer ---- */
-.drawer-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  display: flex;
-  justify-content: flex-end;
-  background: var(--color-overlay);
-}
-
-.drawer-panel {
-  width: 384px;
-  height: 100%;
-  background: var(--color-bg-card);
-  border-left: 1px solid var(--border-subtle);
-  padding: 24px;
-  overflow-y: auto;
-}
-
-.drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.drawer-title {
-  font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--foreground-primary);
-}
-
-.drawer-close {
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: none;
-  color: var(--foreground-muted);
-  cursor: pointer;
-}
-
-.drawer-close:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
-
-.drawer-body {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.drawer-info-card {
-  border-radius: var(--radius-lg);
-  background: var(--surface-secondary);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.drawer-info-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.drawer-label {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.drawer-value {
-  font-size: var(--font-size-sm);
-  color: var(--foreground-secondary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.drawer-output {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.drawer-code {
-  border-radius: var(--radius-lg);
-  background: var(--surface-secondary);
-  border: 1px solid var(--border-subtle);
-  padding: 12px;
-}
-
-.drawer-code pre {
-  white-space: pre-wrap;
-  font-family: 'Courier New', monospace;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-secondary);
+.auto-artifact {
   margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  font-size: var(--font-size-xs);
+  color: var(--foreground-secondary);
 }
 
-/* ---- Responsive ---- */
-@media (max-width: 1200px) {
-  .status-grid { grid-template-columns: repeat(2, 1fr); }
-  .detail-grid { grid-template-columns: repeat(2, 1fr); }
+.auto-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 900px) {
+  .auto-table-head,
+  .auto-table-row {
+    grid-template-columns: 1.4fr 1fr 0.8fr 1.2fr 1fr;
+  }
+
+  .auto-search input {
+    width: 120px;
+  }
 }
 </style>

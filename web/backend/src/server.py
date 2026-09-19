@@ -81,6 +81,10 @@ async def lifespan(app: FastAPI):
         await session.commit()
 
     await init_graph()
+
+    from api.automation.scheduler import automation_scheduler
+
+    await automation_scheduler.start()
     
     cache = await create_cache()
     set_cache(cache)
@@ -99,6 +103,7 @@ async def lifespan(app: FastAPI):
         async with image_gen_mcp.session_manager.run():
             async with video_gen_mcp.session_manager.run():
                 yield
+    await automation_scheduler.stop()
     await shutdown_graph()
 
 

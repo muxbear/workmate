@@ -22,6 +22,7 @@ declare module 'vue' {
     ArtifactPanel: typeof import('./src/components/chat/ArtifactPanel.vue')['default']
     AttachmentBar: typeof import('./src/components/AttachmentBar.vue')['default']
     AuthLayout: typeof import('./src/components/auth/AuthLayout.vue')['default']
+    AutomationTaskDialog: typeof import('./src/components/automation/AutomationTaskDialog.vue')['default']
     BrandPanel: typeof import('./src/components/auth/BrandPanel.vue')['default']
     CaptchaModal: typeof import('./src/components/captcha/CaptchaModal.vue')['default']
     ChatHeader: typeof import('./src/components/ChatHeader.vue')['default']

@@ -42,6 +42,7 @@ frontend/src/
 │   ├── mcp/            #   MCP 工具卡片
 │   ├── skill/          #   技能卡片/弹窗
 │   ├── agent/          #   智能体列表/详情/图/节点/边/弹窗
+│   ├── automation/     #   定时任务新建/编辑弹窗
 │   ├── MainLayout.vue  #   认证后根布局 (SideMenu + TopBar + RouterView)
 │   ├── AppShell.vue    #   聊天三栏布局
 │   ├── ChatMain.vue    #   聊天主区域 (ChatHeader + MessageList + InputBar)
@@ -53,7 +54,7 @@ frontend/src/
 │   ├── RightPanel.vue  #   右侧历史面板
 │   └── TopBar.vue      #   顶部栏 (面包屑)
 ├── composables/        # 组合式函数 (useAuth, useCaptcha, useCountdown, useAgentGraph 等)
-├── stores/             # Pinia stores (auth, captcha, chat, ui, agent, mcp, model, scheduledTask, skill)
+├── stores/             # Pinia stores (auth, captcha, chat, ui, agent, mcp, model, automation, skill)
 ├── services/           # API 层
 │   ├── request.ts      #   Axios 实例 + 拦截器 + SSE 流式请求
 │   ├── authApi.ts      #   认证接口
@@ -63,7 +64,7 @@ frontend/src/
 │   ├── conversationApi.ts # 对话历史接口
 │   ├── mcpApi.ts       #   MCP 工具接口
 │   ├── modelApi.ts     #   模型/提供商接口
-│   ├── scheduledTaskApi.ts # 定时任务接口 (Mock)
+│   ├── automationApi.ts # 定时任务接口（对接后端 /api/automation）
 │   └── skillApi.ts     #   技能接口
 ├── router/             # 路由配置 + 全局守卫
 ├── types/              # TypeScript 类型定义 (10 个模块)

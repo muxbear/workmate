@@ -208,6 +208,7 @@ async def init_db():
     from db.models.agent_version import (
         AgentVersion,  # noqa: F401  ensure table is registered
     )
+    from db.models.automation import AutomationRun, AutomationTask  # noqa: F401
     from db.models.chat_artifact import (
         ChatArtifact,  # noqa: F401  ensure table is registered
     )

@@ -12,6 +12,7 @@ from api.announcements import (
 )
 from api.attachment import router as attachment_router
 from api.auth import router as auth_router
+from api.automation import router as automation_router
 from api.captcha import router as captcha_router
 from api.conversation import router as conversation_router
 from api.departments import router as departments_router
@@ -47,6 +48,7 @@ router = APIRouter()
 router.include_router(accounts_router)
 router.include_router(agent_router)
 router.include_router(attachment_router)
+router.include_router(automation_router)
 router.include_router(agents_router)
 router.include_router(announcements_router)
 router.include_router(announcements_admin_router)

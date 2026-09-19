@@ -138,6 +138,25 @@ function insertFileToken(file: { attachmentId: string; filename: string }) {
   insertToken(makeToken('file', file.attachmentId, file.filename))
 }
 
+/** 用保序部件重建输入内容（编辑任务时回填文本段与文件标记） */
+function setParts(parts: ChatInputPart[]) {
+  const root = el.value
+  if (!root) return
+  root.innerHTML = ''
+  for (const part of parts) {
+    if (part.type === 'text') {
+      const lines = part.text.split('\n')
+      lines.forEach((line, index) => {
+        if (index > 0) root.appendChild(document.createElement('br'))
+        if (line) root.appendChild(document.createTextNode(line))
+      })
+    } else {
+      root.appendChild(makeToken('file', part.attachmentId, part.filename))
+      root.appendChild(document.createTextNode(' '))
+    }
+  }
+  sync()
+}
 function setText(value: string) {
   const root = el.value
   if (!root) return
@@ -207,7 +226,16 @@ function onDrop(event: DragEvent) {
   emit('files', files)
 }
 
-defineExpose({ insertSkill, removeSkillToken, insertFileToken, setText, clear, focus, getText })
+defineExpose({
+  insertSkill,
+  removeSkillToken,
+  insertFileToken,
+  setText,
+  setParts,
+  clear,
+  focus,
+  getText,
+})
 </script>
 
 <template>

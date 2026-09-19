@@ -6,6 +6,7 @@ from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
 from db.models.ai_model import AIModel
 from db.models.announcement import Announcement, AnnouncementRead
+from db.models.automation import AutomationRun, AutomationTask
 from db.models.chat_artifact import ChatArtifact
 from db.models.chat_attachment import ChatAttachment
 from db.models.chat_usage import ChatUsage
@@ -49,6 +50,8 @@ __all__ = [
     "Agent",
     "AgentSkill",
     "AgentTool",
+    "AutomationRun",
+    "AutomationTask",
     "Announcement",
     "AnnouncementRead",
     "AgentMcpConfig",

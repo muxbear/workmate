@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.agent import Agent
 from db.models.ai_model import AIModel
-from db.models.cron_job import CronJob
+from db.models.automation import AutomationTask
 from db.models.mcp_tool import McpTool
 from db.models.personnel import Personnel
 from db.models.provider import Provider
@@ -48,9 +48,17 @@ async def get_resource_stats(db: AsyncSession) -> dict[str, Any]:
     )
 
     # 定时任务
-    cron_total = await db.scalar(select(func.count()).select_from(CronJob))
+    cron_total = await db.scalar(
+        select(func.count()).select_from(AutomationTask).where(AutomationTask.deleted_at.is_(None))
+    )
     cron_active = await db.scalar(
-        select(func.count()).select_from(CronJob).where(CronJob.status == "active")
+        select(func.count())
+        .select_from(AutomationTask)
+        .where(
+            AutomationTask.deleted_at.is_(None),
+            AutomationTask.enabled.is_(True),
+            AutomationTask.status == "enabled",
+        )
     )
 
     # 代理（按类型分组）
