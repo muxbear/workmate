@@ -3,6 +3,11 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db, require_scope
+from api.skill.repository import (
+    import_repository_skills,
+    list_repository_skills,
+    list_sources,
+)
 from api.skill.schemas import (
     SkillBatchDeleteRequest,
     SkillCreateRequest,
@@ -10,6 +15,10 @@ from api.skill.schemas import (
     SkillInfo,
     SkillListResponse,
     SkillManifestResponse,
+    SkillRepoImportRequest,
+    SkillRepoImportResponse,
+    SkillRepoListResponse,
+    SkillRepoSourceListResponse,
     SkillsUploadResponse,
     SkillToggleRequest,
     SkillUpdateRequest,
@@ -47,6 +56,41 @@ async def upload_skills(
     每个成功安装的 skill 入库到 skills 表。
     """
     result = await process_skills_upload(file, db)
+    return ok(result)
+
+
+@router.get("/repo/sources", response_model=ApiResponse[SkillRepoSourceListResponse])
+@handle_errors
+async def skill_repo_sources(
+    user_id: str = Depends(get_current_user_id),
+):
+    """列出可抓取的权威技能仓库来源."""
+    return ok(SkillRepoSourceListResponse(sources=list_sources()))
+
+
+@router.get("/repo/list", response_model=ApiResponse[SkillRepoListResponse])
+@handle_errors
+async def skill_repo_list(
+    source: str = Query(..., description="技能仓库来源 id"),
+    keyword: str | None = Query(None, description="技能名称/描述关键词"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    refresh: bool = Query(False, description="是否强制刷新榜单快照"),
+    user_id: str = Depends(require_scope("skill:read")),
+):
+    """从权威技能仓库按热度抓取榜单，供页面选择导入."""
+    return ok(await list_repository_skills(source, keyword, page, page_size, refresh))
+
+
+@router.post("/repo/import", response_model=ApiResponse[SkillRepoImportResponse])
+@handle_errors
+async def skill_repo_import(
+    req: SkillRepoImportRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """把榜单中选中的技能下载、校验并安装到 workspace/skills_upload/."""
+    result = await import_repository_skills(req, db)
     return ok(result)
 
 

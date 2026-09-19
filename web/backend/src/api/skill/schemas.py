@@ -128,3 +128,70 @@ class SkillManifestResponse(BaseModel):
     hash: str
     files: list[SkillManifestFile]
     updated_at: str
+
+
+class SkillRepoSourceItem(BaseModel):
+    """技能仓库来源."""
+
+    id: str
+    name: str
+    description: str
+    authority: str
+    repository: str
+    homepage: str
+    skills_path: str
+
+
+class SkillRepoSourceListResponse(BaseModel):
+    """技能仓库来源列表."""
+
+    sources: list[SkillRepoSourceItem]
+
+
+class SkillRepoSkillItem(BaseModel):
+    """技能仓库榜单中的单个技能."""
+
+    id: str
+    name: str
+    dir_name: str
+    description: str
+    category: str = "custom"
+    license: str = ""
+    source: str
+    source_name: str
+    repository: str
+    popularity: int = 0
+    rank: int = 0
+    install_url: str = ""
+    updated_at: str = ""
+
+
+class SkillRepoListResponse(BaseModel):
+    """技能仓库榜单响应."""
+
+    source: str
+    source_name: str
+    rank_basis: str
+    fetched_at: datetime
+    total: int
+    page: int
+    page_size: int
+    items: list[SkillRepoSkillItem]
+
+
+class SkillRepoImportRequest(BaseModel):
+    """从技能仓库导入技能的请求."""
+
+    source: str
+    skill_ids: list[str]
+
+
+class SkillRepoImportResponse(BaseModel):
+    """从技能仓库导入技能的结果."""
+
+    total: int
+    valid_count: int
+    invalid_count: int
+    skipped_count: int
+    results: list[SkillResult]
+    skipped: list[str] = []

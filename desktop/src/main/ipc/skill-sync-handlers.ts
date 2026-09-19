@@ -108,6 +108,17 @@ export function registerSkillSyncHandlers(ipc: IpcMain, deps: SkillSyncHandlerDe
     }
   })
 
+  /** 删除本地技能（卸载 + 删除本地技能包；重新同步时以服务端为准） */
+  ipc.handle('skill:delete', async (_event, skillId?: unknown) => {
+    if (!isValidSkillId(skillId)) return fail('参数错误：技能 id 无效')
+    try {
+      session.requireUserId()
+      return ok(await skillInstallService.delete(skillId))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   /** 从主智能体移除技能（保留本地技能包与运行环境） */
   ipc.handle('skill:uninstall', async (_event, skillId?: unknown) => {
     if (!isValidSkillId(skillId)) return fail('参数错误：技能 id 无效')

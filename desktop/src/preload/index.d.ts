@@ -820,6 +820,8 @@ export interface SkillSyncAPI {
   install(skillId: string): Promise<IpcResult<{ skill: DesktopSkill }>>
   /** 从主智能体移除技能（保留本地技能包） */
   uninstall(skillId: string): Promise<IpcResult<{ skill: DesktopSkill }>>
+  /** 删除本地技能（卸载 + 删除本地技能包；重新同步时以服务端为准） */
+  delete(skillId: string): Promise<IpcResult<{ skill: DesktopSkill }>>
   disconnect(): Promise<IpcResult<null>>
   /** 订阅同步进度事件，返回取消订阅函数 */
   onSyncProgress(callback: (data: SkillSyncProgress) => void): () => void

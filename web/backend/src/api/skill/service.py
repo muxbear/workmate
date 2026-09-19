@@ -2,7 +2,6 @@
 import asyncio
 import hashlib
 import io
-import json
 import logging
 import os
 import re
@@ -383,21 +382,25 @@ async def process_skills_upload(
             result = validate_skill_directory(skill_path, expected_name=skill_name)
             results.append(result)
 
+            # 缺陷 DEF-01 修复：校验不通过不落盘、不入库
+            if not result.valid:
+                logger.info("技能 '%s' 校验失败，已拒绝安装：%s", skill_name, result.errors)
+                continue
+
             shutil.copytree(skill_path, dest_path)
 
             description, license_ = _read_skill_metadata(skill_path)
-            errors_json = json.dumps([e.model_dump() for e in result.errors]) if not result.valid else ""
             db.add(
                 Skill(
                     name=skill_name,
-                    valid=result.valid,
+                    valid=True,
                     source="local",
                     description=description,
                     license=license_,
-                    validation_errors=errors_json,
+                    validation_errors="",
                 )
             )
-            logger.info("已安装技能 '%s' (有效=%s)", skill_name, result.valid)
+            logger.info("已安装技能 '%s' (有效=%s)", skill_name, True)
 
         valid_count = sum(1 for r in results if r.valid)
         invalid_count = len(results) - valid_count
@@ -427,7 +430,8 @@ async def list_skills(
     offset = max(0, (page - 1) * page_size)
     page_size = max(1, min(page_size, 100))
 
-    conditions = []
+    # 缺陷 DEF-01 修复：校验失败的技能不再对外暴露（含历史遗留数据）
+    conditions = [Skill.valid.is_(True)]
     if category:
         conditions.append(Skill.category == category)
     if enabled is not None:
@@ -466,7 +470,7 @@ async def search_skills(
     page_size = max(1, min(page_size, 100))
     pattern = f"%{name}%"
 
-    conditions: list = [Skill.name.like(pattern)]
+    conditions: list = [Skill.valid.is_(True), Skill.name.like(pattern)]
     if category:
         conditions.append(Skill.category == category)
     if enabled is not None:

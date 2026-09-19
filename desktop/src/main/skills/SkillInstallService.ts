@@ -174,6 +174,29 @@ export class SkillInstallService {
     return { skill: updated }
   }
 
+  /**
+   * 删除本地技能：先从主智能体卸载 → 删除本地技能包 → 从索引移除。
+   *
+   * 只影响桌面端本地副本；服务端仍存在的技能会在下次「重新同步」时按服务端为准重新拉回。
+   */
+  async delete(skillId: string): Promise<{ skill: DesktopSkill }> {
+    const file = await this.deps.store.read()
+    const skill = file?.skills.find((item) => item.id === skillId)
+    if (!file || !skill) throw new Error('技能不存在，请先重新同步')
+
+    const restSkills = file.skills.filter((item) => item.id !== skillId)
+    // 先重建主智能体技能源，避免已删除技能仍被装配
+    await this.deps.agentManager.applyInstalledSkills(this.installedDirNames(restSkills))
+
+    if (skill.dirName && this.deps.fileStore.hasSkill(skill.dirName)) {
+      await this.deps.fileStore.removeSkill(skill.dirName)
+    }
+
+    // 仅删除本地副本：重新同步时以服务端为准
+    await this.deps.store.write({ ...file, skills: restSkills })
+    return { skill }
+  }
+
   /** 已安装且磁盘存在的技能目录名（主智能体技能源） */
   async listInstalled(): Promise<string[]> {
     const file = await this.deps.store.read()

@@ -188,4 +188,17 @@ describe('SkillInstallService', () => {
     expect(manifest.kinds).toEqual([])
     expect(manifest.runtimes).toEqual({})
   })
+
+  it('SIS-07: 删除技能只作用于本地副本（移除本地包、索引与主智能体装配）', async () => {
+    const harness = await prepare({ 'SKILL.md': skillMd(), 'scripts/run.py': 'print(1)' })
+    await harness.service.install('s1')
+
+    const result = await harness.service.delete('s1')
+
+    expect(result.skill.id).toBe('s1')
+    expect(harness.fileStore.hasSkill('py-skill')).toBe(false)
+    expect(harness.agentManager.applyInstalledSkills).toHaveBeenLastCalledWith([])
+    const stored = await harness.store.read()
+    expect(stored?.skills).toHaveLength(0)
+  })
 })

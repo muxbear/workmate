@@ -194,4 +194,25 @@ describe('SkillSyncService', () => {
     expect(local?.skills[0]?.id).toBe('s1')
     expect(local?.skills[0]?.missing).toBe(false)
   })
+
+  it('SSS-06: 本地删除后重新同步以服务端为准，技能会被重新拉回', async () => {
+    const dir = createBaseDir()
+    const { service, fileStore, store, mock } = setup(dir)
+    mockList(mock, [LIST_ITEM])
+    mock.onGet('/api/skill/s1/manifest').reply(404, { code: 404, data: null, message: '无清单' })
+    mock.onGet('/api/skill/s1/download').reply(200, Buffer.from(skillZip()))
+    await service.sync('local-user')
+    expect(fileStore.hasSkill('web-search')).toBe(true)
+
+    // 模拟用户在桌面端删除本地技能（服务端仍然存在该技能）
+    await store.write({ version: 1, syncedAt: Date.now(), syncedBy: null, skills: [] })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats.added).toBe(1)
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0]?.id).toBe('s1')
+    expect(fileStore.hasSkill('web-search')).toBe(true)
+    expect(readJson(dir).skills).toHaveLength(1)
+  })
 })

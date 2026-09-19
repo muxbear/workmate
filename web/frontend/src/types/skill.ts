@@ -29,6 +29,8 @@ export interface SkillCreateRequest {
 export const SOURCE_LABELS: Record<string, string> = {
   builtin: '内置',
   local: '本地上传',
+  'anthropic-official': 'Anthropic 官方',
+  superpowers: 'Superpowers',
   clawhub: 'ClawHub',
 }
 
@@ -107,3 +109,53 @@ export function getSkillCategoryMeta(category: string): SkillCategoryMeta {
 export const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(CATEGORY_META).map(([key, meta]) => [key, meta.label]),
 )
+
+/** 技能仓库来源（后端注册的权威技能仓库） */
+export interface SkillRepoSource {
+  id: string
+  name: string
+  description: string
+  authority: string
+  repository: string
+  homepage: string
+  skills_path: string
+}
+
+/** 技能仓库榜单条目 */
+export interface SkillRepoSkill {
+  id: string
+  name: string
+  dir_name: string
+  description: string
+  category: string
+  license: string
+  source: string
+  source_name: string
+  repository: string
+  popularity: number
+  rank: number
+  install_url: string
+  updated_at: string
+}
+
+/** 技能仓库榜单响应 */
+export interface SkillRepoListResponse {
+  source: string
+  source_name: string
+  rank_basis: string
+  fetched_at: string
+  total: number
+  page: number
+  page_size: number
+  items: SkillRepoSkill[]
+}
+
+/** 从技能仓库导入技能的结果 */
+export interface SkillRepoImportResponse {
+  total: number
+  valid_count: number
+  invalid_count: number
+  skipped_count: number
+  results: { name: string; valid: boolean; errors: { field: string; message: string }[] }[]
+  skipped: string[]
+}

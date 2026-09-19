@@ -528,6 +528,9 @@ const api = {
     uninstall(skillId: string) {
       return ipcRenderer.invoke('skill:uninstall', skillId)
     },
+    delete(skillId: string) {
+      return ipcRenderer.invoke('skill:delete', skillId)
+    },
     disconnect() {
       return ipcRenderer.invoke('skill-sync:disconnect')
     },

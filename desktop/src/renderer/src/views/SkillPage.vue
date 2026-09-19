@@ -36,6 +36,16 @@ const uninstallSkill = async (skill: SkillItem): Promise<void> => {
   showToast(ok ? `${skill.name} 已从主智能体移除` : (skillSync.error ?? '移除失败'))
 }
 
+/** 删除本地技能（会同时取消安装；重新同步时以服务端为准） */
+const deleteSkill = async (skill: SkillItem): Promise<void> => {
+  const confirmed = window.confirm(
+    `确定删除技能「${skill.name}」吗？此操作仅从本机移除；若服务端仍存在该技能，下次重新同步会再次出现。`
+  )
+  if (!confirmed) return
+  const ok = await skillSync.remove(skill.id)
+  showToast(ok ? `${skill.name} 已删除` : (skillSync.error ?? '删除失败'))
+}
+
 const authorizeAndSync = async (): Promise<void> => {
   const ok = await skillSync.sync()
   showToast(ok ? '技能同步成功' : (skillSync.error ?? '同步失败'))
@@ -194,8 +204,31 @@ onMounted(() => {
                     <line x1="5" y1="12" x2="19" y2="12" />
                   </svg>
                 </button>
+                <button
+                  class="skill-delete-btn"
+                  type="button"
+                  title="删除技能"
+                  :disabled="skillSync.removingId === skill.id"
+                  @click.stop="deleteSkill(skill)"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
               </div>
-              <p class="skill-desc">{{ skill.desc }}</p>
+              <p class="skill-desc" :title="skill.desc">{{ skill.desc }}</p>
             </div>
           </div>
         </div>
@@ -480,6 +513,12 @@ onMounted(() => {
   color: var(--kw-color-text-secondary);
   line-height: 1.4;
   margin: 0 0 12px;
+  /* 描述过长时截断为两行，完整内容通过 title 悬浮提示 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .skill-install-btn {
@@ -508,6 +547,35 @@ onMounted(() => {
 
 .skill-install-btn:active {
   transform: scale(0.92);
+}
+
+.skill-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--kw-color-text-error);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.skill-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff;
+}
+
+.skill-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .skill-toast {

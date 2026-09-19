@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { X, Search, Download, ChevronDown, Upload, Check, AlertTriangle } from 'lucide-vue-next'
 import type { Skill, SkillCreateRequest } from '@/types/skill'
 import { CATEGORY_LABELS } from '@/types/skill'
+import * as skillApi from '@/services/skillApi'
 import { useSkillStore } from '@/stores/skill'
 
 const props = defineProps<{
@@ -17,7 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const isEditing = computed(() => !!props.skill)
-const activeTab = ref<'download' | 'upload' | 'manual'>('upload')
+const activeTab = ref<'download' | 'upload'>('upload')
 
 // ---- Click-outside & keyboard ----
 const repoSelectRef = ref<HTMLElement | null>(null)
@@ -39,6 +40,11 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener('click', handleClickOutside, true)
   document.addEventListener('keydown', handleKeydown)
+  void loadRepoSources()
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'download') void loadRepoSources()
 })
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
@@ -49,34 +55,52 @@ onUnmounted(() => {
 //  Tab 1: Repository Download
 // ============================================================
 interface RepoOption {
+  id: string
   label: string
   url: string
   desc: string
+  authority: string
 }
 
 interface RepoSkill {
+  id: string
+  dirName: string
   name: string
   description: string
   category: string
+  rank: number
+  popularity: number
   selected: boolean
 }
 
-const repoOptions: RepoOption[] = [
-  { label: 'ClawHub', url: 'https://clawhub.ai/', desc: '默认仓库' },
-  { label: 'Anthropic Skills', url: 'https://github.com/anthropics/skills', desc: 'Anthropic 官方' },
-  { label: 'LangChain', url: 'https://github.com/langchain-ai/langchain', desc: '95k stars' },
-  { label: 'CrewAI', url: 'https://github.com/crewAIInc/crewAI-examples', desc: '8.3k stars' },
-  { label: 'AutoGen', url: 'https://github.com/microsoft/autogen', desc: '38k stars' },
-]
-
-const selectedRepo = ref(repoOptions[0])
+const repoOptions = ref<RepoOption[]>([])
+const selectedRepo = ref<RepoOption | null>(null)
 const repoDropdownOpen = ref(false)
 const isCustomRepo = ref(false)
 const customRepoUrl = ref('')
+const importingRepo = ref(false)
 
-const repoUrl = computed(() =>
-  isCustomRepo.value ? customRepoUrl.value : selectedRepo.value.url,
-)
+const repoUrl = computed(() => selectedRepo.value?.url ?? '')
+
+/** 加载后端注册的权威技能仓库来源（真实抓取，非硬编码） */
+async function loadRepoSources(): Promise<void> {
+  if (repoOptions.value.length > 0) return
+  try {
+    const sources = await skillApi.fetchRepoSkillSources()
+    repoOptions.value = sources.map((item) => ({
+      id: item.id,
+      label: item.name,
+      url: item.homepage,
+      desc: item.description,
+      authority: item.authority,
+    }))
+    if (!selectedRepo.value && repoOptions.value.length > 0) {
+      selectedRepo.value = repoOptions.value[0] ?? null
+    }
+  } catch (err: unknown) {
+    repoError.value = err instanceof Error ? err.message : '加载技能仓库来源失败'
+  }
+}
 
 function selectRepoOption(opt: RepoOption) {
   selectedRepo.value = opt
@@ -86,10 +110,7 @@ function selectRepoOption(opt: RepoOption) {
 }
 
 function selectCustomRepo() {
-  isCustomRepo.value = true
-  customRepoUrl.value = ''
-  repoDropdownOpen.value = false
-  resetRepoData()
+  ElMessage.warning('自定义仓库地址暂不支持，请选择已注册的权威技能仓库')
 }
 
 function resetRepoData() {
@@ -145,7 +166,8 @@ const isIndeterminate = computed(() => {
 const selectedCount = computed(() => repoSkills.value.filter((s) => s.selected).length)
 
 async function fetchRepo() {
-  if (!repoUrl.value.trim()) return
+  const source = selectedRepo.value
+  if (!source) return
   fetchingRepo.value = true
   repoError.value = ''
   repoSkills.value = []
@@ -153,21 +175,27 @@ async function fetchRepo() {
   skillPage.value = 1
 
   try {
-    await new Promise((r) => setTimeout(r, 1000))
-    repoSkills.value = [
-      { name: 'web-search', description: '实时搜索互联网信息，获取最新资讯与数据', category: 'search', selected: true },
-      { name: 'code-interpreter', description: '安全沙箱中执行 Python 代码，支持数据分析', category: 'code', selected: true },
-      { name: 'image-generator', description: '根据文本描述使用 DALL-E/Stable Diffusion 生成图像', category: 'creative', selected: false },
-      { name: 'data-analyzer', description: '处理 CSV/Excel/JSON 数据，生成统计报告与可视化图表', category: 'analysis', selected: true },
-      { name: 'file-manager', description: '读写 PDF/Word/Markdown 等格式文件，支持批量转换', category: 'tools', selected: false },
-      { name: 'translator', description: '支持 50+ 语言的精准翻译，可保持原文格式', category: 'tools', selected: false },
-      { name: 'summarizer', description: '对长文本进行智能摘要，提取关键信息', category: 'analysis', selected: false },
-      { name: 'sentiment-analyzer', description: '分析文本情感倾向，支持细粒度情绪分类', category: 'analysis', selected: false },
-      { name: 'pdf-extractor', description: '从 PDF 文档中提取文本、表格和图片信息', category: 'tools', selected: false },
-      { name: 'sql-generator', description: '将自然语言查询转换为 SQL 语句', category: 'code', selected: false },
-    ]
-  } catch {
-    repoError.value = '获取仓库技能列表失败，请检查仓库地址'
+    const res = await skillApi.fetchRepoSkills({
+      source: source.id,
+      keyword: '',
+      page: 1,
+      page_size: 100,
+    })
+    repoSkills.value = res.items.map((item) => ({
+      id: item.id,
+      dirName: item.dir_name,
+      name: item.name,
+      description: item.description,
+      category: item.category,
+      rank: item.rank,
+      popularity: item.popularity,
+      selected: false,
+    }))
+    if (repoSkills.value.length === 0) {
+      repoError.value = '该技能仓库暂无可用技能，请稍后重试'
+    }
+  } catch (err: unknown) {
+    repoError.value = err instanceof Error ? err.message : '获取仓库技能列表失败'
   } finally {
     fetchingRepo.value = false
   }
@@ -177,14 +205,34 @@ function handleSearchChange() {
   skillPage.value = 1
 }
 
-function importSelected() {
+async function importSelected() {
+  const source = selectedRepo.value
   const selected = repoSkills.value.filter((s) => s.selected)
-  if (selected.length === 0) { ElMessage.warning('请选择要导入的技能'); return }
-  selected.forEach((s) =>
-    emit('save', { name: s.name, description: s.description, icon: 'Zap', category: s.category, prompt: '' }),
-  )
-  ElMessage.success(`已导入 ${selected.length} 个技能`)
-  emit('close')
+  if (!source) return
+  if (selected.length === 0) {
+    ElMessage.warning('请选择要导入的技能')
+    return
+  }
+  importingRepo.value = true
+  try {
+    const res = await skillApi.importRepoSkills(
+      source.id,
+      selected.map((s) => s.id),
+    )
+    await skillStore.fetchSkills()
+    if (res.invalid_count > 0) {
+      ElMessage.warning(`已导入 ${res.valid_count} 个技能，${res.invalid_count} 个校验未通过`)
+    } else if (res.skipped_count > 0) {
+      ElMessage.success(`已导入 ${res.valid_count} 个技能，${res.skipped_count} 个已存在被跳过`)
+    } else {
+      ElMessage.success(`已导入 ${res.valid_count} 个技能`)
+    }
+    emit('close')
+  } catch (err: unknown) {
+    ElMessage.error(err instanceof Error ? err.message : '导入技能失败')
+  } finally {
+    importingRepo.value = false
+  }
 }
 
 // ============================================================
@@ -272,7 +320,8 @@ const categoryOptions = computed(() =>
 const sourceOptions = [
   { key: 'local', label: '本地上传' },
   { key: 'builtin', label: '内置' },
-  { key: 'clawhub', label: 'ClawHub' },
+  { key: 'anthropic-official', label: 'Anthropic 官方' },
+  { key: 'superpowers', label: 'Superpowers' },
 ]
 
 interface EditFormData {
@@ -339,9 +388,6 @@ function totalPages() {
             </button>
             <button class="tab-btn" :class="{ active: activeTab === 'download' }" @click="activeTab = 'download'">
               从仓库下载
-            </button>
-            <button class="tab-btn" :class="{ active: activeTab === 'manual' }" @click="activeTab = 'manual'">
-              手动创建
             </button>
           </div>
 
@@ -419,7 +465,7 @@ function totalPages() {
                       type="button"
                       @click.stop="repoDropdownOpen = !repoDropdownOpen"
                     >
-                      <span>{{ isCustomRepo ? '自定义地址' : selectedRepo.label }}</span>
+                      <span>{{ isCustomRepo ? '自定义地址' : (selectedRepo?.label ?? '') }}</span>
                       <ChevronDown :size="14" class="select-arrow" />
                     </button>
                     <div v-show="repoDropdownOpen" class="select-dropdown">
@@ -427,14 +473,14 @@ function totalPages() {
                         v-for="opt in repoOptions"
                         :key="opt.url"
                         class="select-option"
-                        :class="{ picked: !isCustomRepo && opt.url === selectedRepo.url }"
+                        :class="{ picked: !isCustomRepo && opt.url === (selectedRepo?.url ?? '') }"
                         @click.stop="selectRepoOption(opt)"
                       >
                         <div class="opt-info">
                           <span class="opt-label">{{ opt.label }}</span>
                           <span class="opt-desc">{{ opt.desc }}</span>
                         </div>
-                        <Check v-if="!isCustomRepo && opt.url === selectedRepo.url" :size="14" class="opt-check" />
+                        <Check v-if="!isCustomRepo && opt.url === (selectedRepo?.url ?? '')" :size="14" class="opt-check" />
                       </div>
                       <div class="select-divider" />
                       <div
@@ -459,7 +505,7 @@ function totalPages() {
                   />
                   <input
                     v-else
-                    :value="selectedRepo.url"
+                    :value="(selectedRepo?.url ?? '')"
                     type="text"
                     class="text-input dp-url-input readonly"
                     readonly
@@ -498,7 +544,7 @@ function totalPages() {
                   </div>
 
                   <div class="dp-skill-list">
-                    <div v-for="sk in pagedRepoSkills" :key="sk.name" class="skill-row-item">
+                    <div v-for="sk in pagedRepoSkills" :key="sk.id" class="skill-row-item">
                       <span class="check-box small" :class="{ checked: sk.selected }" @click="sk.selected = !sk.selected">
                         <Check v-if="sk.selected" :size="11" />
                       </span>
@@ -506,7 +552,7 @@ function totalPages() {
                         <span class="skill-meta-name">{{ sk.name }}</span>
                         <span class="skill-meta-desc">{{ sk.description }}</span>
                       </div>
-                      <span class="skill-tag">{{ sk.category }}</span>
+                      <span class="skill-tag">#{{ sk.rank }} · {{ sk.popularity }}★</span>
                     </div>
                   </div>
 
@@ -550,8 +596,8 @@ function totalPages() {
               </div>
             </div>
 
-            <!-- =========== TAB 3: MANUAL =========== -->
-            <div v-if="activeTab === 'manual' || isEditing" class="tab-inner">
+            <!-- =========== 编辑技能表单（仅编辑态） =========== -->
+            <div v-if="isEditing" class="tab-inner">
               <div class="form-grid">
                 <div class="field">
                   <label class="field-label">技能名称 <span class="required">*</span></label>
@@ -611,7 +657,7 @@ function totalPages() {
               <div class="actions">
                 <button class="btn btn-ghost" @click="emit('close')">取消</button>
                 <button class="btn btn-primary" @click="handleManualSubmit">
-                  {{ isEditing ? '保存' : '创建' }}
+                  保存
                 </button>
               </div>
             </div>

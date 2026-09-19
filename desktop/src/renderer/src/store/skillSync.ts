@@ -33,6 +33,8 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
   const stats = ref<SkillSyncStats | null>(null)
   /** 正在安装 / 卸载的技能 id */
   const installingId = ref<string | null>(null)
+  /** 正在删除的技能 id */
+  const removingId = ref<string | null>(null)
   const installMessage = ref('')
 
   /** 用新列表替换技能页数据（同时同步 catalog store） */
@@ -167,6 +169,24 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
     }
   }
 
+  /** 删除本地技能（卸载 + 删包；重新同步时以服务端为准） */
+  async function remove(skillId: string): Promise<boolean> {
+    if (removingId.value) return false
+    removingId.value = skillId
+    error.value = null
+    try {
+      const result = await window.api.skillSync.delete(skillId)
+      if (!result.success) throw new Error(result.error || '删除失败')
+      applySkills(skills.value.filter((item) => item.id !== skillId))
+      return true
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '删除失败'
+      return false
+    } finally {
+      removingId.value = null
+    }
+  }
+
   /** 兼容旧入口：读取主进程内存缓存（本地文件优先，缓存通常为空） */
   async function loadCachedSkills(): Promise<void> {
     const result = await window.api.skillSync.getCachedSkills()
@@ -204,6 +224,7 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
     progressMessage.value = ''
     stats.value = null
     installingId.value = null
+    removingId.value = null
     installMessage.value = ''
     catalog.clearSkillItems()
     catalog.clearSkills()
@@ -220,6 +241,7 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
     progressMessage,
     stats,
     installingId,
+    removingId,
     installMessage,
     loadStatus,
     loadLocal,
@@ -227,6 +249,7 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
     sync,
     install,
     uninstall,
+    remove,
     loadCachedSkills,
     disconnect,
     resetLocal

@@ -1,5 +1,11 @@
 import instance from './request'
-import type { Skill, SkillCreateRequest } from '@/types/skill'
+import type {
+  Skill,
+  SkillCreateRequest,
+  SkillRepoImportResponse,
+  SkillRepoListResponse,
+  SkillRepoSource,
+} from '@/types/skill'
 
 /** Backend paginated list response */
 interface SkillListResponse {
@@ -83,4 +89,31 @@ export async function searchSkills(
 ): Promise<SkillListResponse> {
   const res = await instance.get('/skill/search', { params: { name, ...params } })
   return res.data.data as SkillListResponse
+}
+
+/** 获取后端注册的权威技能仓库来源 */
+export async function fetchRepoSkillSources(): Promise<SkillRepoSource[]> {
+  const res = await instance.get('/skill/repo/sources')
+  return (res.data.data?.sources ?? []) as SkillRepoSource[]
+}
+
+/** 抓取指定来源的技能榜单（服务端带缓存与限流保护） */
+export async function fetchRepoSkills(params: {
+  source: string
+  keyword?: string
+  page?: number
+  page_size?: number
+  refresh?: boolean
+}): Promise<SkillRepoListResponse> {
+  const res = await instance.get('/skill/repo/list', { params })
+  return res.data.data as SkillRepoListResponse
+}
+
+/** 把榜单中选中的技能导入到 workspace/skills_upload/ 并入库 */
+export async function importRepoSkills(
+  source: string,
+  skillIds: string[],
+): Promise<SkillRepoImportResponse> {
+  const res = await instance.post('/skill/repo/import', { source, skill_ids: skillIds })
+  return res.data.data as SkillRepoImportResponse
 }
