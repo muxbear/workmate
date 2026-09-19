@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowUp, Globe, Paperclip, Plus, Sparkles, Square, X } from 'lucide-vue-next'
+import { ArrowUp, Paperclip, Plus, Sparkles, Square, X } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { polishText } from '@/services/request'
@@ -265,14 +265,6 @@ watch(
           <Paperclip :size="16" />
         </button>
         <button
-          class="web-search-btn"
-          :class="{ active: selection.webSearch }"
-          @click="chatStore.setSelection({ webSearch: !selection.webSearch })"
-        >
-          <Globe :size="14" />
-          <span>联网搜索</span>
-        </button>
-        <button
           class="tool-btn"
           :class="{ 'tool-btn--polishing': polishing }"
           title="AI 改写润色"
@@ -424,32 +416,6 @@ watch(
 .tool-btn:hover {
   background: rgba(59, 130, 246, 0.1);
   color: var(--foreground-primary);
-}
-
-.web-search-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: rgba(59, 130, 246, 0.08);
-  color: var(--foreground-secondary);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.web-search-btn:hover {
-  background: rgba(59, 130, 246, 0.14);
-  color: var(--foreground-primary);
-}
-
-.web-search-btn.active {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: #fff;
 }
 
 .send-btn,
