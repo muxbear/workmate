@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { BrandLogoUploadPayload, DesktopExpert, ExpertSyncProgress } from './index.d'
+import type {
+  BrandLogoUploadPayload,
+  DesktopExpert,
+  ExpertSyncProgress,
+  SkillInstallProgress,
+  SkillSyncProgress
+} from './index.d'
 
 // Custom APIs for renderer
 const api = {
@@ -513,8 +519,31 @@ const api = {
     getCachedSkills() {
       return ipcRenderer.invoke('skill-sync:cached')
     },
+    loadLocal() {
+      return ipcRenderer.invoke('skill-sync:load-local')
+    },
+    install(skillId: string) {
+      return ipcRenderer.invoke('skill:install', skillId)
+    },
+    uninstall(skillId: string) {
+      return ipcRenderer.invoke('skill:uninstall', skillId)
+    },
     disconnect() {
       return ipcRenderer.invoke('skill-sync:disconnect')
+    },
+    onSyncProgress(callback: (data: SkillSyncProgress) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: SkillSyncProgress): void => {
+        callback(data)
+      }
+      ipcRenderer.on('skill-sync:progress', handler)
+      return () => ipcRenderer.removeListener('skill-sync:progress', handler)
+    },
+    onInstallProgress(callback: (data: SkillInstallProgress) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: SkillInstallProgress): void => {
+        callback(data)
+      }
+      ipcRenderer.on('skill:install-progress', handler)
+      return () => ipcRenderer.removeListener('skill:install-progress', handler)
     }
   },
   expert: {

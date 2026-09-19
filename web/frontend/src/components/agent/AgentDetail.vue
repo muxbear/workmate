@@ -1072,7 +1072,7 @@ function getStatusColor(status: string): string {
 /* ---- Tag selected state ---- */
 .config-tag.tag-selected {
   border-color: currentColor !important;
-  background: rgba(255, 255, 255, 0.06) !important;
+  background: var(--surface-secondary) !important;
   cursor: pointer;
   font-weight: var(--font-weight-medium);
 }
@@ -1243,7 +1243,7 @@ function getStatusColor(status: string): string {
   padding: 5px 10px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-inset-soft);
   font-size: var(--font-size-sm);
   color: var(--foreground-secondary);
   transition: all 0.2s ease;
@@ -1357,7 +1357,7 @@ function getStatusColor(status: string): string {
   padding: 10px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -1442,7 +1442,7 @@ function getStatusColor(status: string): string {
   padding: 28px 16px;
   border: 1px dashed var(--border-subtle);
   border-radius: var(--radius-xl);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
 }
 
 .notice-icon {

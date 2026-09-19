@@ -59,6 +59,20 @@ async function expertToSubAgent(
   }
 }
 
+/** 技能引用归一化为 backend 虚拟路径（/skills/<dir>/） */
+function normalizeSkillPath(value: string): string {
+  if (value.startsWith('/')) return value.endsWith('/') ? value : `${value}/`
+  return `/skills/${value}/`
+}
+
+/** AgentManager 可选扩展（技能挂载与技能 id 解析） */
+export interface AgentManagerOptions {
+  /** 本地技能根目录（~/.ke-work/skills）；提供后本地模式挂载 /skills/ 路由 */
+  skillsDir?: string
+  /** 技能 id → 本地目录名解析器（自动化任务按 id 引用技能时使用） */
+  resolveSkillDirs?: (ids: string[]) => Promise<string[]>
+}
+
 export class AgentManager {
   private agent: DeepAgent | null = null
   private builder: AgentBuilder | null = null
@@ -74,7 +88,9 @@ export class AgentManager {
     private readonly checkpointDbPath: string,
     private readonly storeDbPath: string,
     /** 自定义模型服务（可选：测试/无自定义模型场景不注入则不注册覆盖中间件） */
-    private readonly modelService?: ModelService
+    private readonly modelService?: ModelService,
+    /** 技能挂载与技能 id 解析（可选；不注入时技能功能按目录名直连） */
+    private readonly options: AgentManagerOptions = {}
   ) {}
 
   /** 应用启动时初始化智能体（保存 promise，供 ready() 复用） */
@@ -89,7 +105,8 @@ export class AgentManager {
       mode,
       this.defaultWorkspaceDir,
       this.checkpointDbPath,
-      this.storeDbPath
+      this.storeDbPath,
+      this.options.skillsDir
     ).withModeDefaults()
 
     // 关键：默认模型必须先实例化，否则会像现在一样在中间件前抛错。
@@ -101,7 +118,8 @@ export class AgentManager {
     // 自定义模型覆盖中间件：运行期按 configurable.model_override 切换模型（无需重建 agent）
     if (this.modelService)
       this.builder.setMiddleware([createModelOverrideMiddleware(this.modelService)])
-    if (this.skills.length > 0) this.builder.setSkills(this.skills)
+    // 技能仅本地模式生效（云端 StoreBackend 不含本地技能目录）
+    if (this.skills.length > 0 && mode === 'local') this.builder.setSkills(this.skills)
 
     if (this.experts.length > 0 && (this.expertMode === 'selected' || this.expertMode === 'all')) {
       this.builder.setSubagents(
@@ -146,10 +164,40 @@ export class AgentManager {
     return this
   }
 
+  /**
+   * 设置主智能体技能源。
+   *
+   * 入参为技能目录名（或 `/skills/<dir>/` 虚拟路径）；由自动化等按技能 id 传入时，
+   * 通过 resolveSkillDirs 解析为目录名。设置后异步重建 agent，调用方 await ready()
+   * 即可拿到带新技能的实例（修复此前只写 builder 不重建的问题）。
+   */
   setSkills(skills: string[]): this {
-    this.skills = skills
-    this.builder?.setSkills(skills)
+    if (!this.builder) {
+      this.skills = skills
+      return this
+    }
+    const resolve = this.options.resolveSkillDirs
+    if (skills.some((skill) => !skill.startsWith('/')) && resolve) {
+      this.initPromise = (async () => {
+        const dirs = await resolve(skills)
+        this.skills = dirs.map((dir) => normalizeSkillPath(dir))
+        await this.buildAgent(this.currentMode)
+      })()
+    } else {
+      this.skills = skills.map((skill) => normalizeSkillPath(skill))
+      this.initPromise = this.buildAgent(this.currentMode)
+    }
+    const pending = this.initPromise
+    if (pending) pending.catch(() => undefined)
     return this
+  }
+
+  /** 应用已安装技能目录并重建 agent（技能页安装 / 卸载、启动恢复时调用） */
+  async applyInstalledSkills(dirNames: string[]): Promise<void> {
+    this.skills = dirNames.map((dir) => normalizeSkillPath(dir))
+    if (!this.builder) return
+    this.initPromise = this.buildAgent(this.currentMode)
+    await this.initPromise
   }
 
   setExpertMode(mode: 'selected' | 'all'): this {

@@ -80,7 +80,7 @@ const props = defineProps<{
   margin-top: 16px;
 }
 .stat-item {
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--surface-inset-soft);
   border-radius: var(--radius-md);
   padding: 8px;
   text-align: center;

@@ -37,6 +37,12 @@ import { useModelStore } from '@store/models'
 import { useSettingsStore } from '@store/settings'
 import PlusMenu from './PlusMenu.vue'
 import type { MessagePart } from '../../../preload/index.d'
+import {
+  MAX_ATTACH_FILES,
+  classifyPath,
+  getFileName,
+  limitForKind
+} from '../../../shared/file-kinds'
 
 /**
  * 任务提示词输入卡（PromptInput）
@@ -308,58 +314,21 @@ const onSelectSkillToken = (id: string): void => {
   else removeSkillTokenFromDom(el, id)
 }
 
-// ── 文件附件：选中即时校验（主进程权威，此处为 UX 前置副本） ──
-const FILE_TEXT_EXTS = [
-  'txt',
-  'md',
-  'csv',
-  'json',
-  'yaml',
-  'yml',
-  'xml',
-  'html',
-  'css',
-  'js',
-  'ts',
-  'jsx',
-  'tsx',
-  'py',
-  'java',
-  'c',
-  'cpp',
-  'h',
-  'go',
-  'rs',
-  'sh',
-  'sql',
-  'log',
-  'ini',
-  'toml'
-]
-const FILE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
-const FILE_MAX_TEXT_BYTES = 5 * 1024 * 1024
-const FILE_MAX_PDF_BYTES = 20 * 1024 * 1024
-const FILE_MAX_IMAGE_BYTES = 10 * 1024 * 1024
-const FILE_MAX_COUNT = 10
-
+// ── 文件附件：选中即时校验（主进程权威，渲染层复用共享分类做 UX 前置） ──
 /** PlusMenu 选中本地文件 → 逐个即时校验（UX 前置），通过的在光标处插入文件 token */
 const onSelectFiles = async (paths: string[]): Promise<void> => {
   const el = getInputEl()
   if (!el) return
   // 去重：同一文件多次选择只插一个 token
   const uniquePaths = [...new Set(paths)]
-  if (uniquePaths.length > FILE_MAX_COUNT) {
-    showToast('单次最多选择 ' + FILE_MAX_COUNT + ' 个文件')
+  if (uniquePaths.length > MAX_ATTACH_FILES) {
+    showToast('单次最多选择 ' + MAX_ATTACH_FILES + ' 个文件')
     return
   }
   const accepted: string[] = []
   for (const p of uniquePaths) {
-    const name = p.split(/[\\/]/).pop() ?? p
-    const ext = name.split('.').pop()?.toLowerCase() ?? ''
-    const isText = FILE_TEXT_EXTS.includes(ext)
-    const isImage = FILE_IMAGE_EXTS.includes(ext)
-    const isPdf = ext === 'pdf'
-    if (!isText && !isImage && !isPdf) {
+    const name = getFileName(p)
+    if (classifyPath(p) === 'unsupported') {
       showToast('暂不支持该文件类型：' + name)
       continue
     }
@@ -374,16 +343,10 @@ const onSelectFiles = async (paths: string[]): Promise<void> => {
       continue
     }
     if (data.kind === 'unsupported') {
-      // 主进程权威分类兜底（防两份扩展名列表漂移）
       showToast('暂不支持该文件类型：' + name)
       continue
     }
-    const limit =
-      data.kind === 'text'
-        ? FILE_MAX_TEXT_BYTES
-        : data.kind === 'image'
-          ? FILE_MAX_IMAGE_BYTES
-          : FILE_MAX_PDF_BYTES
+    const limit = data.maxBytes ?? limitForKind(data.kind)
     if (data.size > limit) {
       showToast('文件过大（上限 ' + Math.round(limit / 1024 / 1024) + 'MB）：' + name)
       continue

@@ -74,6 +74,9 @@ import { BrowserViewManager, BROWSER_PARTITION } from './browser/BrowserViewMana
 import { WorkspacePreviewServer } from './browser/WorkspacePreviewServer'
 import { registerBrowserHandlers } from './browser/browser-handlers'
 import { SkillSyncService } from './skills/SkillSyncService'
+import { SkillJsonStore } from './skills/SkillJsonStore'
+import { SkillFileStore } from './skills/SkillFileStore'
+import { SkillInstallService } from './skills/SkillInstallService'
 import { ExpertSyncService } from './experts/ExpertSyncService'
 import { ModelSyncService } from './models/ModelSyncService'
 import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
@@ -275,14 +278,25 @@ app.whenReady().then(() => {
   // ── 初始化自定义模型服务（机器级配置；providers.json 首启种子写入，用户可手改）──
   const modelService = new ModelService(dataDir.getBaseDir())
 
+  // 内置运行时管理器（安全中心「内置运行时」与技能脚本运行环境共用同一注册表）
+  const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)
+  binaryManager.init()
+
   // ── 初始化智能体（AgentManager）──
   // checkpoint（短期记忆）与 store（长期记忆）与业务表共用 ke-work.db（SqliteSaver/SqliteStore 自建表）
   const appDbPath = join(dataDir.getBaseDir(), 'ke-work.db')
+  /** 技能安装服务引用（AgentManager 的技能 id 解析依赖它，创建顺序在后） */
+  let skillInstallServiceRef: SkillInstallService | null = null
   const agentManager = new AgentManager(
     dataDir.getDir('workspace'),
     appDbPath,
     appDbPath,
-    modelService
+    modelService,
+    {
+      skillsDir: dataDir.getDir('skills'),
+      resolveSkillDirs: async (ids) =>
+        skillInstallServiceRef ? await skillInstallServiceRef.resolveDirNames(ids) : []
+    }
   )
   agentManager.init(mode).catch((err) => console.error('[main] agent init failed:', err))
 
@@ -312,11 +326,27 @@ app.whenReady().then(() => {
   })
 
   const webApiBaseUrl = process.env.WORKMATE_WEB_API_BASE_URL ?? ''
+  const skillsDir = dataDir.getDir('skills')
+  const skillStore = new SkillJsonStore(skillsDir)
+  const skillFileStore = new SkillFileStore(skillsDir)
   const skillSyncService = new SkillSyncService({
     authorization,
+    store: skillStore,
+    fileStore: skillFileStore,
     apiBaseUrl: webApiBaseUrl
   })
-  registerSkillSyncHandlers(ipcMain, { skillSyncService, session })
+  const skillInstallService = new SkillInstallService({
+    store: skillStore,
+    fileStore: skillFileStore,
+    binaryManager,
+    agentManager
+  })
+  skillInstallServiceRef = skillInstallService
+  registerSkillSyncHandlers(ipcMain, { skillSyncService, skillInstallService, session })
+  // 启动即恢复已安装技能到主智能体（skills.json 为事实源）
+  void skillInstallService
+    .restoreInstalled()
+    .catch((err) => console.error('[main] restore installed skills failed:', err))
 
   const expertSyncService = new ExpertSyncService({
     authorization,
@@ -520,8 +550,6 @@ app.whenReady().then(() => {
   })
 
   // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
-  const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)
-  binaryManager.init()
   registerRuntimeHandlers(ipcMain, { binaryManager })
 
   // 打开默认工作目录（~/.ke-work/workspace；未绑定工作空间的会话使用）

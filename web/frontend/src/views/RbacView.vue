@@ -503,7 +503,7 @@ function getPermStats(node: PermResource) {
   justify-content: center;
   gap: 6px;
 }
-.add-role-btn:hover { background: rgba(30,41,59,0.6); color: var(--foreground-primary); }
+.add-role-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 .rbac-main {
   flex: 1;
   min-width: 0;
@@ -532,7 +532,7 @@ function getPermStats(node: PermResource) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: rgba(255,255,255,0.8);
+  color: var(--foreground-primary);
 }
 .role-avatar.from-red-500\/20 { background: linear-gradient(135deg, rgba(239,68,68,0.2), rgba(239,68,68,0.05)); }
 .role-avatar.from-blue-500\/20 { background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(59,130,246,0.05)); }
@@ -667,7 +667,7 @@ function getPermStats(node: PermResource) {
   font-size: var(--font-size-xs);
   cursor: pointer;
 }
-.tool-btn:hover { background: rgba(30,41,59,0.6); }
+.tool-btn:hover { background: var(--surface-secondary); }
 .legend {
   display: flex;
   gap: 12px;
@@ -853,7 +853,7 @@ function getPermStats(node: PermResource) {
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: var(--color-overlay);
   display: flex;
   align-items: center;
   justify-content: center;

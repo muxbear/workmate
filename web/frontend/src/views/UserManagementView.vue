@@ -862,7 +862,7 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
   display: flex;
   align-items: center;
 }
-.action-btn:hover { background: rgba(30,41,59,0.6); color: var(--foreground-primary); }
+.action-btn:hover { background: var(--surface-secondary); color: var(--foreground-primary); }
 .action-btn.danger:hover { background: rgba(239,68,68,0.15); color: #fca5a5; }
 
 /* 表格视图 */
@@ -894,7 +894,7 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
   border-bottom: 1px solid var(--border-subtle);
 }
 .user-table tr:hover td {
-  background: rgba(30, 41, 59, 0.3);
+  background: var(--surface-inset-soft);
 }
 .user-table tr.active td {
   background: rgba(59, 130, 246, 0.08);
@@ -914,7 +914,7 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -993,7 +993,7 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
-.dialog-cancel:hover { background: rgba(30,41,59,0.6); }
+.dialog-cancel:hover { background: var(--surface-secondary); }
 .dialog-submit {
   padding: 8px 18px;
   background: var(--accent-primary);
@@ -1078,7 +1078,7 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
 .bind-email { font-size: var(--font-size-xs); color: var(--foreground-muted); }
 
 /* Right Drawer */
-.drawer-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.3); }
+.drawer-overlay { position: fixed; inset: 0; z-index: 1000; background: var(--color-overlay); }
 .drawer-panel {
   position: fixed; top: 0; right: 0; height: 100%; width: 380px; max-width: 90vw;
   background: var(--color-modal-bg); border-left: 1px solid var(--border-subtle);

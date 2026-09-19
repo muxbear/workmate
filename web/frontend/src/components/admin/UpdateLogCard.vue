@@ -69,14 +69,14 @@ defineProps<{
 .log-badge {
   padding: 2px 8px;
   border-radius: var(--radius-sm);
-  background: rgba(30, 41, 59, 0.8);
-  color: var(--foreground-muted);
+  background: var(--surface-inset);
+  color: var(--foreground-secondary);
   font-size: 11px;
   flex-shrink: 0;
 }
 .log-badge.is-primary {
   background: rgba(37, 99, 235, 0.2);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 .log-body {
   min-width: 0;

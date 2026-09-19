@@ -1,13 +1,13 @@
 import type { IpcMain } from 'electron'
 import { stat } from 'fs/promises'
-import { classifyPath } from '../agent/file-parts'
+import { classifyPath, limitForKind } from '../../shared/file-kinds'
 
-/** file:inspect 依赖：登录态守卫（受保护 IPC 路由，主进程会话校验） */
+/** file:inspect 依赖：登录态守卫（受保护 IPC 路由，主进程会话校验）。 */
 export interface FileInspectDeps {
   requireUserId: () => string
 }
 
-/** 注册 file:inspect：选中文件时即时校验（存在性 + 类型分类 + 大小），供渲染层拒绝非法附件 */
+/** 注册 file:inspect：选中文件时即时校验（存在性 + 类型分类 + 大小），供渲染层拒绝非法附件。 */
 export function registerFileHandlers(ipcMain: IpcMain, deps: FileInspectDeps): void {
   ipcMain.handle('file:inspect', async (_event, path?: unknown) => {
     try {
@@ -20,6 +20,10 @@ export function registerFileHandlers(ipcMain: IpcMain, deps: FileInspectDeps): v
     if (!info || !info.isFile()) {
       return { success: true, data: { exists: false, size: 0, kind: 'missing' } }
     }
-    return { success: true, data: { exists: true, size: info.size, kind: classifyPath(path) } }
+    const kind = classifyPath(path)
+    return {
+      success: true,
+      data: { exists: true, size: info.size, kind, maxBytes: limitForKind(kind) }
+    }
   })
 }

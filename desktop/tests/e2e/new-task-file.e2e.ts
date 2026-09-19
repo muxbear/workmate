@@ -18,6 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
+import { makeDocx } from '../unit/workspace/file-fixtures'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
@@ -111,13 +112,24 @@ describe('E2E 文件附件', () => {
     // hover：删除图标淡入（过渡 0.15s，用 poll 等过渡完成，避免负载下读到中间值）
     await token.hover()
     await expect
-      .poll(
-        () =>
-          token.locator('.file-token-del').evaluate((el) => getComputedStyle(el).opacity),
-        { timeout: 5_000 }
-      )
+      .poll(() => token.locator('.file-token-del').evaluate((el) => getComputedStyle(el).opacity), {
+        timeout: 5_000
+      })
       .toBe('1')
     // 点击删除 → token 移除
+    await token.click()
+    expect(await page.locator('.file-token').count()).toBe(0)
+  }, 60_000)
+
+  it('插入 docx 附件：不再提示不支持类型', async () => {
+    const docxPath = join(dataHome, 'Activiti 学习笔记.docx')
+    writeFileSync(docxPath, makeDocx('Activiti 学习笔记正文'))
+    await openPlusMenu()
+    await page.locator('input.plus-file-input').setInputFiles(docxPath)
+    const token = page.locator('.file-token')
+    await token.waitFor({ state: 'visible', timeout: 5_000 })
+    expect(await token.locator('.file-token-name').innerText()).toBe('Activiti 学习笔记.docx')
+    expect(await page.locator('.file-token').count()).toBe(1)
     await token.click()
     expect(await page.locator('.file-token').count()).toBe(0)
   }, 60_000)
@@ -187,7 +199,9 @@ describe('E2E 文件附件', () => {
     // 等流真正结束（发送按钮由 stop 态恢复），避免残留流影响后续用例（isStreaming 未复位时
     // 欢迎态输入卡渲染的是停止按钮，点击会 cancelMessage 而非发送）
     await page.locator('.send-btn--stop').waitFor({ state: 'detached', timeout: 60_000 })
-    const replyText = (await page.locator('.chat-bubble-row--assistant .chat-bubble').last().innerText()).trim()
+    const replyText = (
+      await page.locator('.chat-bubble-row--assistant .chat-bubble').last().innerText()
+    ).trim()
     expect(replyText.length).toBeGreaterThan(0)
     // 排除调用失败的兜底文案（成功断言：真实模型回复而非错误提示）
     expect(replyText).not.toBe('抱歉，请求出错了，请重试')

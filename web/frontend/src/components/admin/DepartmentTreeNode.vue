@@ -76,7 +76,7 @@ export default { name: 'DepartmentTreeNode' }
   border: 1px solid transparent;
 }
 .dept-node:hover {
-  background: rgba(30, 41, 59, 0.4);
+  background: var(--surface-secondary);
 }
 .dept-node.is-selected {
   background: rgba(59, 130, 246, 0.12);
@@ -117,7 +117,7 @@ export default { name: 'DepartmentTreeNode' }
 .dept-count {
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
-  background: rgba(30, 41, 59, 0.6);
+  background: var(--surface-inset-soft);
   padding: 1px 6px;
   border-radius: var(--radius-full);
 }

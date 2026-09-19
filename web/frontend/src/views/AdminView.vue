@@ -175,7 +175,7 @@ function handleTileClick(tile: { id: string; route?: string }) {
   transition: background var(--transition-fast);
 }
 .manual-btn:hover {
-  background: rgba(30, 41, 59, 0.8);
+  background: var(--surface-secondary);
 }
 .loading-state {
   padding: 48px;

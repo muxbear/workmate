@@ -78,6 +78,7 @@
 
   /* === 阴影 === */
   --shadow-card: 0px 4px 24px rgba(0, 0, 0, 0.5), 0px 0px 0px 1px rgba(59, 130, 246, 0.06);
+  --shadow-modal: 0px 12px 60px rgba(0, 0, 0, 0.6);
   --shadow-button: 0px 4px 16px rgba(59, 130, 246, 0.3);
   --shadow-logo: 0px 4px 20px rgba(59, 130, 246, 0.25);
 
@@ -89,6 +90,9 @@
   /* === 遮罩 === */
   --color-overlay: rgba(0, 0, 0, 0.6);
   --color-modal-bg: rgba(15, 23, 46, 0.98);
+
+  /* Element Plus 弹窗遮罩沿用应用遮罩令牌 */
+  --el-overlay-color-lighter: var(--color-overlay);
 
   /* === 工具分类色 === */
   --color-tool-blue: #3b82f6;
@@ -178,11 +182,14 @@
   --color-text-error: #dc2626;
 
   --shadow-card: 0px 4px 24px rgba(15, 23, 42, 0.08), 0px 0px 0px 1px rgba(59, 130, 246, 0.08);
+  --shadow-modal: 0px 16px 48px rgba(15, 23, 42, 0.18);
   --shadow-button: 0px 4px 16px rgba(59, 130, 246, 0.22);
   --shadow-logo: 0px 4px 20px rgba(59, 130, 246, 0.18);
 
   --color-overlay: rgba(15, 23, 42, 0.28);
   --color-modal-bg: rgba(255, 255, 255, 0.98);
+
+  --el-overlay-color-lighter: var(--color-overlay);
 
   --brand-gradient: linear-gradient(125.75deg, #f7faff 21.4%, #eaf1ff 57.1%, #f3f7ff 92.9%);
 
@@ -268,4 +275,34 @@
   --status-amber-text: #b45309;
   --status-pink-text: #be185d;
   --status-highlight-text: #a16207;
+}
+
+
+/* ========================================
+   Element Plus 深色适配
+   Element Plus 自带深色变量表为中性灰，这里对齐 WorkMate 的深蓝色板
+   ======================================== */
+:root[data-theme='dark'] {
+  --el-bg-color: #0f172e;
+  --el-bg-color-page: #060b1a;
+  --el-bg-color-overlay: #141d38;
+  --el-text-color-primary: #f2f5fa;
+  --el-text-color-regular: #c7d1e0;
+  --el-text-color-secondary: #8794ad;
+  --el-text-color-placeholder: #596680;
+  --el-text-color-disabled: #596680;
+  --el-border-color: #1f293d;
+  --el-border-color-light: #263359;
+  --el-border-color-lighter: #1f293d;
+  --el-border-color-extra-light: #1f293d;
+  --el-fill-color: #0a1124;
+  --el-fill-color-light: #0a1124;
+  --el-fill-color-lighter: #0a1124;
+  --el-fill-color-extra-light: #0a1124;
+  --el-fill-color-dark: #0a1124;
+  --el-fill-color-darker: #060b1a;
+  --el-fill-color-blank: #0f172e;
+  --el-mask-color: rgba(15, 23, 46, 0.8);
+  --el-mask-color-extra-light: rgba(15, 23, 46, 0.3);
+  --el-overlay-color-lighter: var(--color-overlay);
 }

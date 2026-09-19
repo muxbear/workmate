@@ -282,7 +282,7 @@ function copyChunkContent() {
   gap: 4px;
   background: none;
   border: none;
-  color: #cbd5e1;
+  color: var(--foreground-secondary);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -292,13 +292,13 @@ function copyChunkContent() {
 }
 
 .back-btn:hover {
-  color: #fff;
+  color: var(--foreground-primary);
 }
 
 .header-divider {
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-medium);
 }
 
 .doc-title-row {
@@ -323,18 +323,18 @@ function copyChunkContent() {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
 }
 
 .metric-icon {
   flex-shrink: 0;
 }
 
-.layers-icon { color: #c4b5fd; }
-.network-icon { color: #6ee7b7; }
+.layers-icon { color: var(--status-purple-text); }
+.network-icon { color: var(--status-ready-text); }
 
 .header-meta-text {
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 /* Split layout */
@@ -363,7 +363,7 @@ function copyChunkContent() {
   left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   pointer-events: none;
 }
 
@@ -371,10 +371,10 @@ function copyChunkContent() {
   width: 100%;
   height: 36px;
   padding: 0 12px 0 36px;
-  background: rgba(15, 23, 46, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-medium);
   border-radius: 10px;
-  color: #f2f5fa;
+  color: var(--foreground-primary);
   font-size: 13px;
   font-family: inherit;
   outline: none;
@@ -382,7 +382,7 @@ function copyChunkContent() {
 }
 
 .search-input::placeholder {
-  color: #596680;
+  color: var(--foreground-muted);
 }
 
 .search-input:focus {
@@ -391,7 +391,7 @@ function copyChunkContent() {
 
 .chunk-count-label {
   font-size: 12px;
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 .chunk-scroll-area {
@@ -409,7 +409,7 @@ function copyChunkContent() {
 }
 
 .chunk-scroll-area::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-subtle);
   border-radius: 2px;
 }
 
@@ -417,15 +417,15 @@ function copyChunkContent() {
 .chunk-card {
   padding: 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(15, 23, 46, 0.4);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .chunk-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(15, 23, 46, 0.6);
+  border-color: var(--border-medium);
+  background: var(--color-bg-input);
 }
 
 .chunk-card--sel {
@@ -452,37 +452,37 @@ function copyChunkContent() {
   height: 16px;
   line-height: 16px;
   border-radius: 4px;
-  background: rgba(100, 116, 139, 0.1);
-  color: #94a3b8;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-inset-soft);
+  color: var(--foreground-secondary);
+  border: 1px solid var(--border-medium);
 }
 
 .chunk-index-badge--sel {
   background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
   border-color: rgba(59, 130, 246, 0.4);
 }
 
 .chunk-page-ref {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 .chunk-token-count {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 .chunk-section-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
   margin-bottom: 4px;
 }
 
 .chunk-content-preview {
   margin: 0;
   font-size: 12px;
-  color: #cbd5e1;
+  color: var(--foreground-secondary);
   line-height: 1.6;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -492,7 +492,7 @@ function copyChunkContent() {
 
 .search-highlight {
   background: rgba(250, 204, 21, 0.3);
-  color: #fde68a;
+  color: var(--status-highlight-text);
   padding: 0 2px;
   border-radius: 2px;
 }
@@ -511,7 +511,7 @@ function copyChunkContent() {
   line-height: 14px;
   border-radius: 4px;
   background: rgba(168, 85, 247, 0.1);
-  color: #c4b5fd;
+  color: var(--status-purple-text);
   border: 1px solid rgba(168, 85, 247, 0.2);
 }
 
@@ -521,7 +521,7 @@ function copyChunkContent() {
   align-items: center;
   justify-content: center;
   padding: 40px 0;
-  color: #64748b;
+  color: var(--foreground-muted);
   font-size: 13px;
   gap: 8px;
 }
@@ -543,8 +543,8 @@ function copyChunkContent() {
   align-items: center;
   justify-content: space-between;
   padding: 12px;
-  background: rgba(15, 23, 46, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
 }
 
@@ -556,11 +556,11 @@ function copyChunkContent() {
 }
 
 .metadata-item {
-  color: #94a3b8;
+  color: var(--foreground-secondary);
 }
 
 .metadata-item strong {
-  color: #e2e8f0;
+  color: var(--foreground-primary);
 }
 
 .metadata-actions {
@@ -577,15 +577,15 @@ function copyChunkContent() {
   height: 28px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   cursor: pointer;
   border-radius: 6px;
   transition: all 0.15s;
 }
 
 .nav-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  color: #e2e8f0;
+  background: var(--surface-secondary);
+  color: var(--foreground-primary);
 }
 
 .nav-btn:disabled {
@@ -606,7 +606,7 @@ function copyChunkContent() {
 
 .entity-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 /* Context view */
@@ -621,14 +621,14 @@ function copyChunkContent() {
 }
 
 .context-scroll-area::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-subtle);
   border-radius: 2px;
 }
 
 .context-card {
   border-radius: 12px;
-  background: rgba(15, 23, 46, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-medium);
   overflow: hidden;
 }
 
@@ -637,19 +637,19 @@ function copyChunkContent() {
   align-items: center;
   gap: 6px;
   padding: 10px 16px;
-  background: rgba(0, 0, 0, 0.4);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
 }
 
 .context-header-icon {
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 
 .context-header-right {
   margin-left: auto;
-  color: #475569;
+  color: var(--foreground-muted);
 }
 
 .context-card-body {
@@ -658,7 +658,7 @@ function copyChunkContent() {
 
 .context-prev,
 .context-next {
-  border-left: 2px solid rgba(51, 65, 85, 0.6);
+  border-left: 2px solid var(--border-medium);
   padding-left: 16px;
   padding-top: 12px;
   padding-bottom: 12px;
@@ -669,14 +669,14 @@ function copyChunkContent() {
   align-items: center;
   gap: 4px;
   font-size: 10px;
-  color: #475569;
+  color: var(--foreground-muted);
   margin-bottom: 6px;
 }
 
 .context-ctx-text {
   margin: 0;
   font-size: 13px;
-  color: #475569;
+  color: var(--foreground-muted);
   line-height: 1.6;
 }
 
@@ -695,7 +695,7 @@ function copyChunkContent() {
   align-items: center;
   gap: 6px;
   font-size: 10px;
-  color: #60a5fa;
+  color: var(--status-indexing-text);
   margin-bottom: 8px;
 }
 
@@ -715,7 +715,7 @@ function copyChunkContent() {
 .context-current-text {
   margin: 0;
   font-size: 14px;
-  color: #e2e8f0;
+  color: var(--foreground-primary);
   line-height: 1.6;
 }
 
@@ -723,8 +723,8 @@ function copyChunkContent() {
 .stats-card {
   margin-top: 12px;
   padding: 16px;
-  background: rgba(15, 23, 46, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
 }
 
@@ -733,12 +733,12 @@ function copyChunkContent() {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   margin: 0 0 12px;
 }
 
 .stats-title-icon {
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 
 .stats-grid {
@@ -751,20 +751,20 @@ function copyChunkContent() {
 .stat-item {
   text-align: center;
   padding: 12px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
 
 .stat-value {
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
+  color: var(--foreground-primary);
 }
 
 .stat-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
   margin-top: 2px;
 }
 
@@ -773,14 +773,14 @@ function copyChunkContent() {
   align-items: center;
   justify-content: space-between;
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
   margin-bottom: 4px;
 }
 
 .stats-position-bar {
   height: 8px;
   border-radius: 4px;
-  background: #1e293b;
+  background: var(--surface-inset);
   overflow: hidden;
 }
 
@@ -798,7 +798,7 @@ function copyChunkContent() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  color: var(--foreground-muted);
   font-size: 13px;
   gap: 8px;
 }

@@ -1,4 +1,7 @@
-"""技能上传业务逻辑：压缩包解压、校验与安装。"""
+"""技能上传业务逻辑：压缩包解压、校验与安装."""
+import asyncio
+import hashlib
+import io
 import json
 import logging
 import os
@@ -19,6 +22,8 @@ from api.skill.schemas import (
     SkillDeleteResult,
     SkillInfo,
     SkillListResponse,
+    SkillManifestFile,
+    SkillManifestResponse,
     SkillResult,
     SkillsUploadResponse,
     SkillUpdateRequest,
@@ -36,12 +41,12 @@ SKILLS_DIR = os.path.join(settings.WORKSPACE, "skills_upload")
 
 
 def get_skill_upload_path(skill_name: str) -> str:
-    """返回技能在上传目录中的文件系统路径。"""
+    """返回技能在上传目录中的文件系统路径."""
     return os.path.join(SKILLS_DIR, skill_name)
 
 
 def parse_skill_frontmatter(content: str) -> tuple[dict | None, str | None]:
-    """解析 SKILL.md 中的 YAML 前置元数据。
+    """解析 SKILL.md 中的 YAML 前置元数据.
 
     返回:
         (解析后的字典或 None, 错误信息或 None)。
@@ -62,7 +67,7 @@ def parse_skill_frontmatter(content: str) -> tuple[dict | None, str | None]:
 
 
 def _read_skill_metadata(skill_path: str) -> tuple[str, str]:
-    """从技能的 SKILL.md 前置元数据中读取描述和许可证。
+    """从技能的 SKILL.md 前置元数据中读取描述和许可证.
 
     返回 (description, license)。出错时两者默认为空字符串。
     """
@@ -88,7 +93,7 @@ def _read_skill_metadata(skill_path: str) -> tuple[str, str]:
 def validate_skill_directory(
     skill_path: str, expected_name: str | None = None
 ) -> SkillResult:
-    """按智能体技能规范校验技能目录。
+    """按智能体技能规范校验技能目录.
 
     参数:
         skill_path: 技能目录路径。
@@ -206,7 +211,7 @@ def validate_skill_directory(
 
 
 def _detect_archive_format(file_path: str) -> str:
-    """通过读取文件头魔数检测压缩包格式。
+    """通过读取文件头魔数检测压缩包格式.
 
     返回以下格式之一: 'zip'、'tar.gz'、'tar.bz2'、'tar.xz'、'tar'。
     """
@@ -234,7 +239,7 @@ def _detect_archive_format(file_path: str) -> str:
 
 
 def _extract_archive(src_path: str, dest_dir: str, fmt: str) -> None:
-    """将压缩包解压到目标目录。"""
+    """将压缩包解压到目标目录."""
     try:
         if fmt == "zip":
             with zipfile.ZipFile(src_path) as zf:
@@ -270,7 +275,7 @@ def _extract_archive(src_path: str, dest_dir: str, fmt: str) -> None:
 
 
 def _safe_extract_tar(tf: tarfile.TarFile, dest_dir: str) -> None:
-    """解压 tar 文件，含路径穿越攻击防护。"""
+    """解压 tar 文件，含路径穿越攻击防护."""
     for member in tf.getmembers():
         member_path = os.path.realpath(os.path.join(dest_dir, member.name))
         if not member_path.startswith(os.path.realpath(dest_dir) + os.sep):
@@ -281,12 +286,12 @@ def _safe_extract_tar(tf: tarfile.TarFile, dest_dir: str) -> None:
 
 
 def _is_skill_dir(path: str) -> bool:
-    """检查目录是否包含 SKILL.md（即是否为有效的技能根目录）。"""
+    """检查目录是否包含 SKILL.md（即是否为有效的技能根目录）."""
     return os.path.isfile(os.path.join(path, "SKILL.md"))
 
 
 def _get_skill_directories(extract_dir: str) -> list[str]:
-    """发现解压目录中的技能目录。
+    """发现解压目录中的技能目录.
 
     处理三种结构：
     1. 压缩包本身即为技能 —— extract_dir 自身包含 SKILL.md
@@ -321,7 +326,7 @@ def _get_skill_directories(extract_dir: str) -> list[str]:
 
 
 def _get_skill_name(skill_path: str) -> str:
-    """获取规范技能名称 —— 优先从 SKILL.md 前置元数据读取，回退到目录名。"""
+    """获取规范技能名称 —— 优先从 SKILL.md 前置元数据读取，回退到目录名."""
     skill_md = os.path.join(skill_path, "SKILL.md")
     if os.path.isfile(skill_md):
         try:
@@ -337,7 +342,7 @@ def _get_skill_name(skill_path: str) -> str:
 async def process_skills_upload(
     file: UploadFile, db: AsyncSession
 ) -> SkillsUploadResponse:
-    """上传、解压、校验、安装并持久化压缩包中的技能。"""
+    """上传、解压、校验、安装并持久化压缩包中的技能."""
     content = await file.read()
 
     if len(content) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
@@ -416,7 +421,7 @@ async def process_skills_upload(
 async def list_skills(
     db: AsyncSession, page: int = 1, page_size: int = 20, category: str | None = None, enabled: bool | None = None
 ) -> SkillListResponse:
-    """分页列出技能，支持按分类和启用状态筛选。"""
+    """分页列出技能，支持按分类和启用状态筛选."""
     from sqlalchemy import func, select
 
     offset = max(0, (page - 1) * page_size)
@@ -454,7 +459,7 @@ async def search_skills(
     category: str | None = None,
     enabled: bool | None = None,
 ) -> SkillListResponse:
-    """按名称模糊搜索技能，支持分页和可选筛选。"""
+    """按名称模糊搜索技能，支持分页和可选筛选."""
     from sqlalchemy import func, select
 
     offset = max(0, (page - 1) * page_size)
@@ -488,7 +493,7 @@ async def search_skills(
 
 
 async def _delete_one_skill(db: AsyncSession, skill_id: str) -> SkillDeleteResult:
-    """按 ID 删除单个技能 —— 同时删除数据库记录和文件系统目录。"""
+    """按 ID 删除单个技能 —— 同时删除数据库记录和文件系统目录."""
     from sqlalchemy import select
 
     stmt = select(Skill).where(Skill.id == skill_id)
@@ -520,7 +525,7 @@ async def _delete_one_skill(db: AsyncSession, skill_id: str) -> SkillDeleteResul
 
 
 async def delete_skill(db: AsyncSession, skill_id: str) -> SkillDeleteResponse:
-    """按 ID 删除单个技能。"""
+    """按 ID 删除单个技能."""
     result = await _delete_one_skill(db, skill_id)
     return SkillDeleteResponse(
         deleted_count=1 if result.deleted else 0,
@@ -532,7 +537,7 @@ async def delete_skill(db: AsyncSession, skill_id: str) -> SkillDeleteResponse:
 async def delete_skills_batch(
     db: AsyncSession, ids: list[str]
 ) -> SkillDeleteResponse:
-    """按 ID 列表批量删除技能。"""
+    """按 ID 列表批量删除技能."""
     results: list[SkillDeleteResult] = []
     for skill_id in ids:
         result = await _delete_one_skill(db, skill_id)
@@ -548,7 +553,7 @@ async def delete_skills_batch(
 
 
 async def get_skill(db: AsyncSession, skill_id: str) -> SkillInfo:
-    """按 ID 获取单个技能。"""
+    """按 ID 获取单个技能."""
     from sqlalchemy import select
 
     stmt = select(Skill).where(Skill.id == skill_id)
@@ -561,7 +566,7 @@ async def get_skill(db: AsyncSession, skill_id: str) -> SkillInfo:
 async def update_skill(
     db: AsyncSession, skill_id: str, req: SkillUpdateRequest
 ) -> SkillInfo:
-    """更新技能元数据，仅更新非 None 字段。"""
+    """更新技能元数据，仅更新非 None 字段."""
     from sqlalchemy import select
 
     stmt = select(Skill).where(Skill.id == skill_id)
@@ -579,7 +584,7 @@ async def update_skill(
 async def toggle_skill_enabled(
     db: AsyncSession, skill_id: str, enabled: bool
 ) -> SkillInfo:
-    """切换技能的启用/禁用状态。"""
+    """切换技能的启用/禁用状态."""
     from sqlalchemy import select
 
     stmt = select(Skill).where(Skill.id == skill_id)
@@ -594,7 +599,7 @@ async def toggle_skill_enabled(
 async def create_skill(
     db: AsyncSession, req: SkillCreateRequest
 ) -> SkillInfo:
-    """手动创建单个技能 —— 写入 SKILL.md 并在数据库中插入记录。"""
+    """手动创建单个技能 —— 写入 SKILL.md 并在数据库中插入记录."""
     from sqlalchemy import select
 
     # 检查名称是否重复
@@ -679,7 +684,7 @@ BUILTIN_SKILLS = [
 
 
 async def seed_builtin_skills(db: AsyncSession) -> None:
-    """填充内置技能，仅当技能表为空时执行，可重复调用。"""
+    """填充内置技能，仅当技能表为空时执行，可重复调用."""
     from sqlalchemy import func, select
 
     count = (await db.execute(select(func.count()).select_from(Skill))).scalar() or 0
@@ -702,3 +707,96 @@ async def seed_builtin_skills(db: AsyncSession) -> None:
         db.add(skill)
 
     logger.info("已填充 %d 个内置技能", len(BUILTIN_SKILLS))
+
+def _skill_dir_name(skill: Skill) -> str:
+    """返回技能在 SKILLS_DIR 下的目录名（规范名优先，中文等回退 skill-<id 前 8 位>）."""
+    name = (skill.name or "").strip()
+    if _SKILL_NAME_RE.match(name) and "--" not in name:
+        return name
+    return f"skill-{str(skill.id)[:8]}"
+
+
+def _ensure_skill_package(skill: Skill) -> str:
+    """确保技能目录存在（内置技能无目录时按 prompt 生成最小 SKILL.md），返回目录路径."""
+    dir_name = _skill_dir_name(skill)
+    skill_dir = os.path.join(SKILLS_DIR, dir_name)
+    skill_md = os.path.join(skill_dir, "SKILL.md")
+    if not os.path.isfile(skill_md):
+        os.makedirs(skill_dir, exist_ok=True)
+        description = (skill.description or skill.name or "技能").replace("\n", " ").strip()
+        body = (skill.prompt or "").strip()
+        lines = ["---", f"name: {dir_name}", f"description: {description[:1024]}", "---", ""]
+        if body:
+            lines.extend([f"# {skill.name or dir_name}", "", body, ""])
+        with open(skill_md, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+        logger.info("已为技能 '%s' 生成最小技能包", dir_name)
+    return skill_dir
+
+
+def _iter_skill_files(skill_dir: str) -> list[tuple[str, str]]:
+    """列出技能目录内文件（相对路径 + 绝对路径），跳过 .runtime/ 运行环境目录."""
+    out: list[tuple[str, str]] = []
+    for root, _dirs, file_names in os.walk(skill_dir):
+        for file_name in file_names:
+            full = os.path.join(root, file_name)
+            rel = os.path.relpath(full, skill_dir).replace(os.sep, "/")
+            if rel.startswith(".runtime/"):
+                continue
+            out.append((rel, full))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def build_skill_manifest(skill: Skill) -> SkillManifestResponse:
+    """构建技能包清单（文件 sha256 + 内容指纹，供桌面端增量同步）."""
+    skill_dir = _ensure_skill_package(skill)
+    files: list[SkillManifestFile] = []
+    hasher = hashlib.sha256()
+    for rel, full in _iter_skill_files(skill_dir):
+        with open(full, "rb") as handle:
+            content = handle.read()
+        digest = hashlib.sha256(content).hexdigest()
+        files.append(SkillManifestFile(path=rel, size=len(content), sha256=digest))
+        hasher.update(rel.encode("utf-8"))
+        hasher.update(digest.encode("ascii"))
+    return SkillManifestResponse(
+        id=skill.id,
+        name=skill.name,
+        dir_name=_skill_dir_name(skill),
+        hash=hasher.hexdigest(),
+        files=files,
+        updated_at=skill.updated_at.isoformat() if skill.updated_at else "",
+    )
+
+
+def build_skill_zip(skill: Skill) -> tuple[str, bytes]:
+    """打包技能目录为 zip（保持 Agent Skills 目录规范）."""
+    skill_dir = _ensure_skill_package(skill)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for rel, full in _iter_skill_files(skill_dir):
+            archive.write(full, arcname=rel)
+    return f"{_skill_dir_name(skill)}.zip", buffer.getvalue()
+
+
+async def _get_skill_row(db: AsyncSession, skill_id: str) -> Skill:
+    """按 id 读取技能记录，不存在时抛 404."""
+    from sqlalchemy import select
+
+    row = (await db.execute(select(Skill).where(Skill.id == skill_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="技能未找到")
+    return row
+
+
+async def get_skill_manifest(db: AsyncSession, skill_id: str) -> SkillManifestResponse:
+    """获取技能包清单（文件 IO 在线程池执行，避免阻塞事件循环）."""
+    row = await _get_skill_row(db, skill_id)
+    return await asyncio.to_thread(build_skill_manifest, row)
+
+
+async def get_skill_package(db: AsyncSession, skill_id: str) -> tuple[str, bytes]:
+    """获取技能包 zip（文件名 + 内容）."""
+    row = await _get_skill_row(db, skill_id)
+    return await asyncio.to_thread(build_skill_zip, row)

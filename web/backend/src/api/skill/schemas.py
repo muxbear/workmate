@@ -110,3 +110,21 @@ class SkillDeleteResponse(BaseModel):
     deleted_count: int
     failed_count: int
     results: list[SkillDeleteResult]
+
+class SkillManifestFile(BaseModel):
+    """Single file entry inside a skill package."""
+
+    path: str
+    size: int
+    sha256: str
+
+
+class SkillManifestResponse(BaseModel):
+    """Skill package manifest for incremental desktop sync."""
+
+    id: str
+    name: str
+    dir_name: str
+    hash: str
+    files: list[SkillManifestFile]
+    updated_at: str

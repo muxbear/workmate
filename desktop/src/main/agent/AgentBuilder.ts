@@ -1,4 +1,10 @@
-import { createDeepAgent, FilesystemBackend, LocalShellBackend, StoreBackend } from 'deepagents'
+import {
+  CompositeBackend,
+  createDeepAgent,
+  FilesystemBackend,
+  LocalShellBackend,
+  StoreBackend
+} from 'deepagents'
 import type { SubAgent, DeepAgent } from 'deepagents'
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
@@ -25,6 +31,21 @@ export function normalizeBackendKind(value: unknown): BackendKind | undefined {
 }
 
 /**
+ * 把工作空间 backend 与本地技能目录组合：`/skills/` 路由到 ~/.ke-work/skills。
+ *
+ * deepagents 的 skills 中间件按 backend 虚拟路径加载技能（如 `/skills/<dir>/`），
+ * 因此本地技能目录需要以路由形式挂到工作空间 backend 之上。
+ */
+function withSkillsRoute(
+  backend: FilesystemBackend | LocalShellBackend,
+  skillsDir: string
+): CompositeBackend {
+  return new CompositeBackend(backend, {
+    '/skills/': new FilesystemBackend({ rootDir: skillsDir, virtualMode: true })
+  })
+}
+
+/**
  * 按工作模式创建 backend（虚拟文件系统后端）
  *
  * local 分支返回工厂函数而非实例：deepagents 每次工具调用时以运行期 runtime 调用工厂，
@@ -34,12 +55,12 @@ export function normalizeBackendKind(value: unknown): BackendKind | undefined {
  * ⚠️ LocalShellBackend 无沙箱（文档警告 unrestricted shell execution）；virtualMode: true
  * 只约束文件操作、不限制 shell 命令，工作空间目录由主进程权威解析（渲染层只传 id）。
  */
-function createBackend(mode: WorkMode, defaultWorkspaceDir: string) {
+function createBackend(mode: WorkMode, defaultWorkspaceDir: string, skillsDir?: string) {
   if (mode === 'local') {
     return (runtime: {
       configurable?: Record<string, unknown>
       config?: { configurable?: Record<string, unknown> }
-    }): FilesystemBackend | LocalShellBackend => {
+    }): FilesystemBackend | LocalShellBackend | CompositeBackend => {
       const dir = String(
         runtime.configurable?.workspace_dir ??
           runtime.config?.configurable?.workspace_dir ??
@@ -50,8 +71,11 @@ function createBackend(mode: WorkMode, defaultWorkspaceDir: string) {
       const kind = normalizeBackendKind(
         runtime.configurable?.backend_kind ?? runtime.config?.configurable?.backend_kind
       )
-      if (kind === 'filesystem') return new FilesystemBackend({ rootDir: dir, virtualMode: true })
-      return new LocalShellBackend({ rootDir: dir, virtualMode: true, inheritEnv: true })
+      const backend: FilesystemBackend | LocalShellBackend =
+        kind === 'filesystem'
+          ? new FilesystemBackend({ rootDir: dir, virtualMode: true })
+          : new LocalShellBackend({ rootDir: dir, virtualMode: true, inheritEnv: true })
+      return skillsDir ? withSkillsRoute(backend, skillsDir) : backend
     }
   }
   return new StoreBackend({
@@ -104,7 +128,9 @@ export class AgentBuilder {
     mode: WorkMode,
     private readonly defaultWorkspaceDir: string,
     private readonly checkpointDbPath: string,
-    private readonly storeDbPath: string
+    private readonly storeDbPath: string,
+    /** 本地技能根目录（~/.ke-work/skills）；提供后本地模式挂载 /skills/ 路由 */
+    private readonly skillsDir?: string
   ) {
     this.mode = mode
   }
@@ -120,7 +146,7 @@ export class AgentBuilder {
    * 同步返回 this 以支持链式调用；异步的 store 创建延后到 build() 时 await
    */
   withModeDefaults(): this {
-    this.config.backend = createBackend(this.mode, this.defaultWorkspaceDir)
+    this.config.backend = createBackend(this.mode, this.defaultWorkspaceDir, this.skillsDir)
     this.checkpointer = createCheckpointer(this.mode, this.checkpointDbPath)
     this.config.checkpointer = this.checkpointer
     this.storePromise = createStore(this.mode, this.storeDbPath)
@@ -204,7 +230,14 @@ export function createAgentBuilder(
   mode: WorkMode,
   defaultWorkspaceDir: string,
   checkpointDbPath: string,
-  storeDbPath: string
+  storeDbPath: string,
+  skillsDir?: string
 ): AgentBuilder {
-  return new AgentBuilder(mode, defaultWorkspaceDir, checkpointDbPath, storeDbPath).withModeDefaults()
+  return new AgentBuilder(
+    mode,
+    defaultWorkspaceDir,
+    checkpointDbPath,
+    storeDbPath,
+    skillsDir
+  ).withModeDefaults()
 }

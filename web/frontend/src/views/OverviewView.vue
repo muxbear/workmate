@@ -41,6 +41,7 @@ import {
   RefreshCw,
   Clock,
 } from 'lucide-vue-next'
+import { useUiStore } from '@/stores/ui'
 
 /* ---- Types ---- */
 type Period = 'day' | 'month' | 'year'
@@ -361,7 +362,27 @@ const resourceItems = computed<ResourceItem[]>(() => {
 })
 
 /* ---- Chart Options ---- */
+const uiStore = useUiStore()
+
+/** 读取当前主题下的 CSS 令牌，用于 ECharts 配色（跟随深浅色切换） */
+function themeToken(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function chartPalette() {
+  return {
+    axisLabel: themeToken('--foreground-muted', '#6b7280'),
+    splitLine: themeToken('--border-medium', '#1f293d'),
+    tooltipBg: themeToken('--color-modal-bg', 'rgba(15, 23, 46, 0.98)'),
+    tooltipBorder: themeToken('--border-medium', '#1f293d'),
+    tooltipText: themeToken('--foreground-primary', '#f2f5fa'),
+    sliceBorder: themeToken('--color-modal-bg', '#ffffff'),
+  }
+}
+
 function makeAreaChartOptions(data: TrendPoint[]): echarts.EChartsOption {
+  const c = chartPalette()
   return {
     grid: { top: 8, right: 16, left: 40, bottom: 8 },
     xAxis: {
@@ -369,17 +390,17 @@ function makeAreaChartOptions(data: TrendPoint[]): echarts.EChartsOption {
       data: data.map((d) => d.time),
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: '#6B7280', fontSize: 11 },
+      axisLabel: { color: c.axisLabel, fontSize: 11 },
     },
     yAxis: {
       type: 'value',
-      splitLine: { lineStyle: { color: '#1F2937', type: 'dashed' } },
-      axisLabel: { color: '#6B7280', fontSize: 11 },
+      splitLine: { lineStyle: { color: c.splitLine, type: 'dashed' } },
+      axisLabel: { color: c.axisLabel, fontSize: 11 },
     },
     tooltip: {
-      backgroundColor: '#111827',
-      borderColor: '#374151',
-      textStyle: { color: '#fff', fontSize: 12 },
+      backgroundColor: c.tooltipBg,
+      borderColor: c.tooltipBorder,
+      textStyle: { color: c.tooltipText, fontSize: 12 },
     },
     series: [
       {
@@ -415,6 +436,7 @@ function makeAreaChartOptions(data: TrendPoint[]): echarts.EChartsOption {
 }
 
 function makePieChartOptions(): echarts.EChartsOption {
+  const c = chartPalette()
   const pieData = modelProviders.value.map((p) => ({ name: p.name, value: p.usage }))
   return {
     series: [
@@ -426,16 +448,16 @@ function makePieChartOptions(): echarts.EChartsOption {
         label: { show: false },
         emphasis: { scale: false },
         itemStyle: {
-          borderColor: '#111827',
+          borderColor: c.sliceBorder,
           borderWidth: 3,
         },
         color: modelProviders.value.map((p) => p.color),
       },
     ],
     tooltip: {
-      backgroundColor: '#111827',
-      borderColor: '#374151',
-      textStyle: { color: '#fff', fontSize: 12 },
+      backgroundColor: c.tooltipBg,
+      borderColor: c.tooltipBorder,
+      textStyle: { color: c.tooltipText, fontSize: 12 },
       formatter: (params: { name: string; value: number }) =>
         `${params.name}: ${params.value}%`,
     },
@@ -469,6 +491,14 @@ watch(period, async () => {
   await loadTrendData()
   updateChart()
 })
+
+watch(
+  () => uiStore.theme,
+  () => {
+    updateChart()
+    if (pieInstance) pieInstance.setOption(makePieChartOptions(), true)
+  },
+)
 
 onMounted(async () => {
   clockTimer = setInterval(() => {
@@ -950,7 +980,7 @@ function eventDotColor(type: EventType): string {
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: rgba(255,255,255,0.06);
+  background: var(--surface-inset);
   animation: shimmer 1.5s infinite;
 }
 
@@ -958,7 +988,7 @@ function eventDotColor(type: EventType): string {
   width: 60px;
   height: 12px;
   border-radius: 4px;
-  background: rgba(255,255,255,0.06);
+  background: var(--surface-inset);
   animation: shimmer 1.5s infinite;
 }
 
@@ -966,7 +996,7 @@ function eventDotColor(type: EventType): string {
   width: 40px;
   height: 20px;
   border-radius: 4px;
-  background: rgba(255,255,255,0.06);
+  background: var(--surface-inset);
   animation: shimmer 1.5s infinite;
 }
 
@@ -1064,7 +1094,7 @@ function eventDotColor(type: EventType): string {
 .period-tabs {
   display: flex;
   gap: 2px;
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-secondary);
   padding: 3px;
   border-radius: var(--radius-lg);
 }
@@ -1204,7 +1234,7 @@ function eventDotColor(type: EventType): string {
   gap: 8px;
   margin-top: 16px;
   padding: 12px;
-  background: rgba(255,255,255,0.03);
+  background: var(--surface-inset-soft);
   border-radius: var(--radius-lg);
 }
 
@@ -1271,7 +1301,7 @@ function eventDotColor(type: EventType): string {
 
 .provider-bar-track {
   height: 6px;
-  background: rgba(255,255,255,0.06);
+  background: var(--surface-inset);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -1425,7 +1455,7 @@ function eventDotColor(type: EventType): string {
 
 .health-bar-track {
   height: 6px;
-  background: rgba(255,255,255,0.06);
+  background: var(--surface-inset);
   border-radius: 3px;
   overflow: hidden;
 }

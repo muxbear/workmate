@@ -1,4 +1,5 @@
 ﻿import { ElectronAPI } from '@electron-toolkit/preload'
+import type { FileKind } from '../shared/file-kinds'
 
 /** IPC 统一结果包裹（与主进程 auth-handlers 一致） */
 export interface IpcResult<T> {
@@ -127,12 +128,13 @@ export interface AgentAPI {
   onAgentArtifactChunk(callback: (data: { artifactId: string; text: string }) => void): () => void
   onAgentArtifactEnd(callback: (data: { artifactId: string; ok: boolean }) => void): () => void
   onAgentArtifactError(callback: (data: { artifactId: string; error: string }) => void): () => void
-  /** 选中文件即时校验（存在性 + 类型分类 + 大小），返回 kind: text/image/pdf/unsupported/missing */
+  /** 选中文件即时校验（存在性 + 类型分类 + 大小），返回 kind: text/image/pdf/document/unsupported/missing */
   inspectFile(path: string): Promise<
     IpcResult<{
       exists: boolean
       size: number
-      kind: 'text' | 'image' | 'pdf' | 'unsupported' | 'missing'
+      maxBytes?: number
+      kind: FileKind | 'missing'
     }>
   >
   /** 获取文件选择器选中文件的绝对路径（Electron 39 起 File.path 已移除，须走 webUtils） */
@@ -711,7 +713,28 @@ export interface WebUser {
   avatar?: string
 }
 
-/** 桌面端技能列表项（Web SkillInfo 映射后的结果） */
+/** 技能包内单个文件的元信息（主进程同步落盘时记录） */
+export interface SkillFileEntry {
+  /** 相对技能根目录的路径，'/' 分隔 */
+  path: string
+  size: number
+  sha256: string
+}
+
+/** 技能脚本运行时类型 */
+export type SkillRuntimeKind = 'python' | 'node'
+
+/** 技能脚本运行时需求（同步 / 安装时探测得到） */
+export interface SkillRuntimeRequirement {
+  /** 需要的运行时；空数组表示技能不含脚本 */
+  kinds: SkillRuntimeKind[]
+  /** 入口脚本相对路径（frontmatter module 或首个脚本） */
+  entry: string | null
+  /** 探测依据（展示 / 排查用） */
+  reasons?: string[]
+}
+
+/** 桌面端技能列表项（Web SkillInfo 映射 + 本地安装信息） */
 export interface DesktopSkill {
   id: string
   name: string
@@ -722,14 +745,86 @@ export interface DesktopSkill {
   enabled: boolean
   isBuiltin: boolean
   source: string
+  /** 本地技能目录名（~/.ke-work/skills/<dirName>） */
+  dirName?: string
+  /** 技能包内文件清单（同步落盘时记录） */
+  files?: SkillFileEntry[]
+  /** 脚本运行时需求（同步 / 安装时探测） */
+  runtime?: SkillRuntimeRequirement | null
+  /** 是否已安装到主智能体 */
+  installed?: boolean
+  /** 安装时间戳 */
+  installedAt?: number | null
+  /** 服务端已删除但本地保留 */
+  stale?: boolean
+  /** skills.json 有条目但磁盘目录缺失 */
+  missing?: boolean
+}
+
+/** 技能同步阶段（主进程 → 渲染层进度事件） */
+export type SkillSyncPhase = 'authorize' | 'fetch' | 'download' | 'save' | 'load' | 'done' | 'error'
+
+/** 技能同步进度（主进程推送） */
+export interface SkillSyncProgress {
+  phase: SkillSyncPhase
+  /** 0–100 单调递增进度 */
+  percent: number
+  message?: string
+  received?: number
+  total?: number
+  /** 当前处理的技能名 */
+  skill?: string
+}
+
+/** 技能同步增量统计 */
+export interface SkillSyncStats {
+  added: number
+  updated: number
+  unchanged: number
+  failed: number
+  stale: number
+}
+
+/** 本地技能快照（skills.json 读回结果） */
+export interface SkillLocalSnapshot {
+  skills: DesktopSkill[]
+  syncedAt: number
+}
+
+/** 技能安装阶段（主进程 → 渲染层进度事件） */
+export type SkillInstallPhase = 'detect' | 'runtime' | 'deps' | 'write' | 'agent' | 'done' | 'error'
+
+/** 技能安装进度（主进程推送） */
+export interface SkillInstallProgress {
+  skillId: string
+  skillName: string
+  phase: SkillInstallPhase
+  /** 0–100 单调递增进度 */
+  percent: number
+  message?: string
+  /** 正在检查 / 安装的运行时 */
+  runtimeId?: RuntimeId
+  /** 运行时安装进度（透传自 BinaryManager） */
+  runtimeProgress?: RuntimeProgress
 }
 
 export interface SkillSyncAPI {
   getStatus(): Promise<IpcResult<SkillSyncStatus>>
   authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
-  sync(): Promise<IpcResult<{ skills: DesktopSkill[]; syncedAt: number }>>
+  /** 拉取技能列表 → 增量下载技能包 → 落盘 → 读回 */
+  sync(): Promise<IpcResult<{ skills: DesktopSkill[]; syncedAt: number; stats: SkillSyncStats }>>
   getCachedSkills(): Promise<IpcResult<DesktopSkill[]>>
+  /** 读取 ~/.ke-work/skills/skills.json；文件缺失返回 null */
+  loadLocal(): Promise<IpcResult<SkillLocalSnapshot | null>>
+  /** 安装技能到主智能体（含脚本运行时环境准备） */
+  install(skillId: string): Promise<IpcResult<{ skill: DesktopSkill }>>
+  /** 从主智能体移除技能（保留本地技能包） */
+  uninstall(skillId: string): Promise<IpcResult<{ skill: DesktopSkill }>>
   disconnect(): Promise<IpcResult<null>>
+  /** 订阅同步进度事件，返回取消订阅函数 */
+  onSyncProgress(callback: (data: SkillSyncProgress) => void): () => void
+  /** 订阅安装进度事件，返回取消订阅函数 */
+  onInstallProgress(callback: (data: SkillInstallProgress) => void): () => void
 }
 
 /** 桌面端专家绑定的 MCP 工具连接信息（用于注册 MCP 客户端） */

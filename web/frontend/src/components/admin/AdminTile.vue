@@ -60,7 +60,7 @@ function handleClick() {
 }
 .admin-tile.is-clickable:hover {
   border-color: rgba(59, 130, 246, 0.4);
-  background: rgba(20, 29, 56, 0.6);
+  background: var(--surface-secondary);
 }
 .tile-inner {
   display: flex;

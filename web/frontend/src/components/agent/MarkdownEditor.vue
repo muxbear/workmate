@@ -166,7 +166,7 @@ const renderedHtml = computed(() => {
   justify-content: space-between;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-secondary);
   flex-shrink: 0;
 }
 
@@ -240,7 +240,7 @@ const renderedHtml = computed(() => {
 }
 
 .mode-btn.active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-card);
   color: var(--foreground-primary);
 }
 
@@ -330,7 +330,7 @@ const renderedHtml = computed(() => {
 }
 
 .editor-preview :deep(code) {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-inset-soft);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
@@ -338,7 +338,7 @@ const renderedHtml = computed(() => {
 }
 
 .editor-preview :deep(pre) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-inset-soft);
   padding: 12px 16px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
@@ -390,7 +390,7 @@ const renderedHtml = computed(() => {
 }
 
 .editor-preview :deep(th) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-inset-soft);
   font-weight: var(--font-weight-semibold);
 }
 

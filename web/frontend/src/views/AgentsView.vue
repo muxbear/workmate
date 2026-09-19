@@ -463,7 +463,7 @@ onMounted(() => {
   padding: 7px 30px 7px 30px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-inset-soft);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;

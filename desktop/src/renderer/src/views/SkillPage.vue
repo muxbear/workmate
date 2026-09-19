@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useCatalogStore, type SkillItem } from '@store/catalog'
 import { useSkillSyncStore } from '@store/skillSync'
 import { useSettingsStore } from '@store/settings'
@@ -9,7 +9,7 @@ const search = ref('')
 const catalog = useCatalogStore()
 const skillSync = useSkillSyncStore()
 
-/** 技能安装提示（轻量 toast，点击技能卡片右侧 + 后展示） */
+/** 技能操作提示（轻量 toast） */
 const skillToast = ref('')
 let skillToastTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -18,34 +18,43 @@ const showToast = (text: string): void => {
   if (skillToastTimer) clearTimeout(skillToastTimer)
   skillToastTimer = setTimeout(() => {
     skillToast.value = ''
-  }, 1800)
+  }, 2200)
 }
 
-const installSkill = (skill: SkillItem): void => {
-  showToast(`${skill.name}技能已安装，去试试`)
+/** 页面是否已有可展示技能（本地优先：本地有数据就不显示同步空态） */
+const hasSkills = computed(() => catalog.skillItems.length > 0)
+
+/** 安装技能到主智能体（含脚本运行时环境准备） */
+const installSkill = async (skill: SkillItem): Promise<void> => {
+  const ok = await skillSync.install(skill.id)
+  showToast(ok ? `${skill.name} 已安装，去试试` : (skillSync.error ?? '安装失败'))
+}
+
+/** 从主智能体移除技能（保留本地技能包） */
+const uninstallSkill = async (skill: SkillItem): Promise<void> => {
+  const ok = await skillSync.uninstall(skill.id)
+  showToast(ok ? `${skill.name} 已从主智能体移除` : (skillSync.error ?? '移除失败'))
 }
 
 const authorizeAndSync = async (): Promise<void> => {
-  try {
-    await skillSync.authorize()
-    await skillSync.sync()
-  } catch (err) {
-    showToast(err instanceof Error ? err.message : '同步失败')
-  }
+  const ok = await skillSync.sync()
+  showToast(ok ? '技能同步成功' : (skillSync.error ?? '同步失败'))
 }
 
 const resync = async (): Promise<void> => {
-  try {
-    await skillSync.sync()
-    showToast('技能同步成功')
-  } catch (err) {
-    showToast(err instanceof Error ? err.message : '同步失败')
+  const ok = await skillSync.sync()
+  if (!ok) {
+    showToast(skillSync.error ?? '同步失败')
+    return
   }
+  const stats = skillSync.stats
+  showToast(stats && stats.failed > 0 ? `同步完成，${stats.failed} 个技能失败` : '技能同步成功')
 }
 
 onMounted(() => {
   void skillSync.loadStatus()
-  void skillSync.loadCachedSkills()
+  // 本地优先：先读 ~/.ke-work/skills/skills.json，无本地数据时才提示同步
+  void skillSync.loadLocal()
 })
 </script>
 
@@ -71,13 +80,23 @@ onMounted(() => {
     </div>
 
     <div class="page-body">
-      <div v-if="skillSync.status === 'unknown' || skillSync.status === 'syncing'" class="sync-state">
-        {{ skillSync.status === 'syncing' ? '正在同步技能...' : '正在加载技能同步状态...' }}
+      <div
+        v-if="!hasSkills && (skillSync.status === 'unknown' || skillSync.syncing)"
+        class="sync-state"
+      >
+        {{ skillSync.syncing ? '正在同步技能...' : '正在加载本地技能...' }}
       </div>
 
-      <div v-else-if="skillSync.status === 'unauthorized'" class="sync-empty">
+      <div v-else-if="!hasSkills && skillSync.status === 'unauthorized'" class="sync-empty">
         <div class="sync-empty-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
             <path d="M21 3v6h-6" />
           </svg>
@@ -91,12 +110,23 @@ onMounted(() => {
         <div class="sec-intro">
           <div>
             <h2 class="sec-title">技能广场</h2>
-            <p class="sec-desc">为{{ settingsStore.systemName }}扩展专项能力，一键调用即可赋能任意对话</p>
+            <p class="sec-desc">
+              为{{ settingsStore.systemName }}扩展专项能力，一键调用即可赋能任意对话
+            </p>
           </div>
           <button class="resync-btn" type="button" @click="resync">重新同步</button>
         </div>
 
+        <div v-if="skillSync.syncing" class="sync-progress">
+          <div class="sync-progress-fill" :style="{ width: skillSync.percent + '%' }" />
+          <span class="sync-progress-text"
+            >{{ skillSync.progressMessage }} {{ skillSync.percent }}%</span
+          >
+        </div>
+
         <div v-if="skillSync.error" class="sync-error">{{ skillSync.error }}</div>
+
+        <div v-if="skillSync.installMessage" class="sync-hint">{{ skillSync.installMessage }}</div>
 
         <div v-if="catalog.skillItems.length === 0" class="sync-empty">
           <p class="sync-empty-title">暂无技能</p>
@@ -126,14 +156,32 @@ onMounted(() => {
             <div class="skill-info">
               <div class="skill-head">
                 <p class="skill-name">{{ skill.name }}</p>
+                <span v-if="skill.installed" class="skill-tag">已安装</span>
+                <span v-if="skill.missing" class="skill-tag skill-tag--warn">目录缺失</span>
                 <span v-if="skill.count" class="skill-count">{{ skill.count }}</span>
                 <button
                   class="skill-install-btn"
+                  :class="{ 'skill-install-btn--done': skill.installed }"
                   type="button"
-                  title="安装技能"
-                  @click="installSkill(skill)"
+                  :title="skill.installed ? '从主智能体移除' : '安装技能到主智能体'"
+                  :disabled="skillSync.installingId === skill.id"
+                  @click.stop="skill.installed ? uninstallSkill(skill) : installSkill(skill)"
                 >
                   <svg
+                    v-if="skill.installed"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  <svg
+                    v-else
                     width="12"
                     height="12"
                     viewBox="0 0 24 24"
@@ -308,6 +356,63 @@ onMounted(() => {
   background: rgba(239, 68, 68, 0.08);
   color: var(--kw-color-text-error);
   font-size: 12px;
+}
+
+.sync-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sync-progress-fill {
+  height: 4px;
+  max-width: 100%;
+  border-radius: 999px;
+  background: var(--kw-color-brand);
+  transition: width 0.25s ease;
+  flex: 1;
+}
+
+.sync-progress-text {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--kw-color-text-muted);
+}
+
+.sync-hint {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
+  font-size: 12px;
+}
+
+.skill-tag {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.skill-tag--warn {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--kw-color-text-error);
+}
+
+.skill-install-btn--done {
+  background: var(--kw-color-brand);
+  color: var(--kw-color-on-accent);
+}
+
+.skill-install-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .skill-grid {

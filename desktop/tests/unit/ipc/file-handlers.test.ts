@@ -3,8 +3,13 @@ import { mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { registerFileHandlers } from '../../../src/main/ipc/file-handlers'
+import { MAX_DOCUMENT_BYTES } from '../../../src/shared/file-kinds'
 
-function createFakeIpcMain() {
+function createFakeIpcMain(): {
+  handle: ReturnType<typeof vi.fn>
+  handlers: Map<string, (...args: unknown[]) => unknown>
+  invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>
+} {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   return {
     handle: vi.fn((channel: string, fn: (...args: unknown[]) => unknown) => {
@@ -32,7 +37,8 @@ describe('file IPC handlers（选中文件即时校验）', () => {
       }
     })
     const result = await ipc.invoke<{ success: boolean; error?: string }>(
-      'file:inspect', 'C:\\a.txt'
+      'file:inspect',
+      'C:\\a.txt'
     )
     expect(result.success).toBe(false)
     expect(result.error).toBeTruthy()
@@ -46,38 +52,49 @@ describe('file IPC handlers（选中文件即时校验）', () => {
     expect(result.error).toBe('参数错误')
   })
 
-  it('存在文件返回 exists + kind（文本/图片/pdf/unsupported）', async () => {
+  it('存在文件返回 exists + kind（文本/图片/pdf/document/unsupported）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kw-fi-'))
     const txt = join(dir, 'a.md')
     writeFileSync(txt, 'hi')
     writeFileSync(join(dir, 'a.zip'), 'z')
     writeFileSync(join(dir, 'a.png'), 'p')
     writeFileSync(join(dir, 'a.pdf'), '%PDF')
+    writeFileSync(join(dir, 'a.docx'), 'd')
     const ipc = createFakeIpcMain()
     registerFileHandlers(ipc as never, { requireUserId: () => 'u1' })
     const r1 = await ipc.invoke<{ success: boolean; data?: { exists: boolean; kind: string } }>(
-      'file:inspect', txt
+      'file:inspect',
+      txt
     )
     expect(r1.data).toMatchObject({ exists: true, kind: 'text' })
     const r2 = await ipc.invoke<{ success: boolean; data?: { kind: string } }>(
-      'file:inspect', join(dir, 'a.zip')
+      'file:inspect',
+      join(dir, 'a.zip')
     )
     expect(r2.data?.kind).toBe('unsupported')
     const r3 = await ipc.invoke<{ success: boolean; data?: { kind: string } }>(
-      'file:inspect', join(dir, 'a.png')
+      'file:inspect',
+      join(dir, 'a.png')
     )
     expect(r3.data?.kind).toBe('image')
     const r4 = await ipc.invoke<{ success: boolean; data?: { kind: string } }>(
-      'file:inspect', join(dir, 'a.pdf')
+      'file:inspect',
+      join(dir, 'a.pdf')
     )
     expect(r4.data?.kind).toBe('pdf')
+    const r5 = await ipc.invoke<{ success: boolean; data?: { kind: string; maxBytes?: number } }>(
+      'file:inspect',
+      join(dir, 'a.docx')
+    )
+    expect(r5.data).toMatchObject({ kind: 'document', maxBytes: MAX_DOCUMENT_BYTES })
   })
 
   it('不存在返回 kind=missing', async () => {
     const ipc = createFakeIpcMain()
     registerFileHandlers(ipc as never, { requireUserId: () => 'u1' })
     const result = await ipc.invoke<{ success: boolean; data?: { exists: boolean; kind: string } }>(
-      'file:inspect', join(tmpdir(), 'nope.txt')
+      'file:inspect',
+      join(tmpdir(), 'nope.txt')
     )
     expect(result.data).toEqual({ exists: false, size: 0, kind: 'missing' })
   })

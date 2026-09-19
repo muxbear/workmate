@@ -109,7 +109,7 @@ function handleClose() {
   background: var(--color-modal-bg);
   border: 1px solid var(--color-border-card);
   border-radius: var(--radius-card);
-  box-shadow: 0px 12px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -170,7 +170,7 @@ function handleClose() {
 }
 
 .modal-close:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--color-text-primary);
 }
 
@@ -261,14 +261,14 @@ function handleClose() {
 }
 
 .btn-ghost {
-  background: rgba(135, 148, 173, 0.08);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-input);
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+  border: 1px solid var(--border-medium);
 }
 
 .btn-ghost:hover {
-  background: rgba(135, 148, 173, 0.14);
-  color: var(--color-text-primary);
+  border-color: var(--accent-primary);
+  color: var(--foreground-primary);
 }
 
 .modal-enter-active,

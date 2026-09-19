@@ -206,7 +206,7 @@ const iconComponent = computed(() => getToolIcon(cm.value.icon))
 }
 
 .toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
 }
 
 .toggle-on { color: #10b981; }
@@ -255,7 +255,7 @@ const iconComponent = computed(() => getToolIcon(cm.value.icon))
   align-items: center;
   justify-content: space-between;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .badges {
@@ -302,7 +302,7 @@ const iconComponent = computed(() => getToolIcon(cm.value.icon))
 }
 
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 

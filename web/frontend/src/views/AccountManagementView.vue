@@ -447,7 +447,7 @@ const pageSizeOptions = [10, 20, 50]
 .form-row input:disabled { opacity: 0.5; }
 
 .dialog-cancel { padding: 8px 18px; background: var(--surface-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--foreground-secondary); font-size: var(--font-size-sm); cursor: pointer; }
-.dialog-cancel:hover { background: rgba(30,41,59,0.6); }
+.dialog-cancel:hover { background: var(--surface-secondary); }
 .dialog-submit { padding: 8px 18px; background: var(--accent-primary); border: none; border-radius: var(--radius-md); color: #fff; font-size: var(--font-size-sm); cursor: pointer; }
 .dialog-submit:hover { filter: brightness(1.1); }
 .dialog-submit:disabled { opacity: 0.6; cursor: not-allowed; }

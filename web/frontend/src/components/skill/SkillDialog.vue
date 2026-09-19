@@ -654,7 +654,7 @@ function totalPages() {
   background: var(--color-modal-bg);
   border: 1px solid var(--color-border-card);
   border-radius: var(--radius-card);
-  box-shadow: 0px 12px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -689,7 +689,7 @@ function totalPages() {
 }
 
 .modal-close:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--color-text-primary);
 }
 
@@ -698,7 +698,7 @@ function totalPages() {
   display: flex;
   padding: 4px;
   margin: 16px 24px 0;
-  background: var(--color-bg-input);
+  background: var(--surface-secondary);
   border-radius: var(--radius-lg);
   gap: 2px;
   flex-shrink: 0;
@@ -712,13 +712,13 @@ function totalPages() {
   background: transparent;
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
+  color: var(--foreground-secondary);
   cursor: pointer;
   font-family: var(--font-family-base);
   transition: all var(--transition-fast);
 }
 
-.tab-btn:hover { color: var(--color-text-secondary); }
+.tab-btn:hover { color: var(--foreground-primary); }
 
 .tab-btn.active {
   background: var(--accent-primary);
@@ -757,7 +757,7 @@ function totalPages() {
   margin-bottom: 8px;
 }
 
-.required { color: #ef4444; }
+.required { color: var(--color-text-error); }
 
 .text-input {
   width: 100%;
@@ -812,12 +812,12 @@ function totalPages() {
 .btn-primary:hover:not(:disabled) { background: var(--color-accent-dark); }
 
 .btn-ghost {
-  background: rgba(135, 148, 173, 0.08);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-input);
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+  border: 1px solid var(--border-medium);
 }
 
-.btn-ghost:hover { background: rgba(135, 148, 173, 0.14); color: var(--color-text-primary); }
+.btn-ghost:hover { border-color: var(--accent-primary); color: var(--foreground-primary); }
 
 .btn-text {
   background: none;
@@ -899,10 +899,10 @@ function totalPages() {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: #111b35;
-  border: 1px solid var(--color-border-card);
+  background: var(--color-bg-card);
+  border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: 0px 8px 30px rgba(0,0,0,0.55);
+  box-shadow: var(--shadow-card);
   z-index: 100;
   overflow: hidden;
 }
@@ -939,9 +939,9 @@ function totalPages() {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border: 1px solid var(--color-border-card);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-card);
-  background: rgba(15, 23, 46, 0.5);
+  background: var(--surface-secondary);
   overflow: hidden;
 }
 
@@ -997,7 +997,7 @@ function totalPages() {
 
 .count-text {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--foreground-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1014,8 +1014,8 @@ function totalPages() {
 
 .dp-skill-list::-webkit-scrollbar { width: 6px; }
 .dp-skill-list::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
-.dp-skill-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
-.dp-skill-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+.dp-skill-list::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
+.dp-skill-list::-webkit-scrollbar-thumb:hover { background: var(--border-medium); }
 
 /* ---- Pagination ---- */
 .dp-pager {
@@ -1074,22 +1074,22 @@ function totalPages() {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  background: rgba(20, 29, 56, 0.5);
+  background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
-.skill-row-item:hover { border-color: rgba(59,130,246,0.3); background: rgba(20,29,56,0.8); }
+.skill-row-item:hover { border-color: rgba(59,130,246,0.3); }
 
 .skill-meta { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .skill-meta-name { font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text-primary); }
-.skill-meta-desc { font-size: var(--font-size-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-meta-desc { font-size: var(--font-size-xs); color: var(--foreground-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .skill-tag {
   padding: 2px 10px;
   border-radius: 4px;
-  background: rgba(135,148,173,0.12);
-  color: var(--color-text-muted);
+  background: var(--surface-inset-soft);
+  color: var(--foreground-secondary);
   font-size: var(--font-size-xs);
   flex-shrink: 0;
 }
@@ -1122,7 +1122,7 @@ function totalPages() {
   border: 1px solid rgba(239,68,68,0.2);
   border-radius: var(--radius-lg);
   font-size: var(--font-size-sm);
-  color: #ef4444;
+  color: var(--color-text-error);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1135,9 +1135,9 @@ function totalPages() {
   padding: 36px 24px;
   text-align: center;
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
-  background: rgba(15,23,46,0.4);
-  border: 1px dashed var(--border-subtle);
+  color: var(--foreground-secondary);
+  background: var(--surface-secondary);
+  border: 1px dashed var(--border-medium);
   border-radius: var(--radius-lg);
   flex: 1;
   display: flex;
@@ -1155,9 +1155,9 @@ function totalPages() {
   align-items: center;
   justify-content: center;
   padding: 40px 24px;
-  border: 2px dashed var(--color-border-input);
+  border: 2px dashed var(--border-medium);
   border-radius: var(--radius-card);
-  background: rgba(15,23,46,0.5);
+  background: var(--surface-secondary);
   text-align: center;
   cursor: pointer;
   transition: border-color var(--transition-fast), background var(--transition-fast);
@@ -1166,7 +1166,7 @@ function totalPages() {
 .dropzone:hover,
 .dropzone.dragging {
   border-color: var(--accent-primary);
-  background: rgba(59,130,246,0.03);
+  background: var(--accent-primary-light);
 }
 
 .dz-icon-circle {
@@ -1199,7 +1199,7 @@ function totalPages() {
 .dz-tag {
   padding: 3px 10px;
   border-radius: 4px;
-  background: rgba(59,130,246,0.1);
+  background: var(--accent-primary-light);
   color: var(--accent-primary);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
@@ -1209,8 +1209,8 @@ function totalPages() {
 .valid-panel {
   margin-top: 18px;
   padding: 14px 16px;
-  background: rgba(15,23,46,0.5);
-  border: 1px solid var(--color-border-card);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
 }
 
@@ -1278,8 +1278,8 @@ function totalPages() {
   justify-content: space-between;
   margin-top: 14px;
   padding: 12px 16px;
-  background: rgba(15, 23, 46, 0.5);
-  border: 1px solid var(--color-border-card);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
 }
 

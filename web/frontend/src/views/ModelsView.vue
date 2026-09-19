@@ -1427,7 +1427,7 @@ onMounted(() => {
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 
@@ -1449,7 +1449,7 @@ onMounted(() => {
   padding: 6px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
 }
@@ -1473,7 +1473,7 @@ onMounted(() => {
 }
 
 .stat-chip--clickable:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--border-medium);
   color: var(--foreground-primary);
 }
 
@@ -1516,7 +1516,7 @@ onMounted(() => {
   padding: 6px 12px 6px 30px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-bg-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -1570,7 +1570,7 @@ onMounted(() => {
 }
 
 .provider-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-secondary);
 }
 
 .provider-item.active {
@@ -1696,7 +1696,7 @@ onMounted(() => {
 }
 
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 .action-btn--danger:hover {
@@ -1873,7 +1873,7 @@ onMounted(() => {
   padding: 6px 12px 6px 30px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-bg-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -1895,7 +1895,7 @@ onMounted(() => {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--foreground-muted);
   font-size: var(--font-size-xs);
   cursor: pointer;
@@ -1903,7 +1903,7 @@ onMounted(() => {
 }
 
 .type-filter:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-inset);
   color: var(--foreground-primary);
 }
 
@@ -1958,12 +1958,12 @@ onMounted(() => {
   padding: 10px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(38, 51, 89, 0.15);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
   transition: background 0.1s ease;
 }
 
 .model-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-secondary);
 }
 
 .model-row.dragging {
@@ -2127,7 +2127,7 @@ onMounted(() => {
 .usage-stat-card {
   border-radius: var(--radius-xl);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
   padding: 16px;
 }
 
@@ -2221,7 +2221,7 @@ onMounted(() => {
 .rank-bar-track {
   height: 6px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-inset);
   overflow: hidden;
 }
 
@@ -2317,7 +2317,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-overlay);
   backdrop-filter: blur(4px);
 }
 
@@ -2369,7 +2369,7 @@ onMounted(() => {
 }
 
 .modal-close:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 
@@ -2382,7 +2382,7 @@ onMounted(() => {
 .modal-section {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -2416,7 +2416,7 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-bg-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -2444,7 +2444,7 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-bg-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -2462,7 +2462,7 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-medium);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-bg-input);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -2552,7 +2552,7 @@ onMounted(() => {
 }
 
 .btn-cancel:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--foreground-primary);
 }
 
@@ -2589,7 +2589,7 @@ onMounted(() => {
   z-index: 999;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--color-overlay);
 }
 
 .drawer-panel {
@@ -2633,7 +2633,7 @@ onMounted(() => {
 
 .drawer-info-card {
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-inset-soft);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -2692,7 +2692,7 @@ onMounted(() => {
   padding: 10px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
 }
 
 .drawer-agent-icon {
@@ -2726,7 +2726,7 @@ onMounted(() => {
 .drawer-params {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
   padding: 12px;
   display: flex;
   flex-direction: column;

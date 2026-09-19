@@ -317,7 +317,7 @@ async function saveAll() {
   gap: 4px;
   background: none;
   border: none;
-  color: #cbd5e1;
+  color: var(--foreground-secondary);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -327,13 +327,13 @@ async function saveAll() {
 }
 
 .back-btn:hover {
-  color: #fff;
+  color: var(--foreground-primary);
 }
 
 .header-divider {
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-medium);
 }
 
 .edit-title-row {
@@ -343,21 +343,21 @@ async function saveAll() {
 }
 
 .edit-title-icon {
-  color: #fcd34d;
+  color: var(--status-amber-text);
 }
 
 .edit-title {
   font-size: 14px;
-  color: #fff;
+  color: var(--foreground-primary);
 }
 
 .title-dot {
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 .edit-doc-name {
   font-size: 14px;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
 }
 
 .edit-header-right {
@@ -371,14 +371,14 @@ async function saveAll() {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #fcd34d;
+  color: var(--status-amber-text);
 }
 
 .dirty-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #fbbf24;
+  background: var(--status-amber-text);
   animation: dot-pulse 1.5s ease-in-out infinite;
 }
 
@@ -392,7 +392,7 @@ async function saveAll() {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #6ee7b7;
+  color: var(--status-ready-text);
 }
 
 .save-btn {
@@ -438,7 +438,7 @@ async function saveAll() {
   left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   pointer-events: none;
 }
 
@@ -446,10 +446,10 @@ async function saveAll() {
   width: 100%;
   height: 36px;
   padding: 0 12px 0 36px;
-  background: rgba(15, 23, 46, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-medium);
   border-radius: 10px;
-  color: #f2f5fa;
+  color: var(--foreground-primary);
   font-size: 13px;
   font-family: inherit;
   outline: none;
@@ -457,7 +457,7 @@ async function saveAll() {
 }
 
 .search-input::placeholder {
-  color: #596680;
+  color: var(--foreground-muted);
 }
 
 .search-input:focus {
@@ -466,7 +466,7 @@ async function saveAll() {
 
 .chunk-summary {
   font-size: 12px;
-  color: #64748b;
+  color: var(--foreground-muted);
   white-space: nowrap;
 }
 
@@ -479,7 +479,7 @@ async function saveAll() {
   background: rgba(244, 63, 94, 0.1);
   border: 1px solid rgba(244, 63, 94, 0.3);
   border-radius: 8px;
-  color: #fda4af;
+  color: var(--status-error-text);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -497,9 +497,9 @@ async function saveAll() {
   display: flex;
   flex-direction: column;
   border-radius: 16px;
-  background: rgba(15, 23, 46, 0.4);
+  background: var(--surface-secondary);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-medium);
   overflow: hidden;
   min-height: 0;
 }
@@ -509,10 +509,10 @@ async function saveAll() {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  background: rgba(0, 0, 0, 0.4);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   flex-shrink: 0;
 }
 
@@ -527,12 +527,12 @@ async function saveAll() {
 }
 
 .table-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-subtle);
   border-radius: 2px;
 }
 
 .table-row {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-subtle);
   transition: background-color 0.15s;
 }
 
@@ -541,7 +541,7 @@ async function saveAll() {
 }
 
 .table-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-inset-soft);
 }
 
 .table-row--sel {
@@ -590,14 +590,14 @@ async function saveAll() {
   height: 16px;
   line-height: 16px;
   border-radius: 4px;
-  background: rgba(100, 116, 139, 0.1);
-  color: #94a3b8;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-inset-soft);
+  color: var(--foreground-secondary);
+  border: 1px solid var(--border-medium);
 }
 
 .edited-tag {
   font-size: 9px;
-  color: #fbbf24;
+  color: var(--status-amber-text);
   white-space: nowrap;
 }
 
@@ -608,24 +608,24 @@ async function saveAll() {
 
 .content-meta {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
   margin-bottom: 6px;
 }
 
 .content-text {
   margin: 0;
   font-size: 13px;
-  color: #cbd5e1;
+  color: var(--foreground-secondary);
   line-height: 1.6;
 }
 
 .edit-textarea {
   width: 100%;
   padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-bg-input);
   border: 1px solid rgba(59, 130, 246, 0.4);
   border-radius: 8px;
-  color: #e2e8f0;
+  color: var(--foreground-primary);
   font-size: 13px;
   font-family: inherit;
   line-height: 1.6;
@@ -648,7 +648,7 @@ async function saveAll() {
 
 .edit-counts {
   font-size: 10px;
-  color: #64748b;
+  color: var(--foreground-muted);
 }
 
 .edit-actions {
@@ -664,7 +664,7 @@ async function saveAll() {
   padding: 0 10px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--foreground-secondary);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -683,7 +683,7 @@ async function saveAll() {
   padding: 0 10px;
   border: 1px solid rgba(59, 130, 246, 0.3);
   background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -708,7 +708,7 @@ async function saveAll() {
   line-height: 14px;
   border-radius: 4px;
   background: rgba(168, 85, 247, 0.1);
-  color: #c4b5fd;
+  color: var(--status-purple-text);
   border: 1px solid rgba(168, 85, 247, 0.2);
 }
 
@@ -717,7 +717,7 @@ async function saveAll() {
   flex-shrink: 0;
   text-align: right;
   font-size: 12px;
-  color: #64748b;
+  color: var(--foreground-muted);
   padding-top: 4px;
 }
 
@@ -726,7 +726,7 @@ async function saveAll() {
   flex-shrink: 0;
   text-align: right;
   font-size: 12px;
-  color: #64748b;
+  color: var(--foreground-muted);
   padding-top: 4px;
 }
 
@@ -753,21 +753,21 @@ async function saveAll() {
 }
 
 .edit-action {
-  color: #60a5fa;
+  color: var(--status-indexing-text);
 }
 
 .edit-action:hover {
   background: rgba(59, 130, 246, 0.15);
-  color: #93c5fd;
+  color: var(--status-indexing-text);
 }
 
 .delete-action {
-  color: #f87171;
+  color: var(--status-error-text);
 }
 
 .delete-action:hover {
   background: rgba(244, 63, 94, 0.15);
-  color: #fda4af;
+  color: var(--status-error-text);
 }
 
 .table-empty {
@@ -776,7 +776,7 @@ async function saveAll() {
   align-items: center;
   justify-content: center;
   padding: 48px 0;
-  color: #64748b;
+  color: var(--foreground-muted);
   font-size: 13px;
   gap: 8px;
 }

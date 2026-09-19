@@ -115,7 +115,7 @@ const isBuiltin = computed(() => props.tool.source === 'builtin')
   z-index: 9998;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--color-overlay);
 }
 
 .drawer-panel {
@@ -191,7 +191,7 @@ const isBuiltin = computed(() => props.tool.source === 'builtin')
 }
 
 .drawer-action:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--color-text-primary);
 }
 
@@ -215,7 +215,7 @@ const isBuiltin = computed(() => props.tool.source === 'builtin')
 }
 
 .drawer-close:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-secondary);
   color: var(--color-text-primary);
 }
 
@@ -229,7 +229,7 @@ const isBuiltin = computed(() => props.tool.source === 'builtin')
 
 /* Metadata */
 .meta-grid {
-  background: rgba(15, 23, 46, 0.4);
+  background: var(--surface-secondary);
   border-radius: var(--radius-lg);
   padding: 12px 16px;
   display: flex;
@@ -282,7 +282,7 @@ const isBuiltin = computed(() => props.tool.source === 'builtin')
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: rgba(15, 23, 46, 0.4);
+  background: var(--surface-inset-soft);
   border-radius: 8px;
 }
 

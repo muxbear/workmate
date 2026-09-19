@@ -1100,13 +1100,13 @@ function getStatusBadgeClass(status: string) {
 .od-quick-btn {
   width: 100%; display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; margin-bottom: 6px;
-  background: rgba(255,255,255,0.03);
+  background: var(--surface-inset-soft);
   border: none; border-radius: var(--radius-md);
   color: var(--foreground-primary);
   font-size: var(--font-size-sm); cursor: pointer;
   transition: background var(--transition-fast);
 }
-.od-quick-btn:hover { background: rgba(255,255,255,0.06); }
+.od-quick-btn:hover { background: var(--surface-secondary); }
 .od-quick-btn.danger:hover { background: rgba(244,63,94,0.1); color: #fb7185; }
 .od-quick-btn:last-child { margin-bottom: 0; }
 
@@ -1128,7 +1128,7 @@ function getStatusBadgeClass(status: string) {
   font-size: var(--font-size-sm); cursor: pointer;
   transition: background var(--transition-fast);
 }
-.od-btn-outline:hover { background: rgba(255,255,255,0.04); }
+.od-btn-outline:hover { background: var(--surface-secondary); }
 .od-btn-outline-danger {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 7px 14px; border: 1px solid rgba(244,63,94,0.3);
@@ -1145,7 +1145,7 @@ function getStatusBadgeClass(status: string) {
   color: var(--foreground-secondary);
   font-size: var(--font-size-sm); cursor: pointer;
 }
-.od-btn-cancel:hover { background: rgba(255,255,255,0.04); }
+.od-btn-cancel:hover { background: var(--surface-secondary); }
 .od-btn-save {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 7px 18px; border: none; border-radius: var(--radius-md);

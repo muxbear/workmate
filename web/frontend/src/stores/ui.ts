@@ -25,6 +25,8 @@ function getInitialTheme(): ThemeMode {
 function applyThemeToDocument(theme: ThemeMode) {
   if (typeof document === 'undefined') return
   document.documentElement.dataset.theme = theme
+  // Element Plus 深色变量表挂在 html.dark 下，需要同步切换
+  document.documentElement.classList.toggle('dark', theme === 'dark')
 }
 
 export const useUiStore = defineStore('ui', () => {

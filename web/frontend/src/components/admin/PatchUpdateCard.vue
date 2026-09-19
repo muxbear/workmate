@@ -45,7 +45,7 @@ import { Download } from 'lucide-vue-next'
   justify-content: center;
 }
 .download-btn:hover {
-  background: rgba(30, 41, 59, 0.8);
+  background: var(--surface-secondary);
   color: var(--accent-primary);
 }
 .patch-desc {

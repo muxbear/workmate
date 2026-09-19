@@ -166,7 +166,7 @@ function statusLabel(status: string): string {
   display: block;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--surface-inset-soft);
   font-size: 11px;
   color: var(--foreground-secondary);
   font-family: 'Consolas', 'Monaco', monospace;

@@ -18,6 +18,12 @@ vi.mock('deepagents', () => ({
   },
   StoreBackend: class {
     constructor(public opts: unknown) {}
+  },
+  CompositeBackend: class {
+    constructor(
+      public defaultBackend: unknown,
+      public routes: Record<string, unknown>
+    ) {}
   }
 }))
 
@@ -67,9 +73,11 @@ describe('AgentBuilder', () => {
     const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
     // backend 为工厂函数（非实例）：按运行期 configurable.workspace_dir 解析根目录
     expect(typeof config.backend).toBe('function')
-    const instance = (config.backend as (r: { configurable: { workspace_dir: string } }) => {
-      opts: { rootDir: string; virtualMode: boolean; inheritEnv: boolean }
-    })({ configurable: { workspace_dir: workDir } })
+    const instance = (
+      config.backend as (r: { configurable: { workspace_dir: string } }) => {
+        opts: { rootDir: string; virtualMode: boolean; inheritEnv: boolean }
+      }
+    )({ configurable: { workspace_dir: workDir } })
     expect(instance.opts.rootDir).toBe(workDir)
     expect(instance.opts.virtualMode).toBe(true)
     expect(instance.opts.inheritEnv).toBe(true)
@@ -111,9 +119,11 @@ describe('AgentBuilder', () => {
 
   it('AG-06: local checkpointer 路径为数据库文件而非工作目录（与业务库共用 ke-work.db）', async () => {
     await createAgentBuilder('local', workDir, checkpointPath, storePath).setModel('m').build()
-    const checkpointer = (createDeepAgentMock.mock.calls[0][0] as {
-      checkpointer: { kind: string; path: string }
-    }).checkpointer
+    const checkpointer = (
+      createDeepAgentMock.mock.calls[0][0] as {
+        checkpointer: { kind: string; path: string }
+      }
+    ).checkpointer
     expect(checkpointer.kind).toBe('SqliteSaver')
     expect(checkpointer.path).not.toBe(workDir) // 回归：目录路径会导致 SQLITE_CANTOPEN_ISDIR
     expect(checkpointer.path.endsWith('.db')).toBe(true)
@@ -132,7 +142,10 @@ describe('AgentBuilder', () => {
 
   it('AG-03: 链式覆盖自定义 backend', async () => {
     const customBackend = { kind: 'custom' }
-    await createAgentBuilder('local', workDir, checkpointPath, storePath).setModel('m').setBackend(customBackend).build()
+    await createAgentBuilder('local', workDir, checkpointPath, storePath)
+      .setModel('m')
+      .setBackend(customBackend)
+      .build()
     const config = createDeepAgentMock.mock.calls[0][0] as { backend: unknown }
     expect(config.backend).toBe(customBackend)
   })
@@ -141,6 +154,25 @@ describe('AgentBuilder', () => {
     const builder = await createAgentBuilder('local', workDir, checkpointPath, storePath)
     await builder.build()
     expect((createDeepAgentMock.mock.calls[0][0] as { model?: string }).model).toBeUndefined()
+  })
+
+  it('AG-10: skillsDir 提供时本地 backend 挂载 /skills 路由', async () => {
+    const skillsDir = join(workDir, 'skills')
+    await createAgentBuilder('local', workDir, checkpointPath, storePath, skillsDir)
+      .setModel('m')
+      .build()
+    const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
+    type Composite = {
+      constructor: { name: string }
+      defaultBackend: { opts: { rootDir: string } }
+      routes: Record<string, { opts: { rootDir: string; virtualMode: boolean } }>
+    }
+    const factory = config.backend as unknown as (r: unknown) => Composite
+    const composite = factory({ configurable: { workspace_dir: workDir } })
+    expect(composite.constructor.name).toBe('CompositeBackend')
+    expect(composite.defaultBackend.opts.rootDir).toBe(workDir)
+    expect(composite.routes['/skills/']?.opts.rootDir).toBe(skillsDir)
+    expect(composite.routes['/skills/']?.opts.virtualMode).toBe(true)
   })
 
   it('AG-05: setMode 保留自定义项，重载默认 backend/记忆', async () => {

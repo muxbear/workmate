@@ -24,6 +24,12 @@ vi.mock('deepagents', () => ({
   },
   StoreBackend: class {
     constructor(public opts: unknown) {}
+  },
+  CompositeBackend: class {
+    constructor(
+      public defaultBackend: unknown,
+      public routes: Record<string, unknown>
+    ) {}
   }
 }))
 vi.mock('@langchain/langgraph-checkpoint-sqlite', () => ({
@@ -108,7 +114,8 @@ describe('AgentManager', () => {
     delete process.env.CLOUD_POSTGRES_CONN_STRING
     const second = await manager.ready()
     expect(second).not.toBe(first)
-    const config = createDeepAgentMock.mock.calls[1][0] as Record<string, never>
+    // setSkills 现在会触发重建（修复「只写 builder 不重建」），最后一次 build 即 cloud 实例
+    const config = createDeepAgentMock.mock.calls.at(-1)?.[0] as Record<string, never>
     expect(config.model).toBe('deepseek:deepseek-v4-pro')
     expect((config.checkpointer as { kind: string }).kind).toBe('PostgresSaver')
   })
@@ -154,6 +161,20 @@ describe('AgentManager', () => {
       apiKey: 'sk-test',
       configuration: { baseURL: 'https://api.deepseek.com' }
     })
+  })
+
+  it('AG-10: applyInstalledSkills 重建 agent 并携带 /skills/<dir>/ 技能源', async () => {
+    const withSkills = new AgentManager(
+      workDir,
+      join(workDir, 'ke-work.db'),
+      join(workDir, 'ke-work.db'),
+      undefined,
+      { skillsDir: join(workDir, 'skills') }
+    )
+    await withSkills.init('local')
+    await withSkills.applyInstalledSkills(['web-search'])
+    const config = createDeepAgentMock.mock.calls.at(-1)?.[0] as Record<string, never>
+    expect(config.skills).toEqual(['/skills/web-search/'])
   })
 
   it('AG-09: 未注入 modelService 时不注册中间件（config.middleware 缺失）', async () => {

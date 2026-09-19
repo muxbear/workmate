@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { makeDocx } from '../workspace/file-fixtures'
 
 // pdf-parse 走 FileLoaders：默认透传真实实现（文本用例真实读取），PDF 用例 mockResolvedValueOnce 覆盖
 vi.mock('../../../src/main/workspace/FileLoaders', async (importOriginal) => {
@@ -19,7 +20,8 @@ import {
   MAX_ATTACH_TEXT_CHARS,
   MAX_TEXT_FILE_BYTES,
   MAX_IMAGE_BYTES,
-  MAX_PDF_BYTES
+  MAX_PDF_BYTES,
+  MAX_DOCUMENT_BYTES
 } from '../../../src/main/agent/file-parts'
 import type { MessagePart } from '../../../src/preload/index.d'
 
@@ -35,6 +37,9 @@ describe('classifyPath（扩展名 → 类型）', () => {
     expect(classifyPath('C:\\docs\\报告.md')).toBe('text')
     expect(classifyPath('/data/a.PNG')).toBe('image')
     expect(classifyPath('/data/a.pdf')).toBe('pdf')
+    expect(classifyPath('/data/a.docx')).toBe('document')
+    expect(classifyPath('/data/a.xlsx')).toBe('document')
+    expect(classifyPath('/data/a.pptx')).toBe('document')
     expect(classifyPath('/data/a.zip')).toBe('unsupported')
     expect(classifyPath('/data/noext')).toBe('unsupported')
   })
@@ -147,6 +152,15 @@ describe('expandFileParts（文件 → 内容块，位置保序）', () => {
     ])
   })
 
+  it('docx -> 经 FileLoaders 抽文本为文本块', async () => {
+    const p = tmpFile('Activiti 学习笔记.docx', makeDocx('Activiti 学习笔记正文'))
+    const blocks = await expandFileParts([{ type: 'file', path: p }])
+    expect(blocks).toHaveLength(1)
+    const text = blocks[0] as { type: string; text: string }
+    expect(text.type).toBe('text')
+    expect(text.text).toContain('Activiti 学习笔记正文')
+    expect(text.text).toContain('【文件：Activiti 学习笔记.docx】')
+  })
   it('文件不存在 → 抛「文件不存在」', async () => {
     await expect(
       expandFileParts([{ type: 'file', path: join(tmpdir(), 'no-such-file-xyz.txt') }])
@@ -180,6 +194,11 @@ describe('expandFileParts（文件 → 内容块，位置保序）', () => {
   it('PDF 文件超过 20MB → 文件过大', async () => {
     const p = tmpFile('big.pdf', Buffer.alloc(MAX_PDF_BYTES + 1, 0x41))
     await expect(expandFileParts([{ type: 'file', path: p }])).rejects.toThrow('文件过大：big.pdf')
+  })
+
+  it('文档文件超过 20MB -> 文件过大', async () => {
+    const p = tmpFile('big.docx', Buffer.alloc(MAX_DOCUMENT_BYTES + 1, 0x41))
+    await expect(expandFileParts([{ type: 'file', path: p }])).rejects.toThrow('文件过大：big.docx')
   })
 
   it('混合 parts 中第二个文件缺失 → 整体失败，不返回部分块', async () => {

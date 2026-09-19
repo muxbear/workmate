@@ -1,5 +1,5 @@
 """Skill upload API endpoints."""
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db, require_scope
@@ -9,6 +9,7 @@ from api.skill.schemas import (
     SkillDeleteResponse,
     SkillInfo,
     SkillListResponse,
+    SkillManifestResponse,
     SkillsUploadResponse,
     SkillToggleRequest,
     SkillUpdateRequest,
@@ -18,6 +19,8 @@ from api.skill.service import (
     delete_skill,
     delete_skills_batch,
     get_skill,
+    get_skill_manifest,
+    get_skill_package,
     list_skills,
     process_skills_upload,
     search_skills,
@@ -37,7 +40,7 @@ async def upload_skills(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """上传 skills 的压缩包（zip, tar.gz, tar.bz2, tar.xz），校验并安装到 workspace/skills_upload/。
+    """上传 skills 的压缩包（zip, tar.gz, tar.bz2, tar.xz），校验并安装到 workspace/skills_upload/.
 
     解压后每个子目录视为一个 skill 包，按 Agent Skills 规范校验 SKILL.md。
     校验失败的 skill 仍会复制到目标目录，在响应中标记 valid=false。
@@ -57,7 +60,7 @@ async def skill_list(
     user_id: str = Depends(require_scope("skill:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """分页列出所有已入库的技能，按上传时间倒序排列。"""
+    """分页列出所有已入库的技能，按上传时间倒序排列."""
     result = await list_skills(db, page, page_size, category, enabled)
     return ok(result)
 
@@ -73,7 +76,7 @@ async def skill_search(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """按技能名称模糊搜索已入库的技能，支持分页、分类和状态筛选。"""
+    """按技能名称模糊搜索已入库的技能，支持分页、分类和状态筛选."""
     result = await search_skills(db, name, page, page_size, category, enabled)
     return ok(result)
 
@@ -85,7 +88,7 @@ async def skill_create(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """手动创建单个技能，写入 SKILL.md 并入库。"""
+    """手动创建单个技能，写入 SKILL.md 并入库."""
     result = await create_skill(db, req)
     return ok(result)
 
@@ -97,9 +100,37 @@ async def skill_get(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取单个技能详情。"""
+    """获取单个技能详情."""
     result = await get_skill(db, skill_id)
     return ok(result)
+
+
+@router.get("/{skill_id}/manifest", response_model=ApiResponse[SkillManifestResponse])
+@handle_errors
+async def skill_manifest(
+    skill_id: str,
+    user_id: str = Depends(require_scope("skill:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取技能包文件清单（桌面端增量同步判断依据）."""
+    result = await get_skill_manifest(db, skill_id)
+    return ok(result)
+
+
+@router.get("/{skill_id}/download")
+@handle_errors
+async def skill_download(
+    skill_id: str,
+    user_id: str = Depends(require_scope("skill:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """下载技能包 zip（保持 Agent Skills 目录规范，供桌面端落盘安装）."""
+    filename, content = await get_skill_package(db, skill_id)
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.put("/{skill_id}", response_model=ApiResponse[SkillInfo])
@@ -110,7 +141,7 @@ async def skill_update(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """更新技能元数据，只更新传入的非空字段。"""
+    """更新技能元数据，只更新传入的非空字段."""
     result = await update_skill(db, skill_id, req)
     return ok(result)
 
@@ -123,7 +154,7 @@ async def skill_toggle(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """切换技能的启用/禁用状态。"""
+    """切换技能的启用/禁用状态."""
     result = await toggle_skill_enabled(db, skill_id, req.enabled)
     return ok(result)
 
@@ -135,7 +166,7 @@ async def skill_batch_delete(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """批量删除技能，同时删除数据库记录和 workspace 目录。"""
+    """批量删除技能，同时删除数据库记录和 workspace 目录."""
     result = await delete_skills_batch(db, req.ids)
     return ok(result)
 
@@ -147,6 +178,6 @@ async def skill_delete(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """删除单个技能，同时删除数据库记录和 workspace 目录。"""
+    """删除单个技能，同时删除数据库记录和 workspace 目录."""
     result = await delete_skill(db, skill_id)
     return ok(result)
