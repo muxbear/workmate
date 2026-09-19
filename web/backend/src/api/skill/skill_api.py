@@ -4,9 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db, require_scope
 from api.skill.repository import (
+    effective_sources,
     import_repository_skills,
     list_repository_skills,
-    list_sources,
+    to_source_items,
 )
 from api.skill.schemas import (
     SkillBatchDeleteRequest,
@@ -63,9 +64,11 @@ async def upload_skills(
 @handle_errors
 async def skill_repo_sources(
     user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """列出可抓取的权威技能仓库来源."""
-    return ok(SkillRepoSourceListResponse(sources=list_sources()))
+    """列出可抓取的技能仓库来源：「参数配置」skill_download_site 优先，未配置回退内置来源."""
+    sources = await effective_sources(db)
+    return ok(SkillRepoSourceListResponse(sources=to_source_items(sources)))
 
 
 @router.get("/repo/list", response_model=ApiResponse[SkillRepoListResponse])
@@ -77,9 +80,11 @@ async def skill_repo_list(
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     refresh: bool = Query(False, description="是否强制刷新榜单快照"),
     user_id: str = Depends(require_scope("skill:read")),
+    db: AsyncSession = Depends(get_db),
 ):
     """从权威技能仓库按热度抓取榜单，供页面选择导入."""
-    return ok(await list_repository_skills(source, keyword, page, page_size, refresh))
+    sources = await effective_sources(db)
+    return ok(await list_repository_skills(sources, source, keyword, page, page_size, refresh))
 
 
 @router.post("/repo/import", response_model=ApiResponse[SkillRepoImportResponse])

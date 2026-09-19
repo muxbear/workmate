@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted, type CSSProperties } from 'vue'
 import { ElMessage } from 'element-plus'
 import { X, Search, Download, ChevronDown, Upload, Check, AlertTriangle } from 'lucide-vue-next'
 import type { Skill, SkillCreateRequest } from '@/types/skill'
 import { CATEGORY_LABELS } from '@/types/skill'
 import * as skillApi from '@/services/skillApi'
+import { fetchChildrenParams } from '@/services/paramApi'
 import { useSkillStore } from '@/stores/skill'
 
 const props = defineProps<{
@@ -22,11 +23,13 @@ const activeTab = ref<'download' | 'upload'>('upload')
 
 // ---- Click-outside & keyboard ----
 const repoSelectRef = ref<HTMLElement | null>(null)
+const repoDropdownRef = ref<HTMLElement | null>(null)
 
 function handleClickOutside(e: MouseEvent) {
-  if (repoSelectRef.value && !repoSelectRef.value.contains(e.target as Node)) {
-    repoDropdownOpen.value = false
-  }
+  const target = e.target as Node
+  if (repoSelectRef.value?.contains(target)) return
+  if (repoDropdownRef.value?.contains(target)) return
+  repoDropdownOpen.value = false
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -40,15 +43,25 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener('click', handleClickOutside, true)
   document.addEventListener('keydown', handleKeydown)
-  void loadRepoSources()
 })
 
 watch(activeTab, (tab) => {
   if (tab === 'download') void loadRepoSources()
 })
+
+// 每次打开弹窗都重新拉取来源，保证「参数配置」的改动即时生效
+watch(
+  () => props.visible,
+  (visible) => {
+    repoDropdownOpen.value = false
+    if (visible) void loadRepoSources(true)
+  },
+)
+
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   document.removeEventListener('keydown', handleKeydown)
+  stopDropdownTracking()
 })
 
 // ============================================================
@@ -79,27 +92,89 @@ const repoDropdownOpen = ref(false)
 const isCustomRepo = ref(false)
 const customRepoUrl = ref('')
 const importingRepo = ref(false)
+const repoTriggerRef = ref<HTMLButtonElement | null>(null)
+const dropdownStyle = ref<CSSProperties>({})
 
 const repoUrl = computed(() => selectedRepo.value?.url ?? '')
 
-/** 加载后端注册的权威技能仓库来源（真实抓取，非硬编码） */
-async function loadRepoSources(): Promise<void> {
-  if (repoOptions.value.length > 0) return
+/** 技能下载站点对应的「参数配置」参数编码 */
+const SKILL_DOWNLOAD_SITE_CODE = 'skill_download_site'
+
+/**
+ * 读取「参数配置」中参数编码为 skill_download_site 的参数：
+ * 该分组下的每个子参数即一个下载站点（编码=来源 id、标签=站点名称、值=仓库地址）。
+ */
+async function fetchConfiguredRepoSources(): Promise<RepoOption[] | null> {
   try {
-    const sources = await skillApi.fetchRepoSkillSources()
-    repoOptions.value = sources.map((item) => ({
-      id: item.id,
-      label: item.name,
-      url: item.homepage,
-      desc: item.description,
-      authority: item.authority,
-    }))
-    if (!selectedRepo.value && repoOptions.value.length > 0) {
-      selectedRepo.value = repoOptions.value[0] ?? null
-    }
+    const params = await fetchChildrenParams(SKILL_DOWNLOAD_SITE_CODE)
+    const options = params
+      .map((item) => ({
+        id: item.paramCode,
+        label: item.paramLabel || item.paramName || item.paramCode,
+        url: (item.paramValue ?? '').trim(),
+        desc: item.description || item.paramName || '',
+        authority: item.paramType,
+      }))
+      .filter((item) => item.id && item.label)
+    return options.length > 0 ? options : null
+  } catch {
+    // 未配置该参数或当前账号无参数读取权限时，回退到后端内置来源
+    return null
+  }
+}
+
+/** 加载技能下载站点：优先取「参数配置」的参数，其次回退后端注册表（真实抓取，非硬编码） */
+async function loadRepoSources(force = false): Promise<void> {
+  if (!force && repoOptions.value.length > 0) return
+  try {
+    const configured = await fetchConfiguredRepoSources()
+    const options =
+      configured ??
+      (await skillApi.fetchRepoSkillSources()).map((item) => ({
+        id: item.id,
+        label: item.name,
+        url: item.homepage,
+        desc: item.description,
+        authority: item.authority,
+      }))
+    repoOptions.value = options
+    repoError.value = ''
+    const current = options.find((opt) => opt.id === selectedRepo.value?.id)
+    selectedRepo.value = current ?? options[0] ?? null
   } catch (err: unknown) {
     repoError.value = err instanceof Error ? err.message : '加载技能仓库来源失败'
   }
+}
+
+/** 下拉面板挂在 body 上并用 fixed 定位，避免被弹窗容器裁剪 */
+function updateDropdownPosition() {
+  const trigger = repoTriggerRef.value
+  if (!trigger) return
+  const rect = trigger.getBoundingClientRect()
+  dropdownStyle.value = {
+    top: `${Math.round(rect.bottom + 4)}px`,
+    left: `${Math.round(rect.left)}px`,
+    width: `${Math.round(Math.max(rect.width, 280))}px`,
+  }
+}
+
+function stopDropdownTracking() {
+  window.removeEventListener('scroll', updateDropdownPosition, true)
+  window.removeEventListener('resize', updateDropdownPosition)
+}
+
+watch(repoDropdownOpen, (open) => {
+  if (!open) {
+    stopDropdownTracking()
+    return
+  }
+  updateDropdownPosition()
+  window.addEventListener('scroll', updateDropdownPosition, true)
+  window.addEventListener('resize', updateDropdownPosition)
+})
+
+function toggleRepoDropdown() {
+  repoDropdownOpen.value = !repoDropdownOpen.value
 }
 
 function selectRepoOption(opt: RepoOption) {
@@ -461,40 +536,49 @@ function totalPages() {
                 <div class="dp-top">
                   <div ref="repoSelectRef" class="custom-select" :class="{ open: repoDropdownOpen }">
                     <button
+                      ref="repoTriggerRef"
                       class="select-trigger"
                       type="button"
-                      @click.stop="repoDropdownOpen = !repoDropdownOpen"
+                      @click.stop="toggleRepoDropdown"
                     >
-                      <span>{{ isCustomRepo ? '自定义地址' : (selectedRepo?.label ?? '') }}</span>
+                      <span class="select-trigger-label">{{ isCustomRepo ? '自定义地址' : (selectedRepo?.label ?? '选择下载站点') }}</span>
                       <ChevronDown :size="14" class="select-arrow" />
                     </button>
-                    <div v-show="repoDropdownOpen" class="select-dropdown">
+                    <Teleport to="body">
                       <div
-                        v-for="opt in repoOptions"
-                        :key="opt.url"
-                        class="select-option"
-                        :class="{ picked: !isCustomRepo && opt.url === (selectedRepo?.url ?? '') }"
-                        @click.stop="selectRepoOption(opt)"
+                        v-if="repoDropdownOpen"
+                        ref="repoDropdownRef"
+                        class="select-dropdown"
+                        :style="dropdownStyle"
+                        @click.stop
                       >
-                        <div class="opt-info">
-                          <span class="opt-label">{{ opt.label }}</span>
-                          <span class="opt-desc">{{ opt.desc }}</span>
+                        <div
+                          v-for="opt in repoOptions"
+                          :key="opt.id"
+                          class="select-option"
+                          :class="{ picked: !isCustomRepo && opt.id === (selectedRepo?.id ?? '') }"
+                          @click.stop="selectRepoOption(opt)"
+                        >
+                          <div class="opt-info">
+                            <span class="opt-label">{{ opt.label }}</span>
+                            <span class="opt-desc">{{ opt.desc || opt.url }}</span>
+                          </div>
+                          <Check v-if="!isCustomRepo && opt.id === (selectedRepo?.id ?? '')" :size="14" class="opt-check" />
                         </div>
-                        <Check v-if="!isCustomRepo && opt.url === (selectedRepo?.url ?? '')" :size="14" class="opt-check" />
-                      </div>
-                      <div class="select-divider" />
-                      <div
-                        class="select-option"
-                        :class="{ picked: isCustomRepo }"
-                        @click.stop="selectCustomRepo()"
-                      >
-                        <div class="opt-info">
-                          <span class="opt-label">自定义地址</span>
-                          <span class="opt-desc">手动输入仓库 URL</span>
+                        <div class="select-divider" />
+                        <div
+                          class="select-option"
+                          :class="{ picked: isCustomRepo }"
+                          @click.stop="selectCustomRepo()"
+                        >
+                          <div class="opt-info">
+                            <span class="opt-label">自定义地址</span>
+                            <span class="opt-desc">手动输入仓库 URL</span>
+                          </div>
+                          <Check v-if="isCustomRepo" :size="14" class="opt-check" />
                         </div>
-                        <Check v-if="isCustomRepo" :size="14" class="opt-check" />
                       </div>
-                    </div>
+                    </Teleport>
                   </div>
                   <input
                     v-if="isCustomRepo"
@@ -940,17 +1024,25 @@ function totalPages() {
 
 .select-arrow { color: var(--color-text-muted); flex-shrink: 0; }
 
+.select-trigger-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 下拉面板由 Teleport 挂载到 body，用 fixed 定位避免被弹窗容器（overflow: hidden）裁剪 */
 .select-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  position: fixed;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
   background: var(--color-bg-card);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  z-index: 100;
-  overflow: hidden;
+  box-shadow: var(--shadow-modal);
+  z-index: 10050;
 }
 
 .select-option {

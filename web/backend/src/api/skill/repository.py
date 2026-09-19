@@ -4,7 +4,8 @@
 校验、落盘到 workspace/skills_upload/ 后入库。
 
 实现要点：
-- 榜单来源为「GitHub 仓库注册表」，默认包含 Anthropic 官方技能仓库与高星社区技能库；
+- 榜单来源优先取「参数配置」中参数编码为 skill_download_site 的参数（子参数即下载站点），
+  未配置时回退内置注册表（Anthropic 官方技能仓库与高星社区技能库）；
 - 抓取使用 GitHub REST API：仓库元信息提供星标数（热度），tarball 接口一次性拉取仓库
   快照后在本地解析，避免逐文件请求与二次限流；
 - 榜单排序依据为「权威级别（官方优先）→ 仓库星标数 → 技能名」，排名与热度随响应返回；
@@ -15,18 +16,22 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
 import posixpath
+import re
 import shutil
 import tarfile
 import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.skill.schemas import (
@@ -45,6 +50,7 @@ from api.skill.service import (
     validate_skill_directory,
 )
 from db.models.skill import Skill
+from db.models.system_param import SystemParam
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +97,20 @@ REPO_SOURCES: tuple[RepoSource, ...] = (
     ),
 )
 
-_SOURCE_MAP = {source.id: source for source in REPO_SOURCES}
+# 「参数配置」中技能下载站点对应的参数编码
+SKILL_DOWNLOAD_SITE_PARAM = "skill_download_site"
+DEFAULT_SKILLS_PATH = "skills"
+DEFAULT_AUTHORITY = "custom"
+
+# GitHub 仓库地址：支持 https://github.com/owner/repo(.git)、git@github.com:owner/repo.git
+# 以及带目录的 https://github.com/owner/repo/tree/main/skills
+_GITHUB_REPO_PATTERN = re.compile(
+    r"^(?:git\+)?(?:https?://|ssh://|git://)?(?:[^@/\s]+@)?(?:www\.)?github\.com[:/]"
+    r"(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?"
+    r"(?:/tree/[^/\s]+/(?P<path>[^\s]+))?$"
+)
+# 简写的 owner/repo 写法
+_REPO_SLUG_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 @dataclass
@@ -109,11 +128,12 @@ class _SourceSnapshot:
 _snapshots: dict[str, _SourceSnapshot] = {}
 _ranked_items: list[SkillRepoSkillItem] = []
 _ranked_at: float = 0.0
+_ranked_key: tuple[tuple[str, str, str], ...] = ()
 _load_lock = asyncio.Lock()
 
 
-def list_sources() -> list[SkillRepoSourceItem]:
-    """返回可用的技能仓库来源列表."""
+def to_source_items(sources: list[RepoSource]) -> list[SkillRepoSourceItem]:
+    """把内部来源结构转换成接口返回结构."""
     return [
         SkillRepoSourceItem(
             id=source.id,
@@ -124,8 +144,215 @@ def list_sources() -> list[SkillRepoSourceItem]:
             homepage=source.homepage,
             skills_path=source.skills_path,
         )
-        for source in REPO_SOURCES
+        for source in sources
     ]
+
+
+def list_sources() -> list[SkillRepoSourceItem]:
+    """返回内置的技能仓库来源列表（未配置参数时的回退）."""
+    return to_source_items(list(REPO_SOURCES))
+
+
+def parse_repository_url(value: str) -> tuple[str, str]:
+    """解析仓库地址，返回 (owner/repo, 技能目录).
+
+    支持 ``https://github.com/owner/repo``、``owner/repo``、
+    ``git@github.com:owner/repo.git`` 以及带目录的
+    ``https://github.com/owner/repo/tree/main/skills`` 等写法。
+
+    Args:
+        value: 参数配置中的仓库地址。
+
+    Returns:
+        (repository, skills_path)；无法识别时 repository 为空字符串。
+    """
+    text = (value or "").strip()
+    if not text:
+        return "", DEFAULT_SKILLS_PATH
+    text = text.split("#", 1)[0].split("?", 1)[0].strip().rstrip("/")
+    if not text:
+        return "", DEFAULT_SKILLS_PATH
+    matched = _GITHUB_REPO_PATTERN.match(text)
+    if matched:
+        repository = f"{matched.group('owner')}/{matched.group('repo')}"
+        path = (matched.group("path") or "").strip("/")
+        return repository, path or DEFAULT_SKILLS_PATH
+    if _REPO_SLUG_PATTERN.match(text):
+        return text, DEFAULT_SKILLS_PATH
+    return "", DEFAULT_SKILLS_PATH
+
+
+def _slugify(value: str) -> str:
+    """把名称转换成可用作来源 id 的短标识（保留中文等字符）."""
+    slug = re.sub(r"[^\w.-]+", "-", (value or "").strip()).strip("-")
+    return slug.lower()
+
+
+def _build_source(
+    source_id: str = "",
+    name: str = "",
+    url: str = "",
+    description: str = "",
+    repository: str = "",
+    skills_path: str = "",
+    authority: str = "",
+) -> RepoSource | None:
+    """把一条参数配置转换成技能仓库来源，缺少必要信息时返回 None."""
+    identifier = (source_id or "").strip()
+    if not identifier:
+        return None
+
+    repo_slug, parsed_path = parse_repository_url(repository or url)
+    path = (skills_path or "").strip().strip("/") or parsed_path
+    homepage = (url or "").strip()
+    if not homepage.startswith("http"):
+        homepage = f"https://github.com/{repo_slug}" if repo_slug else ""
+    if not repo_slug and not homepage:
+        return None
+    return RepoSource(
+        id=identifier,
+        name=(name or "").strip() or identifier,
+        repository=repo_slug,
+        skills_path=path,
+        description=(description or "").strip(),
+        homepage=homepage,
+        authority=(authority or "").strip() or DEFAULT_AUTHORITY,
+    )
+
+
+def _entries_from_json(raw: str) -> list[dict[str, str]]:
+    """把 JSON 形式的参数值解析成站点条目列表."""
+    try:
+        data: Any = json.loads(raw)
+    except (TypeError, ValueError):
+        # 非 JSON：按逗号/分号/换行分隔的地址列表处理
+        data = raw
+
+    if isinstance(data, dict):
+        for key in ("sites", "items", "list", "sources"):
+            value = data.get(key)
+            if isinstance(value, list):
+                data = value
+                break
+        else:
+            mapped: list[dict[str, str]] = []
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    entry = {str(k): str(v) for k, v in value.items() if v is not None}
+                    entry.setdefault("name", str(key))
+                    mapped.append(entry)
+                elif isinstance(value, str):
+                    mapped.append({"name": str(key), "url": value})
+            data = mapped
+
+    if isinstance(data, str):
+        data = [chunk.strip() for chunk in re.split(r"[,\n;，；]", data) if chunk.strip()]
+
+    if not isinstance(data, list):
+        return []
+
+    entries: list[dict[str, str]] = []
+    for item in data:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                entries.append({"url": text, "name": text})
+        elif isinstance(item, dict):
+            entries.append({str(k): str(v) for k, v in item.items() if v is not None})
+    return entries
+
+
+def _entry_kwargs(entry: dict[str, str], fallback_id: str = "") -> dict[str, str]:
+    """把站点条目归一化成 _build_source 的关键字参数."""
+
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    url = pick("url", "homepage", "address", "value", "paramValue", "param_value", "href")
+    name = pick("name", "label", "title", "paramLabel", "param_label", "paramName", "param_name")
+    identifier = pick("id", "code", "key", "paramCode", "param_code", "source") or fallback_id
+    if not name:
+        name = url
+    if not identifier:
+        identifier = _slugify(name)
+    return {
+        "source_id": identifier,
+        "name": name,
+        "url": url,
+        "description": pick("description", "desc", "remark", "paramName", "param_name"),
+        "repository": pick("repository", "repo"),
+        "skills_path": pick("skills_path", "skillsPath", "path"),
+        "authority": pick("authority", "level"),
+    }
+
+
+async def load_configured_sources(db: AsyncSession) -> list[RepoSource]:
+    """读取「参数配置」中编码为 skill_download_site 的参数作为技能下载站点.
+
+    支持两种配置形态：
+
+    1. 父级分组参数 ``skill_download_site``，其每个子参数代表一个站点
+       （参数编码 = 来源 id、参数标签 = 站点名称、参数值 = 仓库地址）；
+    2. 单个参数 ``skill_download_site``，参数值为 JSON 数组或 ``{名称: 地址}`` 映射。
+
+    Args:
+        db: 数据库会话。
+
+    Returns:
+        参数中配置的仓库来源；未配置或无法解析时返回空列表。
+    """
+    result = await db.execute(
+        select(SystemParam).where(SystemParam.param_code == SKILL_DOWNLOAD_SITE_PARAM)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return []
+
+    entries: list[dict[str, str]] = []
+    if row.parent_code is None:
+        child_result = await db.execute(
+            select(SystemParam)
+            .where(SystemParam.parent_code == row.param_code)
+            .order_by(SystemParam.sort_order, SystemParam.created_at)
+        )
+        for child in child_result.scalars().all():
+            entries.append(
+                _entry_kwargs(
+                    {
+                        "id": child.param_code,
+                        "name": child.param_label or child.param_name,
+                        "url": child.param_value or "",
+                        "description": child.description or child.param_name,
+                    },
+                    fallback_id=child.param_code,
+                )
+            )
+    if not entries:
+        entries = [_entry_kwargs(entry) for entry in _entries_from_json(row.param_value or "")]
+
+    sources: list[RepoSource] = []
+    seen: set[str] = set()
+    for entry in entries:
+        source = _build_source(**entry)
+        if source is None or source.id in seen:
+            continue
+        seen.add(source.id)
+        sources.append(source)
+    return sources
+
+
+async def effective_sources(db: AsyncSession) -> list[RepoSource]:
+    """返回生效的技能仓库来源：参数配置优先，未配置时回退内置来源."""
+    configured: list[RepoSource] = []
+    try:
+        configured = await load_configured_sources(db)
+    except Exception:  # noqa: BLE001 - 参数读取异常不应导致来源列表不可用
+        logger.exception("读取技能下载站点参数失败，回退内置来源")
+    return configured or list(REPO_SOURCES)
 
 
 def _headers() -> dict[str, str]:
@@ -227,6 +454,11 @@ def _parse_metadata(markdown: str, fallback_name: str) -> tuple[str, str, str, s
 
 async def _load_source(client: httpx.AsyncClient, source: RepoSource) -> _SourceSnapshot:
     """抓取单个来源：仓库元信息 + 快照解析."""
+    if not source.repository:
+        raise HTTPException(
+            status_code=400,
+            detail=f"技能下载站点「{source.name}」未配置有效的仓库地址（形如 owner/repo）",
+        )
     repository = await _github_json(client, f"{GITHUB_API}/repos/{source.repository}")
     stars = int(repository.get("stargazers_count") or 0)
     branch = str(repository.get("default_branch") or "main")
@@ -269,33 +501,56 @@ async def _load_source(client: httpx.AsyncClient, source: RepoSource) -> _Source
     )
 
 
-async def _ensure_ranked(force: bool = False) -> None:
+async def _ensure_ranked(sources: list[RepoSource], force: bool = False) -> None:
     """确保榜单快照可用（带 TTL 缓存与并发保护）."""
-    global _ranked_items, _ranked_at
-    if not force and _ranked_items and (time.time() - _ranked_at) < CACHE_TTL_SECONDS:
+    global _ranked_items, _ranked_at, _ranked_key
+    key = tuple((source.id, source.repository, source.skills_path) for source in sources)
+    if (
+        not force
+        and _ranked_items
+        and key == _ranked_key
+        and (time.time() - _ranked_at) < CACHE_TTL_SECONDS
+    ):
         return
 
     async with _load_lock:
-        if not force and _ranked_items and (time.time() - _ranked_at) < CACHE_TTL_SECONDS:
+        if (
+            not force
+            and _ranked_items
+            and key == _ranked_key
+            and (time.time() - _ranked_at) < CACHE_TTL_SECONDS
+        ):
             return
         authority_order = {
             source.id: (0 if source.authority == "official" else 1)
-            for source in REPO_SOURCES
+            for source in sources
         }
         async with _create_client() as client:
-            snapshots = await asyncio.gather(
-                *[_load_source(client, source) for source in REPO_SOURCES]
+            gathered = await asyncio.gather(
+                *[_load_source(client, source) for source in sources],
+                return_exceptions=True,
             )
 
-        keep_tarball = sum(len(snapshot.tarball) for snapshot in snapshots) <= (
+        pairs: list[tuple[RepoSource, _SourceSnapshot]] = []
+        first_error: BaseException | None = None
+        for source, result in zip(sources, gathered):
+            if isinstance(result, BaseException):
+                logger.warning("技能仓库来源 %s 抓取失败，已跳过：%s", source.id, result)
+                first_error = first_error or result
+                continue
+            pairs.append((source, result))
+        if not pairs and first_error is not None:
+            raise first_error
+
+        keep_tarball = sum(len(snapshot.tarball) for _source, snapshot in pairs) <= (
             MAX_CACHE_MB * 1024 * 1024
         )
-        for source, snapshot in zip(REPO_SOURCES, snapshots):
+        for source, snapshot in pairs:
             if not keep_tarball:
                 snapshot.tarball = b""
             _snapshots[source.id] = snapshot
 
-        items = [item for snapshot in snapshots for item in snapshot.items]
+        items = [item for _source, snapshot in pairs for item in snapshot.items]
         items.sort(
             key=lambda item: (
                 authority_order.get(item.source, 9),
@@ -307,10 +562,12 @@ async def _ensure_ranked(force: bool = False) -> None:
             item.rank = index
         _ranked_items = items
         _ranked_at = time.time()
+        _ranked_key = key
         logger.info("技能仓库榜单已刷新：%d 个技能", len(items))
 
 
 async def list_repository_skills(
+    sources: list[RepoSource],
     source_id: str,
     keyword: str | None = None,
     page: int = 1,
@@ -318,11 +575,11 @@ async def list_repository_skills(
     refresh: bool = False,
 ) -> SkillRepoListResponse:
     """按来源返回技能仓库榜单（支持关键词过滤与分页）."""
-    source = _SOURCE_MAP.get(source_id)
+    source = next((item for item in sources if item.id == source_id), None)
     if source is None:
         raise HTTPException(status_code=404, detail=f"未知技能仓库来源：{source_id}")
 
-    await _ensure_ranked(force=refresh)
+    await _ensure_ranked(sources, force=refresh)
 
     items = [item for item in _ranked_items if item.source == source_id]
     query = (keyword or "").strip().lower()
@@ -400,13 +657,14 @@ async def import_repository_skills(
     request: SkillRepoImportRequest, db: AsyncSession
 ) -> SkillRepoImportResponse:
     """把榜单中选中的技能导入 workspace/skills_upload/ 并入库."""
-    source = _SOURCE_MAP.get(request.source)
+    sources = await effective_sources(db)
+    source = next((item for item in sources if item.id == request.source), None)
     if source is None:
         raise HTTPException(status_code=404, detail=f"未知技能仓库来源：{request.source}")
     if not request.skill_ids:
         raise HTTPException(status_code=400, detail="请至少选择一个技能")
 
-    await _ensure_ranked()
+    await _ensure_ranked(sources)
     snapshot = _snapshots.get(source.id)
     if snapshot is None:
         raise HTTPException(status_code=502, detail="技能仓库快照不可用，请重试")
