@@ -1,7 +1,10 @@
 """技能下载站点来源（参数配置 skill_download_site）单元测试."""
 
 import asyncio
+import io
 import json
+import pathlib
+import tarfile
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -170,3 +173,89 @@ def test_effective_sources_falls_back_to_builtin() -> None:
     assert [item.id for item in repository.list_sources()] == [
         item.id for item in repository.REPO_SOURCES
     ]
+
+
+def _tar_bytes(entries: dict[str, bytes]) -> bytes:
+    """构造一个 gz 压缩的仓库快照（tar.gz）."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, content in entries.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return buffer.getvalue()
+
+
+def test_scan_tarball_supports_nested_skill_dirs() -> None:
+    """技能目录支持多级嵌套；技能目录内部的嵌套 SKILL.md 不再算独立技能."""
+    data = _tar_bytes(
+        {
+            "repo-main/skills/alpha/SKILL.md": b"---\nname: alpha\n---\n",
+            "repo-main/skills/alpha/references/inner/SKILL.md": b"---\nname: inner\n---\n",
+            "repo-main/skills/engineering/beta/SKILL.md": b"---\nname: beta\n---\n",
+            "repo-main/skills/engineering/beta/scripts/run.py": b"print(1)\n",
+            "repo-main/README.md": b"readme\n",
+        }
+    )
+
+    skill_md, dir_files = repository._scan_tarball(data, "skills")
+
+    assert sorted(skill_md) == ["alpha", "engineering/beta"]
+    assert dir_files["alpha"] == ["SKILL.md", "references/inner/SKILL.md"]
+    assert dir_files["engineering/beta"] == ["SKILL.md", "scripts/run.py"]
+
+
+def test_scan_tarball_supports_skills_at_repo_root() -> None:
+    """技能根目录为仓库根目录（参数值以 /tree/main/. 结尾）时也能识别技能."""
+    data = _tar_bytes(
+        {
+            "repo-main/academic-paper/SKILL.md": b"---\nname: academic-paper\n---\n",
+            "repo-main/academic-paper/references/a.md": b"a\n",
+        }
+    )
+
+    skill_md, dir_files = repository._scan_tarball(data, ".")
+
+    assert list(skill_md) == ["academic-paper"]
+    assert dir_files["academic-paper"] == ["SKILL.md", "references/a.md"]
+
+
+def test_parse_repository_url_supports_repo_root_path() -> None:
+    """带 /tree/main/. 的地址表示技能目录就是仓库根目录."""
+    assert repository.parse_repository_url(
+        "https://github.com/Imbad0202/academic-research-skills/tree/main/."
+    ) == ("Imbad0202/academic-research-skills", "")
+
+
+def test_extract_skill_files_supports_nested_skill_dir(tmp_path: pathlib.Path) -> None:
+    """嵌套技能目录按相对路径解压，且不会带入同级的其他技能."""
+    data = _tar_bytes(
+        {
+            "repo-main/skills/engineering/beta/SKILL.md": b"---\nname: beta\n---\n",
+            "repo-main/skills/engineering/beta/scripts/run.py": b"print(1)\n",
+            "repo-main/skills/engineering/other/SKILL.md": b"---\nname: other\n---\n",
+        }
+    )
+
+    total = repository._extract_skill_files(
+        data, "skills", "engineering/beta", str(tmp_path)
+    )
+
+    assert total > 0
+    assert (tmp_path / "SKILL.md").is_file()
+    assert (tmp_path / "scripts" / "run.py").is_file()
+    assert not (tmp_path / "other").exists()
+
+
+def test_extract_skill_files_supports_repo_root(tmp_path: pathlib.Path) -> None:
+    """技能目录为仓库根目录时，解压前缀不应带多余斜杠."""
+    data = _tar_bytes(
+        {
+            "repo-main/academic-paper/SKILL.md": b"---\nname: academic-paper\n---\n",
+        }
+    )
+
+    total = repository._extract_skill_files(data, ".", "academic-paper", str(tmp_path))
+
+    assert total > 0
+    assert (tmp_path / "SKILL.md").is_file()

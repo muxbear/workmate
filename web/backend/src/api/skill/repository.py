@@ -8,8 +8,10 @@
   未配置时回退内置注册表（Anthropic 官方技能仓库与高星社区技能库）；
 - 抓取使用 GitHub REST API：仓库元信息提供星标数（热度），tarball 接口一次性拉取仓库
   快照后在本地解析，避免逐文件请求与二次限流；
-- 榜单排序依据为「权威级别（官方优先）→ 仓库星标数 → 技能名」，排名与热度随响应返回；
-- 抓取结果按 TTL 缓存，刷新失败时沿用最近一次成功快照；
+- 按来源懒加载：只在用户点「获取」时抓取当前选中的站点，避免站点变多后一次性
+  拉取全部仓库触发 GitHub 限流；
+- 榜单按「仓库星标数 → 技能名」在来源内排序，排名与热度随响应返回；
+- 抓取结果按来源做 TTL 缓存，可通过 refresh 强制刷新；
 - 导入严格复用上传校验规则：校验不通过不落盘、不入库。
 """
 from __future__ import annotations
@@ -57,9 +59,10 @@ logger = logging.getLogger(__name__)
 GITHUB_API = os.environ.get("SKILL_REPO_GITHUB_API", "https://api.github.com")
 CACHE_TTL_SECONDS = int(os.environ.get("SKILL_REPO_CACHE_TTL", "1800"))
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("SKILL_REPO_TIMEOUT", "30"))
+# 单个仓库快照大小上限（如需抓取上百 MB 的大型合集仓库，可用 SKILL_REPO_MAX_TARBALL_MB 调整）
 MAX_TARBALL_MB = int(os.environ.get("SKILL_REPO_MAX_TARBALL_MB", "64"))
 MAX_CACHE_MB = int(os.environ.get("SKILL_REPO_MAX_CACHE_MB", "128"))
-RANK_BASIS = "按权威级别（官方优先）与仓库星标数排序"
+RANK_BASIS = "按仓库星标数与技能名称（来源内）排序"
 KNOWN_CATEGORIES = {"search", "code", "creative", "analysis", "tools", "custom"}
 
 
@@ -126,9 +129,6 @@ class _SourceSnapshot:
 
 
 _snapshots: dict[str, _SourceSnapshot] = {}
-_ranked_items: list[SkillRepoSkillItem] = []
-_ranked_at: float = 0.0
-_ranked_key: tuple[tuple[str, str, str], ...] = ()
 _load_lock = asyncio.Lock()
 
 
@@ -176,6 +176,9 @@ def parse_repository_url(value: str) -> tuple[str, str]:
     if matched:
         repository = f"{matched.group('owner')}/{matched.group('repo')}"
         path = (matched.group("path") or "").strip("/")
+        if path == ".":
+            # 仓库根目录即技能目录
+            return repository, ""
         return repository, path or DEFAULT_SKILLS_PATH
     if _REPO_SLUG_PATTERN.match(text):
         return text, DEFAULT_SKILLS_PATH
@@ -411,11 +414,30 @@ async def _download_tarball(client: httpx.AsyncClient, source: RepoSource, branc
     return content
 
 
+def _skills_prefix(skills_path: str) -> str:
+    """把「技能目录」参数规范成快照内的路径前缀（仓库根目录返回空串）."""
+    path = (skills_path or "").strip().strip("/")
+    if path in ("", "."):
+        return ""
+    return path + "/"
+
+
+def _repo_path(*parts: str) -> str:
+    """拼接仓库内的相对路径，忽略空值与仓库根目录标记."""
+    segments = [part.strip("/") for part in parts]
+    return "/".join(segment for segment in segments if segment and segment != ".")
+
+
 def _scan_tarball(data: bytes, skills_path: str) -> tuple[dict[str, str], dict[str, list[str]]]:
-    """解析仓库快照，返回 技能目录名 -> SKILL.md 内容 以及 技能目录名 -> 文件列表."""
-    prefix = skills_path.strip("/") + "/"
-    skill_md: dict[str, str] = {}
-    dir_files: dict[str, list[str]] = {}
+    """解析仓库快照，返回 技能目录名 -> SKILL.md 内容 以及 技能目录名 -> 文件列表.
+
+    技能目录可以位于技能根目录下的任意层级（如 ``skills/<name>``、
+    ``skills/engineering/<name>``，或技能根目录直接就是仓库根目录），
+    但已识别为技能的目录内部的嵌套目录不会再被当作独立技能。
+    """
+    prefix = _skills_prefix(skills_path)
+    paths: list[str] = []
+    skill_members: dict[str, tarfile.TarInfo] = {}
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
         for member in archive.getmembers():
             if not member.isfile():
@@ -424,19 +446,34 @@ def _scan_tarball(data: bytes, skills_path: str) -> tuple[dict[str, str], dict[s
             if len(parts) != 2:
                 continue
             relative = parts[1].replace("\\", "/")
-            if not relative.startswith(prefix):
+            if prefix and not relative.startswith(prefix):
                 continue
-            remainder = relative[len(prefix):]
-            name, separator, tail = remainder.partition("/")
-            if not separator or not name or not tail:
+            remainder = relative[len(prefix):] if prefix else relative
+            if not remainder:
                 continue
-            dir_files.setdefault(name, []).append(tail)
-            if tail == "SKILL.md":
+            paths.append(remainder)
+            if remainder.endswith("/SKILL.md"):
+                skill_members[remainder[: -len("/SKILL.md")]] = member
+
+        # 由浅到深筛选：技能目录内部的嵌套 SKILL.md 不再单独算作技能
+        skill_dirs: list[str] = []
+        for name in sorted(skill_members, key=lambda item: (item.count("/"), item)):
+            if any(name.startswith(parent + "/") for parent in skill_dirs):
+                continue
+            skill_dirs.append(name)
+
+        skill_md: dict[str, str] = {}
+        dir_files: dict[str, list[str]] = {}
+        for name in skill_dirs:
+            member = skill_members.get(name)
+            if member is not None:
                 handle = archive.extractfile(member)
                 if handle is not None:
                     skill_md[name] = handle.read().decode("utf-8", errors="replace")
-    filtered = {name: sorted(files) for name, files in dir_files.items() if name in skill_md}
-    return skill_md, filtered
+            files = sorted(path[len(name) + 1:] for path in paths if path.startswith(name + "/"))
+            if files:
+                dir_files[name] = files
+    return skill_md, dir_files
 
 
 def _parse_metadata(markdown: str, fallback_name: str) -> tuple[str, str, str, str]:
@@ -485,7 +522,7 @@ async def _load_source(client: httpx.AsyncClient, source: RepoSource) -> _Source
                 popularity=stars,
                 rank=0,
                 install_url=(
-                    f"{source.homepage}/tree/{branch}/{source.skills_path}/{name}"
+                    f"{source.homepage}/tree/{branch}/{_repo_path(source.skills_path, name)}"
                 ),
                 updated_at=pushed_at,
             )
@@ -501,69 +538,42 @@ async def _load_source(client: httpx.AsyncClient, source: RepoSource) -> _Source
     )
 
 
-async def _ensure_ranked(sources: list[RepoSource], force: bool = False) -> None:
-    """确保榜单快照可用（带 TTL 缓存与并发保护）."""
-    global _ranked_items, _ranked_at, _ranked_key
-    key = tuple((source.id, source.repository, source.skills_path) for source in sources)
+async def _ensure_source_snapshot(source: RepoSource, force: bool = False) -> _SourceSnapshot:
+    """确保单个来源的仓库快照可用（按来源 TTL 缓存 + 并发保护）.
+
+    只抓取当前选中的站点：站点数量变多后，一次性抓取全部仓库既慢又容易被 GitHub 限流。
+
+    Args:
+        source: 目标技能仓库来源。
+        force: 为 True 时忽略缓存强制刷新。
+
+    Returns:
+        该来源的仓库快照。
+    """
+    snapshot = _snapshots.get(source.id)
     if (
         not force
-        and _ranked_items
-        and key == _ranked_key
-        and (time.time() - _ranked_at) < CACHE_TTL_SECONDS
+        and snapshot is not None
+        and (time.time() - snapshot.fetched_at) < CACHE_TTL_SECONDS
     ):
-        return
+        return snapshot
 
     async with _load_lock:
+        snapshot = _snapshots.get(source.id)
         if (
             not force
-            and _ranked_items
-            and key == _ranked_key
-            and (time.time() - _ranked_at) < CACHE_TTL_SECONDS
+            and snapshot is not None
+            and (time.time() - snapshot.fetched_at) < CACHE_TTL_SECONDS
         ):
-            return
-        authority_order = {
-            source.id: (0 if source.authority == "official" else 1)
-            for source in sources
-        }
+            return snapshot
+
         async with _create_client() as client:
-            gathered = await asyncio.gather(
-                *[_load_source(client, source) for source in sources],
-                return_exceptions=True,
-            )
-
-        pairs: list[tuple[RepoSource, _SourceSnapshot]] = []
-        first_error: BaseException | None = None
-        for source, result in zip(sources, gathered):
-            if isinstance(result, BaseException):
-                logger.warning("技能仓库来源 %s 抓取失败，已跳过：%s", source.id, result)
-                first_error = first_error or result
-                continue
-            pairs.append((source, result))
-        if not pairs and first_error is not None:
-            raise first_error
-
-        keep_tarball = sum(len(snapshot.tarball) for _source, snapshot in pairs) <= (
-            MAX_CACHE_MB * 1024 * 1024
-        )
-        for source, snapshot in pairs:
-            if not keep_tarball:
-                snapshot.tarball = b""
-            _snapshots[source.id] = snapshot
-
-        items = [item for _source, snapshot in pairs for item in snapshot.items]
-        items.sort(
-            key=lambda item: (
-                authority_order.get(item.source, 9),
-                -item.popularity,
-                item.name.lower(),
-            )
-        )
-        for index, item in enumerate(items, start=1):
-            item.rank = index
-        _ranked_items = items
-        _ranked_at = time.time()
-        _ranked_key = key
-        logger.info("技能仓库榜单已刷新：%d 个技能", len(items))
+            fresh = await _load_source(client, source)
+        if len(fresh.tarball) > MAX_CACHE_MB * 1024 * 1024:
+            fresh.tarball = b""
+        _snapshots[source.id] = fresh
+        logger.info("技能仓库 %s 快照已刷新：%d 个技能", source.id, len(fresh.items))
+        return fresh
 
 
 async def list_repository_skills(
@@ -579,9 +589,13 @@ async def list_repository_skills(
     if source is None:
         raise HTTPException(status_code=404, detail=f"未知技能仓库来源：{source_id}")
 
-    await _ensure_ranked(sources, force=refresh)
+    snapshot = await _ensure_source_snapshot(source, force=refresh)
 
-    items = [item for item in _ranked_items if item.source == source_id]
+    items = list(snapshot.items)
+    items.sort(key=lambda item: (-item.popularity, item.name.lower()))
+    for index, item in enumerate(items, start=1):
+        item.rank = index
+
     query = (keyword or "").strip().lower()
     if query:
         items = [
@@ -600,7 +614,7 @@ async def list_repository_skills(
         source=source.id,
         source_name=source.name,
         rank_basis=RANK_BASIS,
-        fetched_at=datetime.fromtimestamp(_ranked_at or time.time(), tz=UTC),
+        fetched_at=datetime.fromtimestamp(snapshot.fetched_at, tz=UTC),
         total=total,
         page=page,
         page_size=page_size,
@@ -610,7 +624,7 @@ async def list_repository_skills(
 
 def _extract_skill_files(data: bytes, skills_path: str, dir_name: str, target_dir: str) -> int:
     """把仓库快照中指定技能目录的文件解压到目标目录，返回总字节数."""
-    prefix = f"{skills_path.strip('/')}/{dir_name}/"
+    prefix = f"{_skills_prefix(skills_path)}{dir_name.strip('/')}/"
     total_bytes = 0
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
         for member in archive.getmembers():
@@ -664,10 +678,7 @@ async def import_repository_skills(
     if not request.skill_ids:
         raise HTTPException(status_code=400, detail="请至少选择一个技能")
 
-    await _ensure_ranked(sources)
-    snapshot = _snapshots.get(source.id)
-    if snapshot is None:
-        raise HTTPException(status_code=502, detail="技能仓库快照不可用，请重试")
+    snapshot = await _ensure_source_snapshot(source)
 
     data = snapshot.tarball
     if not data:
@@ -681,7 +692,7 @@ async def import_repository_skills(
 
     for raw_id in request.skill_ids:
         dir_name = raw_id.split(":", 1)[1] if ":" in raw_id else raw_id
-        dir_name = dir_name.strip()
+        dir_name = dir_name.strip().strip("/")
         if not dir_name:
             continue
         if dir_name not in snapshot.dir_files:
@@ -698,13 +709,15 @@ async def import_repository_skills(
             )
             continue
 
-        destination = os.path.join(SKILLS_DIR, dir_name)
+        # 技能可能位于技能根目录的子目录中：落盘与入库统一使用技能目录名
+        skill_name = posixpath.basename(dir_name)
+        destination = os.path.join(SKILLS_DIR, skill_name)
         if os.path.exists(destination):
-            skipped.append(dir_name)
+            skipped.append(skill_name)
             continue
 
-        with tempfile.TemporaryDirectory(prefix="skill-repo-") as temp_dir:
-            skill_dir = os.path.join(temp_dir, dir_name)
+        with tempfile.TemporaryDirectory(prefix="skill-repo-") as skill_tmp:
+            skill_dir = os.path.join(skill_tmp, skill_name)
             os.makedirs(skill_dir, exist_ok=True)
             try:
                 _extract_skill_files(data, source.skills_path, dir_name, skill_dir)
@@ -718,17 +731,17 @@ async def import_repository_skills(
                 )
                 continue
 
-            validation = validate_skill_directory(skill_dir, expected_name=dir_name)
+            validation = validate_skill_directory(skill_dir, expected_name=skill_name)
             if not validation.valid:
                 # 校验不通过：不落盘、不入库
                 results.append(validation)
                 continue
 
-            description, license_name, category = _read_metadata_from_dir(skill_dir, dir_name)
+            description, license_name, category = _read_metadata_from_dir(skill_dir, skill_name)
             shutil.copytree(skill_dir, destination)
             db.add(
                 Skill(
-                    name=dir_name,
+                    name=skill_name,
                     valid=True,
                     source=source.id,
                     description=description,
@@ -740,7 +753,7 @@ async def import_repository_skills(
                     validation_errors="",
                 )
             )
-            results.append(SkillResult(name=dir_name, valid=True, errors=[]))
+            results.append(SkillResult(name=skill_name, valid=True, errors=[]))
 
     # 显式提交，确保导入接口返回后列表 / 同步立即可见（避免请求级提交时序竞态）
     await db.commit()
