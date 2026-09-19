@@ -34,7 +34,26 @@ watch(streamingBlocksLen, scrollToBottom)
 
 <template>
   <div class="message-list" ref="scrollContainer">
-    <MessageItem v-for="msg in chatStore.messages" :key="msg.id" :message="msg" />
+    <div
+      v-for="msg in chatStore.messages"
+      :key="msg.id"
+      :data-msg-id="msg.id"
+      class="message-row"
+      :class="{
+        'message-row--hit': chatStore.isSearchHit(msg.id),
+        'message-row--share': chatStore.shareMode,
+      }"
+    >
+      <label
+        v-if="chatStore.shareMode"
+        class="share-check"
+        title="选择该消息"
+        @click.prevent="chatStore.toggleShareSelect(msg.id)"
+      >
+        <input type="checkbox" :checked="chatStore.shareSelected.includes(msg.id)" />
+      </label>
+      <MessageItem :message="msg" />
+    </div>
   </div>
 </template>
 
@@ -47,5 +66,27 @@ watch(streamingBlocksLen, scrollToBottom)
   flex-direction: column;
   gap: 16px;
   background: var(--surface-primary);
+}
+
+.message-row {
+  display: flex;
+  width: 100%;
+}
+
+.message-row--hit {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: 4px;
+  border-radius: var(--radius-lg);
+}
+
+.message-row--share {
+  align-items: center;
+  gap: 8px;
+}
+
+.share-check {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 </style>

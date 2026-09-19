@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { fetchConversations, deleteConversation as deleteConversationApi } from '@/services/conversationApi'
+import {
+  fetchConversations,
+  deleteConversation as deleteConversationApi,
+} from '@/services/conversationApi'
 
 export interface HistoryItem {
   thread_id: string
@@ -38,6 +41,8 @@ export const useUiStore = defineStore('ui', () => {
   const theme = ref<ThemeMode>(getInitialTheme())
   const histories = ref<HistoryItem[]>([])
   const activeThreadId = ref<string | null>(null)
+  /** 右侧面板当前视图：历史对话 / 会话产物 */
+  const rightPanelTab = ref<'history' | 'artifacts'>('history')
 
   function initTheme() {
     applyThemeToDocument(theme.value)
@@ -60,12 +65,10 @@ export const useUiStore = defineStore('ui', () => {
   async function fetchHistories() {
     try {
       const data = await fetchConversations()
-      histories.value = data.map((c) => (
-        {
-          thread_id: c.thread_id,
-          title: c.title,
-        }
-      ))
+      histories.value = data.map((c) => ({
+        thread_id: c.thread_id,
+        title: c.title,
+      }))
     } catch {
       // 静默失败, 列表保持现状
     }
@@ -105,23 +108,24 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   return {
-      sidebarCollapsed,
-      rightPanelCollapsed,
-      plusMenuOpen,
-      searchQuery,
-      selectedModel,
-      theme,
-      histories,
-      activeThreadId,
-      initTheme,
-      setTheme,
-      toggleTheme,
-      fetchHistories,
-      deleteHistory,
-      toggleSidebar,
-      toggleRightPanel,
-      togglePlusMenu,
-      closePlusMenu,
-      newConversation,
+    sidebarCollapsed,
+    rightPanelCollapsed,
+    plusMenuOpen,
+    searchQuery,
+    selectedModel,
+    theme,
+    histories,
+    activeThreadId,
+    rightPanelTab,
+    initTheme,
+    setTheme,
+    toggleTheme,
+    fetchHistories,
+    deleteHistory,
+    toggleSidebar,
+    toggleRightPanel,
+    togglePlusMenu,
+    closePlusMenu,
+    newConversation,
   }
 })

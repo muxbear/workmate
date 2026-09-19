@@ -1,13 +1,10 @@
-<script setup>
-import {
-  ChevronDown,
-  PanelRightClose,
-  PanelRightOpen,
-  Plus,
-  Trash2,
-} from 'lucide-vue-next'
+<script setup lang="ts">
+import { ChevronDown, PanelRightClose, PanelRightOpen, Plus, Trash2 } from 'lucide-vue-next'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
 import { useChatStore } from '@/stores/chat'
+import ArtifactPanel from './chat/ArtifactPanel.vue'
+import { formatFileSize } from '@/utils/format'
 import { onMounted } from 'vue'
 
 const uiStore = useUiStore()
@@ -17,15 +14,35 @@ onMounted(() => {
   uiStore.fetchHistories()
 })
 
-async function handleSelectHistory(threadId) {
+async function handleSelectHistory(threadId: string) {
   uiStore.activeThreadId = threadId
   await chatStore.loadConversation(threadId)
 }
 
-async function handleDeleteHistory(threadId) {
+/** 删除历史对话：二次确认（删除后消息与产物不可恢复） */
+async function handleDeleteHistory(threadId: string, title: string) {
+  const name = title ? '《' + title + '》' : '该对话'
+  try {
+    await ElMessageBox.confirm('删除' + name + '后，消息与产物将不可恢复，是否继续？', '删除对话', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
+
   await uiStore.deleteHistory(threadId)
-  if (chatStore.threadId === threadId) {
-    chatStore.clearMessages()
+  const removed = !uiStore.histories.some((item) => item.thread_id === threadId)
+  if (removed) {
+    if (chatStore.threadId === threadId) {
+      chatStore.clearMessages()
+    }
+    ElMessage.success('对话已删除')
+  } else {
+    ElMessage.error('删除失败，请稍后重试')
   }
 }
 
@@ -38,6 +55,23 @@ function handleNewConversation() {
 <template>
   <aside class="right-panel" :class="{ collapsed: uiStore.rightPanelCollapsed }">
     <div v-if="!uiStore.rightPanelCollapsed" class="panel-expanded">
+      <div class="panel-tabs">
+        <button
+          class="panel-tab"
+          :class="{ active: uiStore.rightPanelTab === 'history' }"
+          @click="uiStore.rightPanelTab = 'history'"
+        >
+          历史对话
+        </button>
+        <button
+          class="panel-tab"
+          :class="{ active: uiStore.rightPanelTab === 'artifacts' }"
+          @click="uiStore.rightPanelTab = 'artifacts'"
+        >
+          会话产物 ({{ chatStore.threadArtifacts.length }})
+        </button>
+      </div>
+
       <div class="panel-header">
         <div class="panel-header-left">
           <span class="panel-title">历史对话</span>
@@ -54,7 +88,7 @@ function handleNewConversation() {
         </div>
       </div>
 
-      <div class="history-list">
+      <div v-if="uiStore.rightPanelTab === 'history'" class="history-list">
         <div
           v-for="item in uiStore.histories"
           :key="item.thread_id"
@@ -63,13 +97,34 @@ function handleNewConversation() {
           @click="handleSelectHistory(item.thread_id)"
         >
           <span class="history-title">{{ item.title }}</span>
-          <button class="delete-btn" @click.stop="handleDeleteHistory(item.thread_id)">
+          <button class="delete-btn" @click.stop="handleDeleteHistory(item.thread_id, item.title)">
             <Trash2 :size="14" />
           </button>
         </div>
       </div>
     </div>
 
+    <div v-if="uiStore.rightPanelTab === 'artifacts'" class="artifact-view">
+      <div class="artifact-items">
+        <button
+          v-for="item in chatStore.threadArtifacts"
+          :key="item.path"
+          class="artifact-item"
+          :class="{ active: chatStore.previewArtifact?.path === item.path }"
+          :title="item.path"
+          @click="chatStore.openArtifact(item)"
+        >
+          <span class="artifact-item-name">{{ item.name }}</span>
+          <span v-if="formatFileSize(item.size)" class="artifact-item-size">{{
+            formatFileSize(item.size)
+          }}</span>
+        </button>
+        <p v-if="chatStore.threadArtifacts.length === 0" class="artifact-tip">
+          本次会话暂无产物文件
+        </p>
+      </div>
+      <ArtifactPanel v-if="chatStore.previewArtifact" />
+    </div>
     <div v-else class="panel-collapsed">
       <button class="expand-btn" @click="uiStore.toggleRightPanel">
         <PanelRightOpen :size="14" />
@@ -82,8 +137,9 @@ function handleNewConversation() {
 .right-panel {
   height: 100%;
   background: var(--surface-card);
-  transition: width var(--transition-duration) ease,
-              min-width var(--transition-duration) ease;
+  transition:
+    width var(--transition-duration) ease,
+    min-width var(--transition-duration) ease;
   overflow: hidden;
 }
 
@@ -259,5 +315,93 @@ function handleNewConversation() {
 
 .expand-btn:hover {
   background: var(--border-subtle);
+}
+
+.panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-tab {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.panel-tab:hover {
+  background: var(--surface-secondary);
+  color: var(--foreground-primary);
+}
+
+.panel-tab.active {
+  background: var(--accent-primary-light);
+  color: var(--accent-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.artifact-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.artifact-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.artifact-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.artifact-item:hover,
+.artifact-item.active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.artifact-tip {
+  margin: 0;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.artifact-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artifact-item-size {
+  color: var(--foreground-muted);
+  font-size: 10px;
+  flex-shrink: 0;
 }
 </style>

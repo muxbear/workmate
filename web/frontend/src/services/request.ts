@@ -114,7 +114,21 @@ function chatAuthHeaders(): Record<string, string> {
   return headers
 }
 
-import type { AgentStartData, AgentEndData, ToolStartData, ToolEndData } from '@/types/chat'
+import type {
+  AgentStartData,
+  AgentEndData,
+  ToolStartData,
+  ToolEndData,
+  ChatInputPart,
+  ChatSelection,
+  SelectionEcho,
+  ChatArtifact,
+} from '@/types/chat'
+
+/** 流式结束回调携带的元信息 */
+export interface DoneInfo {
+  durationMs?: number
+}
 
 export interface StreamCallbacks {
   onToken: (agentName: string, content: string) => void
@@ -125,7 +139,9 @@ export interface StreamCallbacks {
   onToolOutput: (callId: string, content: string) => void
   onToolEnd: (data: ToolEndData) => void
   onThreadId: (threadId: string) => void
-  onDone: () => void
+  onSelection?: (data: SelectionEcho) => void
+  onArtifact?: (artifact: ChatArtifact) => void
+  onDone: (info?: DoneInfo) => void
   onError: (message: string) => void
 }
 
@@ -165,9 +181,15 @@ function parseSseDataLine(line: string, callbacks: StreamCallbacks): void {
       case 'error':
         callbacks.onError(data.message as string)
         break
+      case 'artifact':
+        callbacks.onArtifact?.(data as unknown as ChatArtifact)
+        break
+      case 'selection':
+        callbacks.onSelection?.(data as unknown as SelectionEcho)
+        break
       case 'done':
         callbacks.onThreadId(data.thread_id as string)
-        callbacks.onDone()
+        callbacks.onDone({ durationMs: data.duration_ms as number | undefined })
         break
     }
   } catch {
@@ -184,17 +206,41 @@ export async function sendStreamRequest(
     threadId?: string | null
     callbacks: StreamCallbacks
     attachmentIds?: string[]
+    parts?: ChatInputPart[]
+    selection?: ChatSelection
     signal?: AbortSignal
   },
 ): Promise<void> {
-  const { threadId, callbacks, attachmentIds, signal } = options
+  const { threadId, callbacks, attachmentIds, parts, selection, signal } = options
 
-  const body: { message: string; thread_id?: string; attachment_ids?: string[] } = { message }
+  const body: Record<string, unknown> = { message }
   if (threadId) {
     body.thread_id = threadId
   }
   if (attachmentIds && attachmentIds.length > 0) {
     body.attachment_ids = attachmentIds
+  }
+  if (parts && parts.length > 0) {
+    body.parts = parts.map((part) =>
+      part.type === 'text'
+        ? { type: 'text', text: part.text }
+        : { type: 'file', attachment_id: part.attachmentId, filename: part.filename },
+    )
+  }
+  if (selection) {
+    if (selection.expertId) body.expert_id = selection.expertId
+    if (selection.expertName) body.expert_name = selection.expertName
+    if (selection.skillIds.length > 0) body.skill_ids = selection.skillIds
+    if (selection.kbIds.length > 0) body.kb_ids = selection.kbIds
+    if (selection.mode !== 'default') body.mode = selection.mode
+    if (selection.model) body.model = selection.model
+    if (selection.modelId) body.model_id = selection.modelId
+    if (selection.providerId) body.provider_id = selection.providerId
+    if (selection.webSearch) body.web_search = true
+    if (selection.workspaceId) body.workspace_id = selection.workspaceId
+    // 显式下发（false 也下发），服务端据此收紧沙箱策略
+    body.allow_network = selection.allowNetwork
+    body.allow_shell = selection.allowShell
   }
 
   const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -222,9 +268,9 @@ export async function sendStreamRequest(
 
   // Wrap onDone so we can track whether the stream completed cleanly
   const originalOnDone = callbacks.onDone
-  callbacks.onDone = () => {
+  callbacks.onDone = (info?: DoneInfo) => {
     doneReceived = true
-    originalOnDone()
+    originalOnDone(info)
   }
 
   try {
@@ -287,4 +333,41 @@ export async function sendChatRequest(
     response: data.response,
     threadId: data.thread_id,
   }
+}
+/** 会话产物列表接口 */
+export async function fetchThreadArtifacts(threadId: string): Promise<ChatArtifact[]> {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  const response = await fetch(baseURL + '/chat/artifacts/' + encodeURIComponent(threadId), {
+    headers: chatAuthHeaders(),
+  })
+  if (!response.ok) return []
+  const payload = (await response.json()) as { data?: ChatArtifact[] }
+  return payload.data ?? []
+}
+
+/** 产物下载 / 预览地址 */
+export function artifactDownloadUrl(threadId: string, path: string): string {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  return (
+    baseURL +
+    '/chat/artifacts/' +
+    encodeURIComponent(threadId) +
+    '/download?path=' +
+    encodeURIComponent(path)
+  )
+}
+
+/** AI 改写润色：把输入文本改写为更清晰的任务描述 */
+export async function polishText(text: string): Promise<string> {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  const response = await fetch(baseURL + '/chat/polish', {
+    method: 'POST',
+    headers: chatAuthHeaders(),
+    body: JSON.stringify({ text }),
+  })
+  if (!response.ok) {
+    throw new Error('HTTP ' + response.status)
+  }
+  const payload = (await response.json()) as { data?: { text?: string } }
+  return payload.data?.text ?? ' '
 }

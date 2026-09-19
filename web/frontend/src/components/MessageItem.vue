@@ -9,8 +9,14 @@ import {
   Volume2,
   Square,
   RotateCcw,
+  Download,
+  FileText,
+  Share2,
+  ThumbsDown,
+  ThumbsUp,
 } from 'lucide-vue-next'
 import { marked } from 'marked'
+import { artifactKindLabel, formatFileSize } from '@/utils/format'
 import { useChatStore } from '@/stores/chat'
 import TraceTree from './TraceTree.vue'
 import type { ChatMessage } from '@/types/chat'
@@ -60,14 +66,27 @@ const renderedContent = computed(() => {
   return marked.parse(props.message.content, { breaks: true })
 })
 
-function isImage(mimeType: string): boolean {
-  return mimeType.startsWith('image/')
+function formatDuration(ms?: number): string {
+  if (!ms || ms <= 0) return ''
+  if (ms < 1000) return ms + 'ms'
+  return (ms / 1000).toFixed(1) + 's'
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+function formatTime(ts?: number): string {
+  if (!ts) return ''
+  const date = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return pad(date.getHours()) + ':' + pad(date.getMinutes())
+}
+
+function handleShare() {
+  void navigator.clipboard.writeText(props.message.content)
+  copied.value = true
+  setTimeout(() => (copied.value = false), 2000)
+}
+
+function isImage(mimeType: string): boolean {
+  return mimeType.startsWith('image/')
 }
 
 function fileExtension(filename: string): string {
@@ -132,6 +151,41 @@ function fileExtension(filename: string): string {
           <span class="dot" />
         </span>
       </div>
+      <div
+        v-if="message.role === 'assistant' && message.artifacts && message.artifacts.length > 0"
+        class="artifact-list"
+      >
+        <div
+          v-for="artifact in message.artifacts"
+          :key="artifact.path"
+          class="artifact-card"
+          :title="artifact.path"
+          @click="chatStore.openArtifact(artifact)"
+        >
+          <FileText :size="14" />
+          <span class="artifact-name">{{ artifact.name }}</span>
+          <span class="artifact-meta">
+            {{ artifactKindLabel(artifact.mime_type) }}
+            <template v-if="formatFileSize(artifact.size)">
+              · {{ formatFileSize(artifact.size) }}</template
+            >
+          </span>
+          <button
+            class="artifact-download"
+            title="下载"
+            @click.stop="chatStore.downloadArtifact(artifact)"
+          >
+            <Download :size="12" />
+          </button>
+        </div>
+      </div>
+      <div class="message-meta" v-if="message.role === 'assistant' && !message.streaming">
+        <span v-if="formatDuration(message.durationMs)">{{
+          formatDuration(message.durationMs)
+        }}</span>
+        <span v-if="message.model">{{ message.model }}</span>
+        <span v-if="message.createdAt">{{ formatTime(message.createdAt) }}</span>
+      </div>
       <div v-if="message.role === 'assistant' && !message.streaming" class="message-actions">
         <button class="action-btn" title="复制" @click="handleCopy">
           <Check v-if="copied" :size="14" />
@@ -156,6 +210,25 @@ function fileExtension(filename: string): string {
         >
           <RotateCcw :size="14" />
           <span>重答</span>
+        </button>
+        <button
+          class="action-btn"
+          :class="{ active: message.feedback === 'up' }"
+          title="点赞"
+          @click="chatStore.setFeedback(message.id, 'up')"
+        >
+          <ThumbsUp :size="14" />
+        </button>
+        <button
+          class="action-btn"
+          :class="{ active: message.feedback === 'down' }"
+          title="点踩"
+          @click="chatStore.setFeedback(message.id, 'down')"
+        >
+          <ThumbsDown :size="14" />
+        </button>
+        <button class="action-btn" title="分享" @click="handleShare">
+          <Share2 :size="14" />
         </button>
       </div>
     </div>
@@ -474,5 +547,70 @@ function fileExtension(filename: string): string {
 .user-att-size {
   font-size: 10px;
   opacity: 0.5;
+}
+
+.artifact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.artifact-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--foreground-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.artifact-card:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.artifact-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.artifact-download:hover {
+  color: var(--accent-primary);
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+}
+
+.artifact-meta {
+  color: var(--foreground-muted);
+  font-size: 10px;
+  white-space: nowrap;
 }
 </style>

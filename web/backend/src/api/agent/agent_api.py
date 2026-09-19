@@ -1,23 +1,39 @@
 import asyncio
 import json
 import logging
+import shlex
+from typing import Any, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.utils.uuid import uuid7
 from openai import BadRequestError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent import get_graph
+from agent import get_graph_for, get_sandbox_manager
 from agent.context.context import Context
+from agent.sandbox.workspace import (
+    ensure_workspace,
+    normalize_workspace_id,
+    workspace_path,
+)
+from api.agent.artifacts import (
+    get_artifact,
+    list_artifacts,
+    list_artifacts_without_size,
+    record_artifacts,
+    update_artifact_size,
+)
 from api.agent.event_logger import log_event
 from api.agent.usage_tracker import record_chat_usage
 from api.conversation.conversation_api import create_conversation
 from api.deps import get_current_user_id
+from core.response import ok
 from db import get_db
 from db.models.conversation import Conversation
 
@@ -49,16 +65,49 @@ def _classify_path(path: str) -> str:
     return "FILE"
 
 
+class ChatPart(BaseModel):
+    """保序消息部件：文本段或文件引用段（与网页版输入框内容一一对应）。"""
+
+    type: Literal["text", "file"]
+    text: str | None = None
+    attachment_id: str | None = None
+    filename: str | None = None
+
+
 class ChatRequest(BaseModel):
     user_id: str | None = 'user_123' # TODO
     thread_id: str | None = None
-    message: str = Field(min_length=1)
+    message: str = ""
     attachment_ids: list[str] | None = None
+
+    # 会话级选择项：全部可选，未传时行为与改造前完全一致
+    expert_id: str | None = None
+    expert_name: str | None = None
+    skill_ids: list[str] | None = None
+    kb_ids: list[str] | None = None
+    mode: str | None = None
+    model: str | None = None
+    provider_id: str | None = None
+    model_id: str | None = None
+    workspace_id: str | None = None
+    allow_network: bool | None = None
+    allow_shell: bool | None = None
+    web_search: bool | None = None
+    parts: list[ChatPart] | None = None
+
+    @model_validator(mode="after")
+    def _validate_content(self) -> "ChatRequest":
+        """message / parts / attachment_ids 至少提供一个，避免空请求进入智能体。"""
+        has_message = bool((self.message or "").strip())
+        if not (has_message or self.parts or self.attachment_ids):
+            raise ValueError("message、parts、attachment_ids 至少需要提供一个")
+        return self
 
 
 class ChatResponse(BaseModel):
     thread_id: str
     response: str
+    duration_ms: int | None = None
 
 
 class StreamToken(BaseModel):
@@ -82,6 +131,166 @@ async def _resolve_attachment_paths(
     ]
 
 
+_MODE_LABELS: dict[str, str] = {
+    "default": "默认",
+    "files": "引用上传文件",
+    "knowledge": "引用知识库",
+}
+
+
+async def _collect_attachment_ids(req: ChatRequest) -> list[str]:
+    """合并 attachment_ids 与 parts 中的文件引用（保序去重）。"""
+    ids: list[str] = []
+    for aid in req.attachment_ids or []:
+        if aid and aid not in ids:
+            ids.append(aid)
+    for part in req.parts or []:
+        if part.type == "file" and part.attachment_id and part.attachment_id not in ids:
+            ids.append(part.attachment_id)
+    return ids
+
+
+def _build_user_body(req: ChatRequest) -> str:
+    """按 parts 还原输入框正文；未传 parts 时退回纯文本 message。"""
+    if not req.parts:
+        return req.message or ""
+    chunks: list[str] = []
+    for part in req.parts:
+        if part.type == "text":
+            if part.text:
+                chunks.append(part.text)
+        elif part.filename:
+            chunks.append("[" + part.filename + "]")
+    return "".join(chunks).strip() or (req.message or "")
+
+
+def _compose_effective_message(
+    req: ChatRequest, attachment_paths: list[str], selection_hints: list[str]
+) -> str:
+    """组装送入智能体的用户消息：会话配置 + 附件清单 + 用户正文。"""
+    blocks: list[str] = []
+    if selection_hints:
+        blocks.append("【会话配置】\n" + "\n".join("- " + h for h in selection_hints))
+    if attachment_paths:
+        categorized = ["  - [" + _classify_path(p) + "] " + p for p in attachment_paths]
+        blocks.append("用户上传了以下附件文件：\n" + "\n".join(categorized))
+    blocks.append("用户消息：" + _build_user_body(req))
+    return "\n\n".join(blocks)
+
+
+async def _resolve_selection(
+    db: AsyncSession, req: ChatRequest, user_id: str
+) -> tuple[list[str], dict[str, Any]]:
+    """校验会话级选择项，返回（上下文提示行, 回显数据）。
+
+    校验以数据库为准：不可用的专家 / 技能 / 知识库不会阻塞本次对话，仅记录告警。
+    """
+    from db.models.expert import Expert
+    from db.models.knowledge_base import KnowledgeBase
+    from db.models.skill import Skill
+
+    hints: list[str] = []
+    payload: dict[str, Any] = {}
+
+    expert = None
+    if req.expert_id:
+        expert = (
+            await db.execute(sa_select(Expert).where(Expert.id == req.expert_id))
+        ).scalar_one_or_none()
+    if expert is None and req.expert_name:
+        expert = (
+            await db.execute(sa_select(Expert).where(Expert.name == req.expert_name))
+        ).scalar_one_or_none()
+    if expert is not None and expert.is_published and expert.status == "active":
+        hints.append(
+            "【专家】本次任务已选择专家「" + expert.name + "」，"
+            "请优先把适合该专家的子任务委派给它处理，并汇总其结果。"
+        )
+        payload["expert_id"] = expert.id
+        payload["expert_name"] = expert.name
+    elif req.expert_id or req.expert_name:
+        logger.warning(
+            "Selection ignored: expert unavailable (%s/%s)",
+            req.expert_id,
+            req.expert_name,
+        )
+        payload["expert_missing"] = req.expert_name or req.expert_id
+
+    if req.skill_ids:
+        skill_rows = (
+            await db.execute(
+                sa_select(Skill).where(
+                    Skill.id.in_(req.skill_ids),
+                    Skill.valid.is_(True),
+                    Skill.enabled.is_(True),
+                )
+            )
+        ).scalars().all()
+        skill_by_id = {row.id: row for row in skill_rows}
+        picked_skills = [skill_by_id[i] for i in req.skill_ids if i in skill_by_id]
+        if picked_skills:
+            hints.append(
+                "【技能】本次任务需要用到以下技能："
+                + "、".join(s.name for s in picked_skills)
+                + "。"
+            )
+            payload["skills"] = [{"id": s.id, "name": s.name} for s in picked_skills]
+        missing_skills = [i for i in req.skill_ids if i not in skill_by_id]
+        if missing_skills:
+            logger.warning("Selection ignored: skills unavailable (%s)", missing_skills)
+
+    if req.kb_ids:
+        kb_rows = (
+            await db.execute(
+                sa_select(KnowledgeBase).where(
+                    KnowledgeBase.id.in_(req.kb_ids),
+                    KnowledgeBase.user_id == user_id,
+                )
+            )
+        ).scalars().all()
+        if kb_rows:
+            hints.append(
+                "【知识库】知识检索范围限定为："
+                + "、".join(k.name for k in kb_rows)
+                + "，超出该范围的内容不要引用。"
+            )
+            payload["kbs"] = [{"id": k.id, "name": k.name} for k in kb_rows]
+        else:
+            logger.warning(
+                "Selection ignored: knowledge bases unavailable (%s)", req.kb_ids
+            )
+
+    mode = req.mode if req.mode in _MODE_LABELS else None
+    if mode and mode != "default":
+        hints.append("【模式】当前任务模式：" + _MODE_LABELS[mode] + "。")
+    payload["mode"] = mode or "default"
+    if req.web_search:
+        hints.append("【检索】本次任务允许联网检索。")
+
+    if req.workspace_id:
+        normalized = normalize_workspace_id(req.workspace_id)
+        if normalized:
+            hints.append(
+                "【工作区】本次任务的工作目录为 "
+                + workspace_path(normalized)
+                + "，产物文件请写入该目录，不要写入其它工作区目录。"
+            )
+    if req.allow_network:
+        hints.append("【权限】本次任务允许联网访问外部资源。")
+    if req.allow_shell:
+        hints.append("【权限】本次任务允许执行命令与代码。")
+
+    # 说明：模型（model / provider_id）当前仅回显；沙箱开关（allow_network / allow_shell）
+    # 已注入上下文提示，但真实沙箱策略仍由服务端与管理员配置控制（逐请求覆盖见方案第 10 章）。
+    payload["model"] = req.model
+    payload["provider_id"] = req.provider_id
+    payload["web_search"] = bool(req.web_search)
+    payload["allow_network"] = bool(req.allow_network)
+    payload["allow_shell"] = bool(req.allow_shell)
+    payload["workspace_id"] = req.workspace_id
+    return hints, payload
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
@@ -93,15 +302,55 @@ async def chat(
     is_new = not req.thread_id
     thread_id = req.thread_id or str(uuid7())
 
+    merged_attachment_ids = await _collect_attachment_ids(req)
+    resolved_paths: list[str] = []
+    if merged_attachment_ids:
+        resolved_paths = await _resolve_attachment_paths(db, merged_attachment_ids)
+
+    selection_hints, selection_payload = await _resolve_selection(db, req, user_id)
+    if req.allow_network or req.allow_shell or req.workspace_id:
+        await log_event(
+            db,
+            "info",
+            "agent",
+            f"会话选择项：工作区={req.workspace_id} 联网={bool(req.allow_network)} 代码执行={bool(req.allow_shell)} (thread_id={thread_id})",
+        )
+    user_body = _build_user_body(req)
+    # 会话配置与附件清单并入本次请求正文；attachment_paths 保持为空，
+    # 避免下方既有逻辑重复追加附件清单。
+    req.message = _compose_effective_message(req, resolved_paths, selection_hints)
+    req.attachment_ids = merged_attachment_ids or None
     attachment_paths: list[str] = []
-    if req.attachment_ids:
-        attachment_paths = await _resolve_attachment_paths(db, req.attachment_ids)
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    workspace_id = normalize_workspace_id(req.workspace_id)
+    allow_network = True if req.allow_network is None else bool(req.allow_network)
+    allow_shell = True if req.allow_shell is None else bool(req.allow_shell)
+    # 按会话「联网访问」开关调整沙箱出网策略（失败仅告警，不阻塞对话）
+    try:
+        await asyncio.to_thread(
+            get_sandbox_manager().apply_session_network_policy, user_id, allow_network
+        )
+    except Exception:
+        logger.warning("Apply session network policy failed", exc_info=True)
+    # 按会话工作区在沙箱内创建 /workspace/<id> 目录（失败仅告警）
+    if workspace_id:
+        try:
+            await asyncio.to_thread(
+                ensure_workspace,
+                get_sandbox_manager().get_or_create_backend(user_id),
+                workspace_id,
+            )
+        except Exception:
+            logger.warning("Ensure workspace failed", exc_info=True)
+
     context = Context(
         server_info="ke_hermes_server",
         user_id=user_id,
         org_id="default-org",  # TODO: 从 JWT claims 或 User 表读取真实 org_id
+        allow_network=allow_network,
+        allow_shell=allow_shell,
+        workspace_id=workspace_id,
     )
 
     try:
@@ -113,7 +362,8 @@ async def chat(
                 f"用户上传了以下附件文件：\n{paths_text}\n\n用户消息：{req.message}"
             )
 
-        result = await get_graph().ainvoke(
+        graph = await get_graph_for(req.provider_id, req.model_id)
+        result = await graph.ainvoke(
             {"messages": [HumanMessage(content=effective_message)]},
             config=config,
             context=context
@@ -137,7 +387,7 @@ async def chat(
 
     # 新对话自动创建记录；已有对话则合并 attachment_ids
     if is_new:
-        await create_conversation(db, user_id, thread_id, req.message, req.attachment_ids)
+        await create_conversation(db, user_id, thread_id, user_body, merged_attachment_ids or None)
     elif req.attachment_ids:
         conv_result = await db.execute(
             sa_select(Conversation).where(Conversation.thread_id == thread_id)
@@ -157,7 +407,8 @@ async def chat(
     final_message = result["messages"][-1]
     return ChatResponse(
         response=final_message.content,
-        thread_id=thread_id
+        thread_id=thread_id,
+        duration_ms=int((time.time() - _start_time) * 1000),
     )
 
 
@@ -172,15 +423,55 @@ async def chat_stream(
     is_new = not req.thread_id
     thread_id = req.thread_id or str(uuid7())
 
+    merged_attachment_ids = await _collect_attachment_ids(req)
+    resolved_paths: list[str] = []
+    if merged_attachment_ids:
+        resolved_paths = await _resolve_attachment_paths(db, merged_attachment_ids)
+
+    selection_hints, selection_payload = await _resolve_selection(db, req, user_id)
+    if req.allow_network or req.allow_shell or req.workspace_id:
+        await log_event(
+            db,
+            "info",
+            "agent",
+            f"会话选择项：工作区={req.workspace_id} 联网={bool(req.allow_network)} 代码执行={bool(req.allow_shell)} (thread_id={thread_id})",
+        )
+    user_body = _build_user_body(req)
+    # 会话配置与附件清单并入本次请求正文；attachment_paths 保持为空，
+    # 避免下方既有逻辑重复追加附件清单。
+    req.message = _compose_effective_message(req, resolved_paths, selection_hints)
+    req.attachment_ids = merged_attachment_ids or None
     attachment_paths: list[str] = []
-    if req.attachment_ids:
-        attachment_paths = await _resolve_attachment_paths(db, req.attachment_ids)
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
+    workspace_id = normalize_workspace_id(req.workspace_id)
+    allow_network = True if req.allow_network is None else bool(req.allow_network)
+    allow_shell = True if req.allow_shell is None else bool(req.allow_shell)
+    # 按会话「联网访问」开关调整沙箱出网策略（失败仅告警，不阻塞对话）
+    try:
+        await asyncio.to_thread(
+            get_sandbox_manager().apply_session_network_policy, user_id, allow_network
+        )
+    except Exception:
+        logger.warning("Apply session network policy failed", exc_info=True)
+    # 按会话工作区在沙箱内创建 /workspace/<id> 目录（失败仅告警）
+    if workspace_id:
+        try:
+            await asyncio.to_thread(
+                ensure_workspace,
+                get_sandbox_manager().get_or_create_backend(user_id),
+                workspace_id,
+            )
+        except Exception:
+            logger.warning("Ensure workspace failed", exc_info=True)
+
     context = Context(
         server_info="ke_hermes_server",
         user_id=user_id,
         org_id="default-org",  # TODO: 从 JWT claims 或 User 表读取真实 org_id
+        allow_network=allow_network,
+        allow_shell=allow_shell,
+        workspace_id=workspace_id,
     )
 
     effective_message = req.message
@@ -191,17 +482,22 @@ async def chat_stream(
             f"用户上传了以下附件文件：\n{paths_text}\n\n用户消息：{req.message}"
         )
 
+    graph = await get_graph_for(req.provider_id, req.model_id)
+
     async def event_generator():
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def consume_all() -> None:
             try:
-                stream = await get_graph().astream_events(
+                stream = await graph.astream_events(
                     {"messages": [HumanMessage(content=effective_message)]},
                     config=config,
                     context=context,
                     version="v3",
                 )
+
+                # 回显本次生效的会话选择项（专家 / 技能 / 知识库 / 模式等）
+                await queue.put({"event": "selection", "data": selection_payload})
 
                 # Emit main agent start before any consumer output
                 await queue.put({
@@ -250,6 +546,15 @@ async def chat_stream(
                                 "output": error_str or output_str,
                             }
                         })
+
+                        # 识别本次工具调用产生的产物文件并推送 artifact 事件
+                        for artifact in await record_artifacts(
+                            thread_id, user_id, call.tool_name, input_str
+                        ):
+                            await queue.put({
+                                "event": "artifact",
+                                "data": artifact.to_dict(),
+                            })
 
                 async def consume_subagents() -> None:
                     async for subagent in stream.subagents:
@@ -353,11 +658,14 @@ async def chat_stream(
 
         await consumer
 
-        yield f"data: {json.dumps({'event': 'done', 'data': {'thread_id': thread_id}}, ensure_ascii=False)}\n\n"
+        # 流结束后补全产物元信息（文件大小），失败不影响主流程
+        await _enrich_artifact_sizes(user_id, thread_id)
+
+        yield f"data: {json.dumps({'event': 'done', 'data': {'thread_id': thread_id, 'duration_ms': int((time.time() - _start_time) * 1000)}}, ensure_ascii=False)}\n\n"
 
         if is_new:
             try:
-                await create_conversation(db, user_id, thread_id, req.message, req.attachment_ids)
+                await create_conversation(db, user_id, thread_id, user_body, merged_attachment_ids or None)
             except Exception:
                 logger.exception("Failed to create conversation record")
         elif req.attachment_ids:
@@ -380,3 +688,136 @@ async def chat_stream(
         await log_event(db, "success", "agent", f"流式对话完成 (thread_id={thread_id})")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+async def _enrich_artifact_sizes(user_id: str, thread_id: str) -> None:
+    """流结束后在沙箱内 stat 产物文件，补全大小（失败仅告警，不影响对话结果）。"""
+    try:
+        pending = await list_artifacts_without_size(thread_id)
+        if not pending:
+            return
+        paths = [item.path for item in pending][:20]
+        quoted = " ".join(shlex.quote(item) for item in paths)
+        backend = get_sandbox_manager().get_or_create_backend(user_id)
+        result = await asyncio.to_thread(backend.execute, "stat -c '%s|%n' " + quoted)
+        output = getattr(result, "output", "") or ""
+        for line in output.splitlines():
+            size_text, _, path = line.partition("|")
+            if not size_text.strip().isdigit():
+                continue
+            await update_artifact_size(thread_id, path.strip(), int(size_text))
+    except Exception:
+        logger.warning(
+            "Enrich artifact sizes failed (thread_id=%s)", thread_id, exc_info=True
+        )
+
+
+@router.get("/chat/artifacts/{thread_id}")
+async def list_chat_artifacts(
+    thread_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """列出指定会话已登记的产物文件（持久化于 chat_artifacts 表）。"""
+    items = await list_artifacts(thread_id, user_id)
+    return ok([item.to_dict() for item in items])
+
+
+@router.get("/chat/artifacts/{thread_id}/download")
+async def download_chat_artifact(
+    thread_id: str,
+    path: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """下载会话产物（仅允许下载该会话已登记且属于当前用户的产物）。"""
+    if await get_artifact(thread_id, user_id, path) is None:
+        raise HTTPException(status_code=404, detail="产物不存在或不属于该会话")
+
+    backend = get_sandbox_manager().get_or_create_backend(user_id)
+    results = await asyncio.to_thread(backend.download_files, [path])
+    if not results or results[0].error or results[0].content is None:
+        detail = results[0].error if results else "download_failed"
+        raise HTTPException(status_code=404, detail=f"产物读取失败: {detail}")
+
+    content = results[0].content
+    # 顺手补全文件大小（首次下载时）
+    try:
+        await update_artifact_size(thread_id, path, len(content))
+    except Exception:
+        logger.debug("Update artifact size failed", exc_info=True)
+
+    filename = quote(path.rsplit("/", 1)[-1])
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+POLISH_INSTRUCTION = (
+    "请把下面这段任务描述改写得更清晰、具体、可执行，保持原意与语言，"
+    "直接输出改写后的文本，不要添加解释、标题或前后缀。"
+)
+# 单次改写的文本上限与分片阈值（超出阈值按段落分片，逐片改写后拼接）
+POLISH_CHUNK_CHARS = 1500
+POLISH_MAX_CHUNKS = 8
+
+
+class PolishRequest(BaseModel):
+    """AI 改写润色请求体（长文本由服务端分片处理）。"""
+
+    text: str = Field(min_length=1, max_length=POLISH_CHUNK_CHARS * POLISH_MAX_CHUNKS)
+
+
+def split_for_polish(text: str, limit: int = POLISH_CHUNK_CHARS) -> list[str]:
+    """按空行/段落切分长文本，单段超出上限时硬切；短文本返回单元素列表。"""
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for paragraph in text.split("\n"):
+        piece = paragraph if not current else current + "\n" + paragraph
+        if len(piece) <= limit:
+            current = piece
+            continue
+        if current:
+            chunks.append(current)
+        # 单段自身超长：按上限硬切
+        while len(paragraph) > limit:
+            chunks.append(paragraph[:limit])
+            paragraph = paragraph[limit:]
+        current = paragraph
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+@router.post("/chat/polish")
+async def polish_text(
+    req: PolishRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """把用户输入改写为更清晰、具体、可执行的任务描述（长文本自动分片）。"""
+    from agent.common import resolve_model
+
+    chunks = split_for_polish(req.text)
+    if len(chunks) > POLISH_MAX_CHUNKS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文本过长，最多支持 {POLISH_CHUNK_CHARS * POLISH_MAX_CHUNKS} 个字符",
+        )
+
+    try:
+        model = await resolve_model(None, None, fallback_to_settings=True)
+        polished: list[str] = []
+        for chunk in chunks:
+            result = await model.ainvoke(POLISH_INSTRUCTION + "\n\n" + chunk)
+            content = getattr(result, "content", result)
+            if isinstance(content, list):
+                content = "".join(str(part) for part in content)
+            polished.append(str(content).strip())
+    except Exception:
+        logger.exception("Polish text failed")
+        raise HTTPException(status_code=500, detail="改写失败，请稍后重试")
+
+    return ok({"text": "\n\n".join(item for item in polished if item), "chunks": len(chunks)})

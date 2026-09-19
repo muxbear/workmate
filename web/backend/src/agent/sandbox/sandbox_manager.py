@@ -113,6 +113,13 @@ class SandboxManager:
             )
             return backend
 
+    def apply_session_network_policy(self, user_id: str, allow_network: bool) -> None:
+        """按会话「联网访问」开关调整该用户沙箱的出网策略（阻塞调用，调用方用 to_thread 包裹）。"""
+        from agent.sandbox.sandbox_policy import apply_network_policy
+
+        backend = self.get_or_create_backend(user_id)
+        apply_network_policy(backend, allow_network, self._extra_domains)
+
     def start_cleanup(self) -> None:
         """Start the background cleanup thread (daemon, non-blocking)."""
         if self._cleanup_thread is not None and self._cleanup_thread.is_alive():

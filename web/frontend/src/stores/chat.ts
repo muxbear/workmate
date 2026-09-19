@@ -1,9 +1,23 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { sendStreamRequest } from '@/services/request'
+import {
+  artifactDownloadUrl,
+  fetchThreadArtifacts,
+  getAccessToken,
+  sendStreamRequest,
+} from '@/services/request'
 import { useUiStore } from '@/stores/ui'
-import type { ChatMessage, ExecutionBlock, AttachmentDisplayInfo } from '@/types/chat'
-import type { StreamCallbacks } from '@/services/request'
+import type {
+  ChatMessage,
+  ExecutionBlock,
+  AttachmentDisplayInfo,
+  ChatInputPart,
+  ChatSelection,
+  SelectionEcho,
+  ChatArtifact,
+} from '@/types/chat'
+import { createEmptySelection } from '@/types/chat'
+import type { StreamCallbacks, DoneInfo } from '@/services/request'
 import type { Attachment } from '@/types/chat'
 import { uploadAttachment, deleteAttachment } from '@/services/attachmentApi'
 
@@ -17,6 +31,190 @@ export const useChatStore = defineStore('chat', () => {
   const attachments = ref<Attachment[]>([])
   let nextId = 1
   let abortController: AbortController | null = null
+
+  const selection = ref<ChatSelection>(createEmptySelection())
+  const inputParts = ref<ChatInputPart[]>([])
+  const activeSelection = ref<SelectionEcho | null>(null)
+  /** 当前会话产物（SSE artifact 事件与接口回填） */
+  const threadArtifacts = ref<ChatArtifact[]>([])
+  /** 右侧面板正在预览的产物 */
+  const previewArtifact = ref<ChatArtifact | null>(null)
+
+  /** 分享面板开关与已勾选消息 */
+  const shareMode = ref(false)
+  const shareSelected = ref<number[]>([])
+  const shareAllChecked = computed(
+    () => messages.value.length > 0 && shareSelected.value.length === messages.value.length,
+  )
+
+  /** 对话内搜索关键词与命中消息 */
+  const searchKeyword = ref('')
+  const searchMatchIds = computed(() => {
+    const keyword = searchKeyword.value.trim().toLowerCase()
+    if (!keyword) return []
+    return messages.value
+      .filter((message) => (message.content ?? '').toLowerCase().includes(keyword))
+      .map((message) => message.id)
+  })
+
+  function setSelection(patch: Partial<ChatSelection>) {
+    selection.value = { ...selection.value, ...patch }
+  }
+
+  function setExpert(expert: { id: string; name: string } | null) {
+    selection.value = {
+      ...selection.value,
+      expertId: expert ? expert.id : null,
+      expertName: expert ? expert.name : null,
+    }
+  }
+
+  function toggleSkillId(id: string) {
+    const ids = selection.value.skillIds
+    selection.value = {
+      ...selection.value,
+      skillIds: ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id],
+    }
+  }
+
+  function setMode(mode: ChatSelection['mode']) {
+    selection.value = { ...selection.value, mode }
+  }
+
+  function setModel(name: string | null, providerId: string | null, modelId: string | null = null) {
+    selection.value = { ...selection.value, model: name, providerId, modelId }
+  }
+
+  function setInputParts(parts: ChatInputPart[]) {
+    inputParts.value = parts
+  }
+
+  /** 登记一条产物：挂到对应回复消息上，并加入当前会话产物列表（按路径去重） */
+  /** 切换点赞 / 点踩（本地状态，按消息 id） */
+  function setFeedback(messageId: number, kind: 'up' | 'down') {
+    const entry = byId(messageId)
+    if (!entry) return
+    messages.value[entry.idx] = {
+      ...entry.msg,
+      feedback: entry.msg.feedback === kind ? null : kind,
+    }
+  }
+
+  function registerArtifact(assistantId: number, artifact: ChatArtifact) {
+    if (!threadArtifacts.value.some((item) => item.path === artifact.path)) {
+      threadArtifacts.value = [...threadArtifacts.value, artifact]
+    }
+    const entry = byId(assistantId)
+    if (entry) {
+      const existing = entry.msg.artifacts ?? []
+      if (!existing.some((item) => item.path === artifact.path)) {
+        messages.value[entry.idx] = {
+          ...entry.msg,
+          artifacts: [...existing, artifact],
+        }
+      }
+    }
+  }
+
+  /** 从服务端拉取会话产物（切换会话时回填） */
+  async function loadThreadArtifacts(tid: string) {
+    if (!tid) {
+      threadArtifacts.value = []
+      return
+    }
+    threadArtifacts.value = await fetchThreadArtifacts(tid)
+  }
+
+  /** 在右侧面板预览产物 */
+  function openArtifact(artifact: ChatArtifact) {
+    previewArtifact.value = artifact
+    const uiStore = useUiStore()
+    uiStore.rightPanelCollapsed = false
+    uiStore.rightPanelTab = 'artifacts'
+  }
+
+  function clearArtifacts() {
+    threadArtifacts.value = []
+    previewArtifact.value = null
+  }
+
+  /** 判断某条消息是否命中当前搜索关键词 */
+  function isSearchHit(id: number): boolean {
+    return searchMatchIds.value.includes(id)
+  }
+
+  /** 打开分享面板（清空历史勾选） */
+  function openSharePanel() {
+    shareMode.value = true
+    shareSelected.value = []
+  }
+
+  /** 关闭分享面板并清空勾选 */
+  function closeSharePanel() {
+    shareMode.value = false
+    shareSelected.value = []
+  }
+
+  function toggleShareSelect(id: number) {
+    const index = shareSelected.value.indexOf(id)
+    if (index >= 0) shareSelected.value.splice(index, 1)
+    else shareSelected.value.push(id)
+  }
+
+  function toggleShareAll() {
+    shareSelected.value = shareAllChecked.value ? [] : messages.value.map((item) => item.id)
+  }
+
+  /** 已勾选消息拼文本（用户 / AI 前缀，过滤空内容） */
+  function shareSelectedText(): string {
+    return messages.value
+      .filter((item) => shareSelected.value.includes(item.id))
+      .map((item) => (item.role === 'user' ? '[用户] ' : '[AI] ') + item.content)
+      .filter((text) => text.trim().length > 0)
+      .join('\n\n')
+  }
+
+  /** 会话分享链接（Web 路由，打开后自动加载该会话） */
+  function shareLink(): string {
+    const tid = threadId.value ?? uiStoreActiveThread()
+    return window.location.origin + '/chat?thread=' + (tid ?? '')
+  }
+
+  /** 取当前会话 id（优先 chat store，其次 ui store） */
+  function uiStoreActiveThread(): string | null {
+    return useUiStore().activeThreadId
+  }
+
+  /** 带鉴权拉取产物内容 */
+  async function fetchArtifactBlob(artifact: ChatArtifact): Promise<Blob | null> {
+    const tid = threadId.value
+    if (!tid) return null
+    const response = await fetch(artifactDownloadUrl(tid, artifact.path), {
+      headers: { Authorization: 'Bearer ' + (getAccessToken() ?? '') },
+    })
+    if (!response.ok) return null
+    return await response.blob()
+  }
+
+  /** 下载产物到本地 */
+  async function downloadArtifact(artifact: ChatArtifact) {
+    const blob = await fetchArtifactBlob(artifact)
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = artifact.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function resetSelection() {
+    selection.value = createEmptySelection()
+    inputParts.value = []
+    activeSelection.value = null
+  }
 
   function generateId(): string {
     return crypto.randomUUID()
@@ -53,6 +251,12 @@ export const useChatStore = defineStore('chat', () => {
     const activeBlocks = new Map<string, ExecutionBlock>()
 
     return {
+      onArtifact(artifact: ChatArtifact) {
+        registerArtifact(assistantId, artifact)
+      },
+      onSelection(data: SelectionEcho) {
+        activeSelection.value = data
+      },
       onToken(agentName: string, content: string) {
         const target = agentBlocks.get(agentName) || blocks
         const last = target[target.length - 1]
@@ -158,10 +362,14 @@ export const useChatStore = defineStore('chat', () => {
         threadId.value = id
       },
 
-      onDone() {
+      onDone(info?: DoneInfo) {
         const entry = byId(assistantId)
         if (entry) {
-          messages.value[entry.idx] = { ...entry.msg, streaming: false }
+          messages.value[entry.idx] = {
+            ...entry.msg,
+            streaming: false,
+            durationMs: info?.durationMs,
+          }
         }
         loading.value = false
         const uiStore = useUiStore()
@@ -187,6 +395,12 @@ export const useChatStore = defineStore('chat', () => {
   /** Build callbacks for normal mode: merge all agent tokens into content */
   function buildNormalCallbacks(assistantId: number): StreamCallbacks {
     return {
+      onArtifact(artifact: ChatArtifact) {
+        registerArtifact(assistantId, artifact)
+      },
+      onSelection(data: SelectionEcho) {
+        activeSelection.value = data
+      },
       onToken(agentName: string, content: string) {
         const entry = byId(assistantId)
         if (entry) {
@@ -228,10 +442,14 @@ export const useChatStore = defineStore('chat', () => {
         threadId.value = id
       },
 
-      onDone() {
+      onDone(info?: DoneInfo) {
         const entry = byId(assistantId)
         if (entry) {
-          messages.value[entry.idx] = { ...entry.msg, streaming: false }
+          messages.value[entry.idx] = {
+            ...entry.msg,
+            streaming: false,
+            durationMs: info?.durationMs,
+          }
         }
         loading.value = false
         const uiStore = useUiStore()
@@ -270,19 +488,30 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function sendMessage(text: string) {
-    if (loading.value || !text.trim()) return
+    if (loading.value) return
+
+    // 输入框快照：正文 + 保序部件 + 选择项（发送后立即清空，语义与桌面版一致）
+    const partsSnapshot = [...inputParts.value]
+    const selectionSnapshot = { ...selection.value }
+    const attIds = [...activeAttachmentIds.value]
+    const hasBody = text.trim().length > 0 || partsSnapshot.length > 0 || attIds.length > 0
+    if (!hasBody) return
 
     loading.value = true
 
     // Capture attachment display info before clearing
     const displayInfo = buildAttachmentDisplayInfo()
-    const attIds = [...activeAttachmentIds.value]
 
     // Clear input-area attachments
     clearAttachments()
+    inputParts.value = []
 
     // Add user message with attachment display info
     const userMsg = addMessage('user', text.trim())
+    const userIdx = messages.value.findIndex((m) => m.id === userMsg.id)
+    if (userIdx !== -1) {
+      messages.value[userIdx] = { ...messages.value[userIdx], createdAt: Date.now() }
+    }
     if (displayInfo.length > 0) {
       const idx = messages.value.findIndex((m) => m.id === userMsg.id)
       if (idx !== -1) {
@@ -291,6 +520,14 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const assistantMsg = addMessage('assistant', '', true)
+    const assistantIdx = messages.value.findIndex((m) => m.id === assistantMsg.id)
+    if (assistantIdx !== -1) {
+      messages.value[assistantIdx] = {
+        ...messages.value[assistantIdx],
+        model: selectionSnapshot.model ?? '默认模型',
+        createdAt: Date.now(),
+      }
+    }
 
     const callbacks = traceEnabled.value
       ? buildTraceCallbacks(assistantMsg.id)
@@ -303,6 +540,8 @@ export const useChatStore = defineStore('chat', () => {
         threadId: threadId.value,
         callbacks,
         attachmentIds: attIds.length > 0 ? attIds : undefined,
+        parts: partsSnapshot,
+        selection: selectionSnapshot,
         signal: abortController.signal,
       })
     } catch {
@@ -333,6 +572,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     loading.value = false
     threadId.value = null
+    clearArtifacts()
   }
 
   async function uploadFile(file: File): Promise<void> {
@@ -398,6 +638,7 @@ export const useChatStore = defineStore('chat', () => {
     const { fetchConversationMessages } = await import('@/services/conversationApi')
     threadId.value = tid
     loading.value = true
+    await loadThreadArtifacts(tid)
     try {
       const detail = await fetchConversationMessages(tid)
 
@@ -458,6 +699,7 @@ export const useChatStore = defineStore('chat', () => {
       await sendStreamRequest(userText, {
         threadId: threadId.value,
         callbacks,
+        selection: { ...selection.value },
         signal: abortController.signal,
       })
     } catch {
@@ -482,6 +724,37 @@ export const useChatStore = defineStore('chat', () => {
     threadId,
     traceEnabled,
     attachments,
+    selection,
+    inputParts,
+    activeSelection,
+    threadArtifacts,
+    previewArtifact,
+    loadThreadArtifacts,
+    openArtifact,
+    registerArtifact,
+    setFeedback,
+    clearArtifacts,
+    shareMode,
+    shareSelected,
+    shareAllChecked,
+    openSharePanel,
+    closeSharePanel,
+    toggleShareSelect,
+    toggleShareAll,
+    shareSelectedText,
+    shareLink,
+    searchKeyword,
+    searchMatchIds,
+    isSearchHit,
+    fetchArtifactBlob,
+    downloadArtifact,
+    setSelection,
+    setExpert,
+    toggleSkillId,
+    setMode,
+    setModel,
+    setInputParts,
+    resetSelection,
     activeAttachmentIds,
     sendMessage,
     clearMessages,

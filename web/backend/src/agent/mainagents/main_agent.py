@@ -10,7 +10,12 @@ from agent.common import (  # noqa: F401  re-export for callers
 logger = logging.getLogger(__name__)
 
 
-async def create_main_agent(checkpointer=None, store=None, sandbox_manager=None):
+async def create_main_agent(
+    checkpointer=None,
+    store=None,
+    sandbox_manager=None,
+    model_override: tuple[str | None, str | None] | None = None,
+):
     """从数据库配置创建主智能体——内部委托给 AgentBuilder。
 
     保持与旧版本的签名兼容，内部使用建造者模式逐步构建。
@@ -19,6 +24,7 @@ async def create_main_agent(checkpointer=None, store=None, sandbox_manager=None)
         checkpointer: LangGraph 检查点实例。
         store: LangGraph 存储实例。
         sandbox_manager: 可选 SandboxManager 实例。
+        model_override: 可选的会话级模型覆盖 (provider_id, model_id)。
 
     Returns:
         配置完成的 deep agent 实例。
@@ -32,6 +38,8 @@ async def create_main_agent(checkpointer=None, store=None, sandbox_manager=None)
         await builder.with_memory(session)
         await builder.with_tools(session)
 
+    if model_override is not None:
+        builder.with_model_override(*model_override)
     await builder.with_model()
     builder.with_system_prompt()
     await builder.with_subagents()

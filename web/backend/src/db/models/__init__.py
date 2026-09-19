@@ -6,6 +6,7 @@ from db.models.agent_skill import AgentSkill
 from db.models.agent_tool import AgentTool
 from db.models.ai_model import AIModel
 from db.models.announcement import Announcement, AnnouncementRead
+from db.models.chat_artifact import ChatArtifact
 from db.models.chat_attachment import ChatAttachment
 from db.models.chat_usage import ChatUsage
 from db.models.conversation import Conversation
@@ -42,6 +43,7 @@ from db.models.user_oauth import UserOAuth
 from db.models.user_role import UserRole
 
 __all__ = [
+    "ChatArtifact",
     "ChatAttachment",
     "ChatUsage",
     "Agent",

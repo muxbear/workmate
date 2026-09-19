@@ -35,6 +35,7 @@ from agent.memory.scopes import (
     build_memory_path,
     infer_scope,
 )
+from agent.middleware.request_permission import RequestPermissionMiddleware
 from agent.middleware.skill_sandbox_sync import SkillSandboxSyncMiddleware
 from agent.sandbox.sandbox_manager import SandboxManager
 from agent.sandbox.user_aware_sandbox_backend import UserAwareSandboxBackend
@@ -62,6 +63,7 @@ class AgentBuilder:
         self._memory: list[str] = []
         self._middleware: list = []
         self._skills_root: str = ""
+        self._model_override: tuple[str | None, str | None] | None = None
 
     async def with_agent_from_db(self, db: AsyncSession) -> AgentBuilder:
         """从数据库查询活跃的主智能体配置。"""
@@ -91,14 +93,31 @@ class AgentBuilder:
         )
         return self
 
+    def with_model_override(
+        self, provider_id: str | None, model_id: str | None
+    ) -> AgentBuilder:
+        """指定会话级模型（网页版输入卡模型选择），需在 with_model() 之前调用。"""
+        self._model_override = (provider_id, model_id)
+        return self
+
     async def with_model(self) -> AgentBuilder:
-        """通过共享的 resolve_model 解析 LLM 实例。"""
+        """通过共享的 resolve_model 解析 LLM 实例（优先使用会话级覆盖模型）。"""
         if self._agent_info is None:
             raise RuntimeError("必须先调用 with_agent_from_db()")
 
-        self._model = await resolve_model(
+        provider_id, model_id = self._model_override or (
             self._agent_info.provider_id,
             self._agent_info.model_id,
+        )
+        if self._model_override is not None:
+            logger.info(
+                "主智能体使用会话级模型 override：provider=%s model=%s",
+                provider_id,
+                model_id,
+            )
+        self._model = await resolve_model(
+            provider_id,
+            model_id,
             fallback_to_settings=True,
         )
         return self
@@ -238,7 +257,9 @@ class AgentBuilder:
                 sandbox_manager=self._sandbox_manager,
                 skills_root=self._skills_root,
                 agent_id=self._agent_id,
-            )
+            ),
+            # 会话级权限：未开启「代码执行」时拒绝命令/代码类工具调用
+            RequestPermissionMiddleware(),
         ]
         return self
 

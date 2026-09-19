@@ -208,23 +208,26 @@ async def init_db():
     from db.models.agent_version import (
         AgentVersion,  # noqa: F401  ensure table is registered
     )
+    from db.models.chat_artifact import (
+        ChatArtifact,  # noqa: F401  ensure table is registered
+    )
     from db.models.chat_usage import (
         ChatUsage,  # noqa: F401  ensure table is registered
     )
     from db.models.cron_job import CronJob  # noqa: F401
-    from db.models.system_event import SystemEvent  # noqa: F401
     from db.models.data_scope import DataScope  # noqa: F401
+    from db.models.expert import Expert  # noqa: F401
+    from db.models.expert_mcp_config import ExpertMcpConfig  # noqa: F401
+    from db.models.expert_skill import ExpertSkill  # noqa: F401
+    from db.models.expert_tool import ExpertTool  # noqa: F401
+    from db.models.expert_version import ExpertVersion  # noqa: F401
     from db.models.oauth2_client import OAuth2Client  # noqa: F401
     from db.models.oauth2_consent import OAuth2Consent  # noqa: F401
     from db.models.oauth2_refresh_token import OAuth2RefreshToken  # noqa: F401
     from db.models.permission_resource import PermissionResource  # noqa: F401
     from db.models.role import Role  # noqa: F401
     from db.models.role_permission import RolePermission  # noqa: F401
-    from db.models.expert import Expert  # noqa: F401
-    from db.models.expert_mcp_config import ExpertMcpConfig  # noqa: F401
-    from db.models.expert_skill import ExpertSkill  # noqa: F401
-    from db.models.expert_tool import ExpertTool  # noqa: F401
-    from db.models.expert_version import ExpertVersion  # noqa: F401
+    from db.models.system_event import SystemEvent  # noqa: F401
     from db.models.user_role import UserRole  # noqa: F401
 
     # 断言 async_engine 不为 None，类型检查器会据此收窄类型

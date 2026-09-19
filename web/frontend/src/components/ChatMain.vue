@@ -1,14 +1,29 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { Sparkles } from 'lucide-vue-next'
 import { useChatStore } from '@/stores/chat'
+import { useUiStore } from '@/stores/ui'
+import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
+import SharePanel from './chat/SharePanel.vue'
 import InputBar from './InputBar.vue'
 
 const chatStore = useChatStore()
 
 // 欢迎态：无任何消息时显示；发送首条消息或加载历史对话后自动切换为对话态
 const isWelcome = computed(() => chatStore.messages.length === 0)
+const uiStore = useUiStore()
+const route = useRoute()
+
+// 分享链接入口：/chat?thread=<id> 打开后自动加载该会话
+onMounted(() => {
+  const thread = route.query.thread
+  if (typeof thread === 'string' && thread) {
+    uiStore.activeThreadId = thread
+    void chatStore.loadConversation(thread)
+  }
+})
 </script>
 
 <template>
@@ -29,7 +44,9 @@ const isWelcome = computed(() => chatStore.messages.length === 0)
 
     <!-- 对话态 -->
     <template v-else>
+      <ChatHeader />
       <MessageList />
+      <SharePanel v-if="chatStore.shareMode" />
       <div class="chat-input">
         <InputBar />
       </div>

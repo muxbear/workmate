@@ -30,6 +30,7 @@
     "lucide-vue-next": "^0.400",
     "marked": "^18.0.3",
     "pinia": "^2.2",
+    "qrcode-generator": "^2.0.4",
     "vue": "^3.5",
     "vue-echarts": "^8.0.1",
     "vue-i18n": "^9.14",
