@@ -13,6 +13,9 @@ class SlideVerifyRequest(BaseModel):
     distance: int
     track: list[int] = Field(default_factory=list)
     ticket: str | None = None
+    # 场景标识：login 时票据绑定账号与 IP，供登录接口一次性消费
+    scene: str | None = None
+    account: str | None = None
 
 
 class SlideVerifyResponse(BaseModel):

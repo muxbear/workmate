@@ -4,6 +4,19 @@ import { RefreshCw, ArrowRight, Check, AlertCircle } from 'lucide-vue-next'
 import { captchaApi } from '@/services/captchaApi'
 import type { CaptchaResult } from '@/types/components'
 
+const props = withDefaults(
+  defineProps<{
+    /** 验证场景：login 时票据绑定账号与 IP */
+    scene?: 'login' | 'sms'
+    /** 登录场景下需要绑定的账号 */
+    account?: string
+  }>(),
+  {
+    scene: 'sms',
+    account: '',
+  },
+)
+
 const emit = defineEmits<{
   success: [result: CaptchaResult]
   fail: []
@@ -52,6 +65,8 @@ async function verify() {
       sessionId: sessionId.value,
       distance: sliderX.value,
       track: [],
+      scene: props.scene,
+      account: props.scene === 'login' ? props.account : undefined,
     })
     if (res.data.data.success) {
       status.value = 'success'

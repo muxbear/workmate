@@ -27,6 +27,13 @@ class KeyValueCache(ABC):
     @abstractmethod
     async def ttl(self, key: str) -> int: ...
 
+    async def consume(self, key: str) -> str | None:
+        """取出并删除键值，实现一次性消费；默认实现非原子，子类应覆写。"""
+        value = await self.get(key)
+        if value is not None:
+            await self.delete(key)
+        return value
+
 
 class MemoryCache(KeyValueCache):
     """Thread-safe in-memory cache with lazy TTL eviction."""
@@ -56,6 +63,13 @@ class MemoryCache(KeyValueCache):
     async def delete(self, key: str) -> None:
         with self._lock:
             self._data.pop(key, None)
+
+    async def consume(self, key: str) -> str | None:
+        """加锁取出并删除，保证同一票据只被消费一次。"""
+        with self._lock:
+            self._clean(key)
+            entry = self._data.pop(key, None)
+            return entry[0] if entry else None
 
     async def exists(self, key: str) -> bool:
         v = await self.get(key)
@@ -105,6 +119,16 @@ async def create_cache(redis_url: str = "") -> KeyValueCache:
 
             async def delete(self, key: str) -> None:
                 await self._r.delete(key)
+
+            async def consume(self, key: str) -> str | None:
+                try:
+                    v = await self._r.getdel(key)
+                except AttributeError:
+                    pipe = self._r.pipeline()
+                    pipe.get(key)
+                    pipe.delete(key)
+                    v, _ = await pipe.execute()
+                return v.decode() if v else None
 
             async def exists(self, key: str) -> bool:
                 return await self._r.exists(key) > 0

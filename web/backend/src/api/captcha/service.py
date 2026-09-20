@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import logging
 import random
 import secrets
@@ -223,7 +224,12 @@ async def generate_slide_puzzle(session_id: str, store: KeyValueCache) -> SlideP
     return SlidePuzzleData(bgImage=bg_b64, slideImage=slider_b64, y=y, sessionId=session_id)
 
 
-async def verify_slide(req: SlideVerifyRequest, session_id: str, store: KeyValueCache) -> SlideVerifyResponse:
+async def verify_slide(
+    req: SlideVerifyRequest,
+    session_id: str,
+    store: KeyValueCache,
+    ip: str = "",
+) -> SlideVerifyResponse:
     data = await store.get(f"captcha:slide:{session_id}")
     if not data:
         raise HTTPException(status_code=400, detail="Captcha expired, please retry")
@@ -239,7 +245,19 @@ async def verify_slide(req: SlideVerifyRequest, session_id: str, store: KeyValue
     if abs(req.distance - correct_x) <= settings.SLIDE_THRESHOLD:
         ticket = str(uuid.uuid4())
         randstr = secrets.token_hex(4)
-        await store.set(f"captcha:ticket:{ticket}", randstr, ttl=settings.CAPTCHA_EXPIRE)
+        if req.scene == "login":
+            payload = json.dumps(
+                {"randstr": randstr, "account": req.account or "", "ip": ip}
+            )
+            await store.set(
+                f"login:ticket:{ticket}",
+                payload,
+                ttl=settings.LOGIN_CAPTCHA_TICKET_TTL,
+            )
+        else:
+            await store.set(
+                f"captcha:ticket:{ticket}", randstr, ttl=settings.CAPTCHA_EXPIRE
+            )
         return SlideVerifyResponse(success=True, ticket=ticket, randstr=randstr)
     else:
         return SlideVerifyResponse(success=False)

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { AuthTokens, RoleInfo, UserInfo } from '@/types/auth'
+import type { AuthTokens, LoginChallenge, RoleInfo, UserInfo } from '@/types/auth'
 import { authApi } from '@/services/authApi'
 import { clearTokensFromStorage } from '@/services/request'
 import { useNotificationStore } from '@/stores/notification'
@@ -131,10 +131,17 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // ---- Actions ----
+  async function fetchLoginChallenge(account: string): Promise<LoginChallenge> {
+    const res = await authApi.getLoginChallenge(account)
+    return res.data.data
+  }
+
   async function loginWithPassword(payload: {
     account: string
     password: string
     rememberMe: boolean
+    captchaTicket?: string
+    captchaRandstr?: string
   }) {
     loginLoading.value = true
     loginError.value = null
@@ -142,6 +149,8 @@ export const useAuthStore = defineStore('auth', () => {
       const res = await authApi.accountLogin({
         account: payload.account,
         password: payload.password,
+        captchaTicket: payload.captchaTicket,
+        captchaRandstr: payload.captchaRandstr,
       })
       const { tokens: t, user: u } = res.data.data
       setTokens(t)
@@ -306,6 +315,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshAccessToken,
     switchRole,
     refreshMyRoles,
+    fetchLoginChallenge,
     loginWithPassword,
     loginWithPhone,
     register,

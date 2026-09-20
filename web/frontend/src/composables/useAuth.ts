@@ -24,13 +24,25 @@ export function useAuth() {
     return password
   }
 
-  async function loginWithPassword(account: string, password: string, rememberMe: boolean) {
+  /** 查询登录前是否需要安全验证（滑块） */
+  async function fetchLoginChallenge(account: string) {
+    return authStore.fetchLoginChallenge(account)
+  }
+
+  async function loginWithPassword(
+    account: string,
+    password: string,
+    rememberMe: boolean,
+    captcha?: { ticket?: string; randstr?: string },
+  ) {
     try {
       const finalPassword = await encryptPassword(password)
       await authStore.loginWithPassword({
         account,
         password: finalPassword,
         rememberMe,
+        captchaTicket: captcha?.ticket,
+        captchaRandstr: captcha?.randstr,
       })
       redirectAfterLogin()
     } catch (err) {
@@ -104,6 +116,7 @@ export function useAuth() {
     user: authStore.user,
     loading,
     error,
+    fetchLoginChallenge,
     loginWithPassword,
     loginWithPhone,
     register,

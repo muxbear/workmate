@@ -6,6 +6,7 @@ from api.auth.schemas import (
     AuthResponse,
     ChangePasswordRequest,
     EmailRegisterRequest,
+    LoginChallengeResponse,
     MyRolesResponse,
     PhoneLoginRequest,
     RefreshRequest,
@@ -16,6 +17,7 @@ from api.auth.service import (
     account_login,
     change_password,
     get_fail_count_svc,
+    get_login_challenge_svc,
     get_my_roles_svc,
     get_public_key_svc,
     phone_login,
@@ -64,6 +66,17 @@ async def login_phone(
     cache: KeyValueCache = Depends(get_cache),
 ):
     result = await phone_login(req, db, cache)
+    return ok(result)
+
+
+@router.get("/login/challenge", response_model=ApiResponse[LoginChallengeResponse])
+@handle_errors
+async def login_challenge(
+    account: str,
+    cache: KeyValueCache = Depends(get_cache),
+):
+    """返回登录前是否需要安全验证（失败次数达到阈值时为 True）。"""
+    result = await get_login_challenge_svc(account, cache)
     return ok(result)
 
 

@@ -45,10 +45,12 @@ function onInput(e: Event) {
       type="button"
       class="toggle-btn"
       :disabled="disabled"
+      :title="showPassword ? '隐藏密码' : '显示密码'"
+      :aria-label="showPassword ? '隐藏密码' : '显示密码'"
       @click="showPassword = !showPassword"
     >
-      <EyeOff v-if="showPassword" :size="20" />
-      <Eye v-else :size="20" />
+      <Eye v-if="showPassword" :size="20" />
+      <EyeOff v-else :size="20" />
     </button>
   </div>
 </template>

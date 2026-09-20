@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 
@@ -5,12 +6,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.config import settings
 from api.auth.schemas import (
     AccountLoginRequest,
     AuthResponse,
     AuthTokens,
     ChangePasswordRequest,
     EmailRegisterRequest,
+    LoginChallengeResponse,
     LoginFailInfo,
     MyRolesResponse,
     PhoneLoginRequest,
@@ -87,6 +90,39 @@ async def _clear_fail(account: str, store: KeyValueCache):
     await store.delete(f"login:fail:{account}")
 
 
+async def is_login_captcha_required(account: str, store: KeyValueCache) -> bool:
+    """判断该账号本次登录是否必须先通过滑块验证。"""
+    info = await _get_fail_info(account, store)
+    return info.failCount >= settings.LOGIN_CAPTCHA_AFTER_FAILS
+
+
+def _captcha_invalid() -> HTTPException:
+    return HTTPException(status_code=428, detail="安全验证已失效，请重新完成验证")
+
+
+async def _consume_login_ticket(
+    ticket: str,
+    randstr: str,
+    account: str,
+    ip: str,
+    store: KeyValueCache,
+) -> None:
+    """一次性消费登录票据，并校验其绑定的账号与 IP。"""
+    raw = await store.consume(f"login:ticket:{ticket}")
+    if not raw:
+        raise _captcha_invalid()
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise _captcha_invalid() from None
+    if (
+        data.get("randstr") != randstr
+        or data.get("account") != account
+        or data.get("ip") != ip
+    ):
+        raise _captcha_invalid()
+
+
 async def user_to_info(user: Account, db: AsyncSession) -> UserInfo:
     """构建登录/刷新响应中的用户信息，包含全部角色与默认活动角色."""
     active_roles = await list_active_user_roles(db, user.id)
@@ -148,6 +184,14 @@ async def account_login(
     ip: str = "",
 ) -> AuthResponse:
     await _check_locked(req.account, store)
+
+    # 失败次数达到阈值后，必须先通过滑块验证才继续校验密码
+    if await is_login_captcha_required(req.account, store):
+        if not req.captchaTicket or not req.captchaRandstr:
+            raise HTTPException(status_code=428, detail="请先完成安全验证")
+        await _consume_login_ticket(
+            req.captchaTicket, req.captchaRandstr, req.account, ip, store
+        )
 
     try:
         plain_password = decrypt_password(req.password)
@@ -315,6 +359,18 @@ async def get_my_roles_svc(
 
 async def get_fail_count_svc(account: str, store: KeyValueCache) -> LoginFailInfo:
     return await _get_fail_info(account, store)
+
+
+async def get_login_challenge_svc(
+    account: str, store: KeyValueCache
+) -> LoginChallengeResponse:
+    """返回登录前安全验证状态，供前端决定是否弹出滑块。"""
+    info = await _get_fail_info(account, store)
+    return LoginChallengeResponse(
+        required=info.failCount >= settings.LOGIN_CAPTCHA_AFTER_FAILS,
+        failCount=info.failCount,
+        lockedUntil=info.lockedUntil,
+    )
 
 
 async def change_password(

@@ -12,7 +12,7 @@ Vue 3（Composition API）+ TypeScript 5.5 + Vite 5 + Element Plus 2（unplugin-
 
 ```bash
 npm install
-npm run dev          # localhost:5173
+npm run dev          # localhost:5171
 npm run build        # 生产构建
 npm run type-check   # vue-tsc --build
 npm run lint         # ESLint

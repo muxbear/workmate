@@ -15,7 +15,7 @@ from api.captcha.service import (
     verify_image,
     verify_slide,
 )
-from api.deps import get_cache
+from api.deps import get_cache, get_client_ip
 from core.cache import KeyValueCache
 from core.decorators import handle_errors
 from core.response import ApiResponse, error, ok
@@ -63,7 +63,7 @@ async def verify_slide_route(
     sid = req.sessionId or request.cookies.get(CAPTCHA_SESSION_COOKIE)
     if not sid:
         return error(400, "Captcha session not found, please refresh")
-    result = await verify_slide(req, sid, cache)
+    result = await verify_slide(req, sid, cache, ip=get_client_ip(request))
     return ok(result)
 
 

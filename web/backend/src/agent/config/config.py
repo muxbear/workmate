@@ -121,10 +121,14 @@ class Settings(BaseSettings):
     # ---- Rate Limit ----
     LOGIN_MAX_FAILS: int = int(os.getenv("LOGIN_MAX_FAILS") or 5)
     LOGIN_LOCK_MINUTES: int = int(os.getenv("LOGIN_LOCK_MINUTES") or 30)
+    # 失败次数达到阈值后，账号登录必须先通过滑块验证
+    LOGIN_CAPTCHA_AFTER_FAILS: int = int(os.getenv("LOGIN_CAPTCHA_AFTER_FAILS") or 3)
     SMS_DAILY_LIMIT: int = int(os.getenv("SMS_DAILY_LIMIT") or 5)
 
     # ---- Captcha ----
     CAPTCHA_EXPIRE: int = int(os.getenv("CAPTCHA_EXPIRE") or 300)
+    # 登录场景验证码票据有效期（秒），一次性使用
+    LOGIN_CAPTCHA_TICKET_TTL: int = int(os.getenv("LOGIN_CAPTCHA_TICKET_TTL") or 120)
     SLIDE_THRESHOLD: int = int(os.getenv("SLIDE_THRESHOLD") or 8)
 
     # ---- Redis ----

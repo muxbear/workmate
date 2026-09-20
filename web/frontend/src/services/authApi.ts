@@ -6,6 +6,7 @@ import type {
   RegisterRequest,
   EmailRegisterRequest,
   AuthResponse,
+  LoginChallenge,
   MyRolesResponse,
   SendEmailCodeRequest,
   ChangePasswordRequest,
@@ -54,6 +55,12 @@ export const authApi = {
   /** 获取登录失败次数 */
   getFailCount: (account: string) =>
     request.get<ApiResponse<{ failCount: number }>>('/auth/fail-count', {
+      params: { account },
+    }),
+
+  /** 查询登录前是否需要安全验证（滑块） */
+  getLoginChallenge: (account: string) =>
+    request.get<ApiResponse<LoginChallenge>>('/auth/login/challenge', {
       params: { account },
     }),
 

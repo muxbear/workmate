@@ -86,3 +86,12 @@ class LoginFailInfo(BaseModel):
 class ChangePasswordRequest(BaseModel):
     oldPassword: str
     newPassword: str
+
+
+class LoginChallengeResponse(BaseModel):
+    """登录前安全验证（滑块）的挑战状态。"""
+
+    required: bool
+    challengeType: str = "slide"
+    failCount: int = 0
+    lockedUntil: int | None = None

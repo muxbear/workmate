@@ -12,6 +12,9 @@ export interface SlideVerifyRequest {
   distance: number
   track: number[]
   ticket?: string
+  /** 场景标识：login 时票据会绑定账号与 IP */
+  scene?: 'login' | 'sms'
+  account?: string
 }
 
 /** 滑动拼图校验响应 */

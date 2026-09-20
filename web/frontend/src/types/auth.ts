@@ -91,6 +91,14 @@ export interface LoginFailInfo {
   lockedUntil: number | null
 }
 
+/** 登录前安全验证（滑块）的挑战状态 */
+export interface LoginChallenge {
+  required: boolean
+  challengeType: 'slide' | 'image'
+  failCount: number
+  lockedUntil: number | null
+}
+
 /** 修改密码请求 */
 export interface ChangePasswordRequest {
   oldPassword: string

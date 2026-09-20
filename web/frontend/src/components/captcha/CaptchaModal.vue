@@ -9,9 +9,15 @@ const props = withDefaults(
   defineProps<{
     modelValue: boolean
     type?: 'slide' | 'image'
+    /** 验证场景：login 时票据绑定账号与 IP */
+    scene?: 'login' | 'sms'
+    /** 登录场景下需要绑定的账号 */
+    account?: string
   }>(),
   {
     type: 'slide',
+    scene: 'sms',
+    account: '',
   },
 )
 
@@ -60,7 +66,13 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="captcha-body">
-            <SlidePuzzle v-if="type === 'slide'" @success="onSuccess" @fail="onFail" />
+            <SlidePuzzle
+              v-if="type === 'slide'"
+              :scene="scene"
+              :account="account"
+              @success="onSuccess"
+              @fail="onFail"
+            />
             <ImageCaptcha v-else @success="onSuccess" @fail="onFail" />
           </div>
         </div>
