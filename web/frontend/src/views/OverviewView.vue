@@ -65,7 +65,7 @@ interface ResourceItem {
   borderColor: string
 }
 
-interface TopUser {
+interface TopUserRow {
   name: string
   role: string
   calls: number
@@ -148,7 +148,7 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-const topUsers = computed<TopUser[]>(() => {
+const topUsers = computed<TopUserRow[]>(() => {
   if (!topUsersData.value.length) return []
   return topUsersData.value.map(u => ({
     name: u.name,
@@ -671,7 +671,7 @@ function eventDotColor(type: EventType): string {
         <div class="personnel-list">
           <div v-for="(u, i) in topUsers" :key="u.name" class="personnel-row">
             <span class="personnel-rank">{{ i + 1 }}</span>
-            <div class="personnel-avatar">{{ u.name[0].toUpperCase() }}</div>
+            <div class="personnel-avatar">{{ (u.name || '?').charAt(0).toUpperCase() }}</div>
             <div class="personnel-info">
               <div class="personnel-name-row">
                 <span class="personnel-name">{{ u.name }}</span>

@@ -194,7 +194,8 @@ router.beforeEach((to, _from, next) => {
   }
 
   if (to.meta.guest && authStore.isAuthenticated) {
-    return next({ name: 'home' })
+    // 已登录用户访问登录/注册等游客页时，回到根路径（根路径会自动跳转到概览，并按权限回落到首个可访问菜单）
+    return next({ path: '/' })
   }
 
   // Permission check
@@ -207,6 +208,29 @@ router.beforeEach((to, _from, next) => {
   }
 
   next()
+})
+
+// 路由懒加载的模块拉取失败（例如开发服务器依赖预构建缓存失效、发版后旧 chunk 404）时，
+// 页面会整片空白。这里做一次性自动刷新，避免用户一直卡在白屏。
+const CHUNK_RELOAD_KEY = 'chunk_reload_at'
+let chunkReloaded = false
+
+router.onError((error) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const isChunkLoadError =
+    message.includes('Failed to fetch dynamically imported module') ||
+    message.includes('error loading dynamically imported module') ||
+    message.includes('Importing a module script failed')
+  if (!isChunkLoadError || chunkReloaded) return
+  chunkReloaded = true
+  try {
+    const last = Number(window.sessionStorage.getItem(CHUNK_RELOAD_KEY) ?? 0)
+    if (Date.now() - last < 10_000) return
+    window.sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()))
+  } catch {
+    // sessionStorage 不可用时仍然刷新一次
+  }
+  window.location.reload()
 })
 
 export default router

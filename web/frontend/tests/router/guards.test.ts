@@ -45,7 +45,7 @@ function createTestRouter() {
       return next({ name: 'login', query: { redirect: to.fullPath } })
     }
     if (to.meta.guest && authStore.isAuthenticated) {
-      return next({ name: 'home' })
+      return next({ path: '/' })
     }
     next()
   })
