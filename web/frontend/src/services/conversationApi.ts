@@ -14,10 +14,32 @@ export interface AttachmentItem {
     file_type: string
 }
 
+export interface ConversationToolCall {
+    call_id: string
+    name: string
+    input: string
+    output: string
+    status: 'running' | 'completed' | 'failed'
+}
+
+export interface ConversationBlock {
+    type: 'text' | 'tool_call'
+    content?: string
+    tool_call?: ConversationToolCall
+}
+
 export interface MessageItem {
     role: 'system' | 'user' | 'assistant' | 'tool'
     content: string
     attachments?: AttachmentItem[]
+    /** 执行过程结构化块（text / tool_call），用于历史回显工具卡片 */
+    blocks?: ConversationBlock[]
+    /** 本次回复使用的模型名 */
+    model?: string | null
+    /** 消息创建时间（毫秒时间戳） */
+    created_at?: number | null
+    /** 本次回复耗时（毫秒） */
+    duration_ms?: number | null
 }
 
 export interface ConversationDetail {

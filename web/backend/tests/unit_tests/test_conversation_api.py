@@ -1,9 +1,17 @@
 """Unit tests for conversation_api._message_to_dict() and the merge logic."""
 
-import pytest
+import asyncio
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from api.conversation.conversation_api import _message_to_dict
+from api.conversation.conversation_api import (
+    _apply_tool_output,
+    _assistant_blocks,
+    _attach_turn_meta,
+    _message_to_dict,
+)
 
 
 class TestMessageToDict:
@@ -109,6 +117,8 @@ class TestMergeLogic:
                 and messages[-1]["role"] == "assistant"
             ):
                 messages[-1]["content"] += "\n\n" + m["content"]
+                if m.get("blocks"):
+                    messages[-1]["blocks"] = messages[-1].get("blocks", []) + m["blocks"]
             else:
                 messages.append(m)
         return messages
@@ -191,3 +201,166 @@ class TestMergeLogic:
         result = self._merge(raw)
         assert len(result) == 1  # only user, tool skipped
         assert result[0]["role"] == "user"
+
+    def test_consecutive_assistant_blocks_merged(self):
+        """连续 assistant 的执行块按顺序合并."""
+        raw = [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "第一段", "blocks": [{"type": "text", "content": "第一段"}]},
+            {"role": "assistant", "content": "第二段", "blocks": [{"type": "text", "content": "第二段"}]},
+        ]
+        result = self._merge(raw)
+        assert len(result) == 2
+        assert [b["content"] for b in result[1]["blocks"]] == ["第一段", "第二段"]
+
+
+class TestAssistantBlocks:
+    """Tests for _assistant_blocks()."""
+
+    def test_text_and_tool_call_blocks(self):
+        """文本与工具调用各生成一个执行块."""
+        msg = AIMessage(
+            content="先查一下时间",
+            tool_calls=[
+                {"name": "get_datetime", "args": {"timezone": "Asia/Shanghai"}, "id": "call_1"}
+            ],
+        )
+        blocks = _assistant_blocks(msg, 0)
+        assert blocks[0] == {"type": "text", "content": "先查一下时间"}
+        assert blocks[1]["type"] == "tool_call"
+        tool_call = blocks[1]["tool_call"]
+        assert tool_call["call_id"] == "call_1"
+        assert tool_call["name"] == "get_datetime"
+        assert tool_call["input"] == '{"timezone": "Asia/Shanghai"}'
+        assert tool_call["output"] == ""
+        assert tool_call["status"] == "completed"
+
+    def test_list_content_tool_call_without_id(self):
+        """call id 为空时用消息序号兜底生成 call_id."""
+        msg = AIMessage(content=[{"type": "tool_call", "id": "", "name": "ls", "args": {}}])
+        blocks = _assistant_blocks(msg, 3)
+        assert blocks[0]["tool_call"]["call_id"] == "assistant-3-0"
+        assert blocks[0]["tool_call"]["input"] == ""
+
+    def test_empty_message_has_no_blocks(self):
+        """无文本且无工具调用时返回空列表."""
+        assert _assistant_blocks(AIMessage(content=""), 0) == []
+
+
+class TestApplyToolOutput:
+    """Tests for _apply_tool_output()."""
+
+    @staticmethod
+    def _pending_calls() -> list[dict]:
+        """构造一个待回填输出的工具调用块列表."""
+        msg = AIMessage(
+            content="",
+            tool_calls=[{"name": "ls", "args": {"path": "/root"}, "id": "call_1"}],
+        )
+        return [block["tool_call"] for block in _assistant_blocks(msg, 0)]
+
+    def test_output_matched_by_call_id(self):
+        """按 tool_call_id 精确匹配回填输出."""
+        pending = self._pending_calls()
+        tool_msg = ToolMessage(content="['/root/a.md']", name="ls", tool_call_id="call_1")
+        _apply_tool_output(pending, tool_msg)
+        assert pending[0]["output"] == "['/root/a.md']"
+        assert pending[0]["status"] == "completed"
+
+    def test_output_fallback_when_call_id_missing(self):
+        """call_id 缺失时按先后顺序兜底回填."""
+        pending = self._pending_calls()
+        tool_msg = ToolMessage(content="结果", name="ls", tool_call_id="")
+        _apply_tool_output(pending, tool_msg)
+        assert pending[0]["output"] == "结果"
+
+    def test_error_output_marks_failed(self):
+        """ToolMessage 状态为 error 时标记失败."""
+        pending = self._pending_calls()
+        tool_msg = ToolMessage(
+            content="Error: path_not_found",
+            name="ls",
+            tool_call_id="call_1",
+            status="error",
+        )
+        _apply_tool_output(pending, tool_msg)
+        assert pending[0]["status"] == "failed"
+
+
+class _StubResult:
+    """模拟 SQLAlchemy 查询结果."""
+
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def scalars(self) -> "_StubResult":
+        """返回自身，模拟 Result.scalars()."""
+        return self
+
+    def all(self) -> list:
+        """返回预设行."""
+        return self._rows
+
+
+class _StubDb:
+    """按调用顺序返回预设结果的数据库替身."""
+
+    def __init__(self, *batches: list) -> None:
+        self._batches = list(batches)
+
+    async def execute(self, _stmt: object) -> _StubResult:
+        """返回下一批预设行."""
+        rows = self._batches.pop(0) if self._batches else []
+        return _StubResult(rows)
+
+
+class TestAttachTurnMeta:
+    """Tests for _attach_turn_meta()."""
+
+    @staticmethod
+    def _messages() -> list[dict]:
+        """构造一轮问答的展示消息."""
+        return [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "回复", "blocks": []},
+        ]
+
+    def test_skips_when_counts_mismatch(self):
+        """审计记录条数与助手消息条数不一致时不回填，避免错位."""
+        messages = [*self._messages(), {"role": "assistant", "content": "第二轮"}]
+        usage = SimpleNamespace(
+            duration_ms=1000,
+            created_at=datetime(2026, 9, 20, 7, 0, 0),
+            model_id=None,
+        )
+        asyncio.run(_attach_turn_meta(_StubDb([usage]), "t1", messages))
+        assert "duration_ms" not in messages[1]
+        assert "created_at" not in messages[1]
+        assert "duration_ms" not in messages[2]
+
+    def test_fills_duration_and_created_at(self):
+        """条数一致时回填耗时与 UTC 毫秒时间戳."""
+        messages = self._messages()
+        created = datetime(2026, 9, 20, 7, 48, 19)
+        usage = SimpleNamespace(duration_ms=1500, created_at=created, model_id=None)
+        asyncio.run(_attach_turn_meta(_StubDb([usage]), "t1", messages))
+        assert messages[1]["duration_ms"] == 1500
+        assert messages[1]["created_at"] == int(created.replace(tzinfo=UTC).timestamp() * 1000)
+
+    def test_fills_model_display_name(self):
+        """model_id 存在时回填模型展示名称."""
+        messages = self._messages()
+        usage = SimpleNamespace(
+            duration_ms=10,
+            created_at=datetime(2026, 9, 20, 7, 0, 0),
+            model_id="m1",
+        )
+        db = _StubDb([usage], [("m1", "deepseek-chat", "DeepSeek Chat")])
+        asyncio.run(_attach_turn_meta(db, "t1", messages))
+        assert messages[1]["model"] == "DeepSeek Chat"
+
+    def test_no_assistant_message(self):
+        """没有助手消息时不写任何元信息."""
+        messages = [{"role": "user", "content": "你好"}]
+        asyncio.run(_attach_turn_meta(_StubDb([]), "t1", messages))
+        assert messages == [{"role": "user", "content": "你好"}]

@@ -20,8 +20,33 @@ import { createEmptySelection } from '@/types/chat'
 import type { StreamCallbacks, DoneInfo } from '@/services/request'
 import type { Attachment } from '@/types/chat'
 import { uploadAttachment, deleteAttachment } from '@/services/attachmentApi'
+import type { ConversationBlock } from '@/services/conversationApi'
 
 export type { ChatMessage }
+
+/** 把服务端执行块映射为前端展示块（历史回显：工具调用卡片） */
+function toExecutionBlocks(rawBlocks?: ConversationBlock[]): ExecutionBlock[] {
+  if (!rawBlocks || rawBlocks.length === 0) return []
+
+  const blocks: ExecutionBlock[] = []
+  for (const raw of rawBlocks) {
+    if (raw.type === 'tool_call' && raw.tool_call) {
+      blocks.push({
+        type: 'tool_call',
+        toolCall: {
+          callId: raw.tool_call.call_id,
+          name: raw.tool_call.name,
+          input: raw.tool_call.input ?? '',
+          output: raw.tool_call.output ?? '',
+          status: raw.tool_call.status ?? 'completed',
+        },
+      })
+    } else if (raw.type === 'text' && raw.content) {
+      blocks.push({ type: 'text', content: raw.content })
+    }
+  }
+  return blocks
+}
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
@@ -644,18 +669,28 @@ export const useChatStore = defineStore('chat', () => {
 
       messages.value = detail.messages
         .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m, idx) => ({
-          id: idx + 1,
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-          streaming: false,
-          attachments: m.attachments?.map((att) => ({
-            filename: att.filename,
-            mimeType: att.file_type,
-            size: att.file_size,
-            thumbnailUrl: `/api/chat/files/${att.id}`,
-          })),
-        }))
+        .map((m, idx) => {
+          const message: ChatMessage = {
+            id: idx + 1,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            streaming: false,
+            attachments: m.attachments?.map((att) => ({
+              filename: att.filename,
+              mimeType: att.file_type,
+              size: att.file_size,
+              thumbnailUrl: `/api/chat/files/${att.id}`,
+            })),
+          }
+
+          // 历史回显：执行过程块与轮次元信息（模型 / 耗时 / 时间）
+          const blocks = toExecutionBlocks(m.blocks)
+          if (blocks.length > 0) message.blocks = blocks
+          if (m.model) message.model = m.model
+          if (typeof m.created_at === 'number') message.createdAt = m.created_at
+          if (typeof m.duration_ms === 'number') message.durationMs = m.duration_ms
+          return message
+        })
       nextId = messages.value.length + 1
     } catch {
       // ignore

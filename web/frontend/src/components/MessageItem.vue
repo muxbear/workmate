@@ -60,6 +60,11 @@ const hasBlocks = computed(() => {
   return chatStore.traceEnabled && props.message.blocks && props.message.blocks.length > 0
 })
 
+/** 有耗时 / 模型 / 时间时才渲染元信息行，避免历史回显出现空行 */
+const hasMeta = computed(() =>
+  Boolean(props.message.durationMs || props.message.model || props.message.createdAt),
+)
+
 const renderedContent = computed(() => {
   if (props.message.role === 'user') return props.message.content
   if (!props.message.content) return ''
@@ -179,7 +184,10 @@ function fileExtension(filename: string): string {
           </button>
         </div>
       </div>
-      <div class="message-meta" v-if="message.role === 'assistant' && !message.streaming">
+      <div
+        class="message-meta"
+        v-if="message.role === 'assistant' && !message.streaming && hasMeta"
+      >
         <span v-if="formatDuration(message.durationMs)">{{
           formatDuration(message.durationMs)
         }}</span>
@@ -240,6 +248,8 @@ function fileExtension(filename: string): string {
   display: flex;
   gap: 10px;
   width: 100%;
+  /* 允许 flex 子项收缩：避免长代码块把气泡撑出容器 */
+  min-width: 0;
 }
 
 .message-item.user {
@@ -250,6 +260,8 @@ function fileExtension(filename: string): string {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-item.user .message-body {
@@ -396,6 +408,7 @@ function fileExtension(filename: string): string {
   padding: 12px;
   border-radius: var(--radius-lg);
   background: var(--surface-secondary);
+  max-width: 100%;
   overflow-x: auto;
 }
 
@@ -416,6 +429,13 @@ function fileExtension(filename: string): string {
   border-collapse: collapse;
   margin: 8px 0;
   width: 100%;
+  max-width: 100%;
+}
+
+.markdown-body :deep(img),
+.markdown-body :deep(video) {
+  max-width: 100%;
+  height: auto;
 }
 
 .markdown-body :deep(th),
