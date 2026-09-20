@@ -3,8 +3,10 @@
 通过 langchain-mcp-adapters 将 MCP 工具纳入 Agent 的统一工具体系，
 使 Agent 通过 agent_tools 关联表即可配置 MCP 工具。
 """
+import hashlib
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -19,6 +21,30 @@ from db.models.mcp_tool import McpTool
 from db.models.tool import Tool
 
 logger = logging.getLogger(__name__)
+
+# OpenAI / DeepSeek 等兼容接口要求 function.name 只能包含 [a-zA-Z0-9_-]，
+# 而 MCP 服务名（如「AI 图像生成」）常带中文与空格，直接拼进工具名会被接口拒绝
+_UNSAFE_TOOL_NAME_CHARS = re.compile(r'[^a-zA-Z0-9_-]')
+_REPEATED_UNDERSCORES = re.compile(r'_+')
+
+
+def safe_tool_name_segment(value: str) -> str:
+    """把任意文本转成符合 API 工具名规范的片段。.
+
+    Args:
+        value: 原始文本（MCP 服务名或工具名），可能包含中文、空格等字符。
+
+    Returns:
+        仅含 ``[a-zA-Z0-9_-]`` 的片段；若原文没有任何可用字符，
+        回退为 ``mcp_<原文 md5 前 8 位>``，避免不同服务名互相覆盖。
+    """
+    safe = _UNSAFE_TOOL_NAME_CHARS.sub('_', value or '')
+    safe = _REPEATED_UNDERSCORES.sub('_', safe).strip('_-')
+    if safe:
+        return safe
+    digest = hashlib.md5((value or '').encode('utf-8')).hexdigest()[:8]
+    return f'mcp_{digest}'
+
 
 # 缓存已连接的 MCP 客户端，避免重复建连
 _mcp_clients: dict[str, Any] = {}
@@ -130,8 +156,9 @@ async def _append_mcp_tools(
         else:
             client = await _get_or_create_client(mcp_name, config)
             mcp_tools = await client.get_tools()
+        server_segment = safe_tool_name_segment(mcp_name)
         for tool in mcp_tools:
-            tool.name = f'mcp__{mcp_name}__{tool.name}'
+            tool.name = f'mcp__{server_segment}__{safe_tool_name_segment(tool.name)}'
             all_tools.append(tool)
     except Exception:
         logger.exception('加载 MCP 工具失败，跳过: %s', mcp_name)

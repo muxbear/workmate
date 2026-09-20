@@ -39,6 +39,52 @@ from db.models.conversation import Conversation
 
 logger = logging.getLogger(__name__)
 
+# 模型接口返回 400 时，只有内容审核类错误才提示“安全审核拦截”，
+# 其余（如工具名不合法、参数错误）按通用错误返回，避免误导用户
+_MODERATION_ERROR_MARKERS = (
+    "content_filter",
+    "content_policy",
+    "content exists risk",
+    "data_inspection_failed",
+    "sensitive",
+    "moderation",
+    "risk_control",
+    "安全审核",
+    "内容审核",
+)
+
+
+def _is_moderation_error(error: Exception) -> bool:
+    """判断 400 错误是否来自模型内容审核。.
+
+    Args:
+        error: 模型接口抛出的 BadRequestError。
+
+    Returns:
+        True 表示属于内容审核拦截，False 表示其他请求参数或格式错误。
+    """
+    text = str(error).lower()
+    return any(marker in text for marker in _MODERATION_ERROR_MARKERS)
+
+
+def _describe_stream_error(error: BaseException) -> str:
+    """把流式对话中途的异常转成面向用户的提示。.
+
+    Args:
+        error: 流式消费过程中捕获的异常。
+
+    Returns:
+        面向用户的错误提示文案。
+    """
+    text = str(error).lower()
+    sandbox_markers = ("sandboxinternalexception", "network connectivity error", "sandbox")
+    if any(marker in text for marker in sandbox_markers):
+        return (
+            "抱歉，沙箱服务暂时不可用（无法连接 OpenSandbox），本次对话已中断，"
+            "请联系管理员检查沙箱服务后重试。"
+        )
+    return "抱歉，服务处理您的请求时发生了错误，请稍后重试。"
+
 router = APIRouter(prefix="/api")
 
 # 附件文件扩展名分类常量
@@ -369,13 +415,16 @@ async def chat(
             context=context
         )
     except BadRequestError as e:
-        logger.warning("Model returned BadRequestError: %s", e)
         await record_chat_usage(db, user_id, thread_id, _start_time, status="error")
-        await log_event(db, "error", "agent", f"对话被安全审核拦截 (thread_id={thread_id})")
-        return ChatResponse(
-            response="抱歉，您的请求被模型安全审核拦截，请尝试换一种表述方式。",
-            thread_id=thread_id,
-        )
+        if _is_moderation_error(e):
+            logger.warning("Model rejected request by content moderation: %s", e)
+            await log_event(db, "error", "agent", f"对话被安全审核拦截 (thread_id={thread_id})")
+            response_text = "抱歉，您的请求被模型安全审核拦截，请尝试换一种表述方式。"
+        else:
+            logger.warning("Model returned BadRequestError: %s", e)
+            await log_event(db, "error", "agent", f"模型接口返回 400 错误 (thread_id={thread_id})")
+            response_text = "抱歉，模型服务拒绝了本次请求，请稍后重试或调整输入内容。"
+        return ChatResponse(response=response_text, thread_id=thread_id)
     except Exception:
         logger.exception("Agent encountered an unhandled error")
         await record_chat_usage(db, user_id, thread_id, _start_time, status="error")
@@ -486,8 +535,10 @@ async def chat_stream(
 
     async def event_generator():
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        run_failed = False
 
         async def consume_all() -> None:
+            nonlocal run_failed
             try:
                 stream = await graph.astream_events(
                     {"messages": [HumanMessage(content=effective_message)]},
@@ -609,11 +660,20 @@ async def chat_stream(
                     consume_messages(), consume_tool_calls(), consume_subagents(),
                     return_exceptions=True,
                 )
+                stream_error: BaseException | None = None
                 for result in results:
                     if isinstance(result, BadRequestError):
                         raise result
                     if isinstance(result, BaseException):
                         logger.warning("Stream consumer aborted: %s", result)
+                        stream_error = stream_error or result
+                # 运行期异常必须回传前端，否则用户只会看到一条空回复
+                if stream_error is not None:
+                    run_failed = True
+                    await queue.put({
+                        "event": "error",
+                        "data": {"message": _describe_stream_error(stream_error)},
+                    })
 
                 # Emit main agent end after all consumers finish
                 await queue.put({
@@ -622,12 +682,19 @@ async def chat_stream(
                 })
 
             except BadRequestError as e:
-                logger.warning("Model returned BadRequestError in stream: %s", e)
+                run_failed = True
+                if _is_moderation_error(e):
+                    logger.warning("Model rejected stream by content moderation: %s", e)
+                    error_message = "抱歉，您的请求被模型安全审核拦截，请尝试换一种表述方式。"
+                else:
+                    logger.warning("Model returned BadRequestError in stream: %s", e)
+                    error_message = "抱歉，模型服务拒绝了本次请求，请稍后重试或调整输入内容。"
                 await queue.put({
                     "event": "error",
-                    "data": {"message": "抱歉，您的请求被模型安全审核拦截，请尝试换一种表述方式。"},
+                    "data": {"message": error_message},
                 })
             except Exception:
+                run_failed = True
                 logger.exception("Agent stream encountered an unhandled error")
                 await queue.put({
                     "event": "error",
@@ -683,9 +750,15 @@ async def chat_stream(
                 logger.exception("Failed to merge attachment_ids")
 
         # 记录对话审计信息（Token 用量、耗时等）
-        await record_chat_usage(db, user_id, thread_id, _start_time)
+        await record_chat_usage(
+            db, user_id, thread_id, _start_time,
+            status="error" if run_failed else "success",
+        )
         # 记录系统事件
-        await log_event(db, "success", "agent", f"流式对话完成 (thread_id={thread_id})")
+        if run_failed:
+            await log_event(db, "error", "agent", f"流式对话失败 (thread_id={thread_id})")
+        else:
+            await log_event(db, "success", "agent", f"流式对话完成 (thread_id={thread_id})")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
