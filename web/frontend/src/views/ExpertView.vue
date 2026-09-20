@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, X, Star, RefreshCw } from 'lucide-vue-next'
+import { Plus, Search, X, RefreshCw } from 'lucide-vue-next'
 import { useExpertStore } from '@/stores/expert'
 import type { Expert, ExpertUpdateRequest, ExpertProfileUpdateRequest, ExpertConfigUpdateRequest } from '@/types/expert'
 import { EXPERT_CATEGORY_FILTERS } from '@/types/expert'
@@ -14,9 +14,6 @@ const expertStore = useExpertStore()
 const editVisible = ref(false)
 const editMode = ref<'create' | 'edit'>('create')
 const editingExpert = ref<Expert | null>(null)
-
-/* ---- featured scene ---- */
-const featuredSceneExpanded = ref(true)
 
 /* ---- sort options ---- */
 const sortOptions = [
@@ -185,50 +182,8 @@ onMounted(() => {
       </el-alert>
     </div>
 
-    <!-- 精选场景 -->
-    <div v-if="expertStore.featuredScenes.length > 0" class="scene-section">
-      <div class="section-header">
-        <span class="section-title">精选场景</span>
-        <el-button text size="small" @click="featuredSceneExpanded = !featuredSceneExpanded">
-          {{ featuredSceneExpanded ? '收起' : '展开' }}
-        </el-button>
-      </div>
-      <div v-show="featuredSceneExpanded" class="scene-grid">
-        <div
-          v-for="scene in expertStore.featuredScenes"
-          :key="scene.id"
-          class="scene-card"
-          :style="{ borderColor: scene.color.includes('135deg') ? 'rgba(59,130,246,0.2)' : scene.color }"
-        >
-          <div class="scene-card-head">
-            <div class="scene-card-icon" :style="{ background: scene.color }">
-              <Star :size="13" color="#fff" />
-            </div>
-            <span class="scene-card-label">{{ scene.label }}</span>
-          </div>
-          <div class="scene-items">
-            <template v-if="scene.expertIds.length > 0">
-              <div
-                v-for="eid in scene.expertIds"
-                :key="eid"
-                class="scene-item"
-              >
-                <div class="scene-item-dot" :style="{ background: scene.color }" />
-                <span>{{ expertStore.getFeaturedExpertName(eid) }}</span>
-              </div>
-            </template>
-            <span v-else class="scene-empty-hint">暂无精选专家</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- 分类筛选 + 排序 -->
     <div class="list-header">
-      <div class="list-header-left">
-        <span class="list-title">专家园</span>
-        <span class="list-count">共 {{ expertStore.total }} 个</span>
-      </div>
       <div class="list-header-right">
         <div class="sort-btns">
           <button
@@ -407,115 +362,12 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-/* Scene Section */
-.scene-section {
-  flex-shrink: 0;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.section-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--foreground-primary);
-}
-
-.scene-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.scene-card {
-  border-radius: var(--radius-xl);
-  padding: 14px;
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-card);
-  cursor: pointer;
-  transition: box-shadow var(--transition-fast);
-}
-
-.scene-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.scene-card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.scene-card-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.scene-card-label {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--foreground-primary);
-}
-
-.scene-items {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.scene-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-secondary);
-}
-
-.scene-item-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.scene-empty-hint {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
 /* List Header */
 .list-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   flex-shrink: 0;
-}
-
-.list-header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.list-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--foreground-primary);
-}
-
-.list-count {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
 }
 
 .sort-btns {
@@ -604,19 +456,9 @@ onMounted(() => {
 }
 
 /* Responsive */
-@media (max-width: 1200px) {
-  .scene-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
 @media (max-width: 768px) {
   .experts-page {
     padding: 16px;
-  }
-
-  .scene-grid {
-    grid-template-columns: 1fr;
   }
 
   .expert-grid {
