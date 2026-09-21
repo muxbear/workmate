@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import {
-  artifactDownloadUrl,
-  fetchThreadArtifacts,
-  getAccessToken,
-  sendStreamRequest,
-} from '@/services/request'
+import { fetchThreadArtifacts, sendStreamRequest } from '@/services/request'
 import { useUiStore } from '@/stores/ui'
+import { useWorkspaceStore } from '@/stores/workspace'
+import {
+  downloadArtifact as downloadArtifactFile,
+  fetchArtifactBlob as fetchArtifactBlobApi,
+} from '@/services/artifactApi'
 import type {
   ChatMessage,
   ExecutionBlock,
@@ -62,8 +62,6 @@ export const useChatStore = defineStore('chat', () => {
   const activeSelection = ref<SelectionEcho | null>(null)
   /** 当前会话产物（SSE artifact 事件与接口回填） */
   const threadArtifacts = ref<ChatArtifact[]>([])
-  /** 右侧面板正在预览的产物 */
-  const previewArtifact = ref<ChatArtifact | null>(null)
 
   /** 分享面板开关与已勾选消息 */
   const shareMode = ref(false)
@@ -150,17 +148,18 @@ export const useChatStore = defineStore('chat', () => {
     threadArtifacts.value = await fetchThreadArtifacts(tid)
   }
 
-  /** 在右侧面板预览产物 */
+  /** 点击消息中的产物卡片：在右侧工作区新开（或激活）一个文档标签页 */
   function openArtifact(artifact: ChatArtifact) {
-    previewArtifact.value = artifact
     const uiStore = useUiStore()
+    const workspaceStore = useWorkspaceStore()
+    workspaceStore.openDocument(artifact, threadId.value ?? uiStore.activeThreadId ?? '')
     uiStore.rightPanelCollapsed = false
-    uiStore.rightPanelTab = 'artifacts'
+    // 打开文档时左右两侧按 1:1 展示；用户已拖拽出更宽的右栏则保持不变
+    if (uiStore.rightPanelRatio < 0.5) uiStore.setRightPanelRatio(0.5)
   }
 
   function clearArtifacts() {
     threadArtifacts.value = []
-    previewArtifact.value = null
   }
 
   /** 判断某条消息是否命中当前搜索关键词 */
@@ -210,29 +209,18 @@ export const useChatStore = defineStore('chat', () => {
     return useUiStore().activeThreadId
   }
 
-  /** 带鉴权拉取产物内容 */
+  /** 带鉴权拉取产物内容（沿用当前会话，供消息卡片等场景使用） */
   async function fetchArtifactBlob(artifact: ChatArtifact): Promise<Blob | null> {
     const tid = threadId.value
     if (!tid) return null
-    const response = await fetch(artifactDownloadUrl(tid, artifact.path), {
-      headers: { Authorization: 'Bearer ' + (getAccessToken() ?? '') },
-    })
-    if (!response.ok) return null
-    return await response.blob()
+    return fetchArtifactBlobApi(tid, artifact.path)
   }
 
   /** 下载产物到本地 */
   async function downloadArtifact(artifact: ChatArtifact) {
-    const blob = await fetchArtifactBlob(artifact)
-    if (!blob) return
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = artifact.name
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
+    const tid = threadId.value
+    if (!tid) return
+    await downloadArtifactFile(tid, artifact.path, artifact.name)
   }
 
   function resetSelection() {
@@ -598,6 +586,8 @@ export const useChatStore = defineStore('chat', () => {
     loading.value = false
     threadId.value = null
     clearArtifacts()
+    // 新建对话 / 删除会话时同步关闭右侧已打开的文档标签页
+    useWorkspaceStore().closeAllTabs()
   }
 
   async function uploadFile(file: File): Promise<void> {
@@ -691,6 +681,11 @@ export const useChatStore = defineStore('chat', () => {
           if (typeof m.duration_ms === 'number') message.durationMs = m.duration_ms
           return message
         })
+      // 历史回显：把会话产物挂到最后一条 AI 回复上，点击文件即可在右侧标签页中打开
+      const lastAssistant = [...messages.value].reverse().find((item) => item.role === 'assistant')
+      if (lastAssistant && threadArtifacts.value.length > 0) {
+        lastAssistant.artifacts = [...threadArtifacts.value]
+      }
       nextId = messages.value.length + 1
     } catch {
       // ignore
@@ -763,7 +758,6 @@ export const useChatStore = defineStore('chat', () => {
     inputParts,
     activeSelection,
     threadArtifacts,
-    previewArtifact,
     loadThreadArtifacts,
     openArtifact,
     registerArtifact,

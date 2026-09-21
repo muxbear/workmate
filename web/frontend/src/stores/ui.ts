@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   fetchConversations,
   deleteConversation as deleteConversationApi,
@@ -14,6 +14,22 @@ export type ThemeMode = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'ui_theme'
 const DEFAULT_THEME: ThemeMode = 'light'
+
+/** 右栏展开时的默认宽度（px） */
+export const DEFAULT_RIGHT_PANEL_WIDTH = 280
+/** 右栏最小宽度（px） */
+export const MIN_RIGHT_PANEL_WIDTH = 240
+/** 对话区最小宽度（px），拖拽分割线时用于约束右栏最大宽度 */
+export const MIN_CHAT_WIDTH = 360
+/** 右栏收起后的轨道宽度（px） */
+export const RIGHT_PANEL_COLLAPSED_WIDTH = 40
+
+/** 把右栏宽度约束到 [右栏最小宽度, 容器宽度 - 对话区最小宽度] 区间 */
+export function clampRightPanelWidth(width: number, shellWidth: number): number {
+  if (shellWidth <= 0) return Math.max(Math.round(width), MIN_RIGHT_PANEL_WIDTH)
+  const max = Math.max(MIN_RIGHT_PANEL_WIDTH, shellWidth - MIN_CHAT_WIDTH)
+  return Math.round(Math.min(Math.max(width, MIN_RIGHT_PANEL_WIDTH), max))
+}
 
 function getInitialTheme(): ThemeMode {
   try {
@@ -35,14 +51,21 @@ function applyThemeToDocument(theme: ThemeMode) {
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(false)
   const rightPanelCollapsed = ref(false)
+  /** 右栏展开宽度（px）；收起时保留该值，再次展开可还原 */
+  const rightPanelWidth = ref(DEFAULT_RIGHT_PANEL_WIDTH)
+  /** 主体容器实测宽度（由 AppShell 上报），用于按比例调整右栏宽度 */
+  const shellWidth = ref(0)
   const plusMenuOpen = ref(false)
   const searchQuery = ref('')
   const selectedModel = ref('DeepSeek V4')
   const theme = ref<ThemeMode>(getInitialTheme())
   const histories = ref<HistoryItem[]>([])
   const activeThreadId = ref<string | null>(null)
-  /** 右侧面板当前视图：历史对话 / 会话产物 */
-  const rightPanelTab = ref<'history' | 'artifacts'>('history')
+
+  /** 右栏占主体宽度的比例（容器宽度尚未测量时为 0） */
+  const rightPanelRatio = computed(() =>
+    shellWidth.value > 0 ? rightPanelWidth.value / shellWidth.value : 0,
+  )
 
   function initTheme() {
     applyThemeToDocument(theme.value)
@@ -82,6 +105,28 @@ export const useUiStore = defineStore('ui', () => {
     rightPanelCollapsed.value = !rightPanelCollapsed.value
   }
 
+  /** 设置右栏宽度（自动按容器宽度收敛到合法区间） */
+  function setRightPanelWidth(width: number) {
+    rightPanelWidth.value = clampRightPanelWidth(width, shellWidth.value)
+  }
+
+  /** 按比例设置右栏宽度（打开文档标签页时使用 1:1） */
+  function setRightPanelRatio(ratio: number) {
+    if (shellWidth.value <= 0) return
+    setRightPanelWidth(shellWidth.value * ratio)
+  }
+
+  /** 还原默认右栏宽度（双击分割线） */
+  function resetRightPanelWidth() {
+    setRightPanelWidth(DEFAULT_RIGHT_PANEL_WIDTH)
+  }
+
+  /** 主体容器尺寸变化时同步，并把右栏宽度收敛回合法区间 */
+  function syncShellWidth(width: number) {
+    shellWidth.value = width
+    if (width > 0) setRightPanelWidth(rightPanelWidth.value)
+  }
+
   function togglePlusMenu() {
     plusMenuOpen.value = !plusMenuOpen.value
   }
@@ -110,13 +155,15 @@ export const useUiStore = defineStore('ui', () => {
   return {
     sidebarCollapsed,
     rightPanelCollapsed,
+    rightPanelWidth,
+    shellWidth,
+    rightPanelRatio,
     plusMenuOpen,
     searchQuery,
     selectedModel,
     theme,
     histories,
     activeThreadId,
-    rightPanelTab,
     initTheme,
     setTheme,
     toggleTheme,
@@ -124,6 +171,10 @@ export const useUiStore = defineStore('ui', () => {
     deleteHistory,
     toggleSidebar,
     toggleRightPanel,
+    setRightPanelWidth,
+    setRightPanelRatio,
+    resetRightPanelWidth,
+    syncShellWidth,
     togglePlusMenu,
     closePlusMenu,
     newConversation,
