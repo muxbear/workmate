@@ -1,4 +1,6 @@
+import contextlib
 import logging
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -6,6 +8,11 @@ from abc import ABC, abstractmethod
 from agent.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def mask_url_credentials(url: str) -> str:
+    """隐藏连接串中的账号口令，便于安全写日志。"""
+    return re.sub(r"://[^/@]*@", "://***@", url or "")
 
 
 class KeyValueCache(ABC):
@@ -99,12 +106,13 @@ async def create_cache(redis_url: str = "") -> KeyValueCache:
     """如果 Redis 可用，创建 RedisCache，否则回退到 MemoryCache。"""
     if not redis_url:
         redis_url = settings.REDIS_URL
+    r = None
     try:
         import redis.asyncio as aioredis
 
         r = aioredis.from_url(redis_url)
-        r.ping()
-        logger.info(f"从 {redis_url} 连接到 Redis")
+        await r.ping()
+        logger.info("已连接到 Redis: %s", mask_url_credentials(redis_url))
 
         class RedisCache(KeyValueCache):
             def __init__(self, client):
@@ -115,7 +123,7 @@ async def create_cache(redis_url: str = "") -> KeyValueCache:
                 return v.decode() if v else None
 
             async def set(self, key: str, value: str, ttl: int = 300) -> None:
-                await self._r.setex(key, ttl, value)
+                await self._r.set(key, value, ex=ttl)
 
             async def delete(self, key: str) -> None:
                 await self._r.delete(key)
@@ -141,5 +149,8 @@ async def create_cache(redis_url: str = "") -> KeyValueCache:
 
         return RedisCache(r)
     except Exception as e:
-        logger.warning("Redis 不可用 (%s), 使用 in-memory store", e)
+        if r is not None:
+            with contextlib.suppress(Exception):
+                await r.aclose()
+        logger.warning("Redis 连接失败 (%s)，已降级为内存缓存", e)
         return MemoryCache()

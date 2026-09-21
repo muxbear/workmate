@@ -63,3 +63,21 @@ def test_artifact_to_dict() -> None:
     assert payload["name"] == "report.md"
     assert payload["mime_type"] == "text/markdown"
     assert payload["size"] == 128
+
+
+def test_artifact_to_dict_contains_persistence_fields() -> None:
+    """产物字典包含持久化标识与状态，供前端区分就绪 / 过期。"""
+    item = Artifact(
+        path="/workspace/report.md",
+        name="report.md",
+        source_tool="write_file",
+        mime_type="text/markdown",
+        size=128,
+        created_at=1.0,
+        artifact_id="aid-1",
+        status="ready",
+        storage_key="u/t/a/report.md",
+    )
+    payload = item.to_dict()
+    assert payload["artifact_id"] == "aid-1"
+    assert payload["status"] == "ready"

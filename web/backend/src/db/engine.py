@@ -1,7 +1,9 @@
 import logging
+import uuid
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -203,6 +205,33 @@ async def _migrate_experts_to_own_table(conn) -> None:
     ))
 
 
+# chat_artifacts 产物持久化字段（历史库通过 ALTER 补齐，列已存在时跳过）
+ARTIFACT_COLUMN_MIGRATIONS: dict[str, str] = {
+    "artifact_id": "VARCHAR(36) DEFAULT ''",
+    "storage_backend": "VARCHAR(20) DEFAULT 'local'",
+    "storage_key": "VARCHAR(500) DEFAULT ''",
+    "status": "VARCHAR(20) DEFAULT 'pending'",
+    "checksum": "VARCHAR(64) DEFAULT ''",
+    "last_error": "VARCHAR(255) DEFAULT ''",
+    "updated_at": "TIMESTAMP",
+}
+
+
+async def _backfill_artifact_ids(conn: AsyncConnection) -> None:
+    """为历史产物记录补齐 artifact_id（缺失会导致产物无法物化）。"""
+    result = await conn.execute(
+        text("SELECT id FROM chat_artifacts WHERE artifact_id IS NULL OR artifact_id = ''")
+    )
+    row_ids = [row[0] for row in result.fetchall()]
+    for row_id in row_ids:
+        await conn.execute(
+            text("UPDATE chat_artifacts SET artifact_id = :artifact_id WHERE id = :row_id"),
+            {"artifact_id": str(uuid.uuid4()), "row_id": row_id},
+        )
+    if row_ids:
+        logger.info("Backfilled artifact_id for %d chat_artifacts rows", len(row_ids))
+
+
 async def init_db():
     from db.base import Base
     from db.models.agent_version import (
@@ -255,6 +284,18 @@ async def init_db():
                 logger.info("Adding attachment_ids column to conversations table")
                 col_type = "JSON" if settings.DATABASE_BACKEND == "sqlite" else "JSONB"
                 await conn.execute(text(f"ALTER TABLE conversations ADD COLUMN attachment_ids {col_type}"))
+
+        # 迁移：为 chat_artifacts 增加产物持久化字段（列已存在时跳过）
+        if await _table_exists(conn, "chat_artifacts"):
+            existing = await _get_existing_columns(conn, "chat_artifacts")
+            for column, column_type in ARTIFACT_COLUMN_MIGRATIONS.items():
+                if column in existing:
+                    continue
+                logger.info("Adding %s column to chat_artifacts table", column)
+                await conn.execute(
+                    text(f"ALTER TABLE chat_artifacts ADD COLUMN {column} {column_type}")
+                )
+            await _backfill_artifact_ids(conn)
 
         # 迁移（改进1）：为 tools 表添加 implementation / tool_type 列
         # Migration: add parent_id to agents table

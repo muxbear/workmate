@@ -190,6 +190,9 @@ export function createEmptySelection(): ChatSelection {
   }
 }
 
+/** 产物持久化状态：待物化 / 已就绪 / 物化失败 / 已过期 */
+export type ArtifactStatus = 'pending' | 'ready' | 'failed' | 'expired'
+
 /** 会话产物（智能体生成的沙箱文件） */
 export interface ChatArtifact {
   path: string
@@ -200,4 +203,8 @@ export interface ChatArtifact {
   mime_type?: string
   /** 文件大小（字节，0 表示尚未解析） */
   size?: number
+  /** 产物持久化 ID（标签页标识与恢复使用） */
+  artifact_id?: string
+  /** 持久化状态（缺省视为 pending，兼容旧数据） */
+  status?: ArtifactStatus
 }

@@ -6,16 +6,19 @@ import { resolveDocumentType } from '@/utils/documentType'
 import { formatFileSize } from '@/utils/format'
 import { viewerFor } from '@/components/chat/viewers'
 import type { DocumentPayload } from '@/types/document'
+import { useWorkspaceStore } from '@/stores/workspace'
 import type { DocumentTab } from '@/stores/workspace'
 
 /** 文档标签页内容区：按文档类型加载内容，并交给对应的文档组件渲染 */
 const props = defineProps<{ tab: DocumentTab }>()
+const workspaceStore = useWorkspaceStore()
 
 const typeInfo = computed(() => resolveDocumentType(props.tab.name, props.tab.mimeType))
 const viewer = computed(() => viewerFor(typeInfo.value.kind))
 
 const loading = ref(false)
 const failed = ref(false)
+const expired = ref(false)
 const text = ref('')
 const objectUrl = ref('')
 
@@ -36,20 +39,28 @@ async function loadDocument(tab: DocumentTab) {
   revokeObjectUrl()
   text.value = ''
   failed.value = false
+  expired.value = false
   // 规划中的文档类型（Word / Excel / PPT 等）暂不拉取内容，直接展示占位组件
   if (!typeInfo.value.ready) return
   loading.value = true
   try {
-    const blob = await fetchArtifactBlob(tab.threadId, tab.path)
-    if (!blob) {
-      failed.value = true
+    const result = await fetchArtifactBlob(tab.threadId, tab.path, 'inline')
+    if (!result.ok || !result.blob) {
+      // 410 表示持久副本与沙箱均不可用，重试没有意义，直接提示过期
+      expired.value = result.expired
+      failed.value = !result.expired
       return
     }
-    if (typeInfo.value.text) text.value = await blob.text()
-    else objectUrl.value = URL.createObjectURL(blob)
+    if (typeInfo.value.text) text.value = await result.blob.text()
+    else objectUrl.value = URL.createObjectURL(result.blob)
   } finally {
     loading.value = false
   }
+}
+
+/** 关闭当前已过期产物的标签页 */
+function closeTab() {
+  workspaceStore.closeTab(props.tab.key)
 }
 
 watch(
@@ -86,6 +97,12 @@ function handleDownload() {
       <div v-if="loading" class="document-hint">
         <Loader2 :size="16" class="spin" />
         <span>加载中…</span>
+      </div>
+      <div v-else-if="expired" class="document-hint">
+        <span>文件已过期，无法恢复</span>
+        <button class="document-retry" @click="closeTab">
+          <span>关闭标签页</span>
+        </button>
       </div>
       <div v-else-if="failed" class="document-hint">
         <span>文档内容加载失败</span>

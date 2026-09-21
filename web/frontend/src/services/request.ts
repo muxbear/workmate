@@ -141,6 +141,7 @@ export interface StreamCallbacks {
   onThreadId: (threadId: string) => void
   onSelection?: (data: SelectionEcho) => void
   onArtifact?: (artifact: ChatArtifact) => void
+  onArtifactUpdated?: (artifact: ChatArtifact) => void
   onDone: (info?: DoneInfo) => void
   onError: (message: string) => void
 }
@@ -183,6 +184,9 @@ function parseSseDataLine(line: string, callbacks: StreamCallbacks): void {
         break
       case 'artifact':
         callbacks.onArtifact?.(data as unknown as ChatArtifact)
+        break
+      case 'artifact_updated':
+        callbacks.onArtifactUpdated?.(data as unknown as ChatArtifact)
         break
       case 'selection':
         callbacks.onSelection?.(data as unknown as SelectionEcho)
@@ -345,14 +349,20 @@ export async function fetchThreadArtifacts(threadId: string): Promise<ChatArtifa
   return payload.data ?? []
 }
 
-/** 产物下载 / 预览地址 */
-export function artifactDownloadUrl(threadId: string, path: string): string {
+/** 产物下载 / 预览地址（disposition=inline 用于预览，attachment 用于下载） */
+export function artifactDownloadUrl(
+  threadId: string,
+  path: string,
+  disposition: 'inline' | 'attachment' = 'attachment',
+): string {
   const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
   return (
     baseURL +
     '/chat/artifacts/' +
     encodeURIComponent(threadId) +
-    '/download?path=' +
+    '/download?disposition=' +
+    disposition +
+    '&path=' +
     encodeURIComponent(path)
   )
 }

@@ -140,6 +140,27 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /** 从服务端拉取会话产物（切换会话时回填） */
+  /** 更新已登记产物的元信息（流结束后补全物化状态与大小） */
+  function updateArtifact(artifact: ChatArtifact) {
+    const isSame = (item: ChatArtifact) =>
+      (artifact.artifact_id && item.artifact_id === artifact.artifact_id) ||
+      item.path === artifact.path
+    if (threadArtifacts.value.some(isSame)) {
+      threadArtifacts.value = threadArtifacts.value.map((item) =>
+        isSame(item) ? { ...item, ...artifact } : item,
+      )
+    } else {
+      threadArtifacts.value = [...threadArtifacts.value, artifact]
+    }
+    messages.value = messages.value.map((msg) => {
+      if (!msg.artifacts?.length || !msg.artifacts.some(isSame)) return msg
+      return {
+        ...msg,
+        artifacts: msg.artifacts.map((item) => (isSame(item) ? { ...item, ...artifact } : item)),
+      }
+    })
+  }
+
   async function loadThreadArtifacts(tid: string) {
     if (!tid) {
       threadArtifacts.value = []
@@ -213,7 +234,8 @@ export const useChatStore = defineStore('chat', () => {
   async function fetchArtifactBlob(artifact: ChatArtifact): Promise<Blob | null> {
     const tid = threadId.value
     if (!tid) return null
-    return fetchArtifactBlobApi(tid, artifact.path)
+    const result = await fetchArtifactBlobApi(tid, artifact.path, 'inline')
+    return result.blob
   }
 
   /** 下载产物到本地 */
@@ -266,6 +288,9 @@ export const useChatStore = defineStore('chat', () => {
     return {
       onArtifact(artifact: ChatArtifact) {
         registerArtifact(assistantId, artifact)
+      },
+      onArtifactUpdated(artifact: ChatArtifact) {
+        updateArtifact(artifact)
       },
       onSelection(data: SelectionEcho) {
         activeSelection.value = data
@@ -410,6 +435,9 @@ export const useChatStore = defineStore('chat', () => {
     return {
       onArtifact(artifact: ChatArtifact) {
         registerArtifact(assistantId, artifact)
+      },
+      onArtifactUpdated(artifact: ChatArtifact) {
+        updateArtifact(artifact)
       },
       onSelection(data: SelectionEcho) {
         activeSelection.value = data
@@ -761,6 +789,7 @@ export const useChatStore = defineStore('chat', () => {
     loadThreadArtifacts,
     openArtifact,
     registerArtifact,
+    updateArtifact,
     setFeedback,
     clearArtifacts,
     shareMode,

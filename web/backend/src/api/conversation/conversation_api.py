@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent import get_checkpointer, get_graph
+from api.agent.artifacts import delete_artifacts_by_thread
 from api.deps import get_current_user_id
 from core.decorators import handle_errors
 from core.response import ok
@@ -453,5 +454,11 @@ async def delete_conversation(
     # 3. 删除 DB 记录
     await db.delete(conv)
     await db.commit()
+
+    # 级联清理该会话的产物记录与持久化文件（避免遗留孤儿文件）
+    try:
+        await delete_artifacts_by_thread(thread_id)
+    except Exception:
+        logger.exception("Failed to delete artifacts for thread %s", thread_id)
 
     return ok(None)

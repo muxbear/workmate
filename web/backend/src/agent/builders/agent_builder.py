@@ -26,6 +26,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.backends.user_scoped_filesystem_backend import UserScopedFilesystemBackend
 from agent.common import resolve_model
 from agent.config import settings
 from agent.context.context import Context
@@ -35,13 +36,26 @@ from agent.memory.scopes import (
     build_memory_path,
     infer_scope,
 )
+from agent.middleware.artifact_restore import ArtifactRestoreMiddleware
 from agent.middleware.request_permission import RequestPermissionMiddleware
 from agent.middleware.skill_sandbox_sync import SkillSandboxSyncMiddleware
 from agent.sandbox.sandbox_manager import SandboxManager
 from agent.sandbox.user_aware_sandbox_backend import UserAwareSandboxBackend
 from agent.subagents.subagents_operate import create_subagents
+from core.storage.agent_staging import agent_staging_root
 
 logger = logging.getLogger(__name__)
+
+# 交付目录说明：写入 /artifacts/ 的文件会持久保存（沙箱回收或重建后仍可访问）
+ARTIFACT_DELIVERY_HINT = (
+    "\n\n## 交付文件\n"
+    "需要交付给用户的最终文件（报告、表格、图表、代码等）请使用文件工具写入 `/artifacts/` 目录，"
+    "例如 `/artifacts/报告.md`：该目录中的文件会持久保存并在后续轮次自动恢复，沙箱回收后仍可访问。"
+    "临时文件与中间产物仍放在 `/workspace/` 下。"
+    "注意：`/artifacts/` 仅在文件工具中可见，沙箱内执行的命令（如 Python 脚本）无法直接访问，"
+    "脚本生成的二进制产物请先输出到 `/workspace/`，再用文件工具复制到 `/artifacts/`。\n"
+)
+
 
 class AgentBuilder:
     """分步构建 Deep Agent 的建造者。
@@ -219,6 +233,11 @@ class AgentBuilder:
                     virtual_mode=True,
                     max_file_size_mb=100,
                 ),
+                # 交付目录：智能体直写 /artifacts/，按用户隔离落在宿主 staging
+                "/artifacts/": UserScopedFilesystemBackend(
+                    str(agent_staging_root()),
+                    max_file_size_mb=100,
+                ),
             },
         )
         return self
@@ -258,6 +277,8 @@ class AgentBuilder:
                 skills_root=self._skills_root,
                 agent_id=self._agent_id,
             ),
+            # 沙箱重建后回灌本会话已持久化的产物，保证后续轮次可继续读写
+            ArtifactRestoreMiddleware(sandbox_manager=self._sandbox_manager),
             # 会话级权限：未开启「代码执行」时拒绝命令/代码类工具调用
             RequestPermissionMiddleware(),
         ]
@@ -284,7 +305,7 @@ class AgentBuilder:
             memory=self._memory,
             backend=self._backend,
             subagents=cast(Any, self._subagents),
-            system_prompt=self._system_prompt,
+            system_prompt=(self._system_prompt or "") + ARTIFACT_DELIVERY_HINT,
             middleware=self._middleware,  # type: ignore[list-item]
         )
 

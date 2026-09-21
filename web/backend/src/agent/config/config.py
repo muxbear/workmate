@@ -24,6 +24,14 @@ def get_default_workspace() -> str:
     return os.path.join(backend_root, "workspace")
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """读取布尔型环境变量（1/true/yes/on 视为真，留空回退默认值）。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 class Settings(BaseSettings):
     # ---- Server ----
     HOST: str = os.getenv("HOST", "127.0.0.1")
@@ -87,6 +95,45 @@ class Settings(BaseSettings):
         if not raw:
             return []
         return [d.strip() for d in raw.split(",") if d.strip()]
+
+    # ---- 产物持久化（生成文件的长期存储）
+    ARTIFACT_BACKEND: str = os.getenv("ARTIFACT_BACKEND", "local")
+    ARTIFACT_ROOT: str = os.getenv("ARTIFACT_ROOT", "")
+    ARTIFACT_MAX_FILE_MB: int = int(os.getenv("ARTIFACT_MAX_FILE_MB", "100"))
+    ARTIFACT_USER_QUOTA_MB: int = int(os.getenv("ARTIFACT_USER_QUOTA_MB", "2048"))
+    ARTIFACT_RETENTION_DAYS: int = int(os.getenv("ARTIFACT_RETENTION_DAYS", "30"))
+    ARTIFACT_GC_INTERVAL_SECONDS: int = int(
+        os.getenv("ARTIFACT_GC_INTERVAL_SECONDS", "3600")
+    )
+
+    @field_validator("ARTIFACT_ROOT", mode="before")
+    @classmethod
+    def _artifact_root_use_default_when_empty(cls, value: object) -> str:
+        """产物存储根目录留空时默认使用 ``{WORKSPACE}/artifacts``。"""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return os.path.join(get_default_workspace(), "artifacts")
+        return str(value)
+
+    # ---- MinIO 对象存储（ARTIFACT_BACKEND=minio 时生效）
+    ARTIFACT_MINIO_ENDPOINT: str = os.getenv("ARTIFACT_MINIO_ENDPOINT", "")
+    ARTIFACT_MINIO_ACCESS_KEY: str = os.getenv("ARTIFACT_MINIO_ACCESS_KEY", "")
+    ARTIFACT_MINIO_SECRET_KEY: str = os.getenv("ARTIFACT_MINIO_SECRET_KEY", "")
+    ARTIFACT_MINIO_BUCKET: str = os.getenv(
+        "ARTIFACT_MINIO_BUCKET", "ke-work-artifacts"
+    )
+    ARTIFACT_MINIO_SECURE: bool = _env_bool("ARTIFACT_MINIO_SECURE", False)
+    ARTIFACT_MINIO_REGION: str = os.getenv("ARTIFACT_MINIO_REGION", "")
+
+    # 交付目录（智能体直写 /artifacts/）在宿主上的 staging 根目录
+    ARTIFACT_AGENT_ROOT: str = os.getenv("ARTIFACT_AGENT_ROOT", "")
+
+    @field_validator("ARTIFACT_AGENT_ROOT", mode="before")
+    @classmethod
+    def _artifact_agent_root_use_default_when_empty(cls, value: object) -> str:
+        """交付目录留空时默认使用 ``{WORKSPACE}/artifacts_agent``。"""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return os.path.join(get_default_workspace(), "artifacts_agent")
+        return str(value)
 
     # ---- Database ----
     DATABASE_BACKEND: str = os.getenv("DATABASE_BACKEND", "sqlite")

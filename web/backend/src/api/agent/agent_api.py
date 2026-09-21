@@ -6,7 +6,7 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.utils.uuid import uuid7
@@ -23,9 +23,14 @@ from agent.sandbox.workspace import (
     workspace_path,
 )
 from api.agent.artifacts import (
+    STATUS_READY,
+    Artifact,
     get_artifact,
     list_artifacts,
     list_artifacts_without_size,
+    mark_artifact_expired,
+    persist_artifact,
+    persist_pending_artifacts,
     record_artifacts,
     update_artifact_size,
 )
@@ -34,6 +39,7 @@ from api.agent.usage_tracker import record_chat_usage
 from api.conversation.conversation_api import create_conversation
 from api.deps import get_current_user_id
 from core.response import ok
+from core.storage import ArtifactStore, get_artifact_store
 from db import get_db
 from db.models.conversation import Conversation
 
@@ -725,8 +731,9 @@ async def chat_stream(
 
         await consumer
 
-        # 流结束后补全产物元信息（文件大小），失败不影响主流程
-        await _enrich_artifact_sizes(user_id, thread_id)
+        # 流结束后补全产物元信息（物化 + 文件大小），并把最新元信息推给前端
+        for updated_artifact in await _enrich_artifact_sizes(user_id, thread_id):
+            yield f"data: {json.dumps({'event': 'artifact_updated', 'data': updated_artifact.to_dict()}, ensure_ascii=False)}\n\n"
 
         yield f"data: {json.dumps({'event': 'done', 'data': {'thread_id': thread_id, 'duration_ms': int((time.time() - _start_time) * 1000)}}, ensure_ascii=False)}\n\n"
 
@@ -763,26 +770,47 @@ async def chat_stream(
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-async def _enrich_artifact_sizes(user_id: str, thread_id: str) -> None:
-    """流结束后在沙箱内 stat 产物文件，补全大小（失败仅告警，不影响对话结果）。"""
+async def _enrich_artifact_sizes(user_id: str, thread_id: str) -> list[Artifact]:
+    """流结束后收尾产物：兜底物化未就绪项并补全大小，返回需通知前端的产物。"""
+    touched: set[str] = set()
+
+    try:
+        saved = await persist_pending_artifacts(user_id, thread_id)
+        for item in saved:
+            touched.add(item.artifact_id or item.path)
+        if saved:
+            logger.info("流结束后补物化 %d 个产物（thread_id=%s）", len(saved), thread_id)
+    except Exception:
+        logger.warning("流结束后补物化产物失败（thread_id=%s）", thread_id, exc_info=True)
+
     try:
         pending = await list_artifacts_without_size(thread_id)
-        if not pending:
-            return
-        paths = [item.path for item in pending][:20]
-        quoted = " ".join(shlex.quote(item) for item in paths)
-        backend = get_sandbox_manager().get_or_create_backend(user_id)
-        result = await asyncio.to_thread(backend.execute, "stat -c '%s|%n' " + quoted)
-        output = getattr(result, "output", "") or ""
-        for line in output.splitlines():
-            size_text, _, path = line.partition("|")
-            if not size_text.strip().isdigit():
-                continue
-            await update_artifact_size(thread_id, path.strip(), int(size_text))
+        if pending:
+            paths = [item.path for item in pending][:20]
+            quoted = " ".join(shlex.quote(item) for item in paths)
+            backend = get_sandbox_manager().get_or_create_backend(user_id)
+            result = await asyncio.to_thread(backend.execute, "stat -c '%s|%n' " + quoted)
+            output = getattr(result, "output", "") or ""
+            for line in output.splitlines():
+                size_text, _, raw_path = line.partition("|")
+                if not size_text.strip().isdigit():
+                    continue
+                artifact_path = raw_path.strip()
+                await update_artifact_size(thread_id, artifact_path, int(size_text))
+                touched.add(artifact_path)
     except Exception:
         logger.warning(
             "Enrich artifact sizes failed (thread_id=%s)", thread_id, exc_info=True
         )
+
+    if not touched:
+        return []
+    try:
+        items = await list_artifacts(thread_id, user_id)
+    except Exception:
+        logger.warning("回读产物元信息失败（thread_id=%s）", thread_id, exc_info=True)
+        return []
+    return [item for item in items if (item.artifact_id or item.path) in touched]
 
 
 @router.get("/chat/artifacts/{thread_id}")
@@ -797,33 +825,153 @@ async def list_chat_artifacts(
 
 @router.get("/chat/artifacts/{thread_id}/download")
 async def download_chat_artifact(
+    request: Request,
     thread_id: str,
     path: str,
+    disposition: str = "attachment",
     user_id: str = Depends(get_current_user_id),
 ):
-    """下载会话产物（仅允许下载该会话已登记且属于当前用户的产物）。"""
-    if await get_artifact(thread_id, user_id, path) is None:
+    """下载或预览会话产物（优先读取持久副本，沙箱仅作兜底来源）。
+
+    Args:
+        request: 原始请求，用于读取 Range 头。
+        thread_id: 会话 ID。
+        path: 沙箱内产物路径（沿用既有参数，服务端映射到持久对象）。
+        disposition: ``attachment`` 触发下载，``inline`` 用于页面内预览。
+        user_id: 当前登录用户。
+
+    Returns:
+        产物文件响应；本地存储走 FileResponse，对象存储按 Range 返回字节。
+    """
+    artifact = await get_artifact(thread_id, user_id, path)
+    if artifact is None:
         raise HTTPException(status_code=404, detail="产物不存在或不属于该会话")
 
-    backend = get_sandbox_manager().get_or_create_backend(user_id)
-    results = await asyncio.to_thread(backend.download_files, [path])
-    if not results or results[0].error or results[0].content is None:
-        detail = results[0].error if results else "download_failed"
-        raise HTTPException(status_code=404, detail=f"产物读取失败: {detail}")
+    store = get_artifact_store()
+    artifact = await _ensure_materialized(user_id, thread_id, artifact, store)
+    if artifact is None:
+        raise HTTPException(status_code=410, detail="文件已过期，无法恢复")
 
-    content = results[0].content
-    # 顺手补全文件大小（首次下载时）
-    try:
-        await update_artifact_size(thread_id, path, len(content))
-    except Exception:
-        logger.debug("Update artifact size failed", exc_info=True)
+    key = artifact.storage_key
+    filename = quote(artifact.name or "artifact")
+    mode = "inline" if disposition == "inline" else "attachment"
+    media_type = artifact.mime_type or "application/octet-stream"
+    headers = {"Content-Disposition": f"{mode}; filename*=UTF-8''{filename}"}
 
-    filename = quote(path.rsplit("/", 1)[-1])
+    local_path = store.local_path(key)
+    if local_path is not None and await asyncio.to_thread(store.exists, key):
+        return FileResponse(local_path, media_type=media_type, headers=headers)
+
+    return await _storage_response(request, store, key, media_type, headers)
+
+
+async def _ensure_materialized(
+    user_id: str, thread_id: str, artifact: Artifact, store: ArtifactStore
+) -> Artifact | None:
+    """确保产物存在持久副本；缺失时尝试从沙箱补一次物化。
+
+    Args:
+        user_id: 当前登录用户。
+        thread_id: 会话 ID。
+        artifact: 已登记的产物。
+        store: 产物存储实例。
+
+    Returns:
+        可用产物；持久副本与沙箱均不可用时返回 None（并标记过期）。
+    """
+    if artifact.storage_key and artifact.status == STATUS_READY:
+        if await asyncio.to_thread(store.exists, artifact.storage_key):
+            return artifact
+    if artifact.artifact_id:
+        refreshed = await persist_artifact(user_id, thread_id, artifact.artifact_id)
+        if refreshed is not None and refreshed.storage_key:
+            if await asyncio.to_thread(store.exists, refreshed.storage_key):
+                return refreshed
+    await mark_artifact_expired(thread_id, artifact.artifact_id)
+    return None
+
+
+async def _storage_response(
+    request: Request,
+    store: ArtifactStore,
+    key: str,
+    media_type: str,
+    headers: dict[str, str],
+) -> Response:
+    """从对象存储读取产物并构造响应（支持单段 Range 请求）。
+
+    Args:
+        request: 原始请求。
+        store: 产物存储实例。
+        key: 产物存储键。
+        media_type: 响应媒体类型。
+        headers: 基础响应头。
+
+    Returns:
+        完整内容响应或 206 部分内容响应。
+
+    Raises:
+        HTTPException: 对象在存储侧已不存在（410）。
+    """
+    total = await asyncio.to_thread(store.size, key)
+    if total is None:
+        raise HTTPException(status_code=410, detail="文件已过期，无法恢复")
+
+    byte_range = _parse_byte_range(request.headers.get("range"), total)
+    if byte_range is None:
+        content = await asyncio.to_thread(store.read, key, 0, None)
+        if content is None:
+            raise HTTPException(status_code=410, detail="文件已过期，无法恢复")
+        return Response(content=content, media_type=media_type, headers=headers)
+
+    start, end = byte_range
+    chunk = await asyncio.to_thread(store.read, key, start, end - start + 1)
+    if chunk is None:
+        raise HTTPException(status_code=410, detail="文件已过期，无法恢复")
     return Response(
-        content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        content=chunk,
+        status_code=206,
+        media_type=media_type,
+        headers={
+            **headers,
+            "Accept-Ranges": "bytes",
+            "Content-Range": f"bytes {start}-{end}/{total}",
+        },
     )
+
+
+def _parse_byte_range(header: str | None, total: int) -> tuple[int, int] | None:
+    """解析单段 ``Range`` 请求头；无法解析或不适用时返回 None（按完整内容返回）。
+
+    Args:
+        header: 原始 Range 头。
+        total: 对象总字节数。
+
+    Returns:
+        ``(起始偏移, 结束偏移)`` 闭区间；不支持或越界时返回 None。
+    """
+    if not header or total <= 0 or not header.startswith("bytes="):
+        return None
+    spec = header[len("bytes=") :].split(",", 1)[0].strip()
+    start_text, _, end_text = spec.partition("-")
+    try:
+        if not start_text:
+            suffix = int(end_text)
+            if suffix <= 0:
+                return None
+            start = max(0, total - suffix)
+            end = total - 1
+        else:
+            start = int(start_text)
+            end = int(end_text) if end_text else total - 1
+    except ValueError:
+        return None
+    if start < 0 or start >= total:
+        return None
+    end = min(end, total - 1)
+    if end < start:
+        return None
+    return start, end
 
 
 POLISH_INSTRUCTION = (
