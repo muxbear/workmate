@@ -10,20 +10,53 @@ from opensandbox.models import NetworkPolicy, NetworkRule, WriteEntry
 from opensandbox.sync import SandboxSync
 
 from agent.config import settings
+from agent.config.config import (
+    SANDBOX_NETWORK_MODE_ALLOW_ALL,
+    SANDBOX_NETWORK_MODE_DENY_ALL,
+)
+
+
+def merge_allowed_domains(
+    configured: list[str] | None,
+    extra: list[str] | None = None,
+) -> list[str]:
+    """合并配置白名单与附加域名：去重保序，并剔除空白项。"""
+    merged: list[str] = []
+    for domain in list(configured or []) + list(extra or []):
+        value = str(domain).strip()
+        if value and value not in merged:
+            merged.append(value)
+    return merged
+
+
+def allow_network_rules(domains: list[str]) -> list[NetworkRule]:
+    """把域名列表转换为 allow 规则。"""
+    return [NetworkRule(action="allow", target=domain) for domain in domains]
+
+
+def deny_network_rules(domains: list[str]) -> list[NetworkRule]:
+    """把域名列表转换为 deny 规则（用于覆盖已下发的放行规则）。"""
+    return [NetworkRule(action="deny", target=domain) for domain in domains]
 
 
 def _default_network_policy(
     extra_domains: list[str] | None = None,
 ) -> NetworkPolicy:
-    """构建沙盒网络策略，合并默认域名和额外域名。"""
-    rules = [
-        NetworkRule(action="allow", target="pypi.org"),
-        NetworkRule(action="allow", target="*.github.com"),
-        NetworkRule(action="allow", target="*.baidu.com"),
-    ]
-    for domain in extra_domains or []:
-        rules.append(NetworkRule(action="allow", target=domain))
-    return NetworkPolicy(defaultAction="deny", egress=rules)
+    """按 SANDBOX_NETWORK_MODE 构建沙盒创建时的出网策略。
+
+    - allow_all：默认放行全部域名，沙盒可不受限制访问网络；
+    - deny_all：默认拒绝且不下发任何规则，沙盒完全不可访问网络；
+    - whitelist：默认拒绝，仅放行 SANDBOX_ALLOWED_DOMAINS 内的域名。
+    """
+    mode = settings.sandbox_network_mode
+    if mode == SANDBOX_NETWORK_MODE_ALLOW_ALL:
+        return NetworkPolicy(defaultAction="allow", egress=[])
+    if mode == SANDBOX_NETWORK_MODE_DENY_ALL:
+        return NetworkPolicy(defaultAction="deny", egress=[])
+    domains = merge_allowed_domains(
+        settings.sandbox_allowed_domains_list, extra_domains
+    )
+    return NetworkPolicy(defaultAction="deny", egress=allow_network_rules(domains))
 
 
 def create_sandboxsync(config=None, sandbox_id=None, image=None):

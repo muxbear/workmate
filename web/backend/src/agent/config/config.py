@@ -32,6 +32,17 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+# 沙箱出网模式：仅白名单 / 不受限制 / 完全禁网
+SANDBOX_NETWORK_MODE_WHITELIST = "whitelist"
+SANDBOX_NETWORK_MODE_ALLOW_ALL = "allow_all"
+SANDBOX_NETWORK_MODE_DENY_ALL = "deny_all"
+SANDBOX_NETWORK_MODES: tuple[str, ...] = (
+    SANDBOX_NETWORK_MODE_WHITELIST,
+    SANDBOX_NETWORK_MODE_ALLOW_ALL,
+    SANDBOX_NETWORK_MODE_DENY_ALL,
+)
+
+
 class Settings(BaseSettings):
     # ---- Server ----
     HOST: str = os.getenv("HOST", "127.0.0.1")
@@ -87,6 +98,9 @@ class Settings(BaseSettings):
         os.getenv("SANDBOX_IDLE_TIMEOUT_MINUTES", "10")
     )
     SANDBOX_ALLOWED_DOMAINS: str = os.getenv("SANDBOX_ALLOWED_DOMAINS", "")
+    SANDBOX_NETWORK_MODE: str = os.getenv(
+        "SANDBOX_NETWORK_MODE", SANDBOX_NETWORK_MODE_WHITELIST
+    )
 
     @property
     def sandbox_allowed_domains_list(self) -> list[str]:
@@ -95,6 +109,14 @@ class Settings(BaseSettings):
         if not raw:
             return []
         return [d.strip() for d in raw.split(",") if d.strip()]
+
+    @property
+    def sandbox_network_mode(self) -> str:
+        """规范化沙箱出网模式（非法值回退白名单模式）。"""
+        value = (self.SANDBOX_NETWORK_MODE or "").strip().lower()
+        if value in SANDBOX_NETWORK_MODES:
+            return value
+        return SANDBOX_NETWORK_MODE_WHITELIST
 
     # ---- 产物持久化（生成文件的长期存储）
     ARTIFACT_BACKEND: str = os.getenv("ARTIFACT_BACKEND", "local")
