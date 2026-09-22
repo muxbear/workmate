@@ -17,6 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent import get_graph_for, get_sandbox_manager
 from agent.context.context import Context
+from agent.sandbox.delivery import (
+    delivery_host_dir,
+    delivery_hint,
+    delivery_virtual_dir,
+    next_turn_dir,
+)
 from agent.sandbox.workspace import (
     ensure_workspace,
     normalize_workspace_id,
@@ -25,18 +31,22 @@ from agent.sandbox.workspace import (
 from api.agent.artifacts import (
     STATUS_READY,
     Artifact,
+    build_bundle_zip,
     get_artifact,
     list_artifacts,
     list_artifacts_without_size,
     mark_artifact_expired,
     persist_artifact,
     persist_pending_artifacts,
+    pick_turn_artifacts,
     record_artifacts,
+    scan_delivery_artifacts,
     update_artifact_size,
 )
 from api.agent.event_logger import log_event
 from api.agent.usage_tracker import record_chat_usage
 from api.conversation.conversation_api import create_conversation
+from api.experts.prompt_render import normalize_platform
 from api.deps import get_current_user_id
 from core.response import ok
 from core.storage import ArtifactStore, get_artifact_store
@@ -135,6 +145,8 @@ class ChatRequest(BaseModel):
     # 会话级选择项：全部可选，未传时行为与改造前完全一致
     expert_id: str | None = None
     expert_name: str | None = None
+    # 客户端平台（desktop / web / mobile）：决定运行环境说明的渲染口径
+    platform: str | None = None
     skill_ids: list[str] | None = None
     kb_ids: list[str] | None = None
     mode: str | None = None
@@ -202,6 +214,22 @@ async def _collect_attachment_ids(req: ChatRequest) -> list[str]:
     return ids
 
 
+def _prepare_delivery(user_id: str, thread_id: str) -> tuple[str, str]:
+    """准备本轮交付目录：返回 (轮次目录名, 虚拟绝对路径)，并在宿主侧建好目录。
+
+    Args:
+        user_id: 当前用户 ID。
+        thread_id: 当前会话 ID。
+
+    Returns:
+        ``(turn_dir, delivery_dir)``，例如 ``("turn-1", "/artifacts/<thread>/turn-1")``。
+    """
+    turn = next_turn_dir(user_id, thread_id)
+    delivery = delivery_virtual_dir(thread_id, turn)
+    delivery_host_dir(user_id, thread_id, turn, create=True)
+    return turn, delivery
+
+
 def _build_user_body(req: ChatRequest) -> str:
     """按 parts 还原输入框正文；未传 parts 时退回纯文本 message。"""
     if not req.parts:
@@ -255,8 +283,10 @@ async def _resolve_selection(
         ).scalar_one_or_none()
     if expert is not None and expert.is_published and expert.status == "active":
         hints.append(
-            "【专家】本次任务已选择专家「" + expert.name + "」，"
-            "请优先把适合该专家的子任务委派给它处理，并汇总其结果。"
+            "【专家】本次任务已选择专家「" + expert.name + "」："
+            "必须先用 task 工具把任务交给该专家（subagent_type 使用该专家名称），"
+            "任务描述里要带上用户的完整需求与本条【交付目录】信息；"
+            "等专家返回后再汇总其产出给用户，不要自己直接完成该专家的写作工作。"
         )
         payload["expert_id"] = expert.id
         payload["expert_name"] = expert.name
@@ -360,6 +390,14 @@ async def chat(
         resolved_paths = await _resolve_attachment_paths(db, merged_attachment_ids)
 
     selection_hints, selection_payload = await _resolve_selection(db, req, user_id)
+    # 本轮交付目录：会话 + 轮次子目录（宿主 staging），并注入给模型
+    turn_dir, delivery_dir = await asyncio.to_thread(
+        _prepare_delivery, user_id, thread_id
+    )
+    platform = normalize_platform(req.platform)
+    selection_hints.append(delivery_hint(thread_id, turn_dir))
+    selection_payload["delivery_dir"] = delivery_dir
+    selection_payload["platform"] = platform
     if req.allow_network or req.allow_shell or req.workspace_id:
         await log_event(
             db,
@@ -403,6 +441,10 @@ async def chat(
         allow_network=allow_network,
         allow_shell=allow_shell,
         workspace_id=workspace_id,
+        delivery_dir=delivery_dir,
+        expert_id=str(selection_payload.get("expert_id") or ""),
+        expert_name=str(selection_payload.get("expert_name") or ""),
+        platform=platform,
     )
 
     try:
@@ -484,6 +526,14 @@ async def chat_stream(
         resolved_paths = await _resolve_attachment_paths(db, merged_attachment_ids)
 
     selection_hints, selection_payload = await _resolve_selection(db, req, user_id)
+    # 本轮交付目录：会话 + 轮次子目录（宿主 staging），并注入给模型
+    turn_dir, delivery_dir = await asyncio.to_thread(
+        _prepare_delivery, user_id, thread_id
+    )
+    platform = normalize_platform(req.platform)
+    selection_hints.append(delivery_hint(thread_id, turn_dir))
+    selection_payload["delivery_dir"] = delivery_dir
+    selection_payload["platform"] = platform
     if req.allow_network or req.allow_shell or req.workspace_id:
         await log_event(
             db,
@@ -527,6 +577,10 @@ async def chat_stream(
         allow_network=allow_network,
         allow_shell=allow_shell,
         workspace_id=workspace_id,
+        delivery_dir=delivery_dir,
+        expert_id=str(selection_payload.get("expert_id") or ""),
+        expert_name=str(selection_payload.get("expert_name") or ""),
+        platform=platform,
     )
 
     effective_message = req.message
@@ -542,6 +596,28 @@ async def chat_stream(
     async def event_generator():
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
         run_failed = False
+        # 本次流已推送过 artifact 事件的产物标识（artifact_id 或路径）
+        emitted_artifacts: set[str] = set()
+
+        async def push_new_turn_artifacts() -> None:
+            """补推本轮交付目录中尚未推送过的产物事件。
+
+            ``download_asset`` 等工具在工具内部直接登记产物，基于工具入参的登记
+            逻辑看不到「新增」，因此需要按交付目录差集补推，否则前端当轮拿不到
+            交付物卡片与打包入口。
+            """
+            try:
+                items = await list_artifacts(thread_id, user_id)
+            except Exception:
+                logger.warning(
+                    "读取本轮交付物失败（thread_id=%s）", thread_id, exc_info=True
+                )
+                return
+            for artifact in pick_turn_artifacts(items, delivery_dir, emitted_artifacts):
+                await queue.put({
+                    "event": "artifact",
+                    "data": artifact.to_dict(),
+                })
 
         async def consume_all() -> None:
             nonlocal run_failed
@@ -608,10 +684,13 @@ async def chat_stream(
                         for artifact in await record_artifacts(
                             thread_id, user_id, call.tool_name, input_str
                         ):
+                            emitted_artifacts.add(artifact.artifact_id or artifact.path)
                             await queue.put({
                                 "event": "artifact",
                                 "data": artifact.to_dict(),
                             })
+                        # 工具自身已登记的交付物（如 download_asset 代理下载的配图）补推事件
+                        await push_new_turn_artifacts()
 
                 async def consume_subagents() -> None:
                     async for subagent in stream.subagents:
@@ -731,8 +810,28 @@ async def chat_stream(
 
         await consumer
 
+        # 轮末兜底：把交付目录中未被工具登记的文件补登记并物化（脚本产物等）
+        try:
+            scanned = await scan_delivery_artifacts(user_id, thread_id, turn_dir)
+            if scanned:
+                logger.info(
+                    "交付目录扫描补登记 %d 个产物（thread_id=%s）", len(scanned), thread_id
+                )
+        except Exception:
+            logger.warning("交付目录扫描失败（thread_id=%s）", thread_id, exc_info=True)
+
         # 流结束后补全产物元信息（物化 + 文件大小），并把最新元信息推给前端
-        for updated_artifact in await _enrich_artifact_sizes(user_id, thread_id):
+        updated_artifacts = await _enrich_artifact_sizes(user_id, thread_id)
+
+        # 轮末补推本轮尚未推送过的交付物（轮末扫描登记的文章等），保证消息里出现交付物卡片
+        try:
+            turn_items = await list_artifacts(thread_id, user_id)
+            for artifact in pick_turn_artifacts(turn_items, delivery_dir, emitted_artifacts):
+                yield f"data: {json.dumps({'event': 'artifact', 'data': artifact.to_dict()}, ensure_ascii=False)}\n\n"
+        except Exception:
+            logger.warning("轮末补推交付物事件失败（thread_id=%s）", thread_id, exc_info=True)
+
+        for updated_artifact in updated_artifacts:
             yield f"data: {json.dumps({'event': 'artifact_updated', 'data': updated_artifact.to_dict()}, ensure_ascii=False)}\n\n"
 
         yield f"data: {json.dumps({'event': 'done', 'data': {'thread_id': thread_id, 'duration_ms': int((time.time() - _start_time) * 1000)}}, ensure_ascii=False)}\n\n"
@@ -863,6 +962,38 @@ async def download_chat_artifact(
         return FileResponse(local_path, media_type=media_type, headers=headers)
 
     return await _storage_response(request, store, key, media_type, headers)
+
+
+@router.get("/chat/artifacts/{thread_id}/bundle.zip")
+async def download_artifact_bundle(
+    thread_id: str,
+    scope: str = "turn",
+    turn: str | None = None,
+    user_id: str = Depends(get_current_user_id),
+):
+    """打包下载交付目录（scope=turn 本轮 / scope=thread 整个会话）。
+
+    Args:
+        thread_id: 会话 ID。
+        scope: ``turn`` 只打包本轮；``thread`` 打包整个会话。
+        turn: 指定轮次目录名（缺省取最新一轮）。
+        user_id: 当前登录用户。
+
+    Returns:
+        zip 响应；无内容或不属于该用户时返回 404。
+    """
+    normalized_scope = "thread" if scope == "thread" else "turn"
+    packed = await asyncio.to_thread(
+        build_bundle_zip, user_id, thread_id, scope=normalized_scope, turn=turn
+    )
+    if packed is None:
+        raise HTTPException(status_code=404, detail="没有可打包的交付文件")
+
+    archive_name, content = packed
+    headers = {
+        "Content-Disposition": "attachment; filename*=UTF-8''" + quote(archive_name, safe="")
+    }
+    return Response(content=content, media_type="application/zip", headers=headers)
 
 
 async def _ensure_materialized(

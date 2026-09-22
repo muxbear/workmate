@@ -307,6 +307,27 @@ export interface WorkspaceAPI {
     relPath: string,
     bytes: Uint8Array | ArrayBuffer
   ): Promise<IpcResult<null>>
+
+  /** 打包导出为 zip（写入工作空间根目录，返回导出的相对路径） */
+  exportWorkspaceZip(
+    workspaceId: string,
+    relPaths: string[],
+    zipName?: string
+  ): Promise<IpcResult<WorkspaceZipExport>>
+}
+
+/** 工作空间 zip 导出结果 */
+export interface WorkspaceZipExport {
+  /** 导出文件在工作空间内的相对路径 */
+  relPath: string
+  /** 导出文件绝对路径 */
+  absPath: string
+  /** 打包的文件数量 */
+  entries: number
+  /** zip 字节数 */
+  size: number
+  /** 用户在「另存为」中取消时为 true（此时其它字段为空值） */
+  canceled?: boolean
 }
 
 /** ~/.ke-work 存储统计（config:storage-stats） */
@@ -864,6 +885,8 @@ export interface DesktopExpert {
   mcpConfigs: DesktopMcpConfig[]
   promptTemplate: string
   expertiseAreas: string[]
+  /** 声明式能力（image.generate / document.assemble 等）；老数据可能缺失 */
+  capabilities?: string[]
   isExpert: boolean
 }
 

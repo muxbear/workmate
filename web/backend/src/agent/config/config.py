@@ -127,6 +127,14 @@ class Settings(BaseSettings):
     ARTIFACT_GC_INTERVAL_SECONDS: int = int(
         os.getenv("ARTIFACT_GC_INTERVAL_SECONDS", "3600")
     )
+    # 后端代理下载（配图等素材）：超时、单文件上限、域名白名单（逗号分隔）
+    ARTIFACT_FETCH_TIMEOUT_SECONDS: int = int(
+        os.getenv("ARTIFACT_FETCH_TIMEOUT_SECONDS", "60")
+    )
+    ARTIFACT_FETCH_MAX_MB: int = int(
+        os.getenv("ARTIFACT_FETCH_MAX_MB", os.getenv("ARTIFACT_MAX_FILE_MB", "100"))
+    )
+    ARTIFACT_FETCH_ALLOWED_HOSTS: str = os.getenv("ARTIFACT_FETCH_ALLOWED_HOSTS", "")
 
     @field_validator("ARTIFACT_ROOT", mode="before")
     @classmethod

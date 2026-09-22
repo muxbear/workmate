@@ -243,23 +243,12 @@ class OpenSandBoxBackend(BaseSandbox):
                 continue
 
             try:
-                # 将字节内容转换成字符串
-                if isinstance(content, bytes):
-                    try:
-                        content_str = content.decode("utf-8")
-                        logger.debug(
-                            f"用 utf-8 解码字节，获取到内容长度：{len(content_str)}"
-                        )
-                    except UnicodeDecodeError as decode_error:
-                        logger.warning(
-                            f"用 utf-8 解码失败，将以字符串的形式存储，错误信息: {decode_error}"
-                        )
-                        content_str = str(content)
-                else:
-                    content_str = str(content)
+                # 字节内容原样上传：二进制（图片/音视频等）一旦被解码再回写就会损坏，
+                # WriteEntry 的 data 支持 str | bytes，这里按原始类型透传。
+                payload: str | bytes = content if isinstance(content, bytes) else str(content)
 
                 upload_entries.append(
-                    WriteEntry(path=path, data=content_str, mode=0o644)
+                    WriteEntry(path=path, data=payload, mode=0o644)
                 )
                 responses.append(FileUploadResponse(path=path, error=None))
                 logger.debug(f"文件 {path} 已加入到上传队列")

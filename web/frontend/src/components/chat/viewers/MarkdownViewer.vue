@@ -1,12 +1,49 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { marked } from 'marked'
+import { buildImageSrcMap } from '@/utils/markdownArtifacts'
+import { useArtifactImages } from '@/composables/useArtifactImages'
 import type { DocumentPayload } from '@/types/document'
 
-/** Markdown 文档组件：渲染标题、列表、代码块、表格等富文本 */
+/** Markdown 文档组件：渲染富文本，并把文章内的相对路径配图解析为产物地址 */
 const props = defineProps<{ payload: DocumentPayload }>()
 
-const html = computed(() => marked.parse(props.payload.text || '', { breaks: true }))
+/** HTML 属性转义（marked 原样输出地址，映射后需自行转义） */
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/** 配图需带鉴权拉取字节（<img> 无法携带 Authorization），统一换成 blob 地址 */
+const images = useArtifactImages(
+  () => props.payload.text || '',
+  () => ({
+    threadId: props.payload.threadId,
+    basePath: props.payload.basePath,
+    artifactPaths: props.payload.artifactPaths,
+  }),
+)
+
+const html = computed(() => {
+  const text = props.payload.text || ''
+  const imageMap = buildImageSrcMap(text, {
+    threadId: props.payload.threadId,
+    basePath: props.payload.basePath,
+    artifactPaths: props.payload.artifactPaths,
+  })
+  const renderer = new marked.Renderer()
+  renderer.image = ({ href, title, text: alt }) => {
+    const raw = href ?? ''
+    const src = images.renderSrc(raw, imageMap)
+    const attrs = ['src="' + escapeAttr(src) + '"', 'alt="' + escapeAttr(alt ?? '') + '"']
+    if (title) attrs.push('title="' + escapeAttr(title) + '"')
+    return '<img ' + attrs.join(' ') + '>'
+  }
+  return marked.parse(text, { breaks: true, renderer })
+})
 </script>
 
 <template>

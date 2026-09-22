@@ -1,16 +1,38 @@
 import { DynamicStructuredTool } from '@langchain/core/tools'
+import type { RunnableConfig } from '@langchain/core/runnables'
 import { z } from 'zod'
+
+/** 从工具运行配置中解析当前会话的工作区目录（agent:send 注入 configurable.workspace_dir） */
+function resolveWorkspaceDir(config?: RunnableConfig): string {
+  const raw = config as
+    | {
+        configurable?: Record<string, unknown>
+        config?: { configurable?: Record<string, unknown> }
+      }
+    | undefined
+  const value = raw?.configurable?.workspace_dir ?? raw?.config?.configurable?.workspace_dir
+  return typeof value === 'string' ? value : ''
+}
 import type { ModelService } from '../../model/ModelService'
+import {
+  CAPABILITY_DOCUMENT_ASSEMBLE,
+  CAPABILITY_IMAGE_GENERATE
+} from '../../experts/expertContract'
+import { downloadAssetToWorkspace } from './ArtifactAssetService'
 import { generateImage } from './ImageGenerationService'
 
 export function buildExpertTools(
   toolNames: string[],
   modelService?: ModelService,
-  imageModelName?: string | null
+  imageModelName?: string | null,
+  /** 专家声明的能力（声明式驱动；缺省或为空时回退到工具名匹配，兼容存量专家） */
+  capabilities: string[] = []
 ): DynamicStructuredTool[] {
   const tools: DynamicStructuredTool[] = []
+  const enabled = (capability: string, toolName: string): boolean =>
+    capabilities.includes(capability) || toolNames.includes(toolName)
 
-  if (toolNames.includes('image_generate')) {
+  if (enabled(CAPABILITY_IMAGE_GENERATE, 'image_generate')) {
     tools.push(
       new DynamicStructuredTool({
         name: 'image_generate',
@@ -22,6 +44,34 @@ export function buildExpertTools(
         func: async ({ prompt, size }) => {
           const result = await generateImage({ prompt, size, modelService, imageModelName })
           return JSON.stringify(result)
+        }
+      })
+    )
+  }
+
+  if (enabled(CAPABILITY_DOCUMENT_ASSEMBLE, 'download_asset')) {
+    tools.push(
+      new DynamicStructuredTool({
+        name: 'download_asset',
+        description:
+          '把远程图片（如 AI 生成配图返回的临时地址）下载到工作区交付目录，返回保存路径、大小与类型。',
+        schema: z.object({
+          url: z.string().describe('图片地址（http/https）'),
+          rel_path: z
+            .string()
+            .describe('相对交付目录的保存路径，如 文章标题/figure-1.png')
+        }),
+        func: async ({ url, rel_path }, _runManager, config) => {
+          const workspaceDir = resolveWorkspaceDir(config)
+          if (!workspaceDir) {
+            return JSON.stringify({ error: '缺少工作区目录，无法保存素材' })
+          }
+          try {
+            const saved = await downloadAssetToWorkspace({ url, relPath: rel_path, workspaceDir })
+            return JSON.stringify(saved)
+          } catch (error) {
+            return JSON.stringify({ error: (error as Error).message })
+          }
         }
       })
     )

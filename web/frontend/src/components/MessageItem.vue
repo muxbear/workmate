@@ -10,6 +10,7 @@ import {
   Square,
   RotateCcw,
   Download,
+  Package,
   FileText,
   Share2,
   ThumbsDown,
@@ -17,7 +18,11 @@ import {
 } from 'lucide-vue-next'
 import { marked } from 'marked'
 import { artifactKindLabel, formatFileSize } from '@/utils/format'
+import { buildImageSrcMap } from '@/utils/markdownArtifacts'
+import { useArtifactImages } from '@/composables/useArtifactImages'
+import { turnLabel } from '@/utils/artifactGroups'
 import { useChatStore } from '@/stores/chat'
+import { parseBundleTurn } from '@/stores/workspace'
 import TraceTree from './TraceTree.vue'
 import type { ChatMessage } from '@/types/chat'
 
@@ -65,11 +70,59 @@ const hasMeta = computed(() =>
   Boolean(props.message.durationMs || props.message.model || props.message.createdAt),
 )
 
+/** 当前消息里的文档产物路径（作为配图相对路径的基准目录） */
+const docPath = computed(() => {
+  const items = props.message.artifacts ?? []
+  const doc = items.find((item) => /\.(md|markdown)$/i.test(item.path))
+  return doc?.path ?? ''
+})
+
+/** 本轮交付轮次（从文档路径解析），用于「打包下载本轮」 */
+const bundleTurn = computed(() => parseBundleTurn(docPath.value))
+
+/** Markdown 属性转义 */
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/** 配图需带鉴权拉取字节（<img> 无法携带 Authorization），统一换成 blob 地址 */
+const images = useArtifactImages(
+  () => (props.message.role === 'user' ? '' : props.message.content),
+  () => ({
+    threadId: chatStore.threadId,
+    basePath: docPath.value,
+    artifactPaths: (props.message.artifacts ?? []).map((item) => item.path),
+  }),
+)
+
 const renderedContent = computed(() => {
   if (props.message.role === 'user') return props.message.content
   if (!props.message.content) return ''
-  return marked.parse(props.message.content, { breaks: true })
+
+  const imageMap = buildImageSrcMap(props.message.content, {
+    threadId: chatStore.threadId,
+    basePath: docPath.value,
+    artifactPaths: (props.message.artifacts ?? []).map((item) => item.path),
+  })
+  const renderer = new marked.Renderer()
+  renderer.image = ({ href, title, text: alt }) => {
+    const raw = href ?? ''
+    const src = images.renderSrc(raw, imageMap)
+    const attrs = ['src="' + escapeAttr(src) + '"', 'alt="' + escapeAttr(alt ?? '') + '"']
+    if (title) attrs.push('title="' + escapeAttr(title) + '"')
+    return '<img ' + attrs.join(' ') + '>'
+  }
+  return marked.parse(props.message.content, { breaks: true, renderer })
 })
+
+/** 打包下载本轮交付物（文章 + 同目录配图） */
+function handleBundleDownload(): void {
+  void chatStore.downloadBundle('turn', bundleTurn.value)
+}
 
 function formatDuration(ms?: number): string {
   if (!ms || ms <= 0) return ''
@@ -160,6 +213,17 @@ function fileExtension(filename: string): string {
         v-if="message.role === 'assistant' && message.artifacts && message.artifacts.length > 0"
         class="artifact-list"
       >
+        <div class="artifact-head">
+          <span class="artifact-head-title">{{ turnLabel(bundleTurn) || '本轮交付物' }}</span>
+          <button
+            class="artifact-bundle"
+            title="打包下载本轮交付物（文章 + 配图）"
+            @click.stop="handleBundleDownload"
+          >
+            <Package :size="12" />
+            <span>打包下载</span>
+          </button>
+        </div>
         <div
           v-for="artifact in message.artifacts"
           :key="artifact.path"
@@ -617,6 +681,38 @@ function fileExtension(filename: string): string {
 
 .artifact-download:hover {
   color: var(--accent-primary);
+}
+
+.artifact-bundle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px dashed var(--border-medium);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.artifact-bundle:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.artifact-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 2px;
+}
+
+.artifact-head-title {
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 .message-meta {

@@ -257,6 +257,10 @@ const api = {
   writeWorkspaceFile(workspaceId: string, relPath: string, bytes: Uint8Array | ArrayBuffer) {
     return ipcRenderer.invoke('workspace:write-file', workspaceId, relPath, bytes)
   },
+  /** 打包导出：把工作空间内的文件/目录导出为 zip（落工作空间根目录） */
+  exportWorkspaceZip(workspaceId: string, relPaths: string[], zipName?: string) {
+    return ipcRenderer.invoke('workspace:export-zip', workspaceId, relPaths, zipName)
+  },
   browserNavigate(url: string) {
     return ipcRenderer.invoke('browser:navigate', url)
   },

@@ -1,0 +1,83 @@
+{
+  "steps": [
+    {
+      "name": "历史会话列表可用",
+      "pass": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "打开最近会话",
+      "pass": true,
+      "detail": "messages=2"
+    },
+    {
+      "name": "历史回看可见产物卡片",
+      "pass": true,
+      "detail": "[{\"title\":\"/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/figure-1.png\",\"text\":\"figure-1.png 图片 · 1.2 MB\"},{\"title\":\"/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/figure-2.png\",\"text\":\"figure-2.png 图片 · 1.5 MB\"},{\"title\":\"/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公.md\",\"text\":\"人工智能如何改变日常办公.md 文本 · 1.9 KB\"}]"
+    },
+    {
+      "name": "存在“打包下载”入口",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "消息气泡内含配图",
+      "pass": true,
+      "detail": "count=2"
+    },
+    {
+      "name": "消息气泡配图加载成功",
+      "pass": false,
+      "detail": "[{\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png\",\"nw\":0,\"nh\":0},{\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png\",\"nw\":0,\"nh\":0}]"
+    },
+    {
+      "name": "右侧文档预览内含配图",
+      "pass": true,
+      "detail": "count=2"
+    },
+    {
+      "name": "右侧文档预览配图加载成功",
+      "pass": false,
+      "detail": "[{\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png\",\"nw\":0,\"nh\":0},{\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png\",\"nw\":0,\"nh\":0}]"
+    }
+  ],
+  "cards": [
+    {
+      "title": "/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/figure-1.png",
+      "text": "figure-1.png 图片 · 1.2 MB"
+    },
+    {
+      "title": "/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/figure-2.png",
+      "text": "figure-2.png 图片 · 1.5 MB"
+    },
+    {
+      "title": "/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公.md",
+      "text": "人工智能如何改变日常办公.md 文本 · 1.9 KB"
+    }
+  ],
+  "bubbleImages": [
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png",
+      "nw": 0,
+      "nh": 0
+    },
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png",
+      "nw": 0,
+      "nh": 0
+    }
+  ],
+  "previewImages": [
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png",
+      "nw": 0,
+      "nh": 0
+    },
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png",
+      "nw": 0,
+      "nh": 0
+    }
+  ],
+  "imgHtml": "re-2.png</code>（人与 AI 协同办公场景）</li>\n</ul>\n</li>\n</ul>\n<hr>\n<h1>人工智能如何改变日常办公</h1>\n<p>曾几何时，办公室里最耗时的往往是那些重复性事务：录入数据、整理会议纪要、排定日程、回复邮件。如今，人工智能正悄然成为每个人的\"数字同事\"。它并非来抢走工作，而是把我们从琐碎事务中解放出来，让\"办公\"这件事发生深刻改变。</p>\n<p><img src=\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&amp;path=%2Fartifacts%2F01a0c904-e08f-7063-b899-8c060332fd32%2Fturn-1%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png\" alt=\"AI 自动整理文档与日程\"></p>\n<h2>一、把重复劳动交给\"机器同事\"</h2>\n<p>在日常办公中，大量时间被消耗在格式统一、数据录入、表格汇总等重复性任务上。借助 AI，这些工作正被逐步自动化：智"
+}

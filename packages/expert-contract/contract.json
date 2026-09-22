@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "WorkMate 专家能力契约：专家只声明能力，各端按平台映射实现；三处镜像（本文件 / desktop/src/main/experts/expertContract.ts / web/backend/src/agent/experts/capabilities.py）由两侧契约测试保持一致。",
+  "platforms": ["desktop", "web", "mobile"],
+  "capabilities": ["image.generate", "document.assemble", "web.search", "video.generate"],
+  "promptVariables": ["delivery_dir", "asset_tool", "platform_notes"],
+  "assetTool": "download_asset",
+  "deliverable": {
+    "root": "<title>.md",
+    "resourceDir": "<title>/",
+    "resourcePattern": "figure-{n}.{ext}",
+    "webDeliveryRoot": "/artifacts/<thread_id>/turn-<n>"
+  },
+  "notes": [
+    "能力标识变更必须同步三处镜像，否则两侧契约测试会失败。",
+    "新增平台（如 mobile 接入完成后）在 platforms 中登记，并在各端实现 WorkspacePort / DeliverablePort。"
+  ]
+}

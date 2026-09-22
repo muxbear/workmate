@@ -33,4 +33,10 @@ export interface DocumentPayload {
   text: string
   /** 二进制文档的对象地址（图片 / PDF 等使用） */
   url: string
+  /** 所属会话 id：Markdown 内相对路径配图需要它来拼产物地址 */
+  threadId?: string
+  /** 当前文档的虚拟路径（作为相对图片的基准目录） */
+  basePath?: string
+  /** 会话产物虚拟路径集合（判断相对路径是否命中真实产物） */
+  artifactPaths?: string[]
 }

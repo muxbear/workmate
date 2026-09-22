@@ -8,6 +8,10 @@ export interface WorkspaceHandlerDeps {
   session: SessionService
   /** 级联删除会话：移除工作空间时先删其下会话数据 */
   conversationStore: ConversationStore
+  /** 选择 zip 保存位置（系统「另存为」）；缺省时导出到工作空间根目录 */
+  chooseZipPath?: (defaultName: string) => Promise<string | null>
+  /** 导出完成后在系统文件管理器中定位文件 */
+  revealFile?: (absPath: string) => Promise<void>
 }
 
 function ok<T>(data: T): { success: true; data: T } {
@@ -145,6 +149,43 @@ export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDe
       return fail((err as Error).message)
     }
   })
+
+  ipc.handle(
+    'workspace:export-zip',
+    async (_event, id?: unknown, relPaths?: unknown, zipName?: unknown) => {
+      if (typeof id !== 'string' || !id) return fail('参数错误')
+      if (!Array.isArray(relPaths) || relPaths.some((item) => typeof item !== 'string')) {
+        return fail('参数错误')
+      }
+      try {
+        const userId = session.requireUserId()
+        const name = typeof zipName === 'string' ? zipName : undefined
+        const paths = relPaths as string[]
+
+        let destAbsPath: string | undefined
+        if (deps.chooseZipPath) {
+          const chosen = await deps.chooseZipPath(workspaceService.suggestZipName(paths, name))
+          if (!chosen) {
+            // 用户取消另存为：不落盘，返回取消标记由渲染层静默处理
+            return ok({ canceled: true, relPath: '', absPath: '', entries: 0, size: 0 })
+          }
+          destAbsPath = chosen
+        }
+
+        const result = await workspaceService.exportZip(id, userId, paths, name, destAbsPath)
+        if (deps.revealFile) {
+          try {
+            await deps.revealFile(result.absPath)
+          } catch (err) {
+            console.warn('[workspace] reveal exported zip failed:', err)
+          }
+        }
+        return ok({ ...result, canceled: false })
+      } catch (err) {
+        return fail((err as Error).message)
+      }
+    }
+  )
 
   ipc.handle(
     'workspace:write-file',

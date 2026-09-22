@@ -23,7 +23,13 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.experts.capabilities import (
+    capability_builtin_tools,
+    capabilities_for_mcp_services,
+    capabilities_for_tools,
+)
 from agent.graph import invalidate_graph
+from api.experts.prompt_render import render_expert_prompt
 from api.experts.schemas import (
     ExpertConfigUpdateRequest,
     ExpertCreateRequest,
@@ -102,6 +108,14 @@ class ExpertAssembler:
         skills = await _query_skills(db, expert.id)
         mcp_configs = await _query_mcp_configs(db, expert.id)
 
+        # 能力既可由已有工具反推（存量专家），也可由 MCP 服务反推
+        capabilities = capabilities_for_tools([tool.name for tool in tools])
+        for name in capabilities_for_mcp_services(
+            [config.mcp_tool_name for config in mcp_configs]
+        ):
+            if name not in capabilities:
+                capabilities.append(name)
+
         model_name = None
         model_type = None
         if expert.model_id:
@@ -137,6 +151,7 @@ class ExpertAssembler:
             model_type=model_type,
             prompt_template="",
             expertise_areas=[],
+            capabilities=capabilities,
             tools=tools,
             skills=skills,
             mcp_configs=mcp_configs,
@@ -173,6 +188,7 @@ class ExpertAssembler:
             mcp_configs=expert.mcp_configs,
             prompt_template=expert.prompt_template,
             expertise_areas=expert.expertise_areas,
+            capabilities=expert.capabilities,
         )
 
 
@@ -813,8 +829,15 @@ async def get_featured(db: AsyncSession) -> dict[str, Any]:
 # ── 同步 API ─────────────────────────────────────────────────
 
 
-async def sync_list(db: AsyncSession) -> ExpertSyncListResponse:
-    """获取所有已发布专家的精简数据（供桌面端/移动端同步）。."""
+async def sync_list(
+    db: AsyncSession, platform: str = "web"
+) -> ExpertSyncListResponse:
+    """获取所有已发布专家的精简数据（供桌面端/移动端同步）。.
+
+    Args:
+        db: 数据库会话。
+        platform: 目标端（desktop / web / mobile），用于渲染平台化提示词。
+    """
     stmt = (
         select(Expert)
         .where(
@@ -824,10 +847,15 @@ async def sync_list(db: AsyncSession) -> ExpertSyncListResponse:
         .order_by(Expert.sort_order.desc())
     )
     rows = (await db.execute(stmt)).scalars().all()
-    items = [
-        await ExpertAssembler.to_sync_item(await ExpertAssembler.assemble(db, expert))
-        for expert in rows
-    ]
+    items: list[ExpertSyncItem] = []
+    for expert in rows:
+        info = await ExpertAssembler.assemble(db, expert)
+        rendered = render_expert_prompt(info.system_prompt, platform=platform)
+        items.append(
+            await ExpertAssembler.to_sync_item(
+                info.model_copy(update={"system_prompt": rendered})
+            )
+        )
     return ExpertSyncListResponse(
         items=items,
         total=len(items),
@@ -856,36 +884,42 @@ BUILTIN_EXPERTS: list[dict[str, Any]] = [
         "is_published": True,
         "model_name": "deepseek-v4-pro",
         "mcp_tool_name": "AI 图像生成",
-        "system_prompt": r"""你是 WorkMate 的「文档写作专家」。你的任务是：根据用户提出的写作要求，撰写一篇结构完整、内容充实、语言流畅的文章；在文中合适的位置配图，并把配图和文章一并保存到本次会话绑定的工作区目录。
+        "capabilities": ["image.generate", "document.assemble"],
+        "system_prompt": r"""你是 WorkMate 的「文档写作专家」。你的任务是：根据用户提出的写作要求，撰写一篇结构完整、内容充实、语言流畅的文章；在文中合适的位置配图，并把配图和文章一起保存到本次任务的交付目录。
+
+## 运行环境
+{{platform_notes}}
+
+## 交付目录（必须严格遵守）
+本次任务的交付目录写在任务描述或用户消息的【交付目录】一行中，形如「交付目录前缀为 X」。
+- 文章写到 <交付目录前缀><文章标题>.md；若同名文件已存在，则追加 -1、-2 等序号，避免覆盖；文件名不要包含非法字符。
+- 配图写到与文章文件同名的子目录：<交付目录前缀><文章标题>/figure-1.png、figure-2.png……，扩展名与实际格式一致。
+- 若任务中没有给出交付目录，就把文件写到工作区根目录（文件工具的 / 下）。
+- 所有路径都使用文件工具的虚拟路径，不要编造或输出物理路径。
 
 ## 写作流程
-1. 理解用户的写作要求（主题、体裁、受众、篇幅、风格等），如信息不足可先向用户确认关键信息。
+1. 理解用户的写作要求（主题、体裁、受众、篇幅、风格等），信息不足时先向用户确认关键信息。
 2. 规划文章结构：拟定标题、引言、若干小节（带小标题）与结尾。
 3. 分节撰写正文，语言生动准确、逻辑清晰，避免空话套话。
 
-## 工作区落盘要求（必须执行，不能省略）
-- 文件工具的工作根目录 = 会话绑定的工作区。文件工具使用虚拟路径表示工作区：工作区根目录是 /；execute 的当前目录就是工作区的物理目录。
-- 文章保存到工作区根目录，文件名用文章标题，扩展名为 .md（如 文章标题.md；若同名文件已存在，则追加 -1、-2 等序号，避免覆盖），文件名不要包含 Windows 非法字符。
-- 图片必须保存在与文章文件同名的目录中：目录名与最终确定的文章文件名一致（不含 .md 扩展名）。例如文章保存为 /文章标题.md 时，图片目录必须是 /文章标题/；若文章因重名保存为 /文章标题-1.md，图片目录必须是 /文章标题-1/。所有配图只允许保存到该同名目录。
+## 配图流程
+1. 在适合插图的位置（封面、章节开头、概念说明处、总结处）调用图像生成工具生成配图；可用工具：text_to_image（单张）、text_to_image_batch（风格一致的组图）、image_to_image_batch（基于参考图）。
+2. 图像生成工具返回的 images 里的 url 是临时网络地址，严禁直接写进文章，也不要使用其它下载方式。
+3. 每张图都用素材工具保存，例如：
+   {{asset_tool}}(url="<图片url>", rel_path="<文章标题>/figure-1.png")
+   该工具会完成下载、落盘与登记，使图片可预览、可下载、可打包。
+4. 保存后用文件工具列出图片目录校验文件存在且非空；失败重试一次，仍失败则跳过该图，并在最终回复中说明哪张图未保存。
 
-### 配图与图片落盘步骤
-1. 在适合插图的位置（封面、章节开头、概念说明处、总结处）调用 AI 图像生成工具生成配图；可用工具：text_to_image（单张）、text_to_image_batch（风格一致的组图）、image_to_image_batch（基于参考图）。
-2. 工具返回的 images 列表里的 url 是临时网络地址，严禁直接写进文章或最终回复。
-3. 开始落盘前先用 write_file 确定最终文章文件名，随后用 execute 创建同名图片目录，并把每张图下载到该目录（execute 当前目录就是工作区根目录；把 <目录名> 替换为与最终文章文件同名的实际目录名）：
-   - 先确保目录存在：if not exist "<目录名>" mkdir "<目录名>"
-   - 再下载：curl.exe -sS -L -o "<目录名>\figure-1.png" "<图片url>"
-   - 若 curl 不可用，改用 PowerShell：powershell -NoProfile -Command "Invoke-WebRequest -Uri '<图片url>' -OutFile '<目录名>\figure-1.png'"
-   - 图片按插入顺序命名为 figure-1.png、figure-2.png……，扩展名与实际格式一致（jpg/png/webp 等）。
-4. 每下载一张图后用 ls /<目录名> 校验文件存在且非空；失败重试一次，仍失败则跳过该图，并在最终回复中说明哪张图未保存。
-
-### 保存文章
-- 全部配图落盘后，用 write_file 把完整 Markdown 文章写入工作区根目录对应的虚拟路径：/文章标题.md（实际文件名须与同名图片目录一一对应）。
-- 文章内图片一律使用相对路径，并且必须从同名图片目录引用：![](文章标题/figure-1.png)。例如文章保存为 /文章标题.md 时，配图引用写 ![](文章标题/figure-1.png)；文章保存为 /文章标题-1.md 时，配图引用写 ![](文章标题-1/figure-1.png)。禁止使用 http(s) 网络地址、file:// 绝对路径或 base64 data URI 作为图片引用。
+## 保存文章
+- 全部配图保存完成后，用文件工具把完整 Markdown 文章写入 <交付目录前缀><文章标题>.md。
+- 文章内图片一律使用相对路径，并从与文章同名的图片目录引用：![](<文章标题>/figure-1.png)。
+  禁止使用 http(s) 网络地址、file:// 绝对路径或 base64 data URI 作为图片引用。
 
 ## 输出要求
-- 最终回复开头用 execute 执行 cd 取得工作区物理绝对路径，并说明：文章已保存到哪里（物理绝对路径 + 文件名）、同名图片目录（物理绝对路径）、已保存图片文件名清单。
-- 随后输出完整 Markdown 文章正文；正文中的图片引用与文件内保持一致（<目录名>/figure-N.png 相对路径），不要输出网络图片地址。
-- 若图片生成或落盘失败，不要中断文章输出，继续完成写作并在回复中明确标注该图未保存。""",
+- 最终回复开头说明：文章保存路径、同名图片目录、已保存图片文件名清单。
+- 随后输出完整 Markdown 文章正文；正文中的图片引用与文件内容保持一致，不要输出网络图片地址。
+- 正文不要放进代码块：禁止用 ``` 代码围栏（或缩进代码块）包裹文章正文与图片引用 ![](...)，必须直接输出 Markdown 正文，否则聊天区无法渲染配图。
+- 若图片生成或保存失败，不要中断文章输出，继续完成写作并在回复中明确标注该图未保存。""",
     },
     {
         "name": "视频创作专家",
@@ -950,6 +984,39 @@ BUILTIN_EXPERTS: list[dict[str, Any]] = [
 - 用户提供的参考素材若无法访问，应明确说明，不强行提交。""",
     },
 ]
+def _declared_tool_names(item: dict[str, Any]) -> list[str]:
+    """内置专家声明的内置工具名：显式 tool_names 优先，否则由 capabilities 推导。"""
+    explicit = [str(name) for name in item.get("tool_names", []) if str(name).strip()]
+    if explicit:
+        return explicit
+    return capability_builtin_tools(item.get("capabilities", []))
+
+
+async def _ensure_expert_tool_links(
+    db: AsyncSession, expert: Expert, tool_names: list[str]
+) -> None:
+    """确保专家与指定内置工具的关联存在（幂等）。"""
+    for name in tool_names:
+        tool = (
+            await db.execute(select(Tool).where(Tool.name == name))
+        ).scalar_one_or_none()
+        if tool is None:
+            logger.warning("内置工具 '%s' 未找到，跳过专家关联", name)
+            continue
+        linked = (
+            await db.execute(
+                select(ExpertTool).where(
+                    ExpertTool.expert_id == expert.id,
+                    ExpertTool.tool_id == tool.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if linked is None:
+            db.add(ExpertTool(expert_id=expert.id, tool_id=tool.id))
+            logger.info("为专家 '%s' 补充工具关联 '%s'", expert.name, name)
+    await db.flush()
+
+
 # ── 内置专家种子数据 ─────────────────────────────────────────────────
 
 
@@ -991,6 +1058,7 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
                 logger.info(f'已更新内置专家 {existing.name} (id={existing.id})')
             else:
                 logger.info(f'内置专家 {existing.name} 已是最新，跳过')
+            await _ensure_expert_tool_links(db, existing, _declared_tool_names(item))
             continue
 
         agent_existing = (
@@ -1038,6 +1106,8 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
         )
         db.add(expert)
         await db.flush()
+
+        await _ensure_expert_tool_links(db, expert, _declared_tool_names(item))
 
         mcp_tool_name = item.get("mcp_tool_name")
         if mcp_tool_name:

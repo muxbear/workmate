@@ -52,7 +52,12 @@ async function expertToSubAgent(
     systemPrompt: expert.systemPrompt || '',
     model: await resolveExpertModel(expert, modelService),
     tools: [
-      ...buildExpertTools(expert.tools, modelService, expert.modelName),
+      ...buildExpertTools(
+        expert.tools,
+        modelService,
+        expert.modelName,
+        expert.capabilities ?? []
+      ),
       ...(await buildExpertMcpTools(expert.mcpConfigs))
     ],
     skills: buildExpertSkills(expert.skills)
@@ -81,6 +86,8 @@ export class AgentManager {
   private skills: string[] = []
   private experts: DesktopExpert[] = []
   private expertMode: 'selected' | 'all' = 'selected'
+  /** 专家集合签名（id 排序拼接）：集合未变化时复用已构建的 agent，避免每轮重建 */
+  private expertSignature = ''
   private currentMode: WorkMode = 'local'
 
   constructor(
@@ -207,8 +214,17 @@ export class AgentManager {
 
   /** 设置专家并重建 agent；调用方必须 await 后再发送消息。 */
   async setExperts(experts: DesktopExpert[]): Promise<void> {
+    const signature = experts
+      .map((expert) => expert.id)
+      .sort()
+      .join(',')
     this.experts = experts
+    if (signature === this.expertSignature && this.agent) {
+      // 同一批专家（例如同一会话连续多轮对话）：跳过重建，省下 agent/checkpointer 重建开销
+      return
+    }
     if (!this.builder) throw new Error('AgentManager not initialized')
+    this.expertSignature = signature
     this.initPromise = this.buildAgent(this.currentMode)
     await this.initPromise
   }

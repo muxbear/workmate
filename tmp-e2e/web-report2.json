@@ -1,0 +1,111 @@
+{
+  "steps": [
+    {
+      "name": "添加「文档写作专家」",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "生成结束",
+      "pass": true,
+      "detail": "elapsed=90s"
+    },
+    {
+      "name": "SSE 收到 artifact 事件（图片即时登记）",
+      "pass": false,
+      "detail": "{\"selection\":1,\"agent_start\":2,\"tool_start\":3,\"token\":913,\"tool_end\":3,\"agent_end\":2,\"done\":1}"
+    },
+    {
+      "name": "生成后（未刷新）有产物卡片",
+      "pass": false,
+      "detail": "cards=0"
+    },
+    {
+      "name": "生成后（未刷新）有打包入口",
+      "pass": false,
+      "detail": "bundle=0"
+    },
+    {
+      "name": "生成后（未刷新）配图渲染成功",
+      "pass": false,
+      "detail": "[{\"src\":\"/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disp\",\"nw\":0},{\"src\":\"/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disp\",\"nw\":0},{\"src\":\"/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disp\",\"nw\":0}]"
+    },
+    {
+      "name": "刷新后可见产物卡片",
+      "pass": true,
+      "detail": "[\"/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/turn-1/远程团队如何高效协作/figure-1.png\",\"/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/turn-1/远程团队如何高效协作.md\"]"
+    },
+    {
+      "name": "刷新后配图渲染成功",
+      "pass": false,
+      "detail": "[0,0]"
+    },
+    {
+      "name": "配图地址匿名访问被拒（401）",
+      "pass": true,
+      "detail": "{\"url\":\"/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disposition=inline&path=%2Fartifacts%2F01a0c915-bd8a-7010-8b80-9bc2d340c5a4%2Fturn-1%2F%E8%BF%9C%E7%A8%8B%E5%9B%A2%E9%98%9F%E5%A6%82%E4%BD%95%E9%AB%98%E6%95%88%E5%8D%8F%E4%BD%9C%2Ffigure-1.png\",\"anonStatus\":401,\"authedStatus\":200,\"authedType\":\"image/png\",\"authedBytes\":1161045}"
+    },
+    {
+      "name": "配图地址带 token 可访问（200）",
+      "pass": true,
+      "detail": "{\"url\":\"/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disposition=inline&path=%2Fartifacts%2F01a0c915-bd8a-7010-8b80-9bc2d340c5a4%2Fturn-1%2F%E8%BF%9C%E7%A8%8B%E5%9B%A2%E9%98%9F%E5%A6%82%E4%BD%95%E9%AB%98%E6%95%88%E5%8D%8F%E4%BD%9C%2Ffigure-1.png\",\"anonStatus\":401,\"authedStatus\":200,\"authedType\":\"image/png\",\"authedBytes\":1161045}"
+    }
+  ],
+  "sseEvents": {
+    "selection": 1,
+    "agent_start": 2,
+    "tool_start": 3,
+    "token": 913,
+    "tool_end": 3,
+    "agent_end": 2,
+    "done": 1
+  },
+  "live": {
+    "cards": 0,
+    "bundle": 0,
+    "images": [
+      {
+        "src": "/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disp",
+        "nw": 0
+      },
+      {
+        "src": "/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disp",
+        "nw": 0
+      },
+      {
+        "src": "/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disp",
+        "nw": 0
+      }
+    ]
+  },
+  "afterReload": {
+    "cards": [
+      {
+        "title": "/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/turn-1/远程团队如何高效协作/figure-1.png",
+        "text": "figure-1.png 图片 · 1.1 MB"
+      },
+      {
+        "title": "/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/turn-1/远程团队如何高效协作.md",
+        "text": "远程团队如何高效协作.md 文本 · 1.4 KB"
+      }
+    ],
+    "images": [
+      {
+        "src": "/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disposition=inline&path=%2Fartifacts%2F01a0c915-bd8a-7010-8b80-9bc2d340c5a4%2Fturn-1%2F%E8%BF%9C%E7%A8%8B%E5%9B%A2%E9%98%9F%E5%A6%82%E4%BD%95%E9%AB%98%E6%95%88%E5%8D%8F%E4%BD%9C%2Ffigure-1.png",
+        "nw": 0
+      },
+      {
+        "src": "/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disposition=inline&path=%2Fartifacts%2F01a0c915-bd8a-7010-8b80-9bc2d340c5a4%2Fturn-1%2F%E8%BF%9C%E7%A8%8B%E5%9B%A2%E9%98%9F%E5%A6%82%E4%BD%95%E9%AB%98%E6%95%88%E5%8D%8F%E4%BD%9C%2Ffigure-1.png",
+        "nw": 0
+      }
+    ],
+    "bundle": 1
+  },
+  "authProbe": {
+    "url": "/api/chat/artifacts/01a0c915-bd8a-7010-8b80-9bc2d340c5a4/download?disposition=inline&path=%2Fartifacts%2F01a0c915-bd8a-7010-8b80-9bc2d340c5a4%2Fturn-1%2F%E8%BF%9C%E7%A8%8B%E5%9B%A2%E9%98%9F%E5%A6%82%E4%BD%95%E9%AB%98%E6%95%88%E5%8D%8F%E4%BD%9C%2Ffigure-1.png",
+    "anonStatus": 401,
+    "authedStatus": 200,
+    "authedType": "image/png",
+    "authedBytes": 1161045
+  }
+}

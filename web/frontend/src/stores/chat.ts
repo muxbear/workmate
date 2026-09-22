@@ -5,6 +5,7 @@ import { useUiStore } from '@/stores/ui'
 import { useWorkspaceStore } from '@/stores/workspace'
 import {
   downloadArtifact as downloadArtifactFile,
+  downloadBundle as downloadBundleFile,
   fetchArtifactBlob as fetchArtifactBlobApi,
 } from '@/services/artifactApi'
 import type {
@@ -21,6 +22,7 @@ import type { StreamCallbacks, DoneInfo } from '@/services/request'
 import type { Attachment } from '@/types/chat'
 import { uploadAttachment, deleteAttachment } from '@/services/attachmentApi'
 import type { ConversationBlock } from '@/services/conversationApi'
+import { attachArtifactsToMessages } from '@/utils/artifactGroups'
 
 export type { ChatMessage }
 
@@ -243,6 +245,13 @@ export const useChatStore = defineStore('chat', () => {
     const tid = threadId.value
     if (!tid) return
     await downloadArtifactFile(tid, artifact.path, artifact.name)
+  }
+
+  /** 打包下载交付物：scope=turn 本轮 / scope=thread 整个会话 */
+  async function downloadBundle(scope: 'turn' | 'thread', turn?: string) {
+    const tid = threadId.value
+    if (!tid) return
+    await downloadBundleFile(tid, scope, turn)
   }
 
   function resetSelection() {
@@ -709,11 +718,8 @@ export const useChatStore = defineStore('chat', () => {
           if (typeof m.duration_ms === 'number') message.durationMs = m.duration_ms
           return message
         })
-      // 历史回显：把会话产物挂到最后一条 AI 回复上，点击文件即可在右侧标签页中打开
-      const lastAssistant = [...messages.value].reverse().find((item) => item.role === 'assistant')
-      if (lastAssistant && threadArtifacts.value.length > 0) {
-        lastAssistant.artifacts = [...threadArtifacts.value]
-      }
+      // 历史回显：会话产物按交付轮次挂到对应的 AI 回复上，点击文件即可在右侧标签页中打开
+      messages.value = attachArtifactsToMessages(messages.value, [...threadArtifacts.value])
       nextId = messages.value.length + 1
     } catch {
       // ignore
@@ -806,6 +812,7 @@ export const useChatStore = defineStore('chat', () => {
     isSearchHit,
     fetchArtifactBlob,
     downloadArtifact,
+    downloadBundle,
     setSelection,
     setExpert,
     toggleSkillId,

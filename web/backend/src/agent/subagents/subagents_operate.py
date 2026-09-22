@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 async def _load_expert_subagent_defs(session: AsyncSession) -> list[dict[str, Any]]:
     """从 experts 表加载已发布且启用的专家，组装为主智能体子代理。."""
     from agent.tools.registry import resolve_expert_tools  # noqa: PLC0415
+    from api.experts.prompt_render import render_expert_prompt  # noqa: PLC0415
 
     stmt = (
         select(Expert)
@@ -57,7 +58,11 @@ async def _load_expert_subagent_defs(session: AsyncSession) -> list[dict[str, An
                 "description": expert.description or "",
                 "tools": tools,
                 "model": await resolve_model(expert.provider_id, expert.model_id),
-                "system_prompt": expert.system_prompt or "",
+                "system_prompt": render_expert_prompt(
+                    expert.system_prompt or "",
+                    platform="web",
+                    include_platform_notes=False,
+                ),
                 "skills": [f"/skills/{expert.id}/"],
             }
         )

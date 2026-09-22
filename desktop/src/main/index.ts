@@ -438,6 +438,22 @@ app.whenReady().then(() => {
     const err = await shell.openPath(p)
     if (err) throw new Error(err)
   }
+  /** 打包下载的「另存为」：默认落在系统下载目录，用户取消返回 null */
+  const chooseZipPath = async (defaultName: string): Promise<string | null> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const options = {
+      defaultPath: join(app.getPath('downloads'), defaultName),
+      filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }]
+    }
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
+    return result.canceled || !result.filePath ? null : result.filePath
+  }
+  /** 导出完成后在资源管理器中定位文件 */
+  const revealFile = async (absPath: string): Promise<void> => {
+    shell.showItemInFolder(absPath)
+  }
 
   // eslint-disable-next-line prefer-const
   let workspaceService: WorkspaceService
@@ -478,7 +494,13 @@ app.whenReady().then(() => {
       onWorkspaceMigrated: (moves) => conversationStore.syncWorkspaceDirs(moves)
     }
   )
-  registerWorkspaceHandlers(ipcMain, { workspaceService, conversationStore, session })
+  registerWorkspaceHandlers(ipcMain, {
+    workspaceService,
+    conversationStore,
+    session,
+    chooseZipPath,
+    revealFile
+  })
   registerBrowserHandlers(ipcMain, {
     getBrowserManager: (event: IpcMainInvokeEvent): BrowserViewManager => {
       const win = BrowserWindow.fromWebContents(event.sender)

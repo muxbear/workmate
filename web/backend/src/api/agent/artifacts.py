@@ -8,11 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import re
 import time
 import uuid
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -56,6 +58,9 @@ _PATH_KEYS: tuple[str, ...] = (
 
 # shell 重定向目标：> file / >> file / tee file
 _REDIRECT_RE = re.compile(r"(?:>>?|(?:^|\s)tee(?:\s+-a)?)\s+([^\s;|'\"<>]+)")
+
+# 协议地址（http/data/file 等）不作为产物路径
+_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 
 # 产物路径排除规则（系统目录与编译缓存）
 _SKIP_PREFIXES: tuple[str, ...] = (
@@ -111,6 +116,8 @@ class Artifact:
     artifact_id: str = ""
     status: str = STATUS_PENDING
     storage_key: str = ""
+    # 交付轮次（turn-<n>）；非交付目录产物为空串
+    turn: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为可 JSON 序列化的字典（SSE 与列表接口共用）。"""
@@ -123,6 +130,7 @@ class Artifact:
             "created_at": self.created_at,
             "artifact_id": self.artifact_id,
             "status": self.status,
+            "turn": self.turn,
         }
 
 
@@ -176,11 +184,22 @@ def _parse_input(tool_input: str) -> dict[str, Any] | None:
 
 
 def _normalize_path(raw: str) -> str:
-    """规范化候选路径：去引号、要求绝对路径且不是目录。"""
-    value = raw.strip().strip('"')
-    if not value.startswith("/") or value.endswith("/"):
+    """规范化候选路径：去引号、补全相对路径、排除目录与协议地址。
+
+    文件工具的虚拟根即 ``/``，因此相对路径（如 ``文章.md``）按根目录补全；
+    协议地址（http/data/file 等）与目录路径直接丢弃。
+    """
+    value = raw.strip().strip('"').replace("\\", "/")
+    if not value or value.endswith("/"):
         return ""
-    return value
+    if _SCHEME_RE.match(value):
+        return ""
+    if not value.startswith("/"):
+        value = "/" + value
+    parts = [part for part in value.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    return "/" + "/".join(parts)
 
 
 def _should_skip(path: str) -> bool:
@@ -188,6 +207,13 @@ def _should_skip(path: str) -> bool:
     if any(path.startswith(prefix) for prefix in _SKIP_PREFIXES):
         return True
     return any(path.endswith(suffix) for suffix in _SKIP_SUFFIXES)
+
+
+def turn_of(path: str) -> str:
+    """从产物路径解析交付轮次（``turn-<n>``）；非交付路径返回空串。"""
+    from agent.sandbox.delivery import turn_from_path
+
+    return turn_from_path(path)
 
 
 def _to_artifact(row: Any) -> Artifact:
@@ -203,6 +229,7 @@ def _to_artifact(row: Any) -> Artifact:
         artifact_id=getattr(row, "artifact_id", "") or "",
         status=getattr(row, "status", STATUS_PENDING) or STATUS_PENDING,
         storage_key=getattr(row, "storage_key", "") or "",
+        turn=turn_of(row.file_path),
     )
 
 
@@ -534,6 +561,42 @@ async def list_artifacts(thread_id: str, user_id: str) -> list[Artifact]:
     return [_to_artifact(row) for row in rows]
 
 
+def pick_turn_artifacts(
+    items: list[Artifact],
+    delivery_dir: str,
+    emitted: set[str],
+) -> list[Artifact]:
+    """挑出本轮交付目录下、尚未推送过事件的产物（保序），并记录已推送标识。
+
+    会话产物按「路径」去重：``download_asset`` 等工具在工具内部直接落库登记，
+    随后基于工具入参的登记逻辑只会看到「已存在」而不返回新增记录，前端因此收不到
+    SSE ``artifact`` 事件（当轮不出现交付物卡片与打包入口）。本函数用
+    「交付目录前缀 + 已推送集合」求差集，作为事件推送的统一出口。
+
+    Args:
+        items: 该会话的全部产物（按创建时间升序）。
+        delivery_dir: 本轮交付目录虚拟路径，例如 ``/artifacts/<thread>/turn-2``。
+        emitted: 本次流已推送过的产物标识集合（函数内原地更新）。
+
+    Returns:
+        本次需要推送 ``artifact`` 事件的产物列表。
+    """
+    prefix = delivery_dir.rstrip('/') + '/' if delivery_dir else ''
+    if not prefix:
+        return []
+
+    fresh: list[Artifact] = []
+    for item in items:
+        if not item.path.startswith(prefix):
+            continue
+        key = item.artifact_id or item.path
+        if key in emitted:
+            continue
+        emitted.add(key)
+        fresh.append(item)
+    return fresh
+
+
 async def get_artifact(thread_id: str, user_id: str, path: str) -> Artifact | None:
     """按会话与路径查询单条产物（下载前校验归属）。"""
     from db.engine import async_session
@@ -727,3 +790,296 @@ async def purge_expired_artifacts(retention_days: int, *, limit: int = 200) -> i
         except Exception:
             logger.warning("清理过期产物文件失败：%s", storage_key, exc_info=True)
     return len(entries)
+
+
+# ── 交付目录（/artifacts/<thread>/turn-<n>/）与后端代理下载 ──────────────────
+
+
+def _split_hosts(raw: str) -> list[str]:
+    """把逗号分隔的域名白名单解析为列表。"""
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
+def _artifact_fetch_limits() -> tuple[float, int, list[str]]:
+    """读取代理下载配置：超时（秒）、大小上限（字节）、域名白名单。"""
+    from agent.config import settings
+
+    timeout = _setting_int("ARTIFACT_FETCH_TIMEOUT_SECONDS", 60)
+    max_mb = _setting_int(
+        "ARTIFACT_FETCH_MAX_MB", _setting_int("ARTIFACT_MAX_FILE_MB", 100)
+    )
+    hosts = _split_hosts(str(getattr(settings, "ARTIFACT_FETCH_ALLOWED_HOSTS", "") or ""))
+    return (
+        float(timeout) if timeout > 0 else 60.0,
+        max(0, max_mb) * 1024 * 1024,
+        hosts,
+    )
+
+
+def _write_bytes_file(target: Any, content: bytes) -> None:
+    """把字节写入目标文件（自动创建父目录）。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+
+async def _upsert_artifact_row(
+    thread_id: str,
+    user_id: str,
+    file_path: str,
+    source_tool: str,
+    mime_type: str,
+) -> str:
+    """登记（或复用）一条产物记录，返回 artifact_id。"""
+    from db.engine import async_session
+    from db.models.chat_artifact import ChatArtifact
+
+    async with async_session() as session:
+        row = (
+            await session.execute(
+                select(ChatArtifact).where(
+                    ChatArtifact.thread_id == thread_id,
+                    ChatArtifact.file_path == file_path,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is not None:
+            row.source_tool = source_tool or row.source_tool
+            row.file_type = mime_type or row.file_type
+            row.updated_at = _now()
+            await session.commit()
+            return str(row.artifact_id)
+        created = ChatArtifact(
+            thread_id=thread_id,
+            user_id=user_id,
+            file_path=file_path,
+            filename=file_path.rsplit("/", 1)[-1],
+            file_type=mime_type or guess_mime_type(file_path),
+            file_size=0,
+            source_tool=source_tool,
+            artifact_id=str(uuid.uuid4()),
+            status=STATUS_PENDING,
+        )
+        session.add(created)
+        await session.commit()
+        return str(created.artifact_id)
+
+
+async def ingest_remote_asset(
+    user_id: str,
+    thread_id: str,
+    url: str,
+    rel_path: str,
+    *,
+    delivery_dir: str = "",
+) -> Artifact:
+    """后端代理下载远程图片，落到本轮交付目录并登记、物化为会话产物。
+
+    Args:
+        user_id: 产物所属用户。
+        thread_id: 产物所属会话。
+        url: 远程图片地址（仅 http/https）。
+        rel_path: 相对交付目录的保存路径，如 ``文章标题/figure-1.png``。
+        delivery_dir: 本轮交付目录（虚拟绝对路径）；为空时回退到 ``turn-1``。
+
+    Returns:
+        已就绪的产物。
+
+    Raises:
+        ValueError: 交付路径非法。
+        AssetFetchError: 下载或校验失败。
+        RuntimeError: 物化失败。
+    """
+    from agent.sandbox.delivery import delivery_virtual_dir, normalize_delivery_rel
+    from core.storage.agent_staging import staging_file_path
+    from core.storage.asset_fetcher import fetch_image
+
+    rel = normalize_delivery_rel(rel_path)
+    base = (delivery_dir or delivery_virtual_dir(thread_id, "turn-1")).rstrip("/")
+    virtual_path = base + "/" + rel
+
+    target = staging_file_path(user_id, virtual_path)
+    if target is None:
+        raise ValueError("非法的交付路径")
+
+    timeout, max_bytes, hosts = _artifact_fetch_limits()
+    asset = await fetch_image(
+        url, timeout=timeout, max_bytes=max_bytes, allowed_hosts=hosts
+    )
+
+    await asyncio.to_thread(_write_bytes_file, target, asset.content)
+    artifact_id = await _upsert_artifact_row(
+        thread_id, user_id, virtual_path, "download_asset", asset.mime_type
+    )
+    saved = await persist_artifact(user_id, thread_id, artifact_id, force=True)
+    if saved is None or not saved.storage_key:
+        raise RuntimeError("素材物化失败")
+    return saved
+
+
+def delivery_turn_prefix(thread_id: str, turn: str | None = None) -> str:
+    """返回交付目录（或指定轮次）的虚拟路径前缀（以 ``/`` 结尾）。"""
+    from agent.sandbox.delivery import delivery_thread_dir, safe_segment
+
+    if turn:
+        return delivery_thread_dir(thread_id) + "/" + safe_segment(turn, "turn-1") + "/"
+    return delivery_thread_dir(thread_id) + "/"
+
+
+async def list_bundle_artifacts(
+    thread_id: str, user_id: str, *, turn: str | None = None
+) -> list[Artifact]:
+    """列出某轮（或整个会话）交付目录下的产物，按创建时间升序。"""
+    prefix = delivery_turn_prefix(thread_id, turn)
+    from db.engine import async_session
+    from db.models.chat_artifact import ChatArtifact
+
+    async with async_session() as session:
+        rows = (
+            await session.execute(
+                select(ChatArtifact)
+                .where(
+                    ChatArtifact.thread_id == thread_id,
+                    ChatArtifact.user_id == user_id,
+                    ChatArtifact.file_path.like(prefix + "%"),
+                )
+                .order_by(ChatArtifact.created_at)
+            )
+        ).scalars().all()
+    return [_to_artifact(row) for row in rows]
+
+
+def build_bundle_zip(
+    user_id: str,
+    thread_id: str,
+    *,
+    scope: str = "turn",
+    turn: str | None = None,
+) -> tuple[str, bytes] | None:
+    """把交付目录打包成 zip。
+
+    Args:
+        user_id: 产物所属用户。
+        thread_id: 产物所属会话。
+        scope: ``turn`` 只打包本轮；``thread`` 打包整个会话（含全部轮次）。
+        turn: 指定轮次目录名（缺省取最新一轮）。
+
+    Returns:
+        ``(下载文件名, zip 字节)``；目录不存在或没有文件时返回 ``None``。
+    """
+    from agent.sandbox.delivery import (
+        delivery_host_dir,
+        delivery_thread_root,
+        list_turn_dirs,
+        safe_segment,
+    )
+
+    if scope == "thread":
+        base = delivery_thread_root(user_id, thread_id)
+        archive_name = safe_segment(thread_id) + "-bundle.zip"
+    else:
+        target_turn = turn or ""
+        if not target_turn:
+            turns = list_turn_dirs(user_id, thread_id)
+            target_turn = turns[-1] if turns else ""
+        if not target_turn:
+            return None
+        base = delivery_host_dir(user_id, thread_id, target_turn, create=False)
+        archive_name = safe_segment(target_turn, "turn") + "-bundle.zip"
+
+    if not base.is_dir():
+        return None
+
+    buffer = io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(base.rglob("*")):
+            if not path.is_file():
+                continue
+            archive.write(path, path.relative_to(base).as_posix())
+            count += 1
+    if count == 0:
+        return None
+    return archive_name, buffer.getvalue()
+
+
+async def restore_delivery_artifacts(
+    user_id: str, thread_id: str, *, limit: int = 200
+) -> int:
+    """把已物化的交付目录产物按需回填宿主 staging，返回回填文件数。
+
+    交付目录挂在宿主（``{WORKSPACE}/artifacts_agent/<user>``），但留存期清理会
+    删除 staging 中的旧文件；此时智能体再读写历史交付物就会失败。本函数按持久层
+    副本补写缺失文件，保证"历史交付物始终可读写"。
+    """
+    from core.storage.agent_staging import staging_file_path
+
+    items = await list_ready_artifacts(thread_id, user_id, limit=limit)
+    if not items:
+        return 0
+
+    store = get_artifact_store()
+    max_mb = _setting_int("ARTIFACT_MAX_FILE_MB", 100)
+    max_bytes = max(0, max_mb) * 1024 * 1024
+
+    restored = 0
+    for item in items:
+        if not item.storage_key or not item.path:
+            continue
+        if not is_agent_artifact_path(item.path):
+            # 非交付目录产物由沙箱回灌中间件负责
+            continue
+        target = staging_file_path(user_id, item.path)
+        if target is None:
+            continue
+        if await asyncio.to_thread(target.is_file):
+            continue
+        content = await asyncio.to_thread(store.open, item.storage_key)
+        if content is None:
+            continue
+        if max_bytes and len(content) > max_bytes:
+            logger.info("交付产物超过回填大小上限，已跳过：%s", item.path)
+            continue
+        await asyncio.to_thread(_write_bytes_file, target, content)
+        restored += 1
+
+    if restored:
+        logger.info(
+            "已回填 %d 个交付产物到宿主交付目录（thread_id=%s）", restored, thread_id
+        )
+    return restored
+
+
+async def scan_delivery_artifacts(
+    user_id: str, thread_id: str, turn: str, *, limit: int = 200
+) -> list[Artifact]:
+    """扫描本轮交付目录，把尚未登记（或未就绪）的文件补登记并物化。"""
+    from agent.sandbox.delivery import delivery_host_dir, delivery_virtual_dir
+
+    base = delivery_host_dir(user_id, thread_id, turn, create=False)
+    if not base.is_dir():
+        return []
+
+    virtual_root = delivery_virtual_dir(thread_id, turn)
+    saved: list[Artifact] = []
+    for index, path in enumerate(sorted(base.rglob("*"))):
+        if index >= limit:
+            break
+        if not path.is_file():
+            continue
+        virtual_path = virtual_root + "/" + path.relative_to(base).as_posix()
+        existing = await get_artifact(thread_id, user_id, virtual_path)
+        if existing is not None and existing.status == STATUS_READY and existing.storage_key:
+            continue
+        artifact_id = await _upsert_artifact_row(
+            thread_id,
+            user_id,
+            virtual_path,
+            "delivery_scan",
+            guess_mime_type(virtual_path),
+        )
+        materialized = await persist_artifact(
+            user_id, thread_id, artifact_id, force=True
+        )
+        if materialized is not None:
+            saved.append(materialized)
+    return saved

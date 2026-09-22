@@ -1,4 +1,8 @@
-import { artifactDownloadUrl, getAccessToken } from '@/services/request'
+import {
+  artifactBundleUrl,
+  artifactDownloadUrl,
+  getAccessToken,
+} from '@/services/request'
 
 /** 产物取回结果：区分成功、已过期与普通失败，便于预览面板给出对应提示 */
 export interface ArtifactFetchResult {
@@ -37,6 +41,17 @@ export async function fetchArtifactBlob(
   }
 }
 
+/** 带鉴权拉取产物并转为 <img> 可直接使用的对象地址；失败返回 null */
+export async function fetchArtifactObjectUrl(
+  threadId: string,
+  path: string,
+): Promise<string | null> {
+  if (!threadId || !path) return null
+  const result = await fetchArtifactBlob(threadId, path, 'inline')
+  if (!result.ok || !result.blob) return null
+  return URL.createObjectURL(result.blob)
+}
+
 /** 下载产物到本地（浏览器触发另存为） */
 export async function downloadArtifact(
   threadId: string,
@@ -53,4 +68,34 @@ export async function downloadArtifact(
   link.click()
   link.remove()
   URL.revokeObjectURL(url)
+}
+
+
+/** 打包下载交付物（本轮或整个会话）；返回是否成功与状态码，由调用方提示 */
+export async function downloadBundle(
+  threadId: string,
+  scope: 'turn' | 'thread' = 'turn',
+  turn?: string,
+  name?: string,
+): Promise<{ ok: boolean; status: number }> {
+  if (!threadId) return { ok: false, status: 0 }
+  try {
+    const response = await fetch(artifactBundleUrl(threadId, scope, turn), {
+      headers: { Authorization: 'Bearer ' + (getAccessToken() ?? '') },
+    })
+    if (!response.ok) return { ok: false, status: response.status }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name || (scope === 'thread' ? '会话交付物.zip' : '本轮交付物.zip')
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    return { ok: true, status: response.status }
+  } catch {
+    return { ok: false, status: 0 }
+  }
 }

@@ -37,6 +37,7 @@ from agent.memory.scopes import (
     infer_scope,
 )
 from agent.middleware.artifact_restore import ArtifactRestoreMiddleware
+from agent.middleware.expert_directive import ExpertDirectiveMiddleware
 from agent.middleware.request_permission import RequestPermissionMiddleware
 from agent.middleware.skill_sandbox_sync import SkillSandboxSyncMiddleware
 from agent.sandbox.sandbox_manager import SandboxManager
@@ -279,6 +280,8 @@ class AgentBuilder:
             ),
             # 沙箱重建后回灌本会话已持久化的产物，保证后续轮次可继续读写
             ArtifactRestoreMiddleware(sandbox_manager=self._sandbox_manager),
+            # 选了专家时强制主智能体先委派（避免"已添加专家但未被使用"）
+            ExpertDirectiveMiddleware(),
             # 会话级权限：未开启「代码执行」时拒绝命令/代码类工具调用
             RequestPermissionMiddleware(),
         ]

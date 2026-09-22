@@ -207,4 +207,6 @@ export interface ChatArtifact {
   artifact_id?: string
   /** 持久化状态（缺省视为 pending，兼容旧数据） */
   status?: ArtifactStatus
+  /** 交付轮次（turn-<n>），用于按轮分组展示与打包 */
+  turn?: string
 }

@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "name": "气泡内含配图（未被代码块包裹）",
+      "pass": true,
+      "detail": "{\"imgCount\":4,\"blobCount\":4,\"loaded\":4,\"fencedArticle\":false,\"hasPre\":false}"
+    },
+    {
+      "name": "配图使用鉴权 blob 且加载成功",
+      "pass": true,
+      "detail": "{\"imgCount\":4,\"blobCount\":4,\"loaded\":4,\"fencedArticle\":false,\"hasPre\":false}"
+    },
+    {
+      "name": "正文未放进代码块",
+      "pass": true,
+      "detail": "{\"imgCount\":4,\"blobCount\":4,\"loaded\":4,\"fencedArticle\":false,\"hasPre\":false}"
+    },
+    {
+      "name": "当轮交付物卡片",
+      "pass": true,
+      "detail": "cards=3"
+    }
+  ],
+  "bubble": {
+    "imgCount": 4,
+    "blobCount": 4,
+    "loaded": 4,
+    "fencedArticle": false,
+    "hasPre": false
+  }
+}

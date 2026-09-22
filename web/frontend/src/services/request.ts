@@ -381,3 +381,22 @@ export async function polishText(text: string): Promise<string> {
   const payload = (await response.json()) as { data?: { text?: string } }
   return payload.data?.text ?? ' '
 }
+
+
+/** 交付物打包下载地址：scope=turn 本轮 / scope=thread 整个会话 */
+export function artifactBundleUrl(
+  threadId: string,
+  scope: 'turn' | 'thread' = 'turn',
+  turn?: string,
+): string {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  const params = new URLSearchParams({ scope })
+  if (scope === 'turn' && turn) params.set('turn', turn)
+  return (
+    baseURL +
+    '/chat/artifacts/' +
+    encodeURIComponent(threadId) +
+    '/bundle.zip?' +
+    params.toString()
+  )
+}

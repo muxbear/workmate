@@ -1,0 +1,81 @@
+{
+  "steps": [
+    {
+      "name": "添加「文档写作专家」",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "生成结束",
+      "pass": true,
+      "detail": "elapsed=87s"
+    },
+    {
+      "name": "SSE 推送 artifact 事件",
+      "pass": true,
+      "detail": "{\"selection\":1,\"agent_start\":2,\"tool_start\":1,\"token\":1094,\"tool_end\":1,\"agent_end\":2,\"artifact\":3,\"done\":1}"
+    },
+    {
+      "name": "生成当轮即有产物卡片",
+      "pass": true,
+      "detail": "[\"/artifacts/01a0c980-9fad-7a62-bd1f-281409cb3929/turn-1/团队知识管理/figure-1.png\",\"/artifacts/01a0c980-9fad-7a62-bd1f-281409cb3929/turn-1/团队知识管理/figure-2.png\",\"/artifacts/01a0c980-9fad-7a62-bd1f-281409cb3929/turn-1/团队知识管理.md\"]"
+    },
+    {
+      "name": "生成当轮即有打包入口",
+      "pass": true,
+      "detail": "bundle=1"
+    },
+    {
+      "name": "消息内配图渲染成功（鉴权 blob，无 401 裂图）",
+      "pass": false,
+      "detail": "waitedMs=60899 []"
+    },
+    {
+      "name": "右侧预览配图渲染成功",
+      "pass": true,
+      "detail": "waitedMs=2043 [{\"src\":\"blob:http://localhost:5172/9ade4fbe-e5f3-485e-909f-66f91dbd04a9\",\"nw\":1024},{\"src\":\"blob:http://localhost:5172/fba420c1-54c3-49c4-99e1-efc90e6eaf9a\",\"nw\":1024}]"
+    }
+  ],
+  "sseEvents": {
+    "selection": 1,
+    "agent_start": 2,
+    "tool_start": 1,
+    "token": 1094,
+    "tool_end": 1,
+    "agent_end": 2,
+    "artifact": 3,
+    "done": 1
+  },
+  "live": {
+    "cards": [
+      {
+        "title": "/artifacts/01a0c980-9fad-7a62-bd1f-281409cb3929/turn-1/团队知识管理/figure-1.png",
+        "text": "figure-1.png 图片 · 1.8 MB"
+      },
+      {
+        "title": "/artifacts/01a0c980-9fad-7a62-bd1f-281409cb3929/turn-1/团队知识管理/figure-2.png",
+        "text": "figure-2.png 图片 · 1.7 MB"
+      },
+      {
+        "title": "/artifacts/01a0c980-9fad-7a62-bd1f-281409cb3929/turn-1/团队知识管理.md",
+        "text": "团队知识管理.md 文本 · 1.8 KB"
+      }
+    ],
+    "bundle": 1,
+    "images": []
+  },
+  "preview": {
+    "images": [
+      {
+        "src": "blob:http://localhost:5172/9ade4fbe-e5f3-485e-909f-66f91dbd04a9",
+        "nw": 1024
+      },
+      {
+        "src": "blob:http://localhost:5172/fba420c1-54c3-49c4-99e1-efc90e6eaf9a",
+        "nw": 1024
+      }
+    ],
+    "waitedMs": 2043
+  },
+  "imageWaitMs": 60899
+}

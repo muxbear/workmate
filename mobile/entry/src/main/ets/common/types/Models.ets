@@ -74,7 +74,14 @@ export interface ListBlock {
   items: string[]
 }
 
-export type ContentBlock = TextBlock | HeadingBlock | TableBlock | ListBlock
+/** 图片块(src 已解析为产物接口地址,由 ArtifactImage 带 token 拉取渲染) */
+export interface ImageBlock {
+  type: 'image'
+  src: string
+  alt: string
+}
+
+export type ContentBlock = TextBlock | HeadingBlock | TableBlock | ListBlock | ImageBlock
 
 export interface ChatMessage {
   id: string
@@ -83,6 +90,8 @@ export interface ChatMessage {
   blocks?: ContentBlock[]
   status: 'thinking' | 'done'
   createdAt: number
+  /** 本轮交付物(按 turn 分组后挂载) */
+  artifacts?: ChatArtifact[]
 }
 
 /** HTTP 请求体(显式接口,满足 arkts-no-untyped-obj-literals) */
@@ -105,3 +114,22 @@ export function toResult<T>(resp: ApiResponse<T>): Result<T> {
   }
   return { ok: false, code: resp.code, message: resp.message } as Result<T>
 }
+
+/** 会话产物(与 Web 后端 /api/chat/artifacts 返回结构一致) */
+export interface ChatArtifact {
+  /** 交付目录虚拟路径,如 /artifacts/<thread>/turn-1/文章标题.md */
+  path: string
+  name: string
+  source_tool: string
+  created_at: number
+  mime_type?: string
+  size?: number
+  artifact_id?: string
+  /** 持久化状态:ready / pending / failed / expired */
+  status?: string
+  /** 交付轮次(turn-<n>);老数据可能缺失 */
+  turn?: string
+}
+
+/** 会话产物列表接口响应(/api/chat/artifacts/{threadId} 的 data) */
+export type ChatArtifactList = Array<ChatArtifact>

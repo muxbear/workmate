@@ -67,6 +67,18 @@ function createDeps(
   } as WorkspaceHandlerDeps
 }
 
+
+/** 给工作空间服务替身补上打包相关方法 */
+function withExportZip(
+  deps: WorkspaceHandlerDeps,
+  result: Record<string, unknown>
+): WorkspaceHandlerDeps {
+  const svc = deps.workspaceService as unknown as Record<string, unknown>
+  svc.exportZip = vi.fn().mockResolvedValue(result)
+  svc.suggestZipName = vi.fn().mockReturnValue('交付物.zip')
+  return deps
+}
+
 describe('workspace IPC handlers', () => {
   it('注册 workspace:list/create/select-dir/default/open/delete/list-files/read-file 通道', () => {
     const ipc = createFakeIpcMain()
@@ -353,5 +365,70 @@ describe('workspace IPC handlers', () => {
       expect(result.success, channel).toBe(false)
       expect(result.error, channel).toContain('未登录')
     }
+  })
+
+
+  it('workspace:export-zip：默认导出到工作空间并返回结果', async () => {
+    const deps = withExportZip(createDeps(), {
+      relPath: '文章.zip',
+      absPath: '/tmp/项目A/文章.zip',
+      entries: 2,
+      size: 8
+    })
+    const ipc = createFakeIpcMain()
+    registerWorkspaceHandlers(ipc as never, deps)
+
+    const result = await ipc.invoke<{ success: boolean; data: Record<string, unknown> }>(
+      'workspace:export-zip',
+      'ws-1',
+      ['文章.md', '文章']
+    )
+    expect(result.success).toBe(true)
+    expect(result.data.relPath).toBe('文章.zip')
+    expect(result.data.canceled).toBe(false)
+  })
+
+  it('workspace:export-zip：配置另存为时写到所选路径并定位文件', async () => {
+    const chooseZipPath = vi.fn().mockResolvedValue('D:/out/文章.zip')
+    const revealFile = vi.fn().mockResolvedValue(undefined)
+    const deps = withExportZip(createDeps({ chooseZipPath, revealFile }), {
+      relPath: '',
+      absPath: 'D:/out/文章.zip',
+      entries: 2,
+      size: 8
+    })
+    const ipc = createFakeIpcMain()
+    registerWorkspaceHandlers(ipc as never, deps)
+
+    const result = await ipc.invoke<{ success: boolean; data: { relPath: string } }>(
+      'workspace:export-zip',
+      'ws-1',
+      ['文章.md']
+    )
+    expect(chooseZipPath).toHaveBeenCalledWith('交付物.zip')
+    expect(revealFile).toHaveBeenCalledWith('D:/out/文章.zip')
+    expect(result.data.relPath).toBe('')
+  })
+
+  it('workspace:export-zip：用户取消另存为时不导出', async () => {
+    const chooseZipPath = vi.fn().mockResolvedValue(null)
+    const deps = withExportZip(createDeps({ chooseZipPath }), {
+      relPath: 'x.zip',
+      absPath: '/x.zip',
+      entries: 1,
+      size: 1
+    })
+    const ipc = createFakeIpcMain()
+    registerWorkspaceHandlers(ipc as never, deps)
+
+    const result = await ipc.invoke<{ success: boolean; data: { canceled: boolean } }>(
+      'workspace:export-zip',
+      'ws-1',
+      ['文章.md']
+    )
+    expect(result.data.canceled).toBe(true)
+    expect(
+      (deps.workspaceService as unknown as { exportZip: ReturnType<typeof vi.fn> }).exportZip
+    ).not.toHaveBeenCalled()
   })
 })

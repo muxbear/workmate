@@ -1,10 +1,21 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { cp, mkdir, readFile, readdir, rename, rm } from 'fs/promises'
-import { basename, extname, isAbsolute, join, parse, relative, resolve, sep } from 'path'
+import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep
+} from 'path'
 import { homedir } from 'os'
 import type { WorkspaceRepository } from './WorkspaceRepository'
 import type { WorkspaceRow } from './types'
 import { loadFileText, MAX_BINARY_BYTES, PREVIEW_PAGE_CHARS } from './FileLoaders'
+import { zipSync } from 'fflate'
 import { WordConversionService } from './WordConversionService'
 
 /** 文件列表条目（relPath 统一用 '/' 分隔的相对路径，渲染层据此缩进与回传） */
@@ -41,6 +52,14 @@ export interface WorkspaceFileBinary {
   name: string
   ext: string
   bytes: Uint8Array
+}
+
+/** 打包导出结果（zip 落在工作空间根目录内） */
+export interface WorkspaceZipExport {
+  relPath: string
+  absPath: string
+  entries: number
+  size: number
 }
 
 /** 列表/预览时忽略的隐藏与依赖目录 */
@@ -356,6 +375,124 @@ export class WorkspaceService {
       })
       .slice(0, MAX_LIST_ITEMS)
     return entries
+  }
+
+  /**
+   * 打包导出为 zip（写入工作空间根目录，返回相对/绝对路径）。
+   *
+   * 典型用法：把「文章 + 同名配图目录」或整个交付目录打包下载。
+   * @throws 工作空间不存在 / 路径越界 / 没有可打包内容时抛错
+   */
+  async exportZip(
+    id: string,
+    userId: string,
+    relPaths: string[],
+    zipName?: string,
+    destAbsPath?: string
+  ): Promise<WorkspaceZipExport> {
+    const ws = this.resolveWorkspace(id, userId)
+    if (!ws) throw new Error('工作空间不存在或目录已移除')
+
+    const inputs = (Array.isArray(relPaths) ? relPaths : []).filter(
+      (item): item is string => typeof item === 'string' && item.trim().length > 0
+    )
+    if (!inputs.length) throw new Error('没有可打包的文件')
+
+    const files: Record<string, Uint8Array> = {}
+    let entries = 0
+    for (const relPath of inputs) {
+      const target = this.resolveInside(ws.dir, relPath)
+      if (!existsSync(target)) continue
+      const stat = statSync(target)
+      if (stat.isDirectory()) {
+        const base = relPath.replace(/\/+$/, '')
+        entries += await this.collectZipEntries(target, base, files)
+      } else if (stat.isFile()) {
+        files[relPath] = await readFile(target)
+        entries += 1
+      }
+    }
+    if (entries === 0) throw new Error('没有可打包的文件')
+
+    const buffer = zipSync(files)
+    const baseName = this.suggestZipName(inputs, zipName).replace(/\.zip$/i, '')
+
+    let absZip: string
+    let relZip = ''
+    if (destAbsPath) {
+      // 系统「另存为」指定位置：写入用户选择的路径（不在工作空间内时 relPath 为空串）
+      if (!isAbsolute(destAbsPath)) throw new Error('导出路径必须为绝对路径')
+      absZip = resolve(destAbsPath)
+      await mkdir(dirname(absZip), { recursive: true })
+      await writeFile(absZip, buffer)
+      const root = resolve(ws.dir)
+      if (absZip.startsWith(root + sep)) {
+        relZip = relative(root, absZip).split(sep).join('/')
+      }
+    } else {
+      relZip = this.uniqueZipPath(ws.dir, baseName)
+      absZip = resolve(ws.dir, relZip)
+      await writeFile(absZip, buffer)
+    }
+
+    console.log('[workspace] exported zip: ' + absZip + ' (' + entries + ' entries)')
+    return { relPath: relZip, absPath: absZip, entries, size: buffer.length }
+  }
+
+  /** 生成建议的 zip 文件名（含 .zip 后缀）：另存为默认名与工作空间内导出名共用 */
+  suggestZipName(relPaths: string[], zipName?: string): string {
+    const inputs = (Array.isArray(relPaths) ? relPaths : []).filter(
+      (item) => typeof item === 'string' && item.trim().length > 0
+    )
+    const base = this.sanitizeZipName(
+      zipName || this.defaultZipName(inputs.length > 0 ? inputs : ['交付物'])
+    )
+    return base + '.zip'
+  }
+
+  /** 递归收集目录内文件到 zip 条目表（跳过隐藏/依赖目录） */
+  private async collectZipEntries(
+    dir: string,
+    zipBase: string,
+    files: Record<string, Uint8Array>
+  ): Promise<number> {
+    let count = 0
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (HIDDEN_NAMES.has(entry.name)) continue
+      const child = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        count += await this.collectZipEntries(child, zipBase + '/' + entry.name, files)
+      } else if (entry.isFile()) {
+        files[zipBase + '/' + entry.name] = await readFile(child)
+        count += 1
+      }
+    }
+    return count
+  }
+
+  /** 生成不与现有文件冲突的 zip 相对路径（同名追加 -1、-2） */
+  private uniqueZipPath(root: string, baseName: string): string {
+    for (let index = 0; index < 100; index += 1) {
+      const candidate = index === 0 ? baseName + '.zip' : baseName + '-' + index + '.zip'
+      if (!existsSync(join(root, candidate))) return candidate
+    }
+    throw new Error('同名导出文件过多，请先清理后重试')
+  }
+
+  /** 取 zip 文件名（去掉 Windows 非法字符与 .zip 后缀） */
+  private sanitizeZipName(raw: string): string {
+    const cleaned = raw
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/\.zip$/i, '')
+      .trim()
+    return cleaned || '交付物'
+  }
+
+  /** 依据首个输入推导默认 zip 名（文章.md + 文章/ → 文章） */
+  private defaultZipName(relPaths: string[]): string {
+    const first = relPaths[0].replace(/\/+$/, '')
+    const name = first.split('/').pop() ?? '交付物'
+    return name.replace(/\.[^.]+$/, '') || name
   }
 
   /**

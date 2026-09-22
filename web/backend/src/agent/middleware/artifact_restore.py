@@ -30,6 +30,44 @@ logger = logging.getLogger(__name__)
 # 单次回灌的文件数量上限
 DEFAULT_MAX_FILES = 20
 
+# 资源类产物（图片/音视频/压缩包等）：只服务于预览与下载，无需回灌沙箱
+_RESOURCE_EXTS: frozenset[str] = frozenset(
+    {
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "bmp",
+        "svg",
+        "ico",
+        "tiff",
+        "heic",
+        "mp3",
+        "wav",
+        "ogg",
+        "flac",
+        "aac",
+        "m4a",
+        "mp4",
+        "webm",
+        "mov",
+        "mkv",
+        "avi",
+        "zip",
+        "gz",
+        "tar",
+        "7z",
+    }
+)
+
+
+def is_resource_path(path: str) -> bool:
+    """判断是否为资源类产物（图片/音视频/压缩包等）。"""
+    name = (path or "").rsplit("/", 1)[-1]
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return ext in _RESOURCE_EXTS
+
 
 class ArtifactRestoreState(AgentState):
     """产物回灌中间件状态 — 记录已回灌的沙箱与会话。"""
@@ -72,6 +110,12 @@ class ArtifactRestoreMiddleware(AgentMiddleware[ArtifactRestoreState, Any, Any])
         user_id = _user_id_from_runtime(runtime)
         if not thread_id or not user_id:
             return None
+
+        # 交付目录在宿主 staging：即使沙箱仍存活，也要保证留存期清理后能重新读到
+        try:
+            await _restore_delivery_files(user_id, thread_id)
+        except Exception:
+            logger.warning("交付目录回填失败（thread_id=%s）", thread_id, exc_info=True)
 
         backend = await asyncio.to_thread(
             self._sandbox_manager.get_or_create_backend, user_id
@@ -116,6 +160,9 @@ class ArtifactRestoreMiddleware(AgentMiddleware[ArtifactRestoreState, Any, Any])
             if is_agent_artifact_path(item.path):
                 # 交付目录由宿主 staging 提供，无需回灌到沙箱
                 continue
+            if is_resource_path(item.path):
+                # 资源类产物（配图等）不回灌：预览与下载始终读持久副本
+                continue
             if await self._exists_in_sandbox(backend, item.path):
                 continue
             content = await asyncio.to_thread(store.open, item.storage_key)
@@ -148,6 +195,13 @@ class ArtifactRestoreMiddleware(AgentMiddleware[ArtifactRestoreState, Any, Any])
         except Exception:
             return False
         return getattr(result, "exit_code", 1) == 0
+
+
+async def _restore_delivery_files(user_id: str, thread_id: str) -> int:
+    """把交付目录产物按需回填宿主 staging（委托给 artifacts 服务）。"""
+    from api.agent.artifacts import restore_delivery_artifacts
+
+    return await restore_delivery_artifacts(user_id, thread_id)
 
 
 def _thread_id_from_config(config: RunnableConfig | None) -> str:

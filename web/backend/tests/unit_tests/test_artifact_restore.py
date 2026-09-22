@@ -138,3 +138,67 @@ def test_restore_skips_agent_delivery_directory(tmp_path, monkeypatch) -> None:
 
     assert backend.uploaded == []
     assert result == {"_artifacts_restored": "sbx-1::t1"}
+
+
+def test_restore_delivery_artifacts_backfills_staging(tmp_path, monkeypatch) -> None:
+    """持久层副本按需回填宿主交付目录（staging 被清理后仍可读写）。"""
+    from api.agent import artifacts as artifacts_module
+
+    monkeypatch.setattr("core.storage.agent_staging.agent_staging_root", lambda: tmp_path)
+    store = LocalArtifactStore(str(tmp_path / "store"))
+    key = build_storage_key("u1", "t1", "a1", "文章.md")
+    store.save(key, "# 文章".encode())
+    monkeypatch.setattr("api.agent.artifacts.get_artifact_store", lambda: store)
+
+    async def _list(thread_id: str, user_id: str, *, limit: int = 20) -> list[Artifact]:
+        return [_artifact(key, path="/artifacts/t1/turn-1/文章.md")]
+
+    monkeypatch.setattr("api.agent.artifacts.list_ready_artifacts", _list)
+
+    assert asyncio.run(artifacts_module.restore_delivery_artifacts("u1", "t1")) == 1
+    target = tmp_path / "u1" / "t1" / "turn-1" / "文章.md"
+    assert target.read_bytes() == "# 文章".encode()
+    # 已存在的文件不重复回填
+    assert asyncio.run(artifacts_module.restore_delivery_artifacts("u1", "t1")) == 0
+
+
+def test_restore_delivery_artifacts_skips_non_delivery(tmp_path, monkeypatch) -> None:
+    """非交付目录产物不由本函数回填（交给沙箱回灌中间件）。"""
+    from api.agent import artifacts as artifacts_module
+
+    monkeypatch.setattr("core.storage.agent_staging.agent_staging_root", lambda: tmp_path)
+    store = LocalArtifactStore(str(tmp_path / "store"))
+    key = build_storage_key("u1", "t1", "a2", "报告.md")
+    store.save(key, b"x")
+    monkeypatch.setattr("api.agent.artifacts.get_artifact_store", lambda: store)
+
+    async def _list(thread_id: str, user_id: str, *, limit: int = 20) -> list[Artifact]:
+        return [_artifact(key, path="/workspace/w1/报告.md")]
+
+    monkeypatch.setattr("api.agent.artifacts.list_ready_artifacts", _list)
+    assert asyncio.run(artifacts_module.restore_delivery_artifacts("u1", "t1")) == 0
+
+
+def test_middleware_backfills_delivery_files(tmp_path, monkeypatch) -> None:
+    """中间件在沙箱回灌前先补写宿主交付目录。"""
+    from api.agent import artifacts as artifacts_module
+
+    monkeypatch.setattr("core.storage.agent_staging.agent_staging_root", lambda: tmp_path)
+    store = LocalArtifactStore(str(tmp_path / "store"))
+    key = build_storage_key("u1", "t1", "a3", "文章.md")
+    store.save(key, b"delivery")
+    monkeypatch.setattr("api.agent.artifacts.get_artifact_store", lambda: store)
+
+    async def _list(thread_id: str, user_id: str, *, limit: int = 20) -> list[Artifact]:
+        return [_artifact(key, path="/artifacts/t1/turn-1/文章.md")]
+
+    monkeypatch.setattr("api.agent.artifacts.list_ready_artifacts", _list)
+
+    backend = _FakeBackend()
+    middleware = ArtifactRestoreMiddleware(sandbox_manager=_FakeSandboxManager(backend))
+    runtime = SimpleNamespace(context=SimpleNamespace(user_id="u1"))
+    config = {"configurable": {"thread_id": "t1"}}
+
+    asyncio.run(middleware.abefore_agent({}, runtime, config))
+    assert (tmp_path / "u1" / "t1" / "turn-1" / "文章.md").read_bytes() == b"delivery"
+    assert artifacts_module is not None

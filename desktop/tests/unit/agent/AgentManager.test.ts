@@ -182,4 +182,47 @@ describe('AgentManager', () => {
     const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
     expect(config.middleware).toBeUndefined()
   })
+
+  it('P2: setExperts 专家集合未变化时跳过重建，集合变化才重建', async () => {
+    await manager.init('local')
+    const afterInit = createDeepAgentMock.mock.calls.length
+
+    const expert = {
+      id: 'expert-1',
+      name: '文档写作专家',
+      title: '文档写作专家',
+      tags: [],
+      desc: '',
+      color: '',
+      icon: '',
+      category: 'content_creation',
+      rating: 0,
+      users: '0',
+      initials: '文',
+      systemPrompt: '',
+      tools: [],
+      capabilities: ['document.assemble'],
+      providerId: null,
+      modelId: null,
+      modelName: null,
+      modelType: null,
+      skills: [],
+      mcpConfigs: [],
+      promptTemplate: '',
+      expertiseAreas: [],
+      isExpert: true
+    } as never
+
+    await manager.setExperts([expert])
+    const afterFirst = createDeepAgentMock.mock.calls.length
+    expect(afterFirst).toBe(afterInit + 1)
+
+    // 同一批专家（会话连续多轮对话）：复用已构建的 agent
+    await manager.setExperts([expert])
+    expect(createDeepAgentMock.mock.calls.length).toBe(afterFirst)
+
+    // 集合变化：重建
+    await manager.setExperts([])
+    expect(createDeepAgentMock.mock.calls.length).toBe(afterFirst + 1)
+  })
 })

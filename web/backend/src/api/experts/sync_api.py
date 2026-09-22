@@ -2,6 +2,8 @@
 
 使用 require_scope("expert:read") 校验 OAuth2 scope。
 """
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,9 +24,16 @@ router = APIRouter(prefix="/api/expert-sync", tags=["expert-sync"])
 async def expert_sync_list(
     user_id: str = Depends(require_scope("expert:read")),
     db: AsyncSession = Depends(get_db),
+    platform: Literal["desktop", "web", "mobile"] = "web",
 ):
-    """获取所有已发布专家的精简数据（供桌面端/移动端同步）。."""
-    result = await sync_list(db)
+    """获取所有已发布专家的精简数据（供桌面端/移动端同步）。.
+
+    Args:
+        user_id: 通过 expert:read scope 校验的用户 ID。
+        db: 数据库会话。
+        platform: 目标端；用于把专家提示词渲染成该平台可执行的版本。
+    """
+    result = await sync_list(db, platform=platform)
     return ok(result)
 
 

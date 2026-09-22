@@ -1,7 +1,10 @@
+import { common } from '@kit.AbilityKit'
+import { ArtifactList } from '../components/ArtifactList'
 import { ChatBubble } from '../components/ChatBubble'
 import { MarkdownBlock } from '../components/MarkdownBlock'
 import { chatStore } from '../store/ChatStore'
-import { ChatMessage } from '../common/types/Models'
+import { saveArtifactToSandbox } from '../common/utils/ArtifactAssets'
+import { ChatArtifact, ChatMessage } from '../common/types/Models'
 
 export interface ChatPageParams {
   query: string
@@ -16,6 +19,7 @@ export struct ChatPage {
   @State input: string = ''
   @State thinkExpanded: boolean = false
   @State pulse: boolean = false
+  @State artifactHint: string = ''
   private scroller: Scroller = new Scroller()
 
   aboutToAppear(): void {
@@ -29,6 +33,26 @@ export struct ChatPage {
   /** 返回首页,保留会话 */
   goBack(): void {
     this.pathStack.pop()
+  }
+
+  private hostContext(): common.UIAbilityContext {
+    return getContext(this) as common.UIAbilityContext
+  }
+
+  /** 下载单个产物到应用沙箱(移动端无浏览器式另存为) */
+  private async downloadArtifact(item: ChatArtifact): Promise<void> {
+    const url: string = chatStore.artifactUrlFor(item)
+    const saved: string | undefined = await saveArtifactToSandbox(this.hostContext(), url, item.name)
+    this.artifactHint = saved === undefined ? '下载失败,请稍后重试' : `已保存到 ${saved}`
+  }
+
+  /** 打包下载本轮/整会话交付物 */
+  private async downloadBundle(turn: string): Promise<void> {
+    const scope: string = turn === '' ? 'thread' : 'turn'
+    const url: string = chatStore.bundleUrlFor(scope, turn)
+    const name: string = turn === '' ? '会话交付物.zip' : `${turn}-交付物.zip`
+    const saved: string | undefined = await saveArtifactToSandbox(this.hostContext(), url, name)
+    this.artifactHint = saved === undefined ? '打包下载失败,请稍后重试' : `已保存到 ${saved}`
   }
 
   @Builder
@@ -155,6 +179,23 @@ export struct ChatPage {
                     this.ThinkingDots()
                   } else {
                     MarkdownBlock({ blocks: msg.blocks ?? [] })
+                    if ((msg.artifacts ?? []).length > 0) {
+                      ArtifactList({
+                        artifacts: msg.artifacts ?? [],
+                        threadId: chatStore.threadId,
+                        onDownload: (item: ChatArtifact) => {
+                          this.downloadArtifact(item)
+                        },
+                        onBundle: (turn: string) => {
+                          this.downloadBundle(turn)
+                        }
+                      })
+                    }
+                    if (this.artifactHint !== '') {
+                      Text(this.artifactHint)
+                        .fontSize(12)
+                        .fontColor($r('app.color.text_tertiary'))
+                    }
                   }
                 }
                 .width('100%')

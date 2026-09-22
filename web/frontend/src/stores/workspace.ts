@@ -19,6 +19,14 @@ export interface DocumentTab {
   mimeType?: string
   size?: number
   createdAt: number
+  /** 交付轮次目录名（turn-<n>）：用于「打包下载本轮」 */
+  bundleTurn?: string
+}
+
+/** 从产物虚拟路径中解析交付轮次（/artifacts/<thread>/turn-<n>/...） */
+export function parseBundleTurn(path: string): string | undefined {
+  const match = /\/turn-(\d+)\//.exec(path || '')
+  return match ? 'turn-' + match[1] : undefined
 }
 
 /**
@@ -107,6 +115,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           mimeType: artifact.mime_type,
           size: artifact.size,
           createdAt: artifact.created_at || Date.now(),
+          bundleTurn: parseBundleTurn(artifact.path),
         },
       ]
     }

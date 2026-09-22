@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { Download, Loader2, RefreshCw } from 'lucide-vue-next'
+import { Download, Loader2, Package, RefreshCw } from 'lucide-vue-next'
 import { downloadArtifact, fetchArtifactBlob } from '@/services/artifactApi'
 import { resolveDocumentType } from '@/utils/documentType'
 import { formatFileSize } from '@/utils/format'
 import { viewerFor } from '@/components/chat/viewers'
 import type { DocumentPayload } from '@/types/document'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useChatStore } from '@/stores/chat'
 import type { DocumentTab } from '@/stores/workspace'
 
 /** 文档标签页内容区：按文档类型加载内容，并交给对应的文档组件渲染 */
@@ -22,12 +23,17 @@ const expired = ref(false)
 const text = ref('')
 const objectUrl = ref('')
 
+const chatStore = useChatStore()
+
 const payload = computed<DocumentPayload>(() => ({
   name: props.tab.name,
   kind: typeInfo.value.kind,
   label: typeInfo.value.label,
   text: text.value,
   url: objectUrl.value,
+  threadId: props.tab.threadId,
+  basePath: props.tab.path,
+  artifactPaths: chatStore.threadArtifacts.map((item) => item.path),
 }))
 
 function revokeObjectUrl() {
@@ -76,6 +82,12 @@ onUnmounted(revokeObjectUrl)
 function handleDownload() {
   void downloadArtifact(props.tab.threadId, props.tab.path, props.tab.name)
 }
+
+/** 打包下载：优先本轮（bundleTurn），否则整个会话 */
+function handleBundleDownload(): void {
+  const turn = props.tab.bundleTurn
+  void chatStore.downloadBundle(turn ? 'turn' : 'thread', turn)
+}
 </script>
 
 <template>
@@ -88,6 +100,13 @@ function handleDownload() {
           <template v-if="formatFileSize(tab.size)"> · {{ formatFileSize(tab.size) }}</template>
         </span>
       </div>
+      <button
+        class="document-action"
+        :title="tab.bundleTurn ? '打包下载本轮交付物' : '打包下载整个会话交付物'"
+        @click="handleBundleDownload"
+      >
+        <Package :size="14" />
+      </button>
       <button class="document-action" title="下载" @click="handleDownload">
         <Download :size="14" />
       </button>

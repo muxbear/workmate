@@ -1,6 +1,7 @@
 import { ContentBlock } from '../common/types/Models'
 import { parseBold, InlinePiece } from '../common/utils/MarkdownParser'
 import { Spacing } from '../common/theme/Theme'
+import { ArtifactImage } from './ArtifactImage'
 import { DataTable } from './DataTable'
 
 /** AI 回复内容渲染:text/heading/table/list,内联 **加粗** */
@@ -55,6 +56,8 @@ export struct MarkdownBlock {
     } else if (block.type === 'table') {
       DataTable({ headers: block.headers, rows: block.rows })
         .margin({ bottom: Spacing.M })
+    } else if (block.type === 'image') {
+      ArtifactImage({ url: block.src, imageHeight: 180 })
     }
   }
 

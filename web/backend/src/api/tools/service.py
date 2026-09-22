@@ -1,5 +1,6 @@
 """工具 CRUD 业务逻辑与种子数据。"""
 import logging
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import Text, func, select
@@ -436,6 +437,19 @@ BUILTIN_TOOLS: list[dict] = [
             {"key": "model", "label": "模型 ID", "required": False, "type": "string"},
         ],
     },
+    {
+        "name": "download_asset",
+        "display_name": "素材下载",
+        "description": "把远程图片（如 AI 生成配图的临时地址）经后端代理下载并保存到会话交付目录，"
+        "自动登记为可预览、可下载、可打包的会话产物。",
+        "category": "file",
+        "version": "1.0.0",
+        "tags": ["image", "artifact", "download"],
+        "params": [
+            {"key": "url", "label": "图片地址", "required": True, "type": "string"},
+            {"key": "rel_path", "label": "相对交付目录的保存路径", "required": True, "type": "string"},
+        ],
+    },
 ]
 
 # ── 内置工具实现路径映射 ──────────────────────────────────────────────────
@@ -454,6 +468,7 @@ BUILTIN_TOOL_IMPLEMENTATIONS: dict[str, str] = {
     "list_knowledge_bases": "agent.tools.kb_search:list_knowledge_bases",
     "image_generate": "agent.tools.image_generate:image_generate",
     "text_embedding": "agent.tools.text_embedding:text_embedding",
+    "download_asset": "agent.tools.artifact_assets:download_asset",
 }
 
 
@@ -462,8 +477,12 @@ async def seed_builtin_tools(db: AsyncSession) -> None:
     count = (await db.execute(select(func.count()).select_from(Tool))).scalar() or 0
     if count > 0:
         logger.info("工具表已有 %d 条记录，跳过种子数据", count)
-        # 即使已有记录，也补全 implementation / tool_type 字段
+        # 即使已有记录，也补全 implementation / tool_type 字段与新增的内置工具
         await _backfill_implementation_fields(db)
+        try:
+            await _backfill_builtin_tools(db)
+        except Exception:
+            logger.warning("内置工具 backfill 失败，已跳过（不影响启动）", exc_info=True)
         return
 
     for t in BUILTIN_TOOLS:
@@ -504,3 +523,65 @@ async def _backfill_implementation_fields(db: AsyncSession) -> None:
 
     if updated > 0:
         logger.info("已为 %d 个内置工具补全 implementation 字段", updated)
+
+
+def missing_builtin_tools(
+    existing_names: set[str] | None = None,
+    items: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """返回内置工具清单里"表里还没有"的条目（按名称全表判重）。
+
+    注意：``tools.name`` 是**全局唯一索引**（与 ``source`` 无关），因此判重必须覆盖
+    全表；历史库中可能存在同名但 source 非 builtin 的记录（MCP / 第三方注册），
+    只按 ``source='builtin'`` 过滤会漏判并触发唯一键冲突（曾导致启动中断）。
+
+    Args:
+        existing_names: 工具表中已存在的全部工具名。
+        items: 内置工具定义（缺省用 :data:`BUILTIN_TOOLS`）。
+
+    Returns:
+        需要新增的内置工具定义列表（保持定义顺序）。
+    """
+    known = existing_names if existing_names is not None else set()
+    source_items = BUILTIN_TOOLS if items is None else items
+    return [item for item in source_items if item["name"] not in known]
+
+
+async def _backfill_builtin_tools(db: AsyncSession) -> None:
+    """为存量库补全新增的内置工具（按名称全表判重，缺失才插入）。"""
+    existing = set((await db.execute(select(Tool.name))).scalars().all())
+    missing = missing_builtin_tools(existing)
+    if not missing:
+        return
+
+    for item in missing:
+        impl = BUILTIN_TOOL_IMPLEMENTATIONS.get(item["name"])
+        db.add(
+            Tool(
+                name=item["name"],
+                display_name=item["display_name"],
+                description=item["description"],
+                category=item["category"],
+                source="builtin",
+                status="enabled",
+                version=item["version"],
+                author="ke-hermes",
+                tags=item.get("tags", []),
+                params=item.get("params", []),
+                implementation=impl,
+                tool_type="function",
+            )
+        )
+
+    try:
+        await db.flush()
+    except Exception:
+        # 单个工具写入失败不应影响服务启动：回滚本次 backfill 并记录
+        await db.rollback()
+        logger.warning("补全内置工具失败，已回滚本次 backfill", exc_info=True)
+        return
+    logger.info(
+        "已补全 %d 个新增内置工具：%s",
+        len(missing),
+        "、".join(item["name"] for item in missing),
+    )

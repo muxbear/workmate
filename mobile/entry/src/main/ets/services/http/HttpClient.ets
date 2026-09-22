@@ -18,6 +18,11 @@ export class HttpClient {
     this.token = token
   }
 
+  /** 当前 token(供产物取件等非 JSON 请求复用) */
+  getToken(): string {
+    return this.token
+  }
+
   clearToken(): void {
     this.token = ''
   }

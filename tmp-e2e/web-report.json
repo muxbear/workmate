@@ -1,0 +1,139 @@
+{
+  "base": "http://localhost:5174",
+  "steps": [
+    {
+      "name": "登录 Web 版",
+      "pass": true,
+      "detail": "URL=http://localhost:5174/overview"
+    },
+    {
+      "name": "打开左侧「对话」菜单页",
+      "pass": true,
+      "detail": "URL=http://localhost:5174/chat"
+    },
+    {
+      "name": "点击「+」打开添加菜单",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "添加「文档写作专家」到输入框",
+      "pass": true,
+      "detail": "chip=\"文档写作专家\""
+    },
+    {
+      "name": "输入问题",
+      "pass": true,
+      "detail": "请以「人工智能如何改变日常办公」为主题写一篇约 600 字的文章，包含标题、引言…"
+    },
+    {
+      "name": "生成结束（流式停止）",
+      "pass": true,
+      "detail": "elapsed=99s"
+    },
+    {
+      "name": "生成文章正文",
+      "pass": true,
+      "detail": "length=3009"
+    },
+    {
+      "name": "文章内含配图",
+      "pass": true,
+      "detail": "count=4"
+    },
+    {
+      "name": "配图实际加载成功",
+      "pass": false,
+      "detail": "[{\"nw\":0,\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=in\"},{\"nw\":0,\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=in\"},{\"nw\":0,\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=in\"},{\"nw\":0,\"src\":\"/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=in\"}]"
+    },
+    {
+      "name": "登记交付物卡片",
+      "pass": false,
+      "detail": "count=0 head="
+    },
+    {
+      "name": "产物包含文章与配图",
+      "pass": false,
+      "detail": "[]"
+    },
+    {
+      "name": "打包下载本轮交付物",
+      "pass": false,
+      "detail": "error: locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.artifact-bundle').first()\u001b[22m\n"
+    },
+    {
+      "name": "整会话打包接口",
+      "pass": true,
+      "detail": "thread=01a0c904-e08f-7063-b899-8c060332fd32 => 200 application/zip bytes=2860125"
+    }
+  ],
+  "api": [
+    "200 GET /api/auth/login/challenge?account=e2e_doc_writer",
+    "200 GET /api/auth/public-key",
+    "200 POST /api/auth/login/account",
+    "200 GET /api/rbac/my-permissions",
+    "200 GET /api/notifications/unread_count",
+    "200 GET /api/auth/me/roles",
+    "200 GET /api/announcements/mine?page=1&page_size=20",
+    "200 GET /api/announcements/unread_count",
+    "200 GET /api/notifications?page=1&page_size=20",
+    "200 GET /api/notifications/unread_count",
+    "200 GET /api/overview/kpi?period=day",
+    "200 GET /api/announcements/unread_count",
+    "200 GET /api/overview/health",
+    "200 GET /api/notifications?page=1&page_size=20",
+    "200 GET /api/announcements/mine?page=1&page_size=20",
+    "200 GET /api/overview/resource-stats",
+    "200 GET /api/overview/usage-trend?period=day",
+    "200 GET /api/overview/events?limit=20",
+    "200 GET /api/overview/top-users?limit=5&period=day",
+    "200 GET /api/overview/token-stats?period=day",
+    "200 GET /api/overview/provider-usage",
+    "200 GET /api/overview/system-metrics",
+    "200 GET /api/notifications?page=1&page_size=20",
+    "200 GET /api/announcements/mine?page=1&page_size=20",
+    "200 GET /api/auth/me/roles",
+    "200 GET /api/conversations",
+    "200 GET /api/notifications/unread_count",
+    "200 GET /api/rbac/my-permissions",
+    "200 GET /api/providers",
+    "200 GET /api/announcements/unread_count",
+    "200 GET /api/announcements/unread_count",
+    "200 GET /api/notifications/unread_count",
+    "200 GET /api/notifications?page=1&page_size=20",
+    "200 GET /api/announcements/mine?page=1&page_size=20",
+    "200 GET /api/experts?page=1&page_size=50&status=active",
+    "200 POST /api/chat/stream",
+    "200 GET /api/providers",
+    "200 GET /api/notifications/stream?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3MzVmZTUwMy0wNDdkLTRjNjctYWU3ZC0zYWNmMjgyMjlhNmQiLCJ0eXBlIjoiYWNjZXNzIiwiYXVkIjoia2UtaGVybWVzIiwiaWF0IjoxNzkwMDc4OTIzLCJleHAiOjE3OTAwODYxMjMsInJvbGUiOiJtYW5hZ2VyIn0.6FAesY_c43elRFdjzl3alq_14kBBIirSR8oDFkveuGQ",
+    "401 GET /api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png",
+    "401 GET /api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png",
+    "200 GET /api/conversations",
+    "200 GET /api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/bundle.zip?scope=thread"
+  ],
+  "images": [
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png",
+      "nw": 0,
+      "nh": 0
+    },
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png",
+      "nw": 0,
+      "nh": 0
+    },
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-1.png",
+      "nw": 0,
+      "nh": 0
+    },
+    {
+      "src": "/api/chat/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/download?disposition=inline&path=%2F%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD%E5%A6%82%E4%BD%95%E6%94%B9%E5%8F%98%E6%97%A5%E5%B8%B8%E5%8A%9E%E5%85%AC%2Ffigure-2.png",
+      "nw": 0,
+      "nh": 0
+    }
+  ],
+  "artifacts": [],
+  "bundle": "error: locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.artifact-bundle').first()\u001b[22m\n",
+  "text": "我来完成这个写作与配图任务。首先规划文章结构，并同时生成两张与主题相关的插图。两张插图已生成，现在将它们保存到交付目录的配图子目录。两张图片均已保存。现在校验文件存在并写入文章。文章与配图均已完成。\n\n交付说明\n文章保存路径：/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公.md\n同名图片目录：/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/\n已保存图片清单：\nfigure-1.png（AI 自动整理文档与日程场景）\nfigure-2.png（人与 AI 协同办公场景）\n人工智能如何改变日常办公\n\n曾几何时，办公室里最耗时的往往是那些重复性事务：录入数据、整理会议纪要、排定日程、回复邮件。如今，人工智能正悄然成为每个人的\"数字同事\"。它并非来抢走工作，而是把我们从琐碎事务中解放出来，让\"办公\"这件事发生深刻改变。\n\n一、把重复劳动交给\"机器同事\"\n\n在日常办公中，大量时间被消耗在格式统一、数据录入、表格汇总等重复性任务上。借助 AI，这些工作正被逐步自动化：智能识别发票并生成报销单、自动分类整理邮件、语音实时转写会议内容……员工只需审核与确认，效率成倍提升，也大幅减少了因疲劳与机械操作带来的差错。\n\n二、让决策更有\"数据底气\"\n\nAI 不仅能\"干活\"，还能\"参谋\"。通过对海量数据快速分析，它能生成可视化报表、预测业务趋势、提炼客户反馈的要点。过去需要团队花数天整理的资料，如今几分钟即可得到清晰摘要与建议。管理者由此把更多精力放在判断、沟通与统筹上，让决策更快、也更准。\n\n三、重新定义\"会办公\"\n\n当 AI 承担了执行层面的工作，人的价值便更多体现在提出好问题、做出判断、进行创新与协作上。会写提示词、能审核 AI 的输出、懂得人机分工，正在成为新的职场基本功。办公不再比拼谁打字更快、谁表格做得更熟练，而是看谁更善于与智能工具协同。\n\n人工智能正在重新书写\"办公\"的定义。它不是取代人的工具，而是一面放大镜，放大人的创造力与效率。拥抱它、用好它，我们就能把时间留给真正重要的事——思考、创造与沟通，让工作回归价值本身。\n\ntask 输出：\nCommand(update={'files': {}, 'messages': [ToolMessage(content='文章与配图均已完成。\\n\\n## 交付说明\\n\\n- 文章保存路径：/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公.md\\n- 同名图片目录：/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/\\n- 已保存图片清单：\\n - figure-1.png（AI 自动整理文档与日程场景）\\n - figure-2.png（人与 AI 协同办公场景）\\n\\n---\\n\\n# 人工智能如何改变日常办公\\n\\n曾几何时，办公室里最耗时的往往是那些重复性事务：录入数据、整理会议纪要、排定日程、回复邮件。如今，人工智能正悄然成为每个人的\"数字同事\"。它并非来抢走工作，而是把我们从琐碎事务中解放出来，让\"办公\"这件事发生深刻改变。\\n\\n\\n\\n## 一、把重复劳动交给\"机器同事\"\\n\\n在日常办公中，大量时间被消耗在格式统一、数据录入、表格汇总等重复性任务上。借助 AI，这些工作正被逐步自动化：智能识别发票并生成报销单、自动分类整理邮件、语音实时转写会议内容……员工只需审核与确认，效率成倍提升，也大幅减少了因疲劳与机械操作带来的差错。\\n\\n## 二、让决策更有\"数据底气\"\\n\\nAI 不仅能\"干活\"，还能\"参谋\"。通过对海量数据快速分析，它能生成可视化报表、预测业务趋势、提炼客户反馈的要点。过去需要团队花数天整理的资料，如今几分钟即可得到清晰摘要与建议。管理者由此把更多精力放在判断、沟通与统筹上，让决策更快、也更准。\\n\\n## 三、重新定义\"会办公\"\\n\\n当 AI 承担了执行层面的工作，人的价值便更多体现在提出好问题、做出判断、进行创新与协作上。会写提示词、能审核 AI 的输出、懂得人机分工，正在成为新的职场基本功。办公不再比拼谁打字更快、谁表格做得更熟练，而是看谁更善于与智能工具协同。\\n\\n\\n\\n人工智能正在重新书写\"办公\"的定义。它不是取代人的工具，而是一面放大镜，放大人的创造力与效率。拥抱它、用好它，我们就能把时间留给真正重要的事——思考、创造与沟通，让工作回归价值本身。', tool_call_id='call_00_Nuo5fumGy6afft8awIfE5096')]})\n\nls 输出：\ncontent=\"['/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公.md', '/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/']\" name='ls' tool_call_id='call_00_V42oCeDnb0WKrJ3bSGI05768'\n\nls 输出：\ncontent=\"['/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/figure-1.png', '/artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/人工智能如何改变日常办公/figure-2.png']\" name='ls' tool_call_id='call_00_ET_iT6ykrVHaTzK22QydOMf4207'\n文章已完成交付。以下是文档写作专家的产出汇总：\n\n交付成果\n\n文章文件\n\n人工智能如何改变日常办公.md（约 600 字，含标题、引言、3 个小节与结尾）\n\n配图目录（与文章同名子目录）\n\nfigure-1.png —— AI 自动整理文档与日程场景\nfigure-2.png —— 人与 AI 协同办公场景\n\n完整路径位于 /artifacts/01a0c904-e08f-7063-b899-8c060332fd32/turn-1/ 下。\n\n文章概览\n\n标题：人工智能如何改变日常办公\n\n结构\n\n引言：把 AI 比作\"数字同事\"，点明其意义在于解放琐碎事务。\n小节一 · 把重复劳动交给\"机器同事\"：讲述 AI 自动化处理数据录入、邮件分类、语音转写等重复性工作，提升效率、减少差错。\n小节二 · 让决策更有\"数据底气\"：说明 AI 通过数据分析、报表生成、趋势预测辅助管理者更快更准地决策。\n小节三 · 重新定义\"会办公\"：提出新的职场基本功是人机协同、提示词写作与 AI 输出审核。\n结尾：升华主题——AI 不是取代人的工具，而是放大创造力与效率的\"放大镜\"。\n\n两幅插图已分别插入文中相应位置，文章排版清晰，可直接使用。"
+}

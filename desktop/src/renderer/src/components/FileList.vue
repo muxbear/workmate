@@ -29,6 +29,43 @@ const rootError = ref('')
 /** 根条目：目录先行 + 保持主进程返回顺序 */
 const rootEntries = ref<WorkspaceFileEntry[]>([])
 
+/** 打包下载进行中的行与结果提示（组件内轻量反馈） */
+const exportingPath = ref('')
+const exportNote = ref('')
+
+/**
+ * 打包下载当前行：
+ * - 文件（如 文章.md）连带同名目录（文章/，含配图）一起打包；
+ * - 目录则整目录递归打包。
+ * zip 导出到工作空间根目录，由主进程完成。
+ */
+async function exportRow(entry: WorkspaceFileEntry): Promise<void> {
+  if (!entry || entry.relPath.startsWith('__')) return
+  const targets = [entry.relPath]
+  if (entry.type === 'file') {
+    const base = entry.relPath.replace(/\.[^./]+$/, '')
+    if (base && base !== entry.relPath) targets.push(base)
+  }
+  exportingPath.value = entry.relPath
+  exportNote.value = ''
+  try {
+    const res = await window.api.exportWorkspaceZip(props.workspaceId, targets)
+    if (!res.success || !res.data) {
+      exportNote.value = res.error || '打包失败'
+      return
+    }
+    if (res.data.canceled) {
+      exportNote.value = ''
+      return
+    }
+    exportNote.value = '已导出到：' + (res.data.relPath || res.data.absPath)
+  } catch (err) {
+    exportNote.value = err instanceof Error ? err.message : '打包失败'
+  } finally {
+    exportingPath.value = ''
+  }
+}
+
 // 根目录切换（工作空间变化 / 返回根）时重置
 watch(
   () => [props.workspaceId, props.rootPath],
@@ -108,6 +145,7 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
 <template>
   <div class="fl">
     <p v-if="rootError" class="fl-error">{{ rootError }}</p>
+    <p v-if="exportNote" class="fl-note">{{ exportNote }}</p>
     <div v-else class="fl-list">
       <div v-for="row in rows" :key="row.entry.relPath" class="fl-row" :style="{ paddingLeft: `${12 + row.depth * 14}px` }">
         <template v-if="row.entry.type === 'dir'">
@@ -122,6 +160,25 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
             </svg>
             <span class="fl-name">{{ row.entry.name }}</span>
           </button>
+          <button
+            class="fl-export"
+            title="打包下载该目录"
+            :disabled="exportingPath === row.entry.relPath"
+            @click.stop="exportRow(row.entry)"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
         </template>
         <template v-else>
           <div class="fl-file">
@@ -134,6 +191,25 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
             <button class="fl-file-name" :disabled="row.entry.relPath.startsWith('__')"
               @click="emit('openFile', row.entry)">
               {{ row.entry.name }}
+            </button>
+            <button
+              class="fl-export"
+              title="打包下载（文章 + 同名配图目录）"
+              :disabled="exportingPath === row.entry.relPath"
+              @click.stop="exportRow(row.entry)"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
             </button>
           </div>
         </template>
@@ -248,6 +324,38 @@ const rows = computed<Array<{ entry: WorkspaceFileEntry; depth: number }>>(() =>
 .fl-file-name:disabled {
   cursor: default;
   color: var(--kw-color-text-subtle);
+}
+
+.fl-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kw-color-text-subtle);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fl-export:hover:not(:disabled) {
+  background: var(--kw-color-brand-hover);
+  color: var(--kw-color-brand);
+}
+
+.fl-export:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.fl-note {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--kw-color-brand);
+  word-break: break-all;
 }
 
 .fl-empty,

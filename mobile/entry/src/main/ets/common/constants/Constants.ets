@@ -4,6 +4,8 @@ export class Constants {
   static readonly BASE_URL: string = 'https://api.example.com'
   /** 请求超时(毫秒) */
   static readonly TIMEOUT_MS: number = 10000
+  /** 流式对话读超时(毫秒):长文写作可能持续较久 */
+  static readonly STREAM_TIMEOUT_MS: number = 300000
   /** 是否使用 Mock 实现 —— 后端就绪后改为 false */
   static readonly USE_MOCK: boolean = true
   /** 本地偏好存储名 */

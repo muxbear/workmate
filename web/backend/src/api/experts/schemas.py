@@ -73,6 +73,8 @@ class ExpertInfo(BaseModel):
     model_type: str | None = None
     prompt_template: str = ""
     expertise_areas: list[str] = []
+    # 声明式能力（image.generate / document.assemble 等）：各端据此映射本平台工具
+    capabilities: list[str] = []
     tools: list[ToolBrief] = []
     skills: list[ExpertSkillBrief] = []
     mcp_configs: list[McpConfigBrief] = []
@@ -196,6 +198,7 @@ class ExpertSyncItem(BaseModel):
     mcp_configs: list[McpConfigBrief] = []
     prompt_template: str = ""
     expertise_areas: list[str] = []
+    capabilities: list[str] = []
 
 
 class ExpertSyncListResponse(BaseModel):

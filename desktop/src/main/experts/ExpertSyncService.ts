@@ -64,6 +64,8 @@ interface ExpertSyncItem {
   }>
   prompt_template: string
   expertise_areas: string[]
+  /** 声明式能力（后端按工具/MCP 反推） */
+  capabilities?: string[]
 }
 
 interface ExpertSyncListData {
@@ -115,6 +117,7 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
     })),
     promptTemplate: item.prompt_template,
     expertiseAreas: item.expertise_areas,
+    capabilities: item.capabilities ?? [],
     isExpert: true
   }
 }
@@ -170,6 +173,8 @@ export class ExpertSyncService {
 
     this.report(onProgress, 'fetch', 12, '正在从服务器拉取专家数据…')
     const data = await this.request<ExpertSyncListData>('get', '/api/expert-sync/list', undefined, {
+      // 平台参数：服务端据此渲染平台化提示词（去掉平台专属命令）
+      params: { platform: 'desktop' },
       headers: { Authorization: `Bearer ${accessToken}` },
       onDownloadProgress: (e: AxiosProgressEvent): void => {
         if (!e.total) return
