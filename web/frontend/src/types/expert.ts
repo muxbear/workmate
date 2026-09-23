@@ -45,6 +45,8 @@ export interface Expert {
   sortOrder: number
   isPublished: boolean
   status: 'active' | 'inactive' | 'error'
+  /** 语义化版本号，如 1.0.0；每次编辑默认递增修订号 */
+  version: string
   systemPrompt: string
   providerId?: string
   modelId?: string
@@ -74,6 +76,8 @@ export interface ExpertCreateRequest {
   mcpConfigs: McpConfigItem[]
   featured: boolean
   scene?: string
+  /** 语义化版本号，缺省由后端按 1.0.0 处理 */
+  version?: string
 }
 
 /** 更新专家基础信息 */
@@ -84,6 +88,8 @@ export interface ExpertUpdateRequest {
   systemPrompt: string
   providerId?: string
   modelId?: string
+  /** 编辑弹窗中计算好的版本号（默认 patch 递增，可手工修改） */
+  version: string
 }
 
 /** 更新展示元数据 */

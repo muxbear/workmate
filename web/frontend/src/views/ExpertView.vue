@@ -81,6 +81,7 @@ async function handleEditSave(data: {
         mcpConfigs: data.config.mcpConfigs || [],
         featured: data.profile.featured || false,
         scene: data.profile.scene,
+        version: data.basic.version,
       })
       ElMessage.success('专家创建成功')
     } else {

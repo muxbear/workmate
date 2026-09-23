@@ -65,6 +65,9 @@ class Expert(Base):
     status: Mapped[str] = mapped_column(
         String(16), default="inactive", comment="状态: active/inactive"
     )
+    version: Mapped[str] = mapped_column(
+        String(32), default="1.0.0", comment="版本号（语义化版本，每次编辑递增修订号）"
+    )
     system_prompt: Mapped[str] = mapped_column(Text, default="", comment="系统提示词")
     provider_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, comment="模型提供方 ID"

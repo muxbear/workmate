@@ -5,15 +5,21 @@ import type { Tool, ToolCategory, ToolStatus } from '@/types/tool'
 import { CATEGORY_META, STATUS_META } from '@/types/tool'
 import { fetchTools } from '@/services/toolApi'
 
-const props = defineProps<{
-  visible: boolean
-  agentName: string
-  existingToolNames: string[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    agentName: string
+    existingToolNames: string[]
+    /** 多选模式：确认后以 add-batch 事件回传全部选中项（默认单选，保持原有行为） */
+    multiple?: boolean
+  }>(),
+  { multiple: false },
+)
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'add', toolName: string, description: string): void
+  (e: 'add-batch', tools: Tool[]): void
 }>()
 
 // --- state ---
@@ -25,12 +31,25 @@ const pageSize = 10
 const keyword = ref('')
 const categoryFilter = ref<ToolCategory | ''>('')
 const statusFilter = ref<ToolStatus | ''>('')
+// 单选模式记录选中项 id；多选模式记录选中项 id 集合
 const selectedToolId = ref<string | null>(null)
+const selectedToolIds = ref<string[]>([])
+// 多选模式下缓存选中项对象，保证翻页后仍能取回完整的选中记录
+const selectedTools = ref(new Map<string, Tool>())
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
-const selectedTool = computed(() =>
-  tools.value.find((t) => t.id === selectedToolId.value) ?? null,
+const selectedTool = computed(() => tools.value.find((t) => t.id === selectedToolId.value) ?? null)
+
+/** 当前页可勾选（未被添加过）的工具 */
+const selectableTools = computed(() => tools.value.filter((t) => !isAlreadyAdded(t.name)))
+
+const selectedCount = computed(() => selectedToolIds.value.length)
+
+const allPageSelected = computed(
+  () =>
+    selectableTools.value.length > 0 &&
+    selectableTools.value.every((t) => selectedToolIds.value.includes(t.id)),
 )
 
 const categoryOptions = computed(() =>
@@ -84,18 +103,61 @@ async function loadTools() {
   }
 }
 
+/** 多选模式下切换单个工具的勾选状态 */
+function toggleToolSelection(tool: Tool) {
+  const idx = selectedToolIds.value.indexOf(tool.id)
+  if (idx === -1) {
+    selectedToolIds.value.push(tool.id)
+    selectedTools.value.set(tool.id, tool)
+  } else {
+    selectedToolIds.value.splice(idx, 1)
+    selectedTools.value.delete(tool.id)
+  }
+}
+
+/** 全选 / 取消全选当前页可勾选项 */
+function toggleSelectAllOnPage() {
+  if (allPageSelected.value) {
+    for (const tool of selectableTools.value) {
+      const idx = selectedToolIds.value.indexOf(tool.id)
+      if (idx !== -1) selectedToolIds.value.splice(idx, 1)
+      selectedTools.value.delete(tool.id)
+    }
+    return
+  }
+  for (const tool of selectableTools.value) {
+    if (!selectedToolIds.value.includes(tool.id)) {
+      selectedToolIds.value.push(tool.id)
+      selectedTools.value.set(tool.id, tool)
+    }
+  }
+}
+
+/** 行点击：多选模式切换勾选，单选模式设置唯一选中项 */
+function onRowClick(tool: Tool) {
+  if (isAlreadyAdded(tool.name)) return
+  if (props.multiple) toggleToolSelection(tool)
+  else selectedToolId.value = tool.id
+}
+
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value || p === page.value) return
   page.value = p
   loadTools()
 }
 
-function selectTool(id: string) {
-  if (isAlreadyAdded(tools.value.find((t) => t.id === id)?.name ?? '')) return
-  selectedToolId.value = id
-}
-
 function handleConfirm() {
+  if (props.multiple) {
+    // 按勾选顺序回捞完整记录（含翻页前勾选的项）
+    const items = selectedToolIds.value
+      .map((id) => selectedTools.value.get(id))
+      .filter((t): t is Tool => t !== undefined && !isAlreadyAdded(t.name))
+    if (items.length === 0) return
+    emit('add-batch', items)
+    resetState()
+    return
+  }
+
   const tool = selectedTool.value
   if (!tool) return
   if (props.existingToolNames.includes(tool.name)) return
@@ -114,6 +176,8 @@ function resetState() {
   statusFilter.value = ''
   page.value = 1
   selectedToolId.value = null
+  selectedToolIds.value = []
+  selectedTools.value.clear()
   tools.value = []
   total.value = 0
 }
@@ -173,34 +237,18 @@ watch(
             </div>
             <div class="filter-row">
               <div class="filter-select-wrap">
-                <select
-                  v-model="categoryFilter"
-                  class="filter-select"
-                  @change="onFilterChange"
-                >
+                <select v-model="categoryFilter" class="filter-select" @change="onFilterChange">
                   <option value="">全部类别</option>
-                  <option
-                    v-for="opt in categoryOptions"
-                    :key="opt.value"
-                    :value="opt.value"
-                  >
+                  <option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">
                     {{ opt.label }}
                   </option>
                 </select>
                 <ChevronDown :size="12" class="select-arrow" />
               </div>
               <div class="filter-select-wrap">
-                <select
-                  v-model="statusFilter"
-                  class="filter-select"
-                  @change="onFilterChange"
-                >
+                <select v-model="statusFilter" class="filter-select" @change="onFilterChange">
                   <option value="">全部状态</option>
-                  <option
-                    v-for="opt in statusOptions"
-                    :key="opt.value"
-                    :value="opt.value"
-                  >
+                  <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
                     {{ opt.label }}
                   </option>
                 </select>
@@ -212,21 +260,42 @@ watch(
 
           <!-- Tool List (fixed height, scrollable) -->
           <div class="list-container">
-            <div v-if="loading" class="list-status">加载中...</div>
-            <div v-else-if="tools.length === 0" class="list-status">
-              未找到匹配的工具
+            <div v-if="multiple && tools.length > 0" class="multi-bar">
+              <el-checkbox
+                :model-value="allPageSelected"
+                :indeterminate="selectedCount > 0 && !allPageSelected"
+                size="small"
+                :disabled="selectableTools.length === 0"
+                @change="toggleSelectAllOnPage"
+              >
+                全选本页
+              </el-checkbox>
+              <span class="multi-count">已选 {{ selectedCount }} 项</span>
             </div>
+            <div v-if="loading" class="list-status">加载中...</div>
+            <div v-else-if="tools.length === 0" class="list-status">未找到匹配的工具</div>
             <div v-else class="tool-list">
               <div
                 v-for="tool in tools"
                 :key="tool.id"
                 class="tool-row"
                 :class="{
-                  selected: selectedToolId === tool.id,
+                  selected: multiple
+                    ? selectedToolIds.includes(tool.id)
+                    : selectedToolId === tool.id,
                   disabled: isAlreadyAdded(tool.name),
                 }"
-                @click="selectTool(tool.id)"
+                @click="onRowClick(tool)"
               >
+                <el-checkbox
+                  v-if="multiple"
+                  class="tool-row-check"
+                  :model-value="selectedToolIds.includes(tool.id)"
+                  size="small"
+                  :disabled="isAlreadyAdded(tool.name)"
+                  @click.stop
+                  @change="toggleToolSelection(tool)"
+                />
                 <div class="tool-row-left">
                   <span class="tool-display-name">{{ tool.displayName }}</span>
                   <span class="tool-name">{{ tool.name }}</span>
@@ -254,7 +323,7 @@ watch(
                 <div class="tool-row-right">
                   <span v-if="isAlreadyAdded(tool.name)" class="added-mark">已添加</span>
                   <Check
-                    v-else-if="selectedToolId === tool.id"
+                    v-else-if="!multiple && selectedToolId === tool.id"
                     :size="16"
                     class="check-icon"
                   />
@@ -265,19 +334,11 @@ watch(
 
           <!-- Pagination -->
           <div class="pagination-row">
-            <button
-              class="page-btn"
-              :disabled="page <= 1"
-              @click="goToPage(page - 1)"
-            >
+            <button class="page-btn" :disabled="page <= 1" @click="goToPage(page - 1)">
               <ChevronLeft :size="14" />
             </button>
             <span class="page-info">{{ page }} / {{ totalPages }}</span>
-            <button
-              class="page-btn"
-              :disabled="page >= totalPages"
-              @click="goToPage(page + 1)"
-            >
+            <button class="page-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)">
               <ChevronRight :size="14" />
             </button>
           </div>
@@ -295,10 +356,12 @@ watch(
             <button class="btn btn-ghost" @click="handleClose">取消</button>
             <button
               class="btn btn-primary"
-              :disabled="!selectedTool || isAlreadyAdded(selectedTool.name)"
+              :disabled="
+                multiple ? selectedCount === 0 : !selectedTool || isAlreadyAdded(selectedTool.name)
+              "
               @click="handleConfirm"
             >
-              添加工具
+              {{ multiple && selectedCount > 0 ? `添加 ${selectedCount} 个工具` : '添加工具' }}
             </button>
           </div>
         </div>
@@ -501,6 +564,29 @@ watch(
   padding: 32px 16px;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
+}
+
+/* ---- Multi-select bar ---- */
+.multi-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 8px;
+  position: sticky;
+  top: 0;
+  background: var(--color-modal-bg);
+  z-index: 1;
+}
+
+.multi-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.tool-row-check {
+  flex-shrink: 0;
+  margin-right: 2px;
 }
 
 .tool-list {

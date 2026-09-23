@@ -54,6 +54,7 @@ const usageText = computed(() => {
         <div class="name-row">
           <span class="name">{{ expert.name }}</span>
           <span class="status-dot" :style="{ background: statusColor }" :title="statusLabel" />
+          <span class="version-badge" title="专家版本号">v{{ expert.version }}</span>
         </div>
         <span class="title">{{ expert.title }}</span>
       </div>
@@ -182,6 +183,18 @@ const usageText = computed(() => {
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.version-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
 }
 
 .title {

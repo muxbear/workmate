@@ -22,10 +22,11 @@ Vue 3 前端应用，TypeScript + Element Plus。
 frontend/src/
 ├── main.ts             # 应用入口, 挂载 Pinia/Router/i18n/ElementPlus
 ├── App.vue             # 根组件
-├── views/              # 页面级组件 (12 个)
+├── views/              # 页面级组件
 │   ├── HomeView.vue    # 对话页面
 │   ├── OverviewView.vue # 概览仪表盘 (ECharts)
 │   ├── AgentsView.vue  # 智能体管理
+│   ├── ExpertView.vue  # 专家管理
 │   ├── ModelsView.vue  # 模型管理
 │   ├── SkillsView.vue  # 技能管理
 │   ├── McpSquareView.vue # MCP 广场
@@ -38,9 +39,10 @@ frontend/src/
 ├── components/         # 通用组件
 │   ├── auth/           #   登录/注册布局
 │   ├── captcha/        #   滑块验证码
-│   ├── common/         #   通用小组件
+│   ├── common/         #   通用小组件 + 工具/技能选择弹窗
 │   ├── mcp/            #   MCP 工具卡片
 │   ├── skill/          #   技能卡片/弹窗
+│   ├── expert/         #   专家卡片/编辑弹窗
 │   ├── agent/          #   智能体列表/详情/图/节点/边/弹窗
 │   ├── automation/     #   定时任务新建/编辑弹窗
 │   ├── MainLayout.vue  #   认证后根布局 (SideMenu + TopBar + RouterView)
@@ -78,6 +80,8 @@ frontend/src/
 | `/` | 需登录 | 主页 (对话界面) |
 | `/overview` | 需登录 | 概览仪表盘 |
 | `/agents` | 需登录 | 智能体管理 |
+| `/experts` | 需登录 | 专家管理 |
+| `/tools` | 需登录 | 工具管理 |
 | `/models` | 需登录 | 模型管理 |
 | `/skills` | 需登录 | 技能管理 |
 | `/scheduled-tasks` | 需登录 | 定时任务 |

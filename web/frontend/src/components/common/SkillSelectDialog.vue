@@ -5,15 +5,21 @@ import { fetchSkills, searchSkills } from '@/services/skillApi'
 import type { Skill } from '@/types/skill'
 import { getSkillIcon } from '@/components/skill/iconMap'
 
-const props = defineProps<{
-  visible: boolean
-  agentName: string
-  existingSkillIds: string[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    agentName: string
+    existingSkillIds: string[]
+    /** 多选模式：确认后以 add-batch 事件回传全部选中项（默认单选，保持原有行为） */
+    multiple?: boolean
+  }>(),
+  { multiple: false },
+)
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'add', skillId: string): void
+  (e: 'add-batch', skills: Skill[]): void
 }>()
 
 const PAGE_SIZE = 10
@@ -24,6 +30,9 @@ const skills = ref<Skill[]>([])
 const total = ref(0)
 const page = ref(1)
 const selectedSkill = ref<Skill | null>(null)
+// 多选模式：选中项 id 集合 + 完整记录缓存（保证翻页后仍能回捞）
+const selectedSkillIds = ref<string[]>([])
+const selectedSkills = ref(new Map<string, Skill>())
 const activeCategory = ref('')
 const activeStatus = ref<'all' | 'enabled' | 'disabled'>('all')
 
@@ -40,6 +49,17 @@ const categoryLabels: Record<string, string> = {
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
+/** 当前页可勾选（未被添加过）的技能 */
+const selectableSkills = computed(() => skills.value.filter((s) => !isAlreadyAdded(s.id)))
+
+const selectedCount = computed(() => selectedSkillIds.value.length)
+
+const allPageSelected = computed(
+  () =>
+    selectableSkills.value.length > 0 &&
+    selectableSkills.value.every((s) => selectedSkillIds.value.includes(s.id)),
+)
+
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 function buildParams() {
@@ -54,9 +74,7 @@ async function loadData() {
   try {
     const params = buildParams()
     const q = searchQuery.value.trim()
-    const result = q
-      ? await searchSkills(q, params)
-      : await fetchSkills(params)
+    const result = q ? await searchSkills(q, params) : await fetchSkills(params)
     skills.value = result.items
     total.value = result.total
   } catch {
@@ -78,6 +96,16 @@ function onFilterChange() {
   loadData()
 }
 
+function selectCategory(cat: string) {
+  activeCategory.value = cat
+  onFilterChange()
+}
+
+function selectStatus(s: 'all' | 'enabled' | 'disabled') {
+  activeStatus.value = s
+  onFilterChange()
+}
+
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value) return
   page.value = p
@@ -86,7 +114,8 @@ function goToPage(p: number) {
 
 function selectSkill(skill: Skill) {
   if (isAlreadyAdded(skill.id)) return
-  selectedSkill.value = skill
+  if (props.multiple) toggleSkillSelection(skill)
+  else selectedSkill.value = skill
 }
 
 function isAlreadyAdded(skillId: string) {
@@ -94,10 +123,50 @@ function isAlreadyAdded(skillId: string) {
 }
 
 function isSelected(skillId: string) {
+  if (props.multiple) return selectedSkillIds.value.includes(skillId)
   return selectedSkill.value?.id === skillId
 }
 
+/** 多选模式下切换单个技能的勾选状态 */
+function toggleSkillSelection(skill: Skill) {
+  const idx = selectedSkillIds.value.indexOf(skill.id)
+  if (idx === -1) {
+    selectedSkillIds.value.push(skill.id)
+    selectedSkills.value.set(skill.id, skill)
+  } else {
+    selectedSkillIds.value.splice(idx, 1)
+    selectedSkills.value.delete(skill.id)
+  }
+}
+
+/** 全选 / 取消全选当前页可勾选项 */
+function toggleSelectAllOnPage() {
+  if (allPageSelected.value) {
+    for (const skill of selectableSkills.value) {
+      const idx = selectedSkillIds.value.indexOf(skill.id)
+      if (idx !== -1) selectedSkillIds.value.splice(idx, 1)
+      selectedSkills.value.delete(skill.id)
+    }
+    return
+  }
+  for (const skill of selectableSkills.value) {
+    if (!selectedSkillIds.value.includes(skill.id)) {
+      selectedSkillIds.value.push(skill.id)
+      selectedSkills.value.set(skill.id, skill)
+    }
+  }
+}
+
 function handleConfirm() {
+  if (props.multiple) {
+    const items = selectedSkillIds.value
+      .map((id) => selectedSkills.value.get(id))
+      .filter((s): s is Skill => s !== undefined && !isAlreadyAdded(s.id))
+    if (items.length === 0) return
+    emit('add-batch', items)
+    resetForm()
+    return
+  }
   if (selectedSkill.value && !isAlreadyAdded(selectedSkill.value.id)) {
     emit('add', selectedSkill.value.id)
   }
@@ -114,6 +183,8 @@ function resetForm() {
   total.value = 0
   page.value = 1
   selectedSkill.value = null
+  selectedSkillIds.value = []
+  selectedSkills.value.clear()
   activeCategory.value = ''
   activeStatus.value = 'all'
 }
@@ -177,7 +248,7 @@ watch(
                   :plain="activeCategory !== cat"
                   size="small"
                   round
-                  @click="activeCategory = cat; onFilterChange()"
+                  @click="selectCategory(cat)"
                 >
                   {{ categoryLabels[cat] }}
                 </el-button>
@@ -185,17 +256,31 @@ watch(
               <div class="filter-group">
                 <span class="filter-label">状态：</span>
                 <el-button
-                  v-for="s in (['all', 'enabled', 'disabled'] as const)"
+                  v-for="s in ['all', 'enabled', 'disabled'] as const"
                   :key="s"
                   :type="activeStatus === s ? 'primary' : 'default'"
                   :plain="activeStatus !== s"
                   size="small"
                   round
-                  @click="activeStatus = s; onFilterChange()"
+                  @click="selectStatus(s)"
                 >
                   {{ s === 'all' ? '全部' : s === 'enabled' ? '已启用' : '已禁用' }}
                 </el-button>
               </div>
+            </div>
+
+            <!-- Multi-select bar -->
+            <div v-if="multiple && skills.length > 0" class="multi-bar">
+              <el-checkbox
+                :model-value="allPageSelected"
+                :indeterminate="selectedCount > 0 && !allPageSelected"
+                size="small"
+                :disabled="selectableSkills.length === 0"
+                @change="toggleSelectAllOnPage"
+              >
+                全选本页
+              </el-checkbox>
+              <span class="multi-count">已选 {{ selectedCount }} 项</span>
             </div>
 
             <!-- Skill list -->
@@ -220,9 +305,19 @@ watch(
                   @click="selectSkill(skill)"
                 >
                   <div class="skill-item-left">
+                    <el-checkbox
+                      v-if="multiple"
+                      :model-value="selectedSkillIds.includes(skill.id)"
+                      size="small"
+                      :disabled="isAlreadyAdded(skill.id)"
+                      @click.stop
+                      @change="toggleSkillSelection(skill)"
+                    />
                     <component :is="getSkillIcon(skill.icon)" :size="16" class="skill-item-icon" />
                     <span class="skill-item-name">{{ skill.name }}</span>
-                    <span class="skill-item-category">{{ categoryLabels[skill.category] || skill.category }}</span>
+                    <span class="skill-item-category">{{
+                      categoryLabels[skill.category] || skill.category
+                    }}</span>
                   </div>
                   <div class="skill-item-right">
                     <span v-if="isAlreadyAdded(skill.id)" class="added-badge">已添加</span>
@@ -234,19 +329,11 @@ watch(
 
             <!-- Pagination -->
             <div v-if="total > 0" class="pagination">
-              <button
-                class="page-btn"
-                :disabled="page <= 1"
-                @click="goToPage(page - 1)"
-              >
+              <button class="page-btn" :disabled="page <= 1" @click="goToPage(page - 1)">
                 <ChevronLeft :size="14" />
               </button>
               <span class="page-info">{{ page }} / {{ totalPages }}</span>
-              <button
-                class="page-btn"
-                :disabled="page >= totalPages"
-                @click="goToPage(page + 1)"
-              >
+              <button class="page-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)">
                 <ChevronRight :size="14" />
               </button>
             </div>
@@ -256,7 +343,9 @@ watch(
               <div class="desc-header">
                 <component :is="getSkillIcon(selectedSkill.icon)" :size="14" />
                 <span class="desc-title">{{ selectedSkill.name }}</span>
-                <span class="desc-cat">{{ categoryLabels[selectedSkill.category] || selectedSkill.category }}</span>
+                <span class="desc-cat">{{
+                  categoryLabels[selectedSkill.category] || selectedSkill.category
+                }}</span>
               </div>
               <p class="desc-text">{{ selectedSkill.description || '暂无描述' }}</p>
             </div>
@@ -267,10 +356,12 @@ watch(
             <button class="btn btn-ghost" @click="handleClose">取消</button>
             <button
               class="btn btn-primary"
-              :disabled="!selectedSkill || isAlreadyAdded(selectedSkill.id)"
+              :disabled="
+                multiple ? selectedCount === 0 : !selectedSkill || isAlreadyAdded(selectedSkill.id)
+              "
               @click="handleConfirm"
             >
-              确认添加
+              {{ multiple && selectedCount > 0 ? `添加 ${selectedCount} 个技能` : '确认添加' }}
             </button>
           </div>
         </div>
@@ -440,6 +531,20 @@ watch(
   white-space: nowrap;
 }
 
+/* ---- Multi-select bar ---- */
+.multi-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.multi-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
 /* ---- Skill list ---- */
 .skill-list {
   flex: 1;
@@ -472,7 +577,9 @@ watch(
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .skill-item {

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -95,6 +96,27 @@ FEATURED_SCENES = [
 ]
 
 
+# ── 版本号工具 ───────────────────────────────────────────────
+
+DEFAULT_VERSION = "1.0.0"
+
+_VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+
+
+def bump_patch(version: str | None) -> str:
+    """递增语义化版本号的修订号（patch）：1.2.3 -> 1.2.4.
+
+    预发布标识与构建元数据（``1.2.3-beta.1`` / ``1.2.3+build``）在递增后丢弃。
+    非法或缺失的输入回退到 ``1.0.0``。该函数仅作为「调用方未传版本号」时的
+    兜底，主流程的版本号由客户端在编辑弹窗中计算并可手工修改。
+    """
+    match = _VERSION_PATTERN.match(version or "")
+    if match is None:
+        return DEFAULT_VERSION
+    major, minor, patch = match.groups()
+    return f"{major}.{minor}.{int(patch) + 1}"
+
+
 # ── 工厂模式：ExpertAssembler ─────────────────────────────────
 
 
@@ -158,6 +180,7 @@ class ExpertAssembler:
             sort_order=expert.sort_order,
             is_published=expert.is_published,
             status=expert.status,
+            version=expert.version or DEFAULT_VERSION,
             system_prompt=expert.system_prompt or "",
             provider_id=expert.provider_id,
             model_id=expert.model_id,
@@ -471,6 +494,7 @@ async def create_expert(db: AsyncSession, req: ExpertCreateRequest) -> ExpertInf
         model_id=req.model_id,
         featured=req.featured,
         scene=req.scene or None,
+        version=req.version,
     )
     db.add(expert)
     await db.flush()
@@ -535,6 +559,9 @@ async def update_expert(
     expert.system_prompt = req.system_prompt
     expert.provider_id = req.provider_id
     expert.model_id = req.model_id
+    # 版本号在快照之后写入：快照保存的是本次变更前的状态。
+    # 调用方未传版本号时按「每次编辑递增修订号」兜底。
+    expert.version = req.version if req.version is not None else bump_patch(expert.version)
 
     await db.flush()
     await invalidate_graph()
@@ -754,6 +781,7 @@ async def clone_expert(db: AsyncSession, expert_id: str) -> ExpertInfo:
         system_prompt=source.system_prompt,
         provider_id=source.provider_id,
         model_id=source.model_id,
+        version=DEFAULT_VERSION,
         files=list(source.files) if isinstance(source.files, list) else [],
         featured=False,
         scene=None,

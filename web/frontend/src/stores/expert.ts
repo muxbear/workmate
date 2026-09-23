@@ -10,6 +10,7 @@ import type {
   FeaturedScene,
 } from '@/types/expert'
 import * as expertApi from '@/services/expertApi'
+import { DEFAULT_VERSION } from '@/utils/version'
 
 /* ------------------------------------------------------------------ */
 /*  Mock 数据（后端 API 实现后移除）                                    */
@@ -33,6 +34,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 100,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位专业的内容创作专家，擅长小红书种草文案和品牌故事撰写。',
     providerId: 'p1',
     modelId: 'm1',
@@ -62,6 +64,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 90,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位资深法律顾问，专注于商事合同审查与知识产权保护。',
     providerId: 'p1',
     modelId: 'm1',
@@ -89,6 +92,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 80,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位全栈设计工程师，精通 React 生态与 Design System。',
     tools: [
       { id: 't2', name: 'execute_code', displayName: '代码执行', toolType: 'function', category: 'code', icon: '' },
@@ -117,6 +121,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 70,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位行业信息研究员，擅长市场调研与竞品分析。',
     tools: [],
     skills: [],
@@ -143,6 +148,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 60,
     isPublished: true,
     status: 'inactive',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位资深后端工程师，专注于高并发系统设计。',
     tools: [],
     skills: [],
@@ -170,6 +176,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 50,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位资深财税专家，CPA 注册会计师。',
     tools: [],
     skills: [],
@@ -196,6 +203,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 40,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一位资深产品经理，擅长 0-1 产品搭建与用户研究。',
     tools: [],
     skills: [],
@@ -222,6 +230,7 @@ const MOCK_EXPERTS: Expert[] = [
     sortOrder: 30,
     isPublished: true,
     status: 'active',
+    version: DEFAULT_VERSION,
     systemPrompt: '你是一个创投分析团队，专注早期项目尽调与估值建模。',
     tools: [],
     skills: [],
@@ -427,6 +436,7 @@ export const useExpertStore = defineStore('expert', () => {
         sortOrder: 0,
         isPublished: true,
         status: 'inactive',
+        version: DEFAULT_VERSION,
         systemPrompt: data.systemPrompt,
         providerId: data.providerId,
         modelId: data.modelId,
@@ -559,6 +569,7 @@ export const useExpertStore = defineStore('expert', () => {
           id: 'mock-' + Date.now(),
           name: src.name + ' (副本)',
           status: 'inactive',
+          version: DEFAULT_VERSION,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }

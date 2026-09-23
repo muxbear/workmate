@@ -5,6 +5,7 @@
  * 后端实现后移除 mock 相关逻辑即可。
  */
 import instance from './request'
+import { DEFAULT_VERSION } from '@/utils/version'
 import type {
   Expert,
   ExpertCreateRequest,
@@ -72,6 +73,7 @@ function toExpert(raw: Record<string, unknown>): Expert {
     sortOrder: (raw.sort_order as number) ?? 0,
     isPublished: (raw.is_published as boolean) ?? true,
     status: ((raw.status as string) || 'inactive') as 'active' | 'inactive' | 'error',
+    version: (raw.version as string) || DEFAULT_VERSION,
     systemPrompt: (raw.system_prompt as string) || '',
     providerId: raw.provider_id as string | undefined,
     modelId: raw.model_id as string | undefined,
@@ -111,6 +113,7 @@ function toCreatePayload(data: ExpertCreateRequest): Record<string, unknown> {
     mcp_configs: toMcpConfigPayload(data.mcpConfigs),
     featured: data.featured,
     scene: data.scene || null,
+    version: data.version || DEFAULT_VERSION,
   }
 }
 
@@ -122,6 +125,7 @@ function toUpdatePayload(data: ExpertUpdateRequest): Record<string, unknown> {
     system_prompt: data.systemPrompt,
     provider_id: data.providerId || null,
     model_id: data.modelId || null,
+    version: data.version || DEFAULT_VERSION,
   }
 }
 

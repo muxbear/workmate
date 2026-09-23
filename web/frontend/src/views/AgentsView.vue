@@ -8,8 +8,8 @@ import AgentListItem from '@/components/agent/AgentListItem.vue'
 import AgentDetail from '@/components/agent/AgentDetail.vue'
 import AgentGraph from '@/components/agent/AgentGraph.vue'
 import AddConfigDialog from '@/components/agent/AddConfigDialog.vue'
-import ToolSelectDialog from '@/components/agent/ToolSelectDialog.vue'
-import SkillSelectDialog from '@/components/agent/SkillSelectDialog.vue'
+import ToolSelectDialog from '@/components/common/ToolSelectDialog.vue'
+import SkillSelectDialog from '@/components/common/SkillSelectDialog.vue'
 import AgentFormDialog from '@/components/agent/AgentFormDialog.vue'
 
 const agentStore = useAgentStore()

@@ -270,6 +270,21 @@ async def init_db():
         # 迁移：专家数据从 agents/expert_profiles 迁移到独立的 experts 表
         await _migrate_experts_to_own_table(conn)
 
+        # 迁移：为 experts 表添加语义化版本号列（列已存在时跳过）
+        if await _table_exists(conn, "experts"):
+            expert_columns = await _get_existing_columns(conn, "experts")
+            if "version" not in expert_columns:
+                logger.info("Adding version column to experts table")
+                await conn.execute(
+                    text("ALTER TABLE experts ADD COLUMN version VARCHAR(32) DEFAULT '1.0.0'")
+                )
+            await conn.execute(
+                text(
+                    "UPDATE experts SET version = '1.0.0' "
+                    "WHERE version IS NULL OR version = ''"
+                )
+            )
+
         # 迁移：为现有 conversations 表添加 attachment_ids 列
         # Migration: add parent_id to agents table
         if await _table_exists(conn, 'agents'):

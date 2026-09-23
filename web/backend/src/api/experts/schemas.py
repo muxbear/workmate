@@ -1,7 +1,11 @@
 """专家管理 API 的请求与响应 Schema 定义。."""
+import re
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# 语义化版本号：主版本.次版本.修订号，允许预发布标识与构建元数据
+_SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+([-+].+)?$")
 
 
 class McpConfigItem(BaseModel):
@@ -66,6 +70,7 @@ class ExpertInfo(BaseModel):
     sort_order: int
     is_published: bool
     status: str
+    version: str = "1.0.0"
     system_prompt: str
     provider_id: str | None = None
     model_id: str | None = None
@@ -111,6 +116,15 @@ class ExpertCreateRequest(BaseModel):
     mcp_configs: list[McpConfigItem] = []
     featured: bool = False
     scene: str | None = None
+    version: str = "1.0.0"
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, value: str) -> str:
+        """校验语义化版本号格式。."""
+        if not _SEMVER_PATTERN.match(value):
+            raise ValueError("版本号需为语义化版本格式，如 1.0.0")
+        return value
 
 
 class ExpertUpdateRequest(BaseModel):
@@ -121,6 +135,17 @@ class ExpertUpdateRequest(BaseModel):
     system_prompt: str = ""
     provider_id: str | None = None
     model_id: str | None = None
+    # 缺省表示调用方未参与版本管理，由服务端按「每次编辑递增修订号」兜底；
+    # 不可给默认值 "1.0.0"，否则省略该字段的调用方会把版本静默重置。
+    version: str | None = None
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, value: str | None) -> str | None:
+        """校验语义化版本号格式（缺省允许）。."""
+        if value is not None and not _SEMVER_PATTERN.match(value):
+            raise ValueError("版本号需为语义化版本格式，如 1.0.0")
+        return value
 
 
 class ExpertProfileUpdateRequest(BaseModel):
