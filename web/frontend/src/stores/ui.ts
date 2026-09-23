@@ -50,7 +50,10 @@ function applyThemeToDocument(theme: ThemeMode) {
 
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(false)
-  const rightPanelCollapsed = ref(false)
+  /** 右栏默认收起：进入对话页先只展示对话区，需要时再展开 */
+  const rightPanelCollapsed = ref(true)
+  /** 右栏是否全屏：占满主体宽度、隐藏左侧对话区 */
+  const rightPanelFullscreen = ref(false)
   /** 右栏展开宽度（px）；收起时保留该值，再次展开可还原 */
   const rightPanelWidth = ref(DEFAULT_RIGHT_PANEL_WIDTH)
   /** 主体容器实测宽度（由 AppShell 上报），用于按比例调整右栏宽度 */
@@ -103,6 +106,14 @@ export const useUiStore = defineStore('ui', () => {
 
   function toggleRightPanel() {
     rightPanelCollapsed.value = !rightPanelCollapsed.value
+    // 收起时一并退出全屏，避免再次展开直接铺满整页
+    if (rightPanelCollapsed.value) rightPanelFullscreen.value = false
+  }
+
+  /** 右栏全屏 / 还原（全屏时右栏占满主体宽度，隐藏对话区） */
+  function toggleRightPanelFullscreen() {
+    rightPanelFullscreen.value = !rightPanelFullscreen.value
+    if (rightPanelFullscreen.value) rightPanelCollapsed.value = false
   }
 
   /** 设置右栏宽度（自动按容器宽度收敛到合法区间） */
@@ -150,11 +161,14 @@ export const useUiStore = defineStore('ui', () => {
   function newConversation() {
     activeThreadId.value = null
     plusMenuOpen.value = false
+    // 新建对话后回到对话区，顺带退出右栏全屏
+    rightPanelFullscreen.value = false
   }
 
   return {
     sidebarCollapsed,
     rightPanelCollapsed,
+    rightPanelFullscreen,
     rightPanelWidth,
     shellWidth,
     rightPanelRatio,
@@ -171,6 +185,7 @@ export const useUiStore = defineStore('ui', () => {
     deleteHistory,
     toggleSidebar,
     toggleRightPanel,
+    toggleRightPanelFullscreen,
     setRightPanelWidth,
     setRightPanelRatio,
     resetRightPanelWidth,

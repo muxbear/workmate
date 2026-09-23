@@ -13,13 +13,14 @@ const { dragging, onPointerDown, onKeyDown } = usePanelResize(shellRef)
 
 <template>
   <div ref="shellRef" class="app-shell" :class="{ 'is-resizing': dragging }">
-    <div class="chat-column">
+    <!-- 右栏全屏时隐藏对话区（v-show 保留组件状态，退出全屏后消息滚动位置不丢） -->
+    <div v-show="!uiStore.rightPanelFullscreen" class="chat-column">
       <ChatMain />
     </div>
 
     <!-- 对话区与右栏之间的分割线：按住左右拖动即可改变两边宽度 -->
     <div
-      v-if="!uiStore.rightPanelCollapsed"
+      v-if="!uiStore.rightPanelCollapsed && !uiStore.rightPanelFullscreen"
       class="panel-splitter"
       :class="{ 'is-dragging': dragging }"
       role="separator"

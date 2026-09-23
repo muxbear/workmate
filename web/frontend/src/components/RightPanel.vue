@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ChevronLeft,
   ChevronRight,
+  Maximize,
+  Minimize,
   PanelRightClose,
   PanelRightOpen,
   Plus,
@@ -30,8 +32,12 @@ const ARROW_SPACE = 60
 const panelWidth = computed(() =>
   uiStore.rightPanelCollapsed ? RIGHT_PANEL_COLLAPSED_WIDTH : uiStore.rightPanelWidth,
 )
-/** 右栏较窄时新建对话按钮只保留图标，给标签页留出空间 */
-const compactBar = computed(() => panelWidth.value < 360)
+/** 全屏态下右栏撑满主体宽度，不再写死像素宽度 */
+const panelStyle = computed(() =>
+  uiStore.rightPanelFullscreen
+    ? {}
+    : { width: panelWidth.value + 'px', minWidth: panelWidth.value + 'px' },
+)
 
 let viewportObserver: ResizeObserver | null = null
 
@@ -148,8 +154,11 @@ function handleNewConversation() {
 <template>
   <aside
     class="right-panel"
-    :class="{ collapsed: uiStore.rightPanelCollapsed }"
-    :style="{ width: panelWidth + 'px', minWidth: panelWidth + 'px' }"
+    :class="{
+      collapsed: uiStore.rightPanelCollapsed,
+      fullscreen: uiStore.rightPanelFullscreen,
+    }"
+    :style="panelStyle"
   >
     <!-- 收起态：仅保留展开按钮 -->
     <div v-if="uiStore.rightPanelCollapsed" class="panel-collapsed">
@@ -213,28 +222,43 @@ function handleNewConversation() {
           <ChevronRight :size="14" />
         </button>
 
-        <button class="new-chat-btn" title="新建对话" @click="handleNewConversation">
-          <Plus :size="14" />
-          <span v-if="!compactBar">新建对话</span>
+        <!-- 全屏 / 还原：全屏时右栏占满主体宽度，隐藏左侧对话区 -->
+        <button
+          class="fullscreen-btn"
+          :class="{ 'is-active': uiStore.rightPanelFullscreen }"
+          :title="uiStore.rightPanelFullscreen ? '还原' : '全屏'"
+          :aria-pressed="uiStore.rightPanelFullscreen"
+          @click="uiStore.toggleRightPanelFullscreen"
+        >
+          <Minimize v-if="uiStore.rightPanelFullscreen" :size="14" />
+          <Maximize v-else :size="14" />
         </button>
       </div>
 
       <div class="panel-body">
-        <div v-if="workspaceStore.historyActive" class="history-list">
-          <div
-            v-for="item in uiStore.histories"
-            :key="item.thread_id"
-            class="history-item"
-            :class="{ active: uiStore.activeThreadId === item.thread_id }"
-            @click="handleSelectHistory(item.thread_id)"
-          >
-            <span class="history-title">{{ item.title }}</span>
-            <button
-              class="delete-btn"
-              @click.stop="handleDeleteHistory(item.thread_id, item.title)"
+        <div v-if="workspaceStore.historyActive" class="history-panel">
+          <!-- 新建对话：历史对话标签页的第一行，固定不随列表滚动 -->
+          <button class="new-chat-btn" title="新建对话" @click="handleNewConversation">
+            <Plus :size="14" />
+            <span>新建对话</span>
+          </button>
+
+          <div class="history-list">
+            <div
+              v-for="item in uiStore.histories"
+              :key="item.thread_id"
+              class="history-item"
+              :class="{ active: uiStore.activeThreadId === item.thread_id }"
+              @click="handleSelectHistory(item.thread_id)"
             >
-              <Trash2 :size="14" />
-            </button>
+              <span class="history-title">{{ item.title }}</span>
+              <button
+                class="delete-btn"
+                @click.stop="handleDeleteHistory(item.thread_id, item.title)"
+              >
+                <Trash2 :size="14" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -259,6 +283,12 @@ function handleNewConversation() {
     min-width var(--transition-duration) ease;
 }
 
+/* 全屏态：由 flex 撑满主体宽度（此时左侧对话区已隐藏） */
+.right-panel.fullscreen {
+  flex: 1;
+  min-width: 0;
+}
+
 .panel-expanded {
   display: flex;
   flex-direction: column;
@@ -276,7 +306,8 @@ function handleNewConversation() {
 }
 
 .collapse-btn,
-.tab-scroll {
+.tab-scroll,
+.fullscreen-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
@@ -291,9 +322,16 @@ function handleNewConversation() {
 }
 
 .collapse-btn:hover,
-.tab-scroll:hover:not(:disabled) {
+.tab-scroll:hover:not(:disabled),
+.fullscreen-btn:hover {
   background: var(--surface-secondary);
   color: var(--foreground-primary);
+}
+
+/* 全屏态高亮，提示再次点击可还原 */
+.fullscreen-btn.is-active {
+  background: var(--accent-primary-light);
+  color: var(--accent-primary);
 }
 
 .tab-scroll:disabled {
@@ -382,8 +420,10 @@ function handleNewConversation() {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 5px 10px;
+  width: 100%;
+  padding: 8px 10px;
   border-radius: var(--radius-lg);
   border: none;
   background: var(--accent-primary);
@@ -404,8 +444,17 @@ function handleNewConversation() {
   flex-direction: column;
 }
 
+.history-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .history-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
