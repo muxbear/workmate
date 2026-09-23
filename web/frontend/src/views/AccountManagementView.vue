@@ -166,7 +166,7 @@ const pageSizeOptions = [10, 20, 50]
   <div class="am-page">
     <!-- Top Bar -->
     <div class="am-topbar">
-      <button class="back-btn" @click="router.push('/admin')">
+      <button class="back-btn" @click="router.push('/overview')">
         <ChevronLeft :size="16" />返回
       </button>
       <span class="topbar-divider" />

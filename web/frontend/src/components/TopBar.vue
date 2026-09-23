@@ -57,15 +57,16 @@ const breadcrumb = computed(() => {
     '/tools': { group: '智能体', item: '工具' },
     '/mcp': { group: 'MCP', item: 'MCP 广场' },
     '/knowledge-base': { group: '知识库', item: '知识库' },
-    '/admin': { group: '管理', item: '后台管理' },
     '/admin/users': { group: '管理', item: '人员管理' },
     '/admin/rbac': { group: '管理', item: '角色权限' },
     '/admin/resources': { group: '管理', item: '资源管理' },
+    '/admin/org': { group: '管理', item: '机构部门' },
+    '/admin/accounts': { group: '管理', item: '账号管理' },
     '/admin/announcements': { group: '管理', item: '公告管理' },
+    '/admin/params': { group: '管理', item: '参数配置' },
   }
   const path = route.path
   if (map[path]) return map[path]
-  if (path.startsWith('/admin/')) return map['/admin']
   if (path.startsWith('/mcp/')) return map['/mcp']
   return map[path] ?? null
 })

@@ -450,6 +450,7 @@ class RbacService:
         existing = await self.db.execute(select(Role).where(Role.is_builtin))
         if existing.first():
             await self._sync_overview_resource()
+            await self._sync_remove_admin_dashboard()
             return  # Already seeded
 
         logger.info("Seeding built-in RBAC data...")
@@ -544,9 +545,6 @@ class RbacService:
             # Admin
             {"id": "g-admin", "parent": None, "type": "catalog",
              "label": "管理", "perm_key": "admin", "icon": "Shield", "sort": 7},
-            {"id": "m-admin-dashboard", "parent": "g-admin", "type": "menu",
-             "label": "后台管理", "perm_key": "admin:dashboard", "path": "/admin",
-             "icon": "Shield", "sort": 1},
             {"id": "m-admin-users", "parent": "g-admin", "type": "menu",
              "label": "人员管理", "perm_key": "admin:users", "path": "/admin/users",
              "icon": "Users", "sort": 2},
@@ -625,9 +623,9 @@ class RbacService:
                 "chat:conversation", "chat:send", "chat:create",
                 "knowledge:base", "knowledge:create",
                 "control:overview", "control:scheduled",
-                "agent:manage", "agent:tools", "agent:expert", "agent:skills", "agent:expert",
+                "agent:manage", "agent:tools", "agent:expert", "agent:skills",
                 "mcp:square",
-                "admin:dashboard", "admin:users", "admin:user:create", "admin:user:edit",
+                "admin:users", "admin:user:create", "admin:user:edit",
             ],
             "member": [
                 "chat:conversation", "chat:send", "chat:create",
@@ -635,7 +633,6 @@ class RbacService:
                 "control:overview",
                 "agent:manage", "agent:tools", "agent:expert",
                 "mcp:square",
-                "admin:dashboard",
             ],
             "guest": [
                 "chat:conversation", "chat:send",
@@ -887,6 +884,42 @@ class RbacService:
 
         await self.db.flush()
         logger.info("Params menu synced successfully.")
+
+    async def _sync_remove_admin_dashboard(self) -> None:
+        """Remove the retired admin console menu (后台管理) from existing databases."""
+        result = await self.db.execute(
+            select(PermissionResource).where(
+                PermissionResource.perm_key == "admin:dashboard",
+                PermissionResource.is_builtin.is_(True),
+            )
+        )
+        resource = result.scalar_one_or_none()
+        if resource is None:
+            return  # Already removed
+
+        ids_to_delete = {resource.id}
+        child_result = await self.db.execute(
+            select(PermissionResource.id).where(
+                PermissionResource.parent_id == resource.id
+            )
+        )
+        ids_to_delete.update(row[0] for row in child_result.all())
+
+        key_result = await self.db.execute(
+            select(PermissionResource.perm_key).where(
+                PermissionResource.id.in_(ids_to_delete)
+            )
+        )
+        await self.db.execute(
+            delete(RolePermission).where(
+                RolePermission.perm_key.in_([row[0] for row in key_result.all()])
+            )
+        )
+        await self.db.execute(
+            delete(PermissionResource).where(PermissionResource.id.in_(ids_to_delete))
+        )
+        await self.db.flush()
+        logger.info("Admin console menu (后台管理) removed successfully.")
 
     async def _get_resource(self, resource_id: str) -> PermissionResource | None:
         result = await self.db.execute(

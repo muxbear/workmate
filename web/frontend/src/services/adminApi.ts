@@ -1,9 +1,6 @@
 // 管理后台 API 服务
 import instance from './request'
 import type {
-  AdminTileConfig,
-  SystemStats,
-  UpdateLogEntry,
   Department,
   SystemUser,
   CreateUserRequest,
@@ -31,35 +28,6 @@ function toSnakeCase(obj: Record<string, unknown>): Record<string, unknown> {
     result[snakeKey] = value
   }
   return result
-}
-
-// ─── 管理仪表盘 (仍为 mock — 后续可迁移) ──────────────────────────────────────
-
-export async function fetchAdminTiles(): Promise<AdminTileConfig[]> {
-  return [
-    { id: 'system', icon: 'Settings', title: '系统设置', description: '站点信息、时区、语言、备份与基础安全策略。', gradient: 'from-blue-500/20 to-blue-500/5', group: 'basic' },
-    { id: 'resources', icon: 'FolderTree', title: '资源管理', description: '管理系统功能菜单及页面操作权限（目录、菜单、按钮），与角色权限联动。', route: '/admin/resources', gradient: 'from-cyan-500/20 to-cyan-500/5', group: 'people' },
-    { id: 'notifications', icon: 'Bell', title: '通知配置', description: '邮件、Webhook、IM 渠道与告警规则。', gradient: 'from-amber-500/20 to-amber-500/5', group: 'basic' },
-    { id: 'org', icon: 'Building2', title: '机构部门', description: '管理机构信息、部门层级与组织架构。', route: '/admin/org', gradient: 'from-emerald-500/20 to-emerald-500/5', group: 'basic' },
-    { id: 'users', icon: 'Users', title: '人员管理', description: '维护账号、部门与组织架构，分配负责人。', route: '/admin/users', gradient: 'from-violet-500/20 to-violet-500/5', group: 'people' },
-    { id: 'api-keys', icon: 'UserRoundCog', title: '账号管理', description: '管理系统账号、登录策略与密码安全设置。', route: '/admin/accounts', gradient: 'from-indigo-500/20 to-indigo-500/5', group: 'people' },
-    { id: 'rbac', icon: 'ShieldCheck', title: '角色权限', description: 'RBAC 角色定义、菜单与数据权限粒度配置。', route: '/admin/rbac', gradient: 'from-fuchsia-500/20 to-fuchsia-500/5', group: 'people' },
-    { id: 'plugins', icon: 'Puzzle', title: '插件管理', description: '浏览、安装、启停官方与第三方插件。', gradient: 'from-teal-500/20 to-teal-500/5', group: 'extension' },
-    { id: 'integrations', icon: 'Plug', title: '第三方集成', description: 'SSO、对象存储、向量库、企业 IM 接入。', gradient: 'from-orange-500/20 to-orange-500/5', group: 'extension' },
-    { id: 'audit', icon: 'ScrollText', title: '审计日志', description: '登录、配置变更、模型调用全量操作追溯。', gradient: 'from-rose-500/20 to-rose-500/5', group: 'extension' },
-  ]
-}
-
-export async function fetchSystemStats(): Promise<SystemStats> {
-  return { version: 'v0.0.1', uptime: 12, onlineInstances: 8, registeredUsers: 142, activeAlerts: 3 }
-}
-
-export async function fetchUpdateLogs(): Promise<UpdateLogEntry[]> {
-  return [
-    { tag: 'v0.0.1', date: '2026-06-08', title: 'Ke-Work 首个开发预览版上线', primary: true },
-    { tag: 'Beta', date: '2026-05-22', title: '新增 DeepSeek 提供商与定时任务模块' },
-    { tag: 'Beta', date: '2026-05-10', title: '工具中心支持工具包拖拽上传与自动解析' },
-  ]
 }
 
 // ─── 机构部门 API ──────────────────────────────────────────────────────────────
@@ -212,7 +180,6 @@ export const PERM_RESOURCES: PermResource[] = [
   { id: 'm-mcp', parentId: 'g-mcp', type: 'menu', label: 'MCP 广场', permKey: 'mcp:square', path: '/mcp', icon: 'Puzzle', sortOrder: 1, status: 'active', isBuiltin: true, description: 'MCP 工具广场' },
 
   { id: 'g-admin', parentId: null, type: 'catalog', label: '管理', permKey: 'admin', icon: 'Shield', sortOrder: 6, status: 'active', isBuiltin: true, description: '后台管理权限' },
-  { id: 'm-admin', parentId: 'g-admin', type: 'menu', label: '后台', permKey: 'admin:dashboard', path: '/admin', icon: 'Shield', sortOrder: 1, status: 'active', isBuiltin: true, description: '管理仪表盘' },
   { id: 'm-admin-users', parentId: 'g-admin', type: 'menu', label: '人员管理', permKey: 'admin:users', path: '/admin/users', icon: 'Users', sortOrder: 2, status: 'active', isBuiltin: true, description: '人员与部门管理' },
   { id: 'm-admin-rbac', parentId: 'g-admin', type: 'menu', label: '角色权限', permKey: 'admin:rbac', path: '/admin/rbac', icon: 'ShieldCheck', sortOrder: 3, status: 'active', isBuiltin: true, description: '基于角色的访问控制' },
   { id: 'm-admin-menu', parentId: 'g-admin', type: 'menu', label: '菜单配置', permKey: 'admin:menu', path: '/admin/menu-config', icon: 'LayoutList', sortOrder: 4, status: 'active', isBuiltin: true, description: '菜单与权限资源管理' },
@@ -243,7 +210,7 @@ export const DEFAULT_ROLE_PERMS: Record<string, { perms: Set<string>; dataScope:
     dataScope: Object.fromEntries(DATA_RESOURCES.map((r) => [r.id, 'all' as DataScope])),
   },
   manager: {
-    perms: new Set(['chat:conversation', 'chat:send', 'chat:create', 'knowledge:base', 'knowledge:upload', 'control:overview', 'control:scheduled', 'control:task:create', 'agent:manage', 'agent:tools', 'agent:skills', 'mcp:square', 'admin:dashboard', 'admin:users']),
+    perms: new Set(['chat:conversation', 'chat:send', 'chat:create', 'knowledge:base', 'knowledge:upload', 'control:overview', 'control:scheduled', 'control:task:create', 'agent:manage', 'agent:tools', 'agent:skills', 'mcp:square', 'admin:users']),
     dataScope: Object.fromEntries(DATA_RESOURCES.map((r) => [r.id, 'dept_and_children' as DataScope])),
   },
   member: {

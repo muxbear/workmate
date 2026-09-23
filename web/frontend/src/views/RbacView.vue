@@ -92,7 +92,7 @@ async function handleSave() {
 }
 
 function handleBack() {
-  router.push('/admin')
+  router.push('/overview')
 }
 
 function getPermChildren(parentId: string | null): PermResource[] {

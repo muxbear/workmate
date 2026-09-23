@@ -128,7 +128,7 @@ function getStatusBadgeClass(status: string) {
     <!-- Header -->
     <div class="od-topbar">
       <div class="od-topbar-left">
-        <button class="od-back-btn" @click="router.push('/admin')">
+        <button class="od-back-btn" @click="router.push('/overview')">
           <ChevronLeft :size="16" />
           <span>返回</span>
         </button>

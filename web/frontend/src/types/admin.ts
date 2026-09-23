@@ -1,36 +1,5 @@
 // 管理后台相关类型定义
 
-// ─── 管理卡片 ─────────────────────────────────────────────────────────────────
-
-export interface AdminTileConfig {
-  id: string
-  icon: string
-  title: string
-  description: string
-  route?: string
-  gradient: string
-  group: 'basic' | 'people' | 'extension'
-}
-
-// ─── 系统信息 ─────────────────────────────────────────────────────────────────
-
-export interface SystemStats {
-  version: string
-  uptime: number
-  onlineInstances: number
-  registeredUsers: number
-  activeAlerts: number
-}
-
-// ─── 更新日志 ─────────────────────────────────────────────────────────────────
-
-export interface UpdateLogEntry {
-  tag: string
-  date: string
-  title: string
-  primary?: boolean
-}
-
 // ─── 部门 ─────────────────────────────────────────────────────────────────────
 
 export interface Department {

@@ -82,12 +82,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'MCP 详情', permKey: 'mcp:square' },
       },
       {
-        path: 'admin',
-        name: 'admin',
-        component: () => import('@/views/AdminView.vue'),
-        meta: { title: '后台管理', permKey: 'admin:dashboard' },
-      },
-      {
         path: 'admin/users',
         name: 'admin-users',
         component: () => import('@/views/UserManagementView.vue'),

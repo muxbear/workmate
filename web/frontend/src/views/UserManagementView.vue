@@ -220,7 +220,7 @@ const statusConfig: Record<UserStatus, { label: string; cls: string; icon: typeo
 }
 
 function handleBack() {
-  router.push('/admin')
+  router.push('/overview')
 }
 
 // ─── 分页 ───────────────────────────────────────────────

@@ -174,7 +174,7 @@ function getChildrenList(parentId: string | null): PermResource[] {
 }
 
 function handleBack() {
-  router.push('/admin')
+  router.push('/overview')
 }
 </script>
 
