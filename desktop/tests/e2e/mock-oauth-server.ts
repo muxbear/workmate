@@ -32,10 +32,17 @@ let grantedScopes: string[] = []
 let authorizationRequests: string[] = []
 /** token 交换次数（每次完成授权流程 +1） */
 let tokenRequests = 0
+/** 专家同步接口下发的专家项（默认空，按用例设置） */
+let syncExperts: unknown[] = []
 
 /** 设置模拟“用户关闭的权限”（授权页开关关掉的效果） */
 export function setMockDeniedScopes(scopes: string[]): void {
   deniedScopes = [...scopes]
+}
+
+/** 设置专家同步接口（/api/expert-sync/list）下发的专家数据 */
+export function setMockExperts(items: unknown[]): void {
+  syncExperts = items
 }
 
 /** 重置统计与授权状态（每个用例开始前调用） */
@@ -45,6 +52,7 @@ export function resetMockState(): void {
   grantedScopes = []
   authorizationRequests = []
   tokenRequests = 0
+  syncExperts = []
 }
 
 /** 读取授权统计（断言用） */
@@ -159,7 +167,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // ── 同步接口（最小可用数据，保证“授权后可静默同步”）──
   if (req.method === 'GET' && url.pathname === '/api/expert-sync/list') {
-    return okEnvelope(res, { items: [], total: 0, synced_at: Date.now() })
+    return okEnvelope(res, {
+      items: syncExperts,
+      total: syncExperts.length,
+      synced_at: Date.now()
+    })
   }
 
   if (req.method === 'GET' && url.pathname === '/api/skill/list') {

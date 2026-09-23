@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { experts } from '../../../src/renderer/src/store/catalog'
+import { experts, useCatalogStore } from '../../../src/renderer/src/store/catalog'
 import { useExpertSyncStore } from '../../../src/renderer/src/store/expertSync'
 import type { DesktopExpert, ExpertSyncProgress } from '../../../src/preload/index.d'
 
@@ -38,6 +38,7 @@ function installMockApi(): {
   authorize: MockFn
   sync: MockFn
   loadLocal: MockFn
+  deleteExpert: MockFn
   disconnect: MockFn
   onSyncProgress: MockFn
 } {
@@ -55,12 +56,20 @@ function installMockApi(): {
     progressCb?.({ phase: 'done', percent: 100, message: '完成' })
     return {
       success: true,
-      data: { experts: [makeExpert('remote')], syncedAt: 222 }
+      data: {
+        experts: [makeExpert('remote')],
+        syncedAt: 222,
+        stats: { added: 1, updated: 0, kept: 0 }
+      }
     }
   })
   const loadLocal = vi.fn(async () => ({
     success: true,
     data: { experts: [makeExpert('local')], syncedAt: 111 }
+  }))
+  const deleteExpert = vi.fn(async (id: string) => ({
+    success: true,
+    data: { experts: [makeExpert('local')].filter((expert) => expert.id !== id), syncedAt: 111 }
   }))
   const disconnect = vi.fn(async () => ({ success: true, data: null }))
   const onSyncProgress = vi.fn((cb: (p: ExpertSyncProgress) => void) => {
@@ -71,10 +80,10 @@ function installMockApi(): {
   })
   vi.stubGlobal('window', {
     api: {
-      expert: { getStatus, authorize, sync, loadLocal, disconnect, onSyncProgress }
+      expert: { getStatus, authorize, sync, loadLocal, deleteExpert, disconnect, onSyncProgress }
     }
   })
-  return { getStatus, authorize, sync, loadLocal, disconnect, onSyncProgress }
+  return { getStatus, authorize, sync, loadLocal, deleteExpert, disconnect, onSyncProgress }
 }
 
 beforeEach(() => {
@@ -96,7 +105,7 @@ describe('expertSync store', () => {
     expect(store.error).toBeNull()
   })
 
-  it('ES-02: sync 成功后展示远程数据并回到空闲态', async () => {
+  it('ES-02: sync 成功后展示远程数据、记录版本比对统计并回到空闲态', async () => {
     const mock = installMockApi()
     const store = useExpertSyncStore()
     await store.loadStatus()
@@ -105,6 +114,7 @@ describe('expertSync store', () => {
     expect(mock.onSyncProgress).toHaveBeenCalledTimes(1)
     expect(experts.value.map((e) => e.id)).toEqual(['remote'])
     expect(store.lastSyncedAt).toBe(222)
+    expect(store.stats).toEqual({ added: 1, updated: 0, kept: 0 })
     expect(store.percent).toBe(100)
     expect(store.syncing).toBe(false)
   })
@@ -147,5 +157,49 @@ describe('expertSync store', () => {
     expect(store.lastSyncedAt).toBeNull()
     expect(store.error).toBeNull()
     expect(store.syncing).toBe(false)
+    expect(store.stats).toBeNull()
+    expect(store.removingId).toBeNull()
+  })
+
+  it('ES-06: removeExpert 删除专家广场条目并解除选中态', async () => {
+    const mock = installMockApi()
+    const store = useExpertSyncStore()
+    const catalog = useCatalogStore()
+    await store.loadLocal()
+    catalog.setExpert('local')
+
+    await expect(store.removeExpert('local')).resolves.toBe(true)
+
+    expect(mock.deleteExpert).toHaveBeenCalledWith('local')
+    expect(experts.value).toHaveLength(0)
+    expect(catalog.selectedExpertId).toBeNull()
+    expect(catalog.selectedExpertPrompt).toBe('')
+    expect(store.removingId).toBeNull()
+  })
+
+  it('ES-07: removeExpert 删非选中专家时保留选中态', async () => {
+    installMockApi()
+    const store = useExpertSyncStore()
+    const catalog = useCatalogStore()
+    experts.value = [makeExpert('keep'), makeExpert('drop')]
+    catalog.setExpert('keep')
+
+    await expect(store.removeExpert('drop')).resolves.toBe(true)
+
+    expect(experts.value.map((e) => e.id)).toEqual(['keep'])
+    expect(catalog.selectedExpertId).toBe('keep')
+  })
+
+  it('ES-08: removeExpert 失败时保留列表并记录错误', async () => {
+    const mock = installMockApi()
+    const store = useExpertSyncStore()
+    await store.loadLocal()
+    mock.deleteExpert.mockResolvedValue({ success: false, error: '专家不存在，请先同步专家数据' })
+
+    await expect(store.removeExpert('local')).resolves.toBe(false)
+
+    expect(experts.value.map((e) => e.id)).toEqual(['local'])
+    expect(store.error).toBe('专家不存在，请先同步专家数据')
+    expect(store.removingId).toBeNull()
   })
 })

@@ -214,6 +214,8 @@ class ExpertSyncItem(BaseModel):
     system_prompt: str
     scene: str | None = None
     sort_order: int
+    # 客户端据此判断是否需要更新本地副本（服务端版本更高才覆盖）
+    version: str = "1.0.0"
     provider_id: str | None = None
     model_id: str | None = None
     model_name: str | None = None

@@ -897,7 +897,17 @@ export interface DesktopExpert {
   expertiseAreas: string[]
   /** 声明式能力（image.generate / document.assemble 等）；老数据可能缺失 */
   capabilities?: string[]
+  /** 语义化版本号（如 1.0.0）；同步时与服务端版本比对，老数据可能缺失 */
+  version?: string
   isExpert: boolean
+}
+
+/** 专家同步统计（版本比对结果：新增 / 更新 / 保留本地） */
+export interface ExpertSyncStats {
+  added: number
+  updated: number
+  /** 本地版本不低于服务端版本、保持本地数据的条目数 */
+  kept: number
 }
 
 /** Web 专家同步状态 */
@@ -922,10 +932,12 @@ export interface ExpertSyncProgress {
 export interface ExpertSyncAPI {
   getStatus(): Promise<IpcResult<ExpertSyncStatus>>
   authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
-  /** 拉取 → 落盘 → 读回，返回与磁盘一致的专家数据 */
-  sync(): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number }>>
+  /** 拉取 → 按版本比对合并 → 落盘 → 读回，返回与磁盘一致的专家数据与比对统计 */
+  sync(): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number; stats: ExpertSyncStats }>>
   /** 读取 ~/.ke-work/experts/experts.json；文件缺失返回 null */
   loadLocal(): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number } | null>>
+  /** 删除本地专家（仅本机副本）；服务端仍存在时下次同步会重新拉回 */
+  deleteExpert(id: string): Promise<IpcResult<{ experts: DesktopExpert[]; syncedAt: number }>>
   disconnect(): Promise<IpcResult<null>>
   /** 订阅同步进度事件，返回取消订阅函数 */
   onSyncProgress(callback: (data: ExpertSyncProgress) => void): () => void

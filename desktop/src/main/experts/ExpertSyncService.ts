@@ -3,12 +3,14 @@ import type {
   DesktopExpert,
   DesktopMcpConfig,
   ExpertSyncProgress,
+  ExpertSyncStats,
   ExpertSyncStatus,
   WebUser
 } from '../../preload/index.d'
 import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_EXPERT_READ } from '../oauth2/scopes'
 import { ExpertJsonStore } from './ExpertJsonStore'
+import { shouldUpdateExpert } from './expertVersion'
 
 interface WebApiEnvelope<T> {
   code: number
@@ -66,6 +68,8 @@ interface ExpertSyncItem {
   expertise_areas: string[]
   /** 声明式能力（后端按工具/MCP 反推） */
   capabilities?: string[]
+  /** 语义化版本号（服务端专家版本；老服务端可能不返回） */
+  version?: string
 }
 
 interface ExpertSyncListData {
@@ -84,6 +88,8 @@ interface ExpertSyncServiceDeps {
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const JSON_FILE_VERSION = 1
+/** 服务端未返回版本号时的兜底（与服务端 DEFAULT_VERSION 一致） */
+const DEFAULT_EXPERT_VERSION = '1.0.0'
 
 function mapExpert(item: ExpertSyncItem): DesktopExpert {
   return {
@@ -118,8 +124,18 @@ function mapExpert(item: ExpertSyncItem): DesktopExpert {
     promptTemplate: item.prompt_template,
     expertiseAreas: item.expertise_areas,
     capabilities: item.capabilities ?? [],
+    version: item.version || DEFAULT_EXPERT_VERSION,
     isExpert: true
   }
+}
+
+/** 同步完成文案：汇总版本比对结果（服务端无专家时退回简短提示） */
+function describeStats(stats: ExpertSyncStats): string {
+  const parts: string[] = []
+  if (stats.added > 0) parts.push(`新增 ${stats.added} 个`)
+  if (stats.updated > 0) parts.push(`更新 ${stats.updated} 个`)
+  if (stats.kept > 0) parts.push(`保留本地 ${stats.kept} 个`)
+  return parts.length > 0 ? `专家数据同步完成：${parts.join('，')}` : '专家数据同步完成'
 }
 
 /**
@@ -160,13 +176,19 @@ export class ExpertSyncService {
   }
 
   /**
-   * 拉取专家列表 → 映射 → 写盘 → 读回校验。
+   * 拉取专家列表 → 与本地版本比对合并 → 写盘 → 读回校验。
+   *
+   * 合并规则（服务端列表为基准，本地独有的条目按现有语义丢弃）：
+   * - 本地无同 id 专家（含本地已删除）→ 采用服务端数据；
+   * - 服务端版本更高 → 用服务端数据更新本地；
+   * - 本地版本更高或相同 → 保留本地数据。
+   *
    * 同步期间通过 onProgress 回调向调用方（IPC → 渲染层）推送阶段进度。
    */
   async sync(
     localUserId: string,
     onProgress?: (p: ExpertSyncProgress) => void
-  ): Promise<{ experts: DesktopExpert[]; syncedAt: number }> {
+  ): Promise<{ experts: DesktopExpert[]; syncedAt: number; stats: ExpertSyncStats }> {
     this.report(onProgress, 'authorize', 5, '正在校验专家同步授权…')
     const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_EXPERT_READ])
     const webUser = toWebUser(this.authorization.getWebUser(localUserId))
@@ -183,22 +205,59 @@ export class ExpertSyncService {
       }
     })
 
-    const mapped = data.items.map(mapExpert)
+    const previous = await this.store.read()
+    const remoteExperts = data.items.map(mapExpert)
+    const previousById = new Map((previous?.experts ?? []).map((expert) => [expert.id, expert]))
+    const stats: ExpertSyncStats = { added: 0, updated: 0, kept: 0 }
+    const merged = remoteExperts.map((remoteExpert): DesktopExpert => {
+      const localExpert = previousById.get(remoteExpert.id)
+      if (!localExpert) {
+        stats.added += 1
+        return remoteExpert
+      }
+      if (shouldUpdateExpert(localExpert.version, remoteExpert.version)) {
+        stats.updated += 1
+        return remoteExpert
+      }
+      stats.kept += 1
+      return localExpert
+    })
+
     const syncedAt = Date.now()
     this.report(onProgress, 'save', 75, '正在保存专家数据到本地…')
     await this.store.write({
       version: JSON_FILE_VERSION,
       syncedAt,
       syncedBy: webUser ? { webUserId: webUser.id || '', nickname: webUser.nickname || '' } : null,
-      experts: mapped
+      experts: merged
     })
 
     this.report(onProgress, 'load', 88, '正在加载本地专家数据…')
     const disk = await this.store.read()
-    this.cachedExperts = disk?.experts ?? mapped
+    this.cachedExperts = disk?.experts ?? merged
     this.lastSyncedAt = disk?.syncedAt ?? syncedAt
-    this.report(onProgress, 'done', 100, '专家数据同步完成')
-    return { experts: this.cachedExperts, syncedAt: this.lastSyncedAt }
+    this.report(onProgress, 'done', 100, describeStats(stats))
+    return { experts: this.cachedExperts, syncedAt: this.lastSyncedAt, stats }
+  }
+
+  /**
+   * 删除本地专家（仅本机副本）。
+   *
+   * 不做删除墓碑：服务端仍存在的专家会在下次同步时按版本重新拉回，
+   * 与服务端「下架后不再下发」的语义配合即可覆盖两种情况。
+   */
+  async deleteExpert(expertId: string): Promise<{ experts: DesktopExpert[]; syncedAt: number }> {
+    const file = await this.store.read()
+    if (!file) throw new Error('本地专家数据不存在，请先同步')
+    if (!file.experts.some((expert) => expert.id === expertId)) {
+      throw new Error('专家不存在，请先同步专家数据')
+    }
+    const experts = file.experts.filter((expert) => expert.id !== expertId)
+    // syncedAt 保持不变：删除不是一次同步，避免「上次同步时间」被刷新
+    await this.store.write({ ...file, experts })
+    this.cachedExperts = experts
+    this.lastSyncedAt = file.syncedAt
+    return { experts, syncedAt: file.syncedAt }
   }
 
   /** 读取 ~/.ke-work/experts/experts.json 供页面展示；文件缺失返回 null。 */

@@ -53,12 +53,7 @@ async function expertToSubAgent(
     systemPrompt: expert.systemPrompt || '',
     model: await resolveExpertModel(expert, modelService),
     tools: [
-      ...buildExpertTools(
-        expert.tools,
-        modelService,
-        expert.modelName,
-        expert.capabilities ?? []
-      ),
+      ...buildExpertTools(expert.tools, modelService, expert.modelName, expert.capabilities ?? []),
       ...(await buildExpertMcpTools(expert.mcpConfigs, { onError: onMcpError }))
     ],
     skills: buildExpertSkills(expert.skills)
@@ -229,8 +224,10 @@ export class AgentManager {
    * @returns 本次（或上次构建）的 MCP 加载失败信息，供渲染层提示用户
    */
   async setExperts(experts: DesktopExpert[]): Promise<{ mcpWarnings: McpLoadFailure[] }> {
+    // 签名含版本号：专家 id 不变但版本更新（同步到服务端新版本）时必须重建，
+    // 否则子智能体会一直沿用旧版提示词/工具配置
     const signature = experts
-      .map((expert) => expert.id)
+      .map((expert) => `${expert.id}@${expert.version ?? ''}`)
       .sort()
       .join(',')
     this.experts = experts

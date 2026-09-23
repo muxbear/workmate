@@ -566,6 +566,9 @@ const api = {
     loadLocal() {
       return ipcRenderer.invoke('expert-sync:load-local')
     },
+    deleteExpert(id: string) {
+      return ipcRenderer.invoke('expert-sync:delete-expert', id)
+    },
     disconnect() {
       return ipcRenderer.invoke('expert-sync:disconnect')
     },

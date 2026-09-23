@@ -226,6 +226,46 @@ describe('AgentManager', () => {
     expect(createDeepAgentMock.mock.calls.length).toBe(afterFirst + 1)
   })
 
+  it('P2-2: 专家 id 不变但版本变化时重建 agent（同步到服务端新版本后必须换新配置）', async () => {
+    await manager.init('local')
+    const base = {
+      id: 'expert-1',
+      name: '文档写作专家',
+      title: '文档写作专家',
+      tags: [],
+      desc: '',
+      color: '',
+      icon: '',
+      category: 'content_creation',
+      rating: 0,
+      users: '0',
+      initials: '文',
+      systemPrompt: '',
+      tools: [],
+      capabilities: ['document.assemble'],
+      providerId: null,
+      modelId: null,
+      modelName: null,
+      modelType: null,
+      skills: [],
+      mcpConfigs: [],
+      promptTemplate: '',
+      expertiseAreas: [],
+      isExpert: true
+    }
+
+    await manager.setExperts([{ ...base, version: '1.0.0' }] as never)
+    const afterFirst = createDeepAgentMock.mock.calls.length
+
+    // 同一版本：复用
+    await manager.setExperts([{ ...base, version: '1.0.0' }] as never)
+    expect(createDeepAgentMock.mock.calls.length).toBe(afterFirst)
+
+    // 版本升级：重建（否则子智能体一直沿用旧版提示词/工具配置）
+    await manager.setExperts([{ ...base, version: '1.0.1' }] as never)
+    expect(createDeepAgentMock.mock.calls.length).toBe(afterFirst + 1)
+  })
+
   it('P1-10: 专家 MCP 服务加载失败时回传告警（含专家名），供渲染层提示', async () => {
     await manager.init('local')
 

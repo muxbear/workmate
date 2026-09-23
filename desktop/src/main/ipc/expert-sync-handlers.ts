@@ -16,6 +16,11 @@ function fail(error: string): { success: false; error: string } {
   return { success: false, error }
 }
 
+/** 专家 id 校验（与技能 id 校验一致：非空字符串 + 长度上限） */
+function isValidExpertId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 128
+}
+
 /** 注册 Web 专家同步 IPC 通道（含主进程 → 渲染层的同步进度事件）。 */
 export function registerExpertSyncHandlers(ipc: IpcMain, deps: ExpertSyncHandlerDeps): void {
   const { expertSyncService, session } = deps
@@ -63,6 +68,20 @@ export function registerExpertSyncHandlers(ipc: IpcMain, deps: ExpertSyncHandler
       return fail((err as Error).message)
     }
   })
+
+  /** 删除本地专家（仅本机副本；服务端仍存在时下次同步按版本重新拉回） */
+  ipc.handle(
+    'expert-sync:delete-expert',
+    async (_event: IpcMainInvokeEvent, expertId?: unknown) => {
+      if (!isValidExpertId(expertId)) return fail('参数错误：专家 id 无效')
+      try {
+        session.requireUserId()
+        return ok(await expertSyncService.deleteExpert(expertId))
+      } catch (err) {
+        return fail((err as Error).message)
+      }
+    }
+  )
 
   ipc.handle('expert-sync:disconnect', async () => {
     try {

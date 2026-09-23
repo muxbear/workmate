@@ -216,6 +216,7 @@ class ExpertAssembler:
             system_prompt=expert.system_prompt,
             scene=expert.scene,
             sort_order=expert.sort_order,
+            version=expert.version or DEFAULT_VERSION,
             provider_id=expert.provider_id,
             model_id=expert.model_id,
             model_name=expert.model_name,

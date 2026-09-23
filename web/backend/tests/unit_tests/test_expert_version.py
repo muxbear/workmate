@@ -1,10 +1,40 @@
-"""专家语义化版本号测试（bump_patch / Schema 校验 / 响应默认值）。."""
+"""专家语义化版本号测试（bump_patch / Schema 校验 / 响应默认值 / 同步载荷）。."""
+
+import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
 from api.experts.schemas import ExpertCreateRequest, ExpertInfo, ExpertUpdateRequest
-from api.experts.service import DEFAULT_VERSION, bump_patch
+from api.experts.service import DEFAULT_VERSION, ExpertAssembler, bump_patch
+
+
+def _make_info(**overrides: object) -> ExpertInfo:
+    """构造一个可用的 ExpertInfo（仅覆盖需要断言的字段）。"""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    payload: dict = {
+        "id": "e1",
+        "name": "测试专家",
+        "title": "测试",
+        "description": "",
+        "category": "custom",
+        "tags": [],
+        "icon": "",
+        "color": "",
+        "initials": "测",
+        "rating": 0,
+        "usage_count": 0,
+        "featured": False,
+        "sort_order": 0,
+        "is_published": True,
+        "status": "active",
+        "system_prompt": "",
+        "created_at": now,
+        "updated_at": now,
+    }
+    payload.update(overrides)
+    return ExpertInfo.model_validate(payload)
 
 
 class TestBumpPatch:
@@ -68,27 +98,18 @@ class TestExpertInfoDefault:
 
     def test_version_has_default(self) -> None:
         """不传 version 也能构造 ExpertInfo（存量调用方无需同步改造）。"""
-        from datetime import UTC, datetime
+        assert _make_info().version == DEFAULT_VERSION
 
-        now = datetime.now(UTC).replace(tzinfo=None)
-        info = ExpertInfo(
-            id="e1",
-            name="测试专家",
-            title="测试",
-            description="",
-            category="custom",
-            tags=[],
-            icon="",
-            color="",
-            initials="测",
-            rating=0,
-            usage_count=0,
-            featured=False,
-            sort_order=0,
-            is_published=True,
-            status="active",
-            system_prompt="",
-            created_at=now,
-            updated_at=now,
-        )
-        assert info.version == DEFAULT_VERSION
+
+class TestSyncItemVersion:
+    """同步载荷必须带上版本号，供桌面端比对后决定是否覆盖本地副本。"""
+
+    def test_sync_item_carries_version(self) -> None:
+        """专家版本透传到 ExpertSyncItem。"""
+        item = asyncio.run(ExpertAssembler.to_sync_item(_make_info(version="1.2.3")))
+        assert item.version == "1.2.3"
+
+    def test_sync_item_falls_back_to_default(self) -> None:
+        """库中版本为空的存量专家回落默认版本，避免客户端拿到空版本号。"""
+        item = asyncio.run(ExpertAssembler.to_sync_item(_make_info(version="")))
+        assert item.version == DEFAULT_VERSION

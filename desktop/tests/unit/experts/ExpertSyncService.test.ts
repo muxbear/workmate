@@ -30,10 +30,10 @@ function fakeAuthorization(): OAuth2AuthorizationProvider {
   } as unknown as OAuth2AuthorizationProvider
 }
 
-function makeSyncItem(id = 'e1'): Record<string, unknown> {
+function makeSyncItem(id = 'e1', version = '1.0.0', name?: string): Record<string, unknown> {
   return {
     id,
-    name: `专家${id}`,
+    name: name ?? `专家${id}`,
     title: `标题${id}`,
     desc: '描述',
     category: 'custom',
@@ -55,11 +55,12 @@ function makeSyncItem(id = 'e1'): Record<string, unknown> {
     skills: [],
     mcp_configs: [],
     prompt_template: '',
-    expertise_areas: []
+    expertise_areas: [],
+    version
   }
 }
 
-function makeExpert(id = 'e1'): DesktopExpert {
+function makeExpert(id = 'e1', version?: string): DesktopExpert {
   return {
     id,
     name: `专家${id}`,
@@ -82,6 +83,7 @@ function makeExpert(id = 'e1'): DesktopExpert {
     mcpConfigs: [],
     promptTemplate: '',
     expertiseAreas: [],
+    ...(version ? { version } : {}),
     isExpert: true
   }
 }
@@ -161,5 +163,187 @@ describe('ExpertSyncService', () => {
     const dir = createBaseDir()
     const { service } = setup(dir)
     await expect(service.loadLocal()).resolves.toBeNull()
+  })
+
+  it('ESS-04: 服务端版本更高 → 用服务端内容覆盖本地并计入 updated', async () => {
+    const dir = createBaseDir()
+    const { service, mock } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1', '1.0.0')]
+    })
+    mock.onGet('/api/expert-sync/list').reply(200, {
+      code: 0,
+      data: { items: [makeSyncItem('e1', '1.0.1', '服务端专家')], total: 1, synced_at: 123 },
+      message: 'ok'
+    })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats).toEqual({ added: 0, updated: 1, kept: 0 })
+    expect(result.experts[0]?.name).toBe('服务端专家')
+    expect(result.experts[0]?.version).toBe('1.0.1')
+  })
+
+  it('ESS-05: 本地版本更高 → 保留本地内容并计入 kept', async () => {
+    const dir = createBaseDir()
+    const { service, mock } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1', '9.9.9')]
+    })
+    mock.onGet('/api/expert-sync/list').reply(200, {
+      code: 0,
+      data: { items: [makeSyncItem('e1', '1.0.1', '服务端专家')], total: 1, synced_at: 123 },
+      message: 'ok'
+    })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats).toEqual({ added: 0, updated: 0, kept: 1 })
+    // 本地更高：内容与版本都保持本地，不被服务端回退
+    expect(result.experts[0]?.name).toBe('专家e1')
+    expect(result.experts[0]?.version).toBe('9.9.9')
+  })
+
+  it('ESS-06: 版本相同 → 保留本地条目（不重复覆盖），新增条目计入 added', async () => {
+    const dir = createBaseDir()
+    const { service, mock } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1', '1.0.0')]
+    })
+    mock.onGet('/api/expert-sync/list').reply(200, {
+      code: 0,
+      data: {
+        items: [makeSyncItem('e1', '1.0.0'), makeSyncItem('e2', '1.0.0')],
+        total: 2,
+        synced_at: 123
+      },
+      message: 'ok'
+    })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats).toEqual({ added: 1, updated: 0, kept: 1 })
+    expect(result.experts.map((expert) => expert.id)).toEqual(['e1', 'e2'])
+  })
+
+  it('ESS-07: 本地老数据无版本 → 视为需要更新并补上服务端版本号', async () => {
+    const dir = createBaseDir()
+    const { service, mock } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1')]
+    })
+    mock.onGet('/api/expert-sync/list').reply(200, {
+      code: 0,
+      data: { items: [makeSyncItem('e1', '1.0.1', '服务端专家')], total: 1, synced_at: 123 },
+      message: 'ok'
+    })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats).toEqual({ added: 0, updated: 1, kept: 0 })
+    expect(result.experts[0]?.version).toBe('1.0.1')
+    expect(result.experts[0]?.name).toBe('服务端专家')
+  })
+
+  it('ESS-08: 服务端未返回版本（老服务端）→ 保留本地版本与内容', async () => {
+    const dir = createBaseDir()
+    const { service, mock } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1', '1.0.0')]
+    })
+    const item = makeSyncItem('e1', '')
+    delete item.version
+    mock.onGet('/api/expert-sync/list').reply(200, {
+      code: 0,
+      data: { items: [item], total: 1, synced_at: 123 },
+      message: 'ok'
+    })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats).toEqual({ added: 0, updated: 0, kept: 1 })
+    expect(result.experts[0]?.version).toBe('1.0.0')
+  })
+
+  it('ESS-09: deleteExpert 只移除目标专家，其余条目与同步时间不变', async () => {
+    const dir = createBaseDir()
+    const { service } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: { webUserId: 'u1', nickname: 'demo' },
+      experts: [makeExpert('e1', '1.0.0'), makeExpert('e2', '1.0.0')]
+    })
+
+    const result = await service.deleteExpert('e1')
+
+    expect(result.experts.map((expert) => expert.id)).toEqual(['e2'])
+    expect(result.syncedAt).toBe(111)
+    const raw = JSON.parse(readFileSync(join(dir, 'experts.json'), 'utf-8'))
+    expect(raw.experts.map((expert: { id: string }) => expert.id)).toEqual(['e2'])
+    expect(raw.syncedAt).toBe(111)
+    expect(raw.syncedBy).toEqual({ webUserId: 'u1', nickname: 'demo' })
+  })
+
+  it('ESS-10: 删除本地专家后再次同步 → 该专家按服务端版本重新拉回', async () => {
+    const dir = createBaseDir()
+    const { service, mock } = setup(dir)
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1', '1.0.0'), makeExpert('e2', '1.0.0')]
+    })
+    mock.onGet('/api/expert-sync/list').reply(200, {
+      code: 0,
+      data: {
+        items: [makeSyncItem('e1', '1.0.0'), makeSyncItem('e2', '1.0.0')],
+        total: 2,
+        synced_at: 123
+      },
+      message: 'ok'
+    })
+
+    await service.deleteExpert('e1')
+    await expect(service.loadLocal()).resolves.toMatchObject({
+      experts: [expect.objectContaining({ id: 'e2' })]
+    })
+
+    const result = await service.sync('local-user')
+
+    expect(result.stats).toEqual({ added: 1, updated: 0, kept: 1 })
+    expect(result.experts.map((expert) => expert.id)).toEqual(['e1', 'e2'])
+  })
+
+  it('ESS-11: deleteExpert 本地文件缺失或专家不存在时报错', async () => {
+    const dir = createBaseDir()
+    const { service } = setup(dir)
+    await expect(service.deleteExpert('e1')).rejects.toThrow('本地专家数据不存在，请先同步')
+
+    await new ExpertJsonStore(dir).write({
+      version: 1,
+      syncedAt: 111,
+      syncedBy: null,
+      experts: [makeExpert('e1')]
+    })
+    await expect(service.deleteExpert('missing')).rejects.toThrow('专家不存在，请先同步专家数据')
+    // 报错时不得改动本地文件
+    const raw = JSON.parse(readFileSync(join(dir, 'experts.json'), 'utf-8'))
+    expect(raw.experts).toHaveLength(1)
   })
 })

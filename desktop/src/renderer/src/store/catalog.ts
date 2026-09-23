@@ -32,6 +32,8 @@ export interface Expert {
   mcpConfigs?: unknown[]
   promptTemplate: string
   expertiseAreas: string[]
+  /** 语义化版本号（同步时与服务端版本比对；老数据可能缺失） */
+  version?: string
   isExpert: boolean
 }
 
@@ -180,7 +182,9 @@ function loadPersisted(): PersistedState {
 
 /** 专家使用提示词模板（插入输入框的可编辑文本，删除专家时按原文移除） */
 function buildExpertPrompt(expert: Expert): string {
-  const template = expert.promptTemplate || '请先分析任务并拆分为子任务；对于适合【{name}·{title}】处理的子任务，请调用该专家处理；最后汇总结果。'
+  const template =
+    expert.promptTemplate ||
+    '请先分析任务并拆分为子任务；对于适合【{name}·{title}】处理的子任务，请调用该专家处理；最后汇总结果。'
   return template.replace('{name}', expert.name).replace('{title}', expert.title)
 }
 
@@ -283,6 +287,11 @@ export const useCatalogStore = defineStore('catalog', () => {
     experts.value = items
   }
 
+  /** 移除单个本地专家（保持其余条目与顺序不变） */
+  function removeExpertItem(id: string): void {
+    experts.value = experts.value.filter((item) => item.id !== id)
+  }
+
   /** 清空服务器专家数据（断开连接或退出登录时使用）。 */
   function clearExpertItems(): void {
     experts.value = []
@@ -344,6 +353,7 @@ export const useCatalogStore = defineStore('catalog', () => {
     setSkills,
     clearSkillItems,
     setExperts,
+    removeExpertItem,
     clearExpertItems,
     gotoTab,
     gotoConnector,
