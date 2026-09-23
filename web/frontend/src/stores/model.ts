@@ -3,8 +3,6 @@ import { ref, computed } from 'vue'
 import type { Provider, AIModel, ModelType } from '@/types/model'
 import * as api from '@/services/modelApi'
 
-type RightTab = 'models' | 'usage'
-
 export const useModelStore = defineStore('model', () => {
   /* ---------- state ---------- */
   const providers = ref<Provider[]>([])
@@ -14,7 +12,6 @@ export const useModelStore = defineStore('model', () => {
   const providerSearch = ref('')
   const modelSearch = ref('')
   const modelTypeFilter = ref<ModelType | 'all'>('all')
-  const rightTab = ref<RightTab>('models')
 
   /* ---------- computed ---------- */
   const selectedProvider = computed<Provider | null>(() => {
@@ -63,17 +60,6 @@ export const useModelStore = defineStore('model', () => {
       map[m.type] = (map[m.type] ?? 0) + 1
     })
     return map
-  })
-
-  const providerStats = computed(() => {
-    const p = selectedProvider.value
-    if (!p) return { total: 0, totalCalls: '0', inUse: 0, deprecated: 0 }
-    return {
-      total: p.models.length,
-      totalCalls: p.models.reduce((s, m) => s + m.callCount, 0).toLocaleString(),
-      inUse: p.models.filter((m) => m.callCount > 0).length,
-      deprecated: p.models.filter((m) => m.status === 'deprecated').length,
-    }
   })
 
   /* ---------- actions ---------- */
@@ -182,6 +168,17 @@ export const useModelStore = defineStore('model', () => {
     }
   }
 
+  async function setDefaultModel(providerId: string, modelId: string) {
+    try {
+      await api.setDefaultModel(providerId, modelId)
+      // is_default 是全局唯一的：它会清掉别的提供商下的标记，
+      // 因此必须整体重新拉取，不能只就地更新这一条模型。
+      await fetchAll()
+    } catch (err: unknown) {
+      throw err instanceof Error ? err : new Error('设置默认模型失败')
+    }
+  }
+
   async function reorderProviders(orderedIds: string[]) {
     const byId = new Map(providers.value.map((p) => [p.id, p]))
     const next = orderedIds.map((id) => byId.get(id)).filter((p): p is Provider => Boolean(p))
@@ -208,10 +205,6 @@ export const useModelStore = defineStore('model', () => {
     providers.value[pIdx] = { ...provider, models: next }
   }
 
-  function setRightTab(tab: RightTab) {
-    rightTab.value = tab
-  }
-
   return {
     providers,
     selectedProviderId,
@@ -220,14 +213,12 @@ export const useModelStore = defineStore('model', () => {
     providerSearch,
     modelSearch,
     modelTypeFilter,
-    rightTab,
     selectedProvider,
     filteredProviders,
     filteredModels,
     totalModels,
     typeCounts,
     providerTypeCounts,
-    providerStats,
     fetchAll,
     selectProvider,
     saveProvider,
@@ -237,7 +228,7 @@ export const useModelStore = defineStore('model', () => {
     deleteModel,
     cloneModel,
     toggleModelStatus,
+    setDefaultModel,
     reorderModels,
-    setRightTab,
   }
 })

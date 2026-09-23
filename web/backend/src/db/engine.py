@@ -347,6 +347,12 @@ async def init_db():
                 logger.info("Adding sort_order column to ai_models table")
                 await conn.execute(text("ALTER TABLE ai_models ADD COLUMN sort_order INTEGER DEFAULT 0"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_models_sort_order ON ai_models (sort_order)"))
+            # 迁移：为 ai_models 添加 is_default 列（全局默认对话模型标记，列已存在时跳过）。
+            # 历史行一律置 FALSE：默认模型改由「模型」页面显式指定，否则按 sort_order 兜底。
+            if "is_default" not in existing:
+                logger.info("Adding is_default column to ai_models table")
+                await conn.execute(text("ALTER TABLE ai_models ADD COLUMN is_default BOOLEAN DEFAULT FALSE"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_models_is_default ON ai_models (is_default)"))
 
         if await _table_exists(conn, 'mcp_tools'):
             existing = await _get_existing_columns(conn, 'mcp_tools')

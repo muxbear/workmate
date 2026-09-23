@@ -130,11 +130,7 @@ class AgentBuilder:
                 provider_id,
                 model_id,
             )
-        self._model = await resolve_model(
-            provider_id,
-            model_id,
-            fallback_to_settings=True,
-        )
+        self._model = await resolve_model(provider_id, model_id)
         return self
 
     async def with_tools(self, db: AsyncSession) -> AgentBuilder:

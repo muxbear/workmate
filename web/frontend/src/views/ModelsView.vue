@@ -21,10 +21,12 @@ import {
   Copy,
   Power,
   PowerOff,
+  Star,
+  Check,
 } from 'lucide-vue-next'
 import { useModelStore } from '@/stores/model'
 import type { Provider, AIModel, ModelType, ModelStatus, ModelParam } from '@/types/model'
-import { MODEL_TYPE_META, MODEL_STATUS_META, PROVIDER_STATUS_META } from '@/types/model'
+import { MODEL_TYPE_META, MODEL_STATUS_META } from '@/types/model'
 
 const store = useModelStore()
 
@@ -173,6 +175,8 @@ async function handleSaveModel() {
       id: editingModel.value?.id ?? `m${Date.now()}`,
       ...modelForm.value,
       callCount: editingModel.value?.callCount ?? 0,
+      // 默认模型标记由后端「设为默认」接口维护，这里只是保持类型完整。
+      isDefault: editingModel.value?.isDefault ?? false,
       contextWindow: modelForm.value.contextWindow,
     }
     await store.saveModel(store.selectedProvider.id, data)
@@ -618,7 +622,24 @@ async function handleModelCommand(command: string, m: AIModel) {
         ElMessage.error(err instanceof Error ? err.message : '切换状态失败')
       }
       break
+    case 'default':
+      if (m.isDefault) {
+        ElMessage.info('该模型已是默认模型')
+        break
+      }
+      try {
+        await store.setDefaultModel(pid, m.id)
+        ElMessage.success(`已将「${m.displayName}」设为默认模型`)
+      } catch (err: unknown) {
+        ElMessage.error(err instanceof Error ? err.message : '设置默认模型失败')
+      }
+      break
   }
+}
+
+/** 只有可对话（llm / multimodal）且已启用的模型才能设为默认，与后端校验保持一致。 */
+function canBeDefault(m: AIModel) {
+  return (m.type === 'llm' || m.type === 'multimodal') && m.status === 'active'
 }
 
 /* ---- Lifecycle ---- */
@@ -741,21 +762,7 @@ onMounted(() => {
             <div class="provider-header-info">
               <span class="provider-header-logo">{{ store.selectedProvider.logo }}</span>
               <div>
-                <div class="provider-header-name-row">
-                  <h2 class="provider-header-name">{{ store.selectedProvider.name }}</h2>
-                  <span
-                    class="provider-status-dot"
-                    :style="{ background: PROVIDER_STATUS_META[store.selectedProvider.status].dot }"
-                  />
-                  <span
-                    :style="{
-                      color: PROVIDER_STATUS_META[store.selectedProvider.status].color,
-                      fontSize: 'var(--font-size-xs)',
-                    }"
-                  >
-                    {{ PROVIDER_STATUS_META[store.selectedProvider.status].label }}
-                  </span>
-                </div>
+                <h2 class="provider-header-name">{{ store.selectedProvider.name }}</h2>
                 <p class="provider-header-desc">{{ store.selectedProvider.description }}</p>
               </div>
             </div>
@@ -774,236 +781,164 @@ onMounted(() => {
               </button>
             </div>
           </div>
-
-          <!-- Tabs -->
-          <div class="provider-tabs">
-            <button
-              class="provider-tab"
-              :class="{ active: store.rightTab === 'models' }"
-              @click="store.setRightTab('models')"
-            >
-              模型列表
-            </button>
-            <button
-              class="provider-tab"
-              :class="{ active: store.rightTab === 'usage' }"
-              @click="store.setRightTab('usage')"
-            >
-              使用统计
-            </button>
-          </div>
         </div>
 
-        <!-- Tab content -->
-        <div class="tab-content">
-          <!-- ── Models Tab ──────────────────────────────────────────────── -->
-          <template v-if="store.rightTab === 'models'">
-            <!-- Toolbar -->
-            <div class="models-toolbar">
-              <div class="search-wrap">
-                <Search :size="14" class="search-icon" />
-                <input
-                  v-model="store.modelSearch"
-                  type="text"
-                  placeholder="搜索模型名称或 ID…"
-                  class="search-input"
-                />
-              </div>
-              <div class="type-filters">
-                <button
-                  class="type-filter"
-                  :class="{ active: store.modelTypeFilter === 'all' }"
-                  @click="store.modelTypeFilter = 'all'"
-                >
-                  全部
-                </button>
-                <button
-                  v-for="(count, type) in store.providerTypeCounts"
-                  :key="type"
-                  class="type-filter"
-                  :class="{ active: store.modelTypeFilter === type }"
-                  :style="
-                    store.modelTypeFilter === type
-                      ? { background: MODEL_TYPE_META[type].bg, color: MODEL_TYPE_META[type].color }
-                      : {}
-                  "
-                  @click="store.modelTypeFilter = store.modelTypeFilter === type ? 'all' : type"
-                >
-                  {{ MODEL_TYPE_META[type].emoji }} {{ MODEL_TYPE_META[type].label }}
-                </button>
-              </div>
-              <button class="btn-add-model" @click="openNewModel">
-                <Plus :size="14" />
-                添加模型
+        <!-- Model list -->
+        <div class="models-content">
+          <!-- Toolbar -->
+          <div class="models-toolbar">
+            <div class="search-wrap">
+              <Search :size="14" class="search-icon" />
+              <input
+                v-model="store.modelSearch"
+                type="text"
+                placeholder="搜索模型名称或 ID…"
+                class="search-input"
+              />
+            </div>
+            <div class="type-filters">
+              <button
+                class="type-filter"
+                :class="{ active: store.modelTypeFilter === 'all' }"
+                @click="store.modelTypeFilter = 'all'"
+              >
+                全部
+              </button>
+              <button
+                v-for="(count, type) in store.providerTypeCounts"
+                :key="type"
+                class="type-filter"
+                :class="{ active: store.modelTypeFilter === type }"
+                :style="
+                  store.modelTypeFilter === type
+                    ? { background: MODEL_TYPE_META[type].bg, color: MODEL_TYPE_META[type].color }
+                    : {}
+                "
+                @click="store.modelTypeFilter = store.modelTypeFilter === type ? 'all' : type"
+              >
+                {{ MODEL_TYPE_META[type].emoji }} {{ MODEL_TYPE_META[type].label }}
               </button>
             </div>
+            <button class="btn-add-model" @click="openNewModel">
+              <Plus :size="14" />
+              添加模型
+            </button>
+          </div>
 
-            <!-- Table header -->
-            <div class="model-table-header">
-              <span class="col-grip"></span>
-              <span class="col-name">模型</span>
-              <span class="col-type">类型</span>
-              <span class="col-ctx">上下文</span>
-              <span class="col-status">状态</span>
-              <span class="col-calls">调用次数</span>
-              <span class="col-actions">操作</span>
-            </div>
+          <!-- Table header -->
+          <div class="model-table-header">
+            <span class="col-grip"></span>
+            <span class="col-name">模型</span>
+            <span class="col-type">类型</span>
+            <span class="col-ctx">上下文</span>
+            <span class="col-status">状态</span>
+            <span class="col-calls">调用次数</span>
+            <span class="col-actions">操作</span>
+          </div>
 
-            <!-- Empty -->
-            <div v-if="store.filteredModels.length === 0" class="empty-state">
-              <Cpu :size="40" class="empty-icon" />
-              <p class="empty-title">暂无匹配的模型</p>
-              <p class="empty-desc">尝试清除搜索条件或添加新模型</p>
-            </div>
+          <!-- Empty -->
+          <div v-if="store.filteredModels.length === 0" class="empty-state">
+            <Cpu :size="40" class="empty-icon" />
+            <p class="empty-title">暂无匹配的模型</p>
+            <p class="empty-desc">尝试清除搜索条件或添加新模型</p>
+          </div>
 
-            <!-- Model rows -->
-            <TransitionGroup name="model-list" tag="div" class="model-rows">
-              <div
-                v-for="m in store.filteredModels"
-                :key="m.id"
-                :data-model-id="m.id"
-                class="model-row"
-                :class="{
-                  dragging: draggedModelId === m.id,
-                  pressing: pressingModelId === m.id,
-                  'drop-before': dragOverModelId === m.id && dropPositionModel === 'before',
-                  'drop-after': dragOverModelId === m.id && dropPositionModel === 'after',
-                }"
-                draggable="false"
-                @contextmenu.prevent
-                @pointerdown="onModelPointerDown($event, m)"
-                @pointermove="onModelPointerMove"
-                @pointerup="onModelPointerEnd"
-                @pointercancel="onModelPointerEnd"
-              >
-                <GripVertical :size="14" class="model-grip" />
-                <div class="model-name-cell">
-                  <p class="model-display-name">{{ m.displayName }}</p>
-                  <p class="model-id">{{ m.name }}</p>
-                </div>
-                <span
-                  class="model-type-badge"
-                  :style="{
-                    color: MODEL_TYPE_META[m.type].color,
-                    background: MODEL_TYPE_META[m.type].bg,
-                    borderColor: MODEL_TYPE_META[m.type].border,
-                  }"
-                >
-                  {{ MODEL_TYPE_META[m.type].emoji }} {{ MODEL_TYPE_META[m.type].label }}
-                </span>
-                <span class="model-ctx">{{ formatContext(m.contextWindow) }}</span>
-                <span
-                  class="model-status-badge"
-                  :style="{
-                    color: MODEL_STATUS_META[m.status].color,
-                    background: MODEL_STATUS_META[m.status].bg.split(' ')[0],
-                    border: MODEL_STATUS_META[m.status].bg.split(' ').slice(1).join(' '),
-                  }"
-                >
-                  {{ MODEL_STATUS_META[m.status].label }}
-                </span>
-                <div class="model-calls">
-                  <span class="calls-num">{{ m.callCount.toLocaleString() }}</span>
-                </div>
-                <div class="model-actions">
-                  <button title="查看详情" class="action-btn" @click="viewingModel = m">
-                    <Activity :size="14" />
-                  </button>
-                  <el-dropdown
-                    trigger="click"
-                    @command="(cmd: string) => handleModelCommand(cmd, m)"
-                  >
-                    <button class="action-btn action-btn--more" @click.stop>
-                      <MoreHorizontal :size="14" />
-                    </button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="edit">
-                          <Edit3 :size="14" />
-                          <span>编辑</span>
-                        </el-dropdown-item>
-                        <el-dropdown-item command="delete">
-                          <Trash2 :size="14" />
-                          <span>删除</span>
-                        </el-dropdown-item>
-                        <el-dropdown-item command="clone">
-                          <Copy :size="14" />
-                          <span>克隆</span>
-                        </el-dropdown-item>
-                        <el-dropdown-item command="toggle">
-                          <PowerOff v-if="m.status === 'active'" :size="14" />
-                          <Power v-else :size="14" />
-                          <span>{{ m.status === 'active' ? '禁用' : '启用' }}</span>
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </div>
-              </div>
-            </TransitionGroup>
-          </template>
-
-          <!-- ── Usage Tab ────────────────────────────────────────────────── -->
-          <template v-if="store.rightTab === 'usage'">
-            <div class="usage-stats">
-              <div class="usage-stat-card">
-                <p class="usage-stat-label">模型总数</p>
-                <p class="usage-stat-value">{{ store.providerStats.total }}</p>
-              </div>
-              <div class="usage-stat-card">
-                <p class="usage-stat-label">总调用次数</p>
-                <p class="usage-stat-value usage-stat-value--indigo">
-                  {{ store.providerStats.totalCalls }}
-                </p>
-              </div>
-              <div class="usage-stat-card">
-                <p class="usage-stat-label">正在使用</p>
-                <p class="usage-stat-value usage-stat-value--emerald">
-                  {{ store.providerStats.inUse }}
-                </p>
-              </div>
-              <div class="usage-stat-card">
-                <p class="usage-stat-label">已弃用</p>
-                <p class="usage-stat-value usage-stat-value--gray">
-                  {{ store.providerStats.deprecated }}
-                </p>
-              </div>
-            </div>
-
-            <div class="usage-ranking">
-              <div class="usage-ranking-header">
-                <h3>各模型调用量排行</h3>
-              </div>
-              <div class="usage-ranking-list">
-                <div
-                  v-for="(m, i) in [...store.selectedProvider.models].sort(
-                    (a, b) => b.callCount - a.callCount,
-                  )"
-                  :key="m.id"
-                  class="usage-rank-row"
-                >
-                  <span class="rank-num">{{ i + 1 }}</span>
-                  <span class="rank-emoji" :style="{ color: MODEL_TYPE_META[m.type].color }">
-                    {{ MODEL_TYPE_META[m.type].emoji }}
+          <!-- Model rows -->
+          <TransitionGroup name="model-list" tag="div" class="model-rows">
+            <div
+              v-for="m in store.filteredModels"
+              :key="m.id"
+              :data-model-id="m.id"
+              class="model-row"
+              :class="{
+                dragging: draggedModelId === m.id,
+                pressing: pressingModelId === m.id,
+                'drop-before': dragOverModelId === m.id && dropPositionModel === 'before',
+                'drop-after': dragOverModelId === m.id && dropPositionModel === 'after',
+              }"
+              draggable="false"
+              @contextmenu.prevent
+              @pointerdown="onModelPointerDown($event, m)"
+              @pointermove="onModelPointerMove"
+              @pointerup="onModelPointerEnd"
+              @pointercancel="onModelPointerEnd"
+            >
+              <GripVertical :size="14" class="model-grip" />
+              <div class="model-name-cell">
+                <p class="model-display-name">
+                  {{ m.displayName }}
+                  <span v-if="m.isDefault" class="model-default-badge" title="全局默认对话模型">
+                    默认
                   </span>
-                  <div class="rank-info">
-                    <div class="rank-name-row">
-                      <span class="rank-name">{{ m.displayName }}</span>
-                      <span class="rank-calls">{{ m.callCount.toLocaleString() }} 次</span>
-                    </div>
-                    <div class="rank-bar-track">
-                      <div
-                        class="rank-bar-fill"
-                        :style="{
-                          width: `${(m.callCount / Math.max(...store.selectedProvider.models.map((x) => x.callCount), 1)) * 100}%`,
-                        }"
-                      />
-                    </div>
-                  </div>
-                </div>
+                </p>
+                <p class="model-id">{{ m.name }}</p>
+              </div>
+              <span
+                class="model-type-badge"
+                :style="{
+                  color: MODEL_TYPE_META[m.type].color,
+                  background: MODEL_TYPE_META[m.type].bg,
+                  borderColor: MODEL_TYPE_META[m.type].border,
+                }"
+              >
+                {{ MODEL_TYPE_META[m.type].emoji }} {{ MODEL_TYPE_META[m.type].label }}
+              </span>
+              <span class="model-ctx">{{ formatContext(m.contextWindow) }}</span>
+              <span
+                class="model-status-badge"
+                :style="{
+                  color: MODEL_STATUS_META[m.status].color,
+                  background: MODEL_STATUS_META[m.status].bg.split(' ')[0],
+                  border: MODEL_STATUS_META[m.status].bg.split(' ').slice(1).join(' '),
+                }"
+              >
+                {{ MODEL_STATUS_META[m.status].label }}
+              </span>
+              <div class="model-calls">
+                <span class="calls-num">{{ m.callCount.toLocaleString() }}</span>
+              </div>
+              <div class="model-actions">
+                <button title="查看详情" class="action-btn" @click="viewingModel = m">
+                  <Activity :size="14" />
+                </button>
+                <el-dropdown trigger="click" @command="(cmd: string) => handleModelCommand(cmd, m)">
+                  <button class="action-btn action-btn--more" @click.stop>
+                    <MoreHorizontal :size="14" />
+                  </button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">
+                        <Edit3 :size="14" />
+                        <span>编辑</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item
+                        v-if="canBeDefault(m)"
+                        command="default"
+                        :disabled="m.isDefault"
+                      >
+                        <Check v-if="m.isDefault" :size="14" />
+                        <Star v-else :size="14" />
+                        <span>{{ m.isDefault ? '当前默认模型' : '设为默认' }}</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="delete">
+                        <Trash2 :size="14" />
+                        <span>删除</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="clone">
+                        <Copy :size="14" />
+                        <span>克隆</span>
+                      </el-dropdown-item>
+                      <el-dropdown-item command="toggle">
+                        <PowerOff v-if="m.status === 'active'" :size="14" />
+                        <Power v-else :size="14" />
+                        <span>{{ m.status === 'active' ? '禁用' : '启用' }}</span>
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
               </div>
             </div>
-          </template>
+          </TransitionGroup>
         </div>
       </div>
 
@@ -1770,23 +1705,10 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.provider-header-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .provider-header-name {
   font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--foreground-primary);
-}
-
-.provider-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
 }
 
 .provider-header-desc {
@@ -1812,35 +1734,8 @@ onMounted(() => {
   color: var(--foreground-muted);
 }
 
-/* ---- Provider Tabs ---- */
-.provider-tabs {
-  display: flex;
-  gap: 0;
-  margin-top: 12px;
-}
-
-.provider-tab {
-  padding: 6px 16px;
-  font-size: var(--font-size-sm);
-  border: none;
-  background: none;
-  color: var(--foreground-muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.15s ease;
-}
-
-.provider-tab:hover {
-  color: var(--foreground-secondary);
-}
-
-.provider-tab.active {
-  color: #a5b4fc;
-  border-bottom-color: #4f46e5;
-}
-
-/* ---- Tab Content ---- */
-.tab-content {
+/* ---- Model List Content ---- */
+.models-content {
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
@@ -2043,6 +1938,19 @@ onMounted(() => {
   margin-top: 2px;
 }
 
+.model-default-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  vertical-align: middle;
+}
+
 .model-type-badge {
   display: inline-flex;
   align-items: center;
@@ -2112,146 +2020,6 @@ onMounted(() => {
 }
 .empty-desc {
   margin-top: 4px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-/* ---- Usage Tab ---- */
-.usage-stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.usage-stat-card {
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-inset-soft);
-  padding: 16px;
-}
-
-.usage-stat-label {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.usage-stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--foreground-primary);
-  margin-top: 4px;
-}
-
-.usage-stat-value--indigo {
-  color: #a5b4fc;
-}
-.usage-stat-value--emerald {
-  color: #6ee7b7;
-}
-.usage-stat-value--gray {
-  color: #6b7280;
-}
-
-.usage-ranking {
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-subtle);
-  overflow: hidden;
-}
-
-.usage-ranking-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.usage-ranking-header h3 {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--foreground-primary);
-}
-
-.usage-ranking-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.usage-rank-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(38, 51, 89, 0.12);
-}
-
-.rank-num {
-  width: 20px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-  text-align: center;
-  flex-shrink: 0;
-}
-
-.rank-emoji {
-  font-size: 14px;
-  flex-shrink: 0;
-}
-
-.rank-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.rank-name-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.rank-name {
-  font-size: var(--font-size-sm);
-  color: var(--foreground-primary);
-}
-
-.rank-calls {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-  flex-shrink: 0;
-}
-
-.rank-bar-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--surface-inset);
-  overflow: hidden;
-}
-
-.rank-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  background: #4f46e5;
-  transition: width 0.7s ease;
-}
-
-.rank-agents {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.rank-agent-tag {
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  background: rgba(79, 70, 229, 0.1);
-  border: 1px solid rgba(79, 70, 229, 0.2);
-  font-size: 10px;
-  color: #a5b4fc;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 80px;
-}
-
-.rank-no-agent {
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
 }

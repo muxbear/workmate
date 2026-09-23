@@ -3,9 +3,11 @@ import logging
 
 from fastapi import HTTPException
 from pydantic import SecretStr
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.graph import invalidate_graph
+from agent.models.resolver import CHAT_MODEL_TYPES
 from api.providers.schemas import (
     ModelCreateRequest,
     ModelReorderRequest,
@@ -59,6 +61,7 @@ def _model_to_response(m: AIModel) -> ModelResponse:
         release_date=m.release_date,
         params=m.params,
         sort_order=m.sort_order,
+        is_default=bool(m.is_default),
         created_at=m.created_at,
         updated_at=m.updated_at,
     )
@@ -163,6 +166,7 @@ async def create_provider(
     db.add(provider)
     await db.commit()
     await db.refresh(provider)
+    await invalidate_graph()
     return _provider_to_response(provider, [])
 
 
@@ -184,6 +188,7 @@ async def update_provider(
     provider.website = req.website
     await db.commit()
     await db.refresh(provider)
+    await invalidate_graph()
     models_result = await db.execute(
         select(AIModel).where(AIModel.provider_id == provider.id).order_by(AIModel.created_at)
     )
@@ -200,6 +205,7 @@ async def delete_provider(db: AsyncSession, provider_id: str, user_id: str) -> N
     )
     await db.delete(provider)
     await db.commit()
+    await invalidate_graph()
 
 
 async def reorder_providers(
@@ -218,6 +224,8 @@ async def reorder_providers(
     for index, provider_id in enumerate(req.provider_ids):
         by_id[provider_id].sort_order = index
     await db.commit()
+    # 顺序决定默认模型兜底结果，必须让已缓存的图失效。
+    await invalidate_graph()
 
 
 # ---- 模型 CRUD ----
@@ -246,6 +254,7 @@ async def create_model(
     db.add(model)
     await db.commit()
     await db.refresh(model)
+    await invalidate_graph()
     return _model_to_response(model)
 
 
@@ -266,6 +275,7 @@ async def update_model(
     model.params = [p.model_dump() for p in req.params]
     await db.commit()
     await db.refresh(model)
+    await invalidate_graph()
     return _model_to_response(model)
 
 
@@ -278,6 +288,7 @@ async def delete_model(
     await _detach_model_references(db, provider_id, model_id)
     await db.delete(model)
     await db.commit()
+    await invalidate_graph()
 
 
 async def clone_model(
@@ -286,6 +297,12 @@ async def clone_model(
     """Clone a model — copies all fields with a new ID and modified display name."""
     await _get_provider(db, provider_id)
     original = await _get_model(db, model_id, provider_id)
+    # 克隆体必须排到列表末尾：sort_order 缺省值 0 会让副本排到最前，
+    # 而 sort_order 正是「默认模型」的兜底选取依据，等于悄悄改掉默认模型。
+    max_sort_result = await db.execute(
+        select(func.max(AIModel.sort_order)).where(AIModel.provider_id == provider_id)
+    )
+    next_sort_order = (max_sort_result.scalar() or 0) + 1
     cloned = AIModel(
         provider_id=provider_id,
         name=original.name + "-clone",
@@ -297,10 +314,14 @@ async def clone_model(
         description=original.description,
         release_date=original.release_date,
         params=original.params,
+        sort_order=next_sort_order,
+        # 克隆体绝不能继承「默认模型」标记，否则会出现两个默认（单默认不变式）。
+        is_default=False,
     )
     db.add(cloned)
     await db.commit()
     await db.refresh(cloned)
+    await invalidate_graph()
     return _model_to_response(cloned)
 
 
@@ -311,9 +332,52 @@ async def toggle_model_status(
     await _get_provider(db, provider_id)
     model = await _get_model(db, model_id, provider_id)
     model.status = "inactive" if model.status == "active" else "active"
+    if model.status != "active" and model.is_default:
+        # 被禁用的模型不再可能是默认模型，否则页面会残留「默认」徽标。
+        model.is_default = False
+        logger.info("模型 '%s' 已禁用，同时取消其默认模型标记", model.name)
     await db.commit()
     await db.refresh(model)
+    await invalidate_graph()
     return _model_to_response(model)
+
+
+async def set_default_model(
+    db: AsyncSession, provider_id: str, model_id: str, user_id: str
+) -> ModelResponse:
+    """把指定模型设为全局默认对话模型（全局唯一）。.
+
+    只有可对话（llm / multimodal）且处于启用状态的模型可以成为默认模型；
+    设置时先清空其它模型的标记，保证任何时刻至多一个默认模型。
+    """
+    await _get_provider(db, provider_id)
+    model = await _get_model(db, model_id, provider_id)
+
+    # CHAT_MODEL_TYPES 与默认模型解析共用同一常量，避免两处规则漂移。
+    if model.type not in CHAT_MODEL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"模型 '{model.display_name}' 类型为 {model.type}，"
+            f"只有 {'/'.join(CHAT_MODEL_TYPES)} 类型的模型可设为默认对话模型",
+        )
+    if model.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"模型 '{model.display_name}' 当前状态为 {model.status}，请先启用后再设为默认模型",
+        )
+
+    # 单默认不变式：先整体清零，再置位目标（同一事务内）。
+    await db.execute(update(AIModel).values(is_default=False))
+    model.is_default = True
+    await db.commit()
+    await db.refresh(model)
+    # 默认模型变了，已缓存的默认 Graph 必须重建。
+    await invalidate_graph()
+    logger.info(
+        "已将模型 '%s'（提供商 %s）设为默认对话模型", model.name, provider_id
+    )
+    return _model_to_response(model)
+
 
 async def reorder_models(
     db: AsyncSession, provider_id: str, req: ModelReorderRequest, user_id: str
@@ -337,6 +401,8 @@ async def reorder_models(
     for index, model_id in enumerate(req.model_ids):
         by_id[model_id].sort_order = index
     await db.commit()
+    # 顺序决定默认模型兜底结果，必须让已缓存的图失效。
+    await invalidate_graph()
 
 
 # ---- 已有明文密钥自动升级 ----

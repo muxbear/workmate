@@ -2,7 +2,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,5 +30,8 @@ class AIModel(Base):
     release_date: Mapped[str | None] = mapped_column(String(16), nullable=True, comment="发布日期（如 2024-05）")
     params: Mapped[list] = mapped_column(JSON, default=list, comment="默认参数列表")
     sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True, comment="排序值")
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, index=True, comment="是否为全局默认对话模型（全局唯一）"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, comment="创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow, comment="更新时间")

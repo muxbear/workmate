@@ -61,10 +61,10 @@ class Settings(BaseSettings):
         host = (self.HOST or "127.0.0.1").strip() or "127.0.0.1"
         return f"http://{host}:{self.PORT}"
 
-    # ---- LLM (DeepSeek) ----
-    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
-    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "")
+    # ---- LLM ----
+    # 对话模型不再从环境变量读取：提供商与模型由 Web 端「模型」页面维护
+    # （providers / ai_models 表），默认模型可在该页面显式指定。
+    # 解析入口见 agent/models/resolver.py。
 
     # ---- Image generation ----
     IMAGE_GEN_API_KEY: str = os.getenv("IMAGE_GEN_API_KEY", "")

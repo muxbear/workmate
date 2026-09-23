@@ -13,8 +13,30 @@ from agent.tools.mcp_loader import (
 )
 
 
+def _skip_if_memory_transport_unusable() -> None:
+    """app 生命周期已在本进程跑过时跳过。
+
+    这些用例依赖 ``create_connected_server_and_client_session`` 的进程内内存传输。
+    实测：一旦真实 app 生命周期在同进程内跑过（集成测试会驱动 MCP 工具加载），
+    再新建同类会话就会卡死——服务端已 Initialize，但客户端发来的 initialize
+    请求永远到不了服务端。与其让整个 pytest 会话挂住，不如显式跳过。
+
+    判据用 ``app.state.started_at``（lifespan 启动时写入、关闭时不清除）：
+    这是生产代码本就存在的属性，不需要为测试新增任何标记。
+    必须在**运行时**判断——收集阶段 app 还没启动过。
+    """
+    from server import app
+
+    if getattr(app.state, "started_at", None) is not None:
+        pytest.skip(
+            "本进程已运行过 app 生命周期，MCP 进程内内存传输不可用；"
+            "请单独运行 pytest tests/unit_tests"
+        )
+
+
 @pytest.mark.asyncio
 async def test_append_mcp_tools_uses_registered_local_server():
+    _skip_if_memory_transport_unusable()
     """注册了本进程自托管 MCP 服务时，工具通过内存传输加载，不依赖 HTTP 端口。."""
     from mcp.server.fastmcp import FastMCP
 
@@ -42,6 +64,8 @@ async def test_append_mcp_tools_uses_registered_local_server():
 @pytest.mark.asyncio
 async def test_append_mcp_tools_sanitizes_non_ascii_server_name():
     """中文 MCP 服务名下工具名需符合 ^[a-zA-Z0-9_-]+$，否则模型接口会返回 400。."""
+    _skip_if_memory_transport_unusable()
+
     from mcp.server.fastmcp import FastMCP
 
     local = FastMCP('test-cn')

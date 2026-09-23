@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-FastAPI + Uvicorn、DeepAgents/LangGraph、DeepSeek LLM、DashScope Embeddings、SQLAlchemy async + aiosqlite（可换 PostgreSQL）、OpenSandbox 沙箱、JWT + bcrypt + RSA 加密、Redis（可选，自动降级 MemoryStore）、uv 包管理。
+FastAPI + Uvicorn、DeepAgents/LangGraph、对话模型由 Web 端「模型」页面配置（providers / ai_models）、DashScope Embeddings、SQLAlchemy async + aiosqlite（可换 PostgreSQL）、OpenSandbox 沙箱、JWT + bcrypt + RSA 加密、Redis（可选，自动降级 MemoryStore）、uv 包管理。
 
 ## 常用命令
 
@@ -32,4 +32,6 @@ uv run mypy --strict src/  # 类型检查
 
 ## 环境变量
 
-参考 `.env.example`。关键项：`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`DATABASE_URL`、`JWT_SECRET_KEY`（留空则自动生成并持久化到 `.jwt_secret`）、`REDIS_URL`、`RSA_KEY_SIZE`。切勿提交 `.env`、`.jwt_secret`、`.rsa_key`、`.fernet_key`。
+参考 `.env.example`。关键项：`DATABASE_URL`、`JWT_SECRET_KEY`（留空则自动生成并持久化到 `.jwt_secret`）、`REDIS_URL`、`RSA_KEY_SIZE`。切勿提交 `.env`、`.jwt_secret`、`.rsa_key`、`.fernet_key`。
+
+注意：对话模型（LLM）**不通过环境变量配置**，而是由 Web 端「模型」页面维护的 `providers` / `ai_models` 表决定，默认模型可在该页面显式指定；解析入口见 `src/agent/models/resolver.py`。

@@ -8,11 +8,21 @@ from agent.sandbox.sandbox_manager import SandboxManager
 logger = logging.getLogger(__name__)
 
 
+def _is_model_not_configured(exc: BaseException) -> bool:
+    """判断异常是否表示「模型」页面尚未配置可用对话模型。.
+
+    懒加载以避免 agent.graph 在导入期依赖 agent.models.resolver。
+    """
+    from agent.models.resolver import ModelNotConfiguredError
+
+    return isinstance(exc, ModelNotConfiguredError)
+
+
 class GraphManager:
     """管理 Agent Graph 的生命周期，支持配置热重载（改进3）。
 
     - 首次调用 get_graph() 时懒加载构建。
-    - 配置变更后调用 invalidate()，下次 get_graph() 自动重建。
+    - 配置变更后调用 invalidate() 标记过期，下次 ensure_built*() 自动重建。
     - 构建过程加锁，防止并发重复构建。
     """
 
@@ -26,6 +36,11 @@ class GraphManager:
         self._model_graph_order: list[tuple[str, str]] = []
         self._lock = asyncio.Lock()
         self._version: int = 0  # 递增版本号，每次 invalidate +1
+        # 标记「已过期待重建」。与直接把 _graph 置 None 不同：保留旧图可以让
+        # 只读历史（conversation API 的 aget_state）在重建前继续工作。
+        self._dirty: bool = False
+        # 上次构建失败的异常（如「模型」页面未配置可用模型），供 get_graph() 给出可读提示。
+        self._build_error: Exception | None = None
 
     # 会话级模型图的 LRU 上限（避免按模型无界建图）
     _MAX_MODEL_GRAPHS = 4
@@ -35,8 +50,14 @@ class GraphManager:
         return self._version
 
     def get_graph(self) -> Any:
-        """返回当前 Graph 实例（不触发构建）。"""
+        """返回当前 Graph 实例（不触发构建）。
+
+        过期（invalidate 后尚未重建）时仍返回上一版图：它持有同一个 checkpointer，
+        读取历史消息不受影响；真正需要新配置的调用方应走 ensure_built*()。
+        """
         if self._graph is None:
+            if self._build_error is not None:
+                raise RuntimeError(str(self._build_error))
             raise RuntimeError("图未初始化，请先调用 init_graph()")
         return self._graph
 
@@ -58,15 +79,30 @@ class GraphManager:
         return self._sandbox_manager
 
     async def init_graph(self) -> None:
-        """初始化基础设施（checkpointer / store / sandbox），构建 Graph。"""
+        """初始化基础设施（checkpointer / store / sandbox），构建 Graph。
+
+        「模型」页面尚未配置可用对话模型时**不抛出**：服务照常启动，把错误留到
+        首个请求由 ensure_built() 重试并给出可执行提示。否则未配置模型的部署
+        会连服务都起不来，连去页面配置的入口都没有。
+        """
         await self._init_infrastructure()
-        await self._build_graph()
+        try:
+            await self._build_graph()
+        except Exception as exc:
+            if not _is_model_not_configured(exc):
+                raise
+            self._build_error = exc
+            logger.error(
+                "对话模型尚未配置，服务已启动但对话不可用；"
+                "请在 Web 端「模型」页面配置可用模型后重试：%s",
+                exc,
+            )
 
     async def ensure_built(self) -> Any:
-        """确保 Graph 已构建（懒加载入口）。"""
-        if self._graph is None:
+        """确保 Graph 已构建（懒加载入口，同时也是重建入口）。"""
+        if self._graph is None or self._dirty:
             async with self._lock:
-                if self._graph is None:
+                if self._graph is None or self._dirty:
                     await self._init_infrastructure()
                     await self._build_graph()
         return self._graph
@@ -88,9 +124,9 @@ class GraphManager:
                 self._model_graph_order.append(key)
                 return self._model_graphs[key]
 
-            if self._graph is None:
-                await self._init_infrastructure()
-                await self._build_graph()
+            # 只初始化基础设施，不构建默认图：用户已显式指定模型，
+            # 不该因为「默认模型没配好」而被挡在门外。
+            await self._init_infrastructure()
 
             from agent.mainagents import create_main_agent
 
@@ -108,15 +144,17 @@ class GraphManager:
             return graph
 
     async def invalidate(self) -> None:
-        """标记 Graph 为过期，下次 get_graph() / ensure_built() 时重建。
+        """标记 Graph 为过期，下次 ensure_built*() 时重建。
 
-        仅标记过期，不立即重建——避免在 API 请求中阻塞。
+        仅标记过期，不立即重建——避免在 API 请求中阻塞。**不**清空 ``_graph``：
+        过期期间仍然返回上一版图，使只读历史（conversation API 的 aget_state）
+        不会因为一次模型/提供商编辑就报「图未初始化」。
         """
         self._version += 1
-        self._graph = None
+        self._dirty = True
         self._model_graphs.clear()
         self._model_graph_order.clear()
-        logger.info("Graph 已标记为过期（version=%d），将在下次访问时重建", self._version)
+        logger.info("Graph 已标记为过期（version=%d），将在下次会话时重建", self._version)
 
     async def _init_infrastructure(self) -> None:
         """初始化 checkpointer、store、sandbox manager。"""
@@ -165,30 +203,51 @@ class GraphManager:
         self._sandbox_manager.start_cleanup()
 
     async def _build_graph(self) -> None:
-        """使用 AgentBuilder 构建 Graph。"""
-        self._graph = await create_main_agent(
+        """使用 AgentBuilder 构建 Graph（成功后才清除过期/错误标记）。"""
+        graph = await create_main_agent(
             checkpointer=self._checkpointer,
             store=self._store,
             sandbox_manager=self._sandbox_manager,
         )
+        self._graph = graph
+        self._dirty = False
+        self._build_error = None
 
     async def shutdown(self) -> None:
-        """关闭所有资源。"""
+        """关闭所有资源。
+
+        各步骤相互隔离、best-effort：任一步失败都不能跳过后续清理。
+        尤其是 MCP 会话——它们绑定在进入时的事件循环/任务上，一旦残留不关，
+        后续再加载 MCP 工具会永久挂起。因此这里逐段 try/except 而不是顺序裸调。
+        """
         self._model_graphs.clear()
         self._model_graph_order.clear()
-        if self._sandbox_manager is not None:
-            self._sandbox_manager.shutdown()
-            self._sandbox_manager = None
-        if self._conn_pool is not None:
-            await self._conn_pool.close()
-            self._conn_pool = None
 
-        # 清理 MCP 客户端连接（改进2）
+        if self._sandbox_manager is not None:
+            try:
+                self._sandbox_manager.shutdown()
+            except Exception:
+                logger.warning("关闭沙箱管理器失败", exc_info=True)
+            finally:
+                self._sandbox_manager = None
+
+        if self._conn_pool is not None:
+            try:
+                await self._conn_pool.close()
+            except Exception:
+                logger.warning("关闭连接池失败", exc_info=True)
+            finally:
+                self._conn_pool = None
+
+        # 清理 MCP 客户端与本进程自托管 MCP 的内存会话（改进2）
         try:
             from agent.tools.mcp_loader import close_mcp_clients
-            await close_mcp_clients()
         except ImportError:
-            pass
+            return
+        try:
+            await close_mcp_clients()
+        except Exception:
+            logger.warning("关闭 MCP 客户端失败", exc_info=True)
 
 
 # 全局单例

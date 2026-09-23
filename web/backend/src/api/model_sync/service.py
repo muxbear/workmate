@@ -90,6 +90,7 @@ async def build_model_sync_payload(db: AsyncSession) -> ModelSyncResponse:
                     supports_tool_call=_supports_tool_call(model.type),
                     supports_images=_supports_images(model.type),
                     supports_reasoning=False,
+                    is_default=bool(model.is_default),
                 )
             )
 

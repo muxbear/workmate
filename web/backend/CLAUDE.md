@@ -6,7 +6,7 @@ Python 智能体后端，基于 FastAPI + LangGraph。
 
 - **Web**: FastAPI + Uvicorn
 - **Agent**: DeepAgents LangGraph (`langgraph>=1.0`)
-- **LLM**: DeepSeek (deepseek-v4-pro)
+- **LLM**: 不读环境变量，由 Web 端「模型」页面配置的 `providers` / `ai_models` 决定（默认模型可在该页面显式指定；缺省按页面拖拽顺序兜底），解析入口 `agent/models/resolver.py`
 - **Embeddings**: DashScope (text-embedding-v4)
 - **数据库**: SQLAlchemy async + aiosqlite (开发) / 可替换为 PostgreSQL
 - **沙盒**: OpenSandbox 代码执行环境（Shell 命令 + 文件上下传）
@@ -42,7 +42,7 @@ backend/src/
 │   ├── config/        # 配置类 (Settings, 从 .env 读取)
 │   ├── context/       # Context 数据类 (server_info + user_id)
 │   ├── tools/         # agent 工具
-│   ├── models/        # LLM/Embeddings 模型实例
+│   ├── models/        # LLM 解析（resolver.py，来源为「模型」页面）+ Embeddings 实例
 │   ├── subagents/     # 子智能体定义 (research-agent)
 │   ├── sandbox/       # OpenSandbox 沙盒后端 (代码执行 + 文件操作)
 │   └── utils/         # agent 工具函数
@@ -57,7 +57,6 @@ backend/src/
 
 参见 `.env.example`，关键变量：
 
-- `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DEEPSEEK_BASE_URL` — LLM 配置
 - `DATABASE_URL` — 数据库连接 (SQLite: `sqlite+aiosqlite:///ke-hermes.db`)
 - `JWT_SECRET_KEY` — JWT 密钥 (留空则自动生成持久化到 `.jwt_secret`)
 - `REDIS_URL` — Redis 连接 (不可用时自动降级)

@@ -33,6 +33,8 @@ export interface AIModel {
   description: string
   releaseDate?: string
   sortOrder?: number
+  /** 是否为全局默认对话模型（全局唯一，由「设为默认」按钮设置） */
+  isDefault: boolean
 }
 
 /** 模型提供商 */

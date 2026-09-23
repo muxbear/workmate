@@ -22,6 +22,7 @@ from api.providers.service import (
     list_providers,
     reorder_models,
     reorder_providers,
+    set_default_model,
     toggle_model_status,
     update_model,
     update_provider,
@@ -155,6 +156,22 @@ async def model_toggle_status(
     """切换模型的启用/禁用状态。"""
     result = await toggle_model_status(db, provider_id, model_id, user_id)
     return ok(result)
+
+
+@router.patch(
+    "/{provider_id}/models/{model_id}/default",
+    response_model=ApiResponse[ModelResponse],
+)
+@handle_errors
+async def model_set_default(
+    provider_id: str,
+    model_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """将指定模型设为全局默认对话模型（全局唯一）。."""
+    result = await set_default_model(db, provider_id, model_id, user_id)
+    return ok(result, "已设为默认对话模型")
 
 
 @router.patch("/{provider_id}/models/reorder", response_model=ApiResponse[None])

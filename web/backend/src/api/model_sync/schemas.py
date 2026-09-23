@@ -31,6 +31,8 @@ class ModelSyncModel(BaseModel):
     supports_tool_call: bool = Field(serialization_alias='supportsToolCall')
     supports_images: bool = Field(serialization_alias='supportsImages')
     supports_reasoning: bool = Field(serialization_alias='supportsReasoning')
+    # 是否为全局默认对话模型（在「模型」页面显式指定），供桌面端对齐默认选择。
+    is_default: bool = Field(default=False, serialization_alias='isDefault')
 
 
 class ModelSyncResponse(BaseModel):

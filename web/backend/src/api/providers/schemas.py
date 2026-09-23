@@ -63,6 +63,9 @@ class ModelResponse(BaseModel):
     release_date: str | None = None
     params: list[ModelParamSchema] = []
     sort_order: int = 0
+    # 是否为全局默认对话模型。仅由 PATCH .../models/{id}/default 设置，
+    # 不接受在创建/更新请求体里传入（避免绕过单默认不变式）。
+    is_default: bool = False
     created_at: datetime
     updated_at: datetime
 

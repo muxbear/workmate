@@ -4,8 +4,12 @@
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from agent import tools as agent_tools
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -32,66 +36,29 @@ def get_tool_registry() -> dict[str, object]:
 async def resolve_model(
     provider_id: str | None,
     model_id: str | None,
-    *,
-    fallback_to_settings: bool = False,
-):
-    """根据 provider_id 和 model_id 解析 LLM 实例。
+) -> "BaseChatModel":
+    """解析主智能体/子智能体/专家使用的 LLM 实例。
 
-    解析失败时抛出异常。
+    - 同时给出 ``provider_id`` 与 ``model_id``：按该组合解析（失败抛 RuntimeError）；
+    - 任一为空：解析「模型」页面配置的默认对话模型（显式 ``is_default`` 优先，
+      否则按页面顺序兜底）。
 
-    Args:
-        provider_id: 提供商 ID。
-        model_id: 模型 ID。
-        fallback_to_settings: 若提供商 api_key 为空，是否回退到 settings 中的默认 key。
+    模型来源只有「模型」页面（``providers`` / ``ai_models``）一处，不再读环境变量。
+
+    Raises:
+        RuntimeError: 显式组合解析失败，或页面中没有任何可用对话模型。
     """
     # 懒加载以避免循环导入
-    from langchain_openai import ChatOpenAI
-    from pydantic import SecretStr
-    from sqlalchemy import select
+    from agent.models.resolver import resolve_default_llm, resolve_llm
 
-    from agent.models.llm import llm as default_llm
-    from core.security import decrypt_api_key
-    from db.engine import async_session
-    from db.models.ai_model import AIModel
-    from db.models.provider import Provider
+    if provider_id and model_id:
+        return await resolve_llm(provider_id, model_id)
 
-    if not provider_id or not model_id:
-        logger.warning(f"未配置提供商或模型，使用默认 LLM {default_llm}")
-        return default_llm
-
-    async with async_session() as session:
-        try:
-            provider = (
-                await session.execute(
-                    select(Provider).where(Provider.id == provider_id)
-                )
-            ).scalar_one_or_none()
-
-            if provider is None:
-                raise RuntimeError(f"提供商 {provider_id} 未找到")
-
-            decrypted_key = decrypt_api_key(provider.api_key)
-            if not decrypted_key:
-                raise RuntimeError(f"模型提供商 {provider} 未配置 api_key ")
-            else:
-                api_key = decrypted_key
-
-            model = (
-                await session.execute(
-                    select(AIModel).where(
-                        AIModel.id == model_id, AIModel.provider_id == provider_id
-                    )
-                )
-            ).scalar_one_or_none()
-
-            if model is None:
-                raise RuntimeError(f"模型提供商 {provider_id} 未配置模型 {model_id}")
-
-            return ChatOpenAI(
-                model=model.name,
-                api_key=SecretStr(api_key),
-                base_url=provider.api_base,
-            )
-        except Exception:
-            logger.exception("解析模型失败")
-            raise
+    if provider_id or model_id:
+        # 只给了一半的标识无法定位模型，按默认模型处理并留痕便于排查。
+        logger.warning(
+            "provider_id/model_id 未成对提供（provider=%s, model=%s），改用默认对话模型",
+            provider_id,
+            model_id,
+        )
+    return await resolve_default_llm()

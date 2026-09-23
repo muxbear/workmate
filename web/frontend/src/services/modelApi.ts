@@ -34,6 +34,7 @@ function toModel(raw: Record<string, unknown>): AIModel {
     description: (raw.description as string) ?? '',
     releaseDate: raw.release_date as string | undefined,
     sortOrder: raw.sort_order as number | undefined,
+    isDefault: (raw.is_default as boolean) ?? false,
   }
 }
 
@@ -138,5 +139,11 @@ export async function reorderModels(providerId: string, modelIds: string[]): Pro
 
 export async function toggleModelStatus(providerId: string, modelId: string): Promise<AIModel> {
   const res = await instance.patch(`/providers/${providerId}/models/${modelId}/status`)
+  return toModel(res.data.data as Record<string, unknown>)
+}
+
+/** 将模型设为全局默认对话模型（全局唯一，后端会清空其它模型的标记）。 */
+export async function setDefaultModel(providerId: string, modelId: string): Promise<AIModel> {
+  const res = await instance.patch(`/providers/${providerId}/models/${modelId}/default`)
   return toModel(res.data.data as Record<string, unknown>)
 }

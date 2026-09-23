@@ -286,7 +286,7 @@ async def _get_or_create_client(mcp_name: str, config: dict[str, Any]) -> Any:
 
 async def close_mcp_clients() -> None:
     """关闭所有缓存的 MCP 客户端连接（应用关闭时调用）。."""
-    global _mcp_clients
+    global _mcp_clients, _LOCAL_MCP_SESSIONS
     for key, client in _mcp_clients.items():
         try:
             await client.close()
@@ -294,10 +294,15 @@ async def close_mcp_clients() -> None:
             logger.warning("关闭 MCP 客户端失败: %s", key, exc_info=True)
     _mcp_clients.clear()
 
-    # 关闭本进程自托管 MCP 服务的内存会话
-    for key, (cm, _session) in _LOCAL_MCP_SESSIONS.items():
+    # 关闭本进程自托管 MCP 服务的内存会话。
+    #
+    # 先把缓存整体摘除、再逐个关闭：anyio 的 cancel scope 有**任务亲和性**，退出在其它
+    # 任务/事件循环里进入的会话会抛 "Attempted to exit a cancel scope that isn't the
+    # current task's current cancel scope"（且以异常组形式冒出）。如果一边遍历一边关闭，
+    # 异常一旦逃逸就会跳过 clear()，残留的失效会话会让后续 MCP 工具加载永久挂起。
+    sessions, _LOCAL_MCP_SESSIONS = _LOCAL_MCP_SESSIONS, {}
+    for key, (cm, _session) in sessions.items():
         try:
             await cm.__aexit__(None, None, None)
-        except Exception:
+        except BaseException:  # noqa: BLE001 异常组也要吞掉，绝不能影响缓存清理
             logger.warning("关闭本地 MCP 会话失败: %s", key, exc_info=True)
-    _LOCAL_MCP_SESSIONS.clear()

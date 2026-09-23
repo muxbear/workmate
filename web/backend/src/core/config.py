@@ -39,9 +39,6 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "please-change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    LLM_DEFAULT_MODEL: str = ""
-    LLM_BASE_URL: str = ""
-    LLM_DEFAULT_API_KEY: str = ""
     CORS_ORIGINS: str = ""
 
     @field_validator("APP_ENV", mode="before")

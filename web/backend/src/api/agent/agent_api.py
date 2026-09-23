@@ -19,6 +19,7 @@ from starlette.background import BackgroundTask
 
 from agent import get_graph_for, get_sandbox_manager
 from agent.context.context import Context
+from agent.models.resolver import ModelNotConfiguredError
 from agent.sandbox.delivery import (
     delivery_host_dir,
     delivery_hint,
@@ -476,6 +477,13 @@ async def chat(
             await log_event(db, "error", "agent", f"模型接口返回 400 错误 (thread_id={thread_id})")
             response_text = "抱歉，模型服务拒绝了本次请求，请稍后重试或调整输入内容。"
         return ChatResponse(response=response_text, thread_id=thread_id)
+    except ModelNotConfiguredError as e:
+        # 把「去模型页面配置」这句可执行提示原样回给用户，而不是被下面的
+        # 通用分支吞成无信息量的「服务处理您的请求时发生了错误」。
+        logger.warning("对话模型未配置：%s", e)
+        await record_chat_usage(db, user_id, thread_id, _start_time, status="error")
+        await log_event(db, "error", "agent", f"对话模型未配置 (thread_id={thread_id})")
+        return ChatResponse(response=str(e), thread_id=thread_id)
     except Exception:
         logger.exception("Agent encountered an unhandled error")
         await record_chat_usage(db, user_id, thread_id, _start_time, status="error")
@@ -594,8 +602,6 @@ async def chat_stream(
             f"用户上传了以下附件文件：\n{paths_text}\n\n用户消息：{req.message}"
         )
 
-    graph = await get_graph_for(req.provider_id, req.model_id)
-
     async def event_generator():
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
         run_failed = False
@@ -625,6 +631,9 @@ async def chat_stream(
         async def consume_all() -> None:
             nonlocal run_failed
             try:
+                # 在图解析放在 try 内：本端点没有 @handle_errors，若在生成器外抛错，
+                # 客户端只会拿到一个无信息量的裸 500。
+                graph = await get_graph_for(req.provider_id, req.model_id)
                 stream = await graph.astream_events(
                     {"messages": [HumanMessage(content=effective_message)]},
                     config=config,
@@ -780,6 +789,13 @@ async def chat_stream(
                 await queue.put({
                     "event": "error",
                     "data": {"message": error_message},
+                })
+            except ModelNotConfiguredError as e:
+                run_failed = True
+                logger.warning("流式对话模型未配置：%s", e)
+                await queue.put({
+                    "event": "error",
+                    "data": {"message": str(e)},
                 })
             except Exception:
                 run_failed = True
@@ -1185,7 +1201,7 @@ async def polish_text(
         )
 
     try:
-        model = await resolve_model(None, None, fallback_to_settings=True)
+        model = await resolve_model(None, None)
         polished: list[str] = []
         for chunk in chunks:
             result = await model.ainvoke(POLISH_INSTRUCTION + "\n\n" + chunk)
@@ -1193,6 +1209,9 @@ async def polish_text(
             if isinstance(content, list):
                 content = "".join(str(part) for part in content)
             polished.append(str(content).strip())
+    except ModelNotConfiguredError as e:
+        logger.warning("改写功能未配置对话模型：%s", e)
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception:
         logger.exception("Polish text failed")
         raise HTTPException(status_code=500, detail="改写失败，请稍后重试")
