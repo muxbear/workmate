@@ -45,7 +45,7 @@ class KnowledgeBaseFacade:
             set_search_orchestrator,
         )
         from core.rag.loaders import create_default_loader_registry
-        from core.rag.splitters import create_chunk_registry
+        from core.rag.splitters import INDEX_CONFIG_DEFAULTS, create_chunk_registry
         from core.rag.vector_store import ChromaVectorStore, MilvusVectorStore
         from core.rag.vector_store_factory import VectorStoreFactory
         from db.engine import async_session
@@ -86,12 +86,17 @@ class KnowledgeBaseFacade:
 
         self._vector_store = vector_store
         app.state.vector_store = vector_store
+        # 切片编辑（chunk_api）等接口需要默认 embedding 实例——此前从未挂载，
+        # 导致 app.state.embedding_model 恒为 None，"保存切片"直接返回 500。
+        app.state.embedding_model = embedding_model
 
         # 文档加载器注册表
         loader_registry = create_default_loader_registry()
 
-        # 切片策略注册表
-        chunk_registry = create_chunk_registry({}, embedding_model=embedding_model)
+        # 切片策略注册表（默认实例，实际按知识库配置逐个重建并缓存）
+        chunk_registry = create_chunk_registry(
+            dict(INDEX_CONFIG_DEFAULTS), embedding_model=embedding_model,
+        )
 
         # 图谱抽取服务
         graph_service = GraphExtractionService()

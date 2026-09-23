@@ -23,7 +23,10 @@ const modeOptions: { key: SearchMode; label: string; desc: string; icon: typeof 
 const currentConfig = computed(() => [
   `Embedding: ${props.kb.config.embeddingModel}`,
   `Top-K: ${props.kb.config.topK}`,
-  props.kb.config.enableReranker ? `Reranker: ${props.kb.config.rerankerModel}` : '',
+  `α: ${props.kb.config.hybridAlpha}`,
+  props.kb.config.enableReranker && props.kb.config.rerankerModel
+    ? `Reranker: ${props.kb.config.rerankerModel}`
+    : '',
 ].filter(Boolean).join(' · '))
 
 async function runSearch() {

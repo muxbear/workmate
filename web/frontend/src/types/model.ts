@@ -1,6 +1,14 @@
 /** 模型类型 */
 export type ModelType =
-  'llm' | 'vision' | 'audio' | 'video' | 'embedding' | 'image-gen' | 'speech' | 'multimodal'
+  | 'llm'
+  | 'vision'
+  | 'audio'
+  | 'video'
+  | 'embedding'
+  | 'image-gen'
+  | 'speech'
+  | 'multimodal'
+  | 'rerank'
 
 /** 模型状态 */
 export type ModelStatus = 'active' | 'beta' | 'deprecated' | 'inactive'
@@ -113,6 +121,13 @@ export const MODEL_TYPE_META: Record<
     bg: 'rgba(251,146,60,0.1)',
     border: 'rgba(251,146,60,0.25)',
     emoji: '🧠',
+  },
+  rerank: {
+    label: '重排序模型',
+    color: '#fca5a5',
+    bg: 'rgba(239,68,68,0.1)',
+    border: 'rgba(239,68,68,0.25)',
+    emoji: '📊',
   },
 }
 

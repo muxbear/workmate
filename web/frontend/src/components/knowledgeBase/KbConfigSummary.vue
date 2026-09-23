@@ -20,7 +20,13 @@ const rows = computed(() => [
   { icon: Sparkle, label: 'Embedding', value: `${props.config.embeddingModel} · ${props.config.embeddingDim}d` },
   { icon: Hash, label: '稀疏检索', value: props.config.sparseAlgo === 'none' ? '未启用' : props.config.sparseAlgo.toUpperCase() },
   { icon: Brain, label: '抽取模型', value: props.config.entityModel },
-  { icon: Target, label: 'Reranker', value: props.config.enableReranker ? props.config.rerankerModel : '未启用' },
+  {
+    icon: Target,
+    label: 'Reranker',
+    value: props.config.enableReranker && props.config.rerankerModel
+      ? props.config.rerankerModel
+      : '未启用',
+  },
   { icon: Gauge, label: 'Top-K / α', value: `${props.config.topK} / ${props.config.hybridAlpha}` },
 ])
 </script>

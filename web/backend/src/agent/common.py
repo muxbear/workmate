@@ -6,8 +6,6 @@
 import logging
 from typing import TYPE_CHECKING
 
-from agent import tools as agent_tools
-
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
@@ -18,19 +16,30 @@ def get_tool_registry() -> dict[str, object]:
     """[已废弃] 使用 agent.tools.registry.get_tool_registry(db) 替代。
 
     过渡期：仍返回硬编码的工具列表，但发出 DeprecationWarning。
+
+    这里显式从各子模块导入，而不是遍历 ``agent.tools.__all__``：包内曾把工具函数
+    重导出到与子模块同名的属性上（如 ``agent.tools.kb_search``），既遮蔽了子模块，
+    也让工具清单依赖导入顺序。
     """
     import warnings
+
+    from agent.tools.get_datetime import get_datetime
+    from agent.tools.http_request import http_request
+    from agent.tools.kb_search import kb_search, list_knowledge_bases
+    from agent.tools.tavily_search import tavily_search
+
     warnings.warn(
         "get_tool_registry() 已废弃，请使用 agent.tools.registry.get_tool_registry(db)",
         DeprecationWarning,
         stacklevel=2,
     )
-    registry: dict[str, object] = {}
-    for name in agent_tools.__all__:
-        tool = getattr(agent_tools, name, None)
-        if callable(tool):
-            registry[name] = tool
-    return registry
+    return {
+        "get_datetime": get_datetime,
+        "http_request": http_request,
+        "kb_search": kb_search,
+        "list_knowledge_bases": list_knowledge_bases,
+        "tavily_search": tavily_search,
+    }
 
 
 async def resolve_model(

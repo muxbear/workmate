@@ -6,7 +6,7 @@ import {
 import type { IndexConfig, SparseAlgo } from '@/types/knowledgeBase'
 import {
   CHUNK_STRATEGY_OPTIONS,
-  RERANKER_MODEL_OPTIONS,
+  RERANKER_MODEL_TYPE,
 } from '@/types/knowledgeBase'
 import {
   fetchAvailableProviders,
@@ -50,39 +50,45 @@ const llmProviderModels = computed(() => {
   return p?.models || []
 })
 
+// ── Reranker 提供商 + 模型（来自「模型」页 type=rerank）──
+const rerankProviders = ref<AvailableProvider[]>([])
+const rerankProviderId = ref('')
+const rerankProviderModels = computed(() => {
+  if (!rerankProviderId.value) return []
+  const p = rerankProviders.value.find(x => x.id === rerankProviderId.value)
+  return p?.models || []
+})
+
+/** 按模型名反查提供商，返回命中的 provider id（未命中返回空串）。 */
+function findProviderId(providers: AvailableProvider[], modelName: string): string {
+  if (!modelName) return ''
+  for (const p of providers) {
+    if (p.models.some(m => m.name === modelName)) return p.id
+  }
+  return ''
+}
+
 onMounted(async () => {
   try {
-    const [ep, lp] = await Promise.all([
+    const [ep, lp, rp] = await Promise.all([
       fetchAvailableProviders('embedding'),
       fetchAvailableProviders('llm'),
+      fetchAvailableProviders(RERANKER_MODEL_TYPE),
     ])
     embProviders.value = ep
     llmProviders.value = lp
+    rerankProviders.value = rp
 
-    // 根据当前 draft 中的模型名反查 provider
-    if (draft.embeddingModel) {
-      for (const p of ep) {
-        if (p.models.some(m => m.name === draft.embeddingModel)) {
-          embProviderId.value = p.id
-          break
-        }
-      }
-    }
-    if (!embProviderId.value && ep.length > 0) {
-      embProviderId.value = ep[0].id
-    }
+    // 提供商优先用配置里已保存的值，其次按模型名反查
+    embProviderId.value =
+      draft.embeddingProviderId || findProviderId(ep, draft.embeddingModel)
+    llmProviderId.value = findProviderId(lp, draft.entityModel)
+    rerankProviderId.value =
+      draft.rerankerProviderId || findProviderId(rp, draft.rerankerModel)
 
-    if (draft.entityModel) {
-      for (const p of lp) {
-        if (p.models.some(m => m.name === draft.entityModel)) {
-          llmProviderId.value = p.id
-          break
-        }
-      }
-    }
-    if (!llmProviderId.value && lp.length > 0) {
-      llmProviderId.value = lp[0].id
-    }
+    if (!embProviderId.value && ep.length > 0) embProviderId.value = ep[0].id
+    if (!llmProviderId.value && lp.length > 0) llmProviderId.value = lp[0].id
+    if (!rerankProviderId.value && rp.length > 0) rerankProviderId.value = rp[0].id
   } catch {
     /* ignore */
   }
@@ -101,6 +107,7 @@ function inferDim(name: string, display: string): number {
 
 function onEmbProviderChange(pid: string) {
   embProviderId.value = pid
+  set('embeddingProviderId', pid)
   const p = embProviders.value.find(x => x.id === pid)
   if (p && p.models.length > 0) {
     set('embeddingModel', p.models[0].name)
@@ -121,6 +128,19 @@ function onLlmProviderChange(pid: string) {
   if (p && p.models.length > 0) {
     set('entityModel', p.models[0].name)
   }
+}
+
+function onRerankProviderChange(pid: string) {
+  rerankProviderId.value = pid
+  set('rerankerProviderId', pid)
+  const p = rerankProviders.value.find(x => x.id === pid)
+  if (p && p.models.length > 0) {
+    set('rerankerModel', p.models[0].name)
+  }
+}
+
+function onRerankModelChange(name: string) {
+  set('rerankerModel', name)
 }
 </script>
 
@@ -306,23 +326,45 @@ function onLlmProviderChange(pid: string) {
       <div class="toggle-row">
         <div class="toggle-info">
           <div class="toggle-label">启用 Reranker</div>
-          <div class="toggle-desc">对召回结果进行二次精排</div>
+          <div class="toggle-desc">先召回 Top-K×4 候选，再由重排序模型精排</div>
         </div>
         <el-switch
           :model-value="draft.enableReranker"
+          :disabled="rerankProviders.length === 0"
           @update:model-value="(v: boolean) => set('enableReranker', v)"
         />
       </div>
-      <div v-if="draft.enableReranker" class="field">
-        <label class="field-label">Reranker 模型</label>
-        <el-select
-          :model-value="draft.rerankerModel"
-          @update:model-value="(v: string) => set('rerankerModel', v)"
-          style="width: 100%"
-          popper-class="config-select-popper"
-        >
-          <el-option v-for="m in RERANKER_MODEL_OPTIONS" :key="m" :label="m" :value="m" />
-        </el-select>
+      <div v-if="rerankProviders.length === 0" class="hint-text">
+        尚未配置重排序模型：请到「模型」页面添加 type=rerank 的模型后再启用。
+      </div>
+      <div v-if="draft.enableReranker && rerankProviders.length > 0" class="field-row">
+        <div class="field flex-1">
+          <label class="field-label">Reranker 提供商</label>
+          <el-select
+            :model-value="rerankProviderId"
+            @update:model-value="onRerankProviderChange"
+            style="width: 100%"
+            popper-class="config-select-popper"
+          >
+            <el-option v-for="p in rerankProviders" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </div>
+        <div class="field flex-1">
+          <label class="field-label">Reranker 模型</label>
+          <el-select
+            :model-value="draft.rerankerModel"
+            @update:model-value="onRerankModelChange"
+            style="width: 100%"
+            popper-class="config-select-popper"
+          >
+            <el-option
+              v-for="m in rerankProviderModels"
+              :key="m.id"
+              :label="m.display_name || m.name"
+              :value="m.name"
+            />
+          </el-select>
+        </div>
       </div>
     </div>
   </div>
@@ -404,6 +446,12 @@ function onLlmProviderChange(pid: string) {
   font-size: var(--font-size-xs);
   color: var(--foreground-muted);
   margin-top: 2px;
+}
+
+.hint-text {
+  font-size: var(--font-size-xs);
+  color: var(--status-amber-text, var(--foreground-muted));
+  line-height: 1.5;
 }
 
 /* Select option with description */

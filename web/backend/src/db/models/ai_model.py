@@ -22,7 +22,7 @@ class AIModel(Base):
     provider_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True, comment="所属提供商ID")
     name: Mapped[str] = mapped_column(String(128), nullable=False, comment="模型名称（机器名，如 gpt-4o）")
     display_name: Mapped[str] = mapped_column(String(128), nullable=False, comment="展示名称（如 GPT-4o）")
-    type: Mapped[str] = mapped_column(String(16), nullable=False, comment="模型类型: llm, vision, audio, video, embedding, image-gen, speech")
+    type: Mapped[str] = mapped_column(String(16), nullable=False, comment="模型类型: llm, vision, audio, video, embedding, image-gen, speech, rerank")
     status: Mapped[str] = mapped_column(String(16), default="active", comment="模型状态: active, beta, deprecated")
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="上下文窗口大小（tokens）")
     call_count: Mapped[int] = mapped_column(Integer, default=0, comment="调用次数")

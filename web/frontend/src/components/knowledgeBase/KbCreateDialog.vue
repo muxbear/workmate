@@ -21,10 +21,11 @@ const emit = defineEmits<{
 
 const defaultConfig: IndexConfig = {
   chunkStrategy: 'recursive', chunkSize: 512, chunkOverlap: 64,
-  embeddingModel: '', embeddingDim: 1024,
+  embeddingModel: '', embeddingProviderId: '', embeddingDim: 1024,
   sparseAlgo: 'bm25', bm25K1: 1.5, bm25B: 0.75,
   entityModel: '', relationModel: '', enableGraph: true,
-  rerankerModel: 'bge-reranker-v2-m3', enableReranker: true,
+  // 默认不启用精排：需先在「模型」页配置 type=rerank 的模型
+  rerankerModel: '', rerankerProviderId: '', enableReranker: false,
   topK: 10, hybridAlpha: 0.5,
 }
 

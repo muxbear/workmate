@@ -7,11 +7,16 @@ from pydantic import BaseModel, Field
 # ─── IndexConfig ────────────────────────────────────────────────────────────
 
 class IndexConfigSchema(BaseModel):
-    """索引配置（对应前端 IndexConfig）。"""
+    """索引配置（对应前端 IndexConfig）。
+
+    provider 字段可空：为空时按模型名在全部提供商中解析（``select_usable_models``
+    的兜底顺序），指定后则把解析范围收窄到该提供商，避免同名模型歧义。
+    """
     chunk_strategy: str = Field(default="recursive", description="fixed|recursive|semantic|markdown|agentic")
     chunk_size: int = Field(default=512, ge=128, le=2048)
     chunk_overlap: int = Field(default=64, ge=0, le=512)
     embedding_model: str = Field(default="text-embedding-v4")
+    embedding_provider_id: str | None = Field(default=None, description="embedding 模型所属提供商")
     embedding_dim: int = Field(default=1024)
     sparse_algo: str = Field(default="bm25", description="bm25|bm25_plus|tf_idf|none")
     bm25_k1: float = Field(default=1.5)
@@ -20,6 +25,7 @@ class IndexConfigSchema(BaseModel):
     relation_model: str = Field(default="deepseek-v3")
     enable_graph: bool = Field(default=True)
     reranker_model: str = Field(default="bge-reranker-v2-m3")
+    reranker_provider_id: str | None = Field(default=None, description="reranker 模型所属提供商")
     enable_reranker: bool = Field(default=False)
     top_k: int = Field(default=5, ge=1, le=50)
     hybrid_alpha: float = Field(default=0.7, ge=0.0, le=1.0)

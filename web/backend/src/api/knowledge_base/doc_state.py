@@ -17,6 +17,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def is_graph_enabled(config: dict | None) -> bool:
+    """判断是否启用知识图谱抽取（默认启用）。
+
+    仅当配置里**显式**为 ``False`` 时关闭。此前的写法是
+    ``config.get("enable_graph") or config.get("enableGraph")`` —— 当
+    ``enable_graph=False`` 时表达式短路成 ``None``，再与 ``is not False`` 比较
+    恒为真，导致前端关掉开关仍会执行 LLM 抽取。
+    """
+    config = config or {}
+    for key in ("enable_graph", "enableGraph"):
+        if key in config:
+            return config[key] is not False and bool(config[key])
+    return True
+
+
 @dataclass
 class IndexingContext:
     """索引上下文——状态模式中的 Context 角色。
@@ -42,6 +57,8 @@ class IndexingContext:
 
     embedding_model: Any | None = None
     chunk_registry: ChunkStrategyRegistry | None = None
+    #: 实际使用的切片策略——流水线可能在 agentic 不可用时回退为 recursive
+    chunk_strategy: str | None = None
 
     on_status_change: Callable[[IndexingContext], Awaitable[None]] | None = None
 
@@ -91,9 +108,14 @@ class ChunkingState(DocState):
 
     async def handle(self, ctx: IndexingContext, pipeline: IndexingPipeline) -> None:
         try:
-            strategy_name = ctx.config.get("chunk_strategy", "recursive")
+            strategy_name = (
+                ctx.chunk_strategy
+                or ctx.config.get("chunk_strategy")
+                or "recursive"
+            )
             chunk_reg = ctx.chunk_registry or pipeline.chunk_registry
-            ctx.chunks = chunk_reg.split(strategy_name, ctx.documents)
+            # 走异步路径：agentic 会调用 LLM，不能阻塞事件循环
+            ctx.chunks = await chunk_reg.async_split(strategy_name, ctx.documents)
             await ctx.transition_to(EmbeddingState(), "embedding", 30)
         except Exception as e:
             await ctx.fail(f"文本切片失败: {e}")
@@ -150,12 +172,7 @@ class ExtractingState(DocState):
         import logging
         _logger = logging.getLogger(__name__)
         try:
-            # 兼容前端 camelCase 和后端 snake_case 两种 key 格式
-            enable_graph = (
-                ctx.config.get("enable_graph", None)
-                or ctx.config.get("enableGraph", None)
-            )
-            if enable_graph is not False:  # 默认开启
+            if is_graph_enabled(ctx.config):
                 _logger.info("Running graph extraction for doc=%s", ctx.doc_id)
                 entity_model = (
                     ctx.config.get("entity_model") or ctx.config.get("entityModel")
@@ -168,6 +185,8 @@ class ExtractingState(DocState):
                 )
                 ctx.entities_count = len(entities)
                 ctx.relations_count = len(relations)
+            else:
+                _logger.info("Graph extraction disabled for doc=%s", ctx.doc_id)
             await ctx.transition_to(IndexedState(), "indexed", 100)
         except Exception:
             _logger.exception("Entity extraction failed for doc=%s", ctx.doc_id)

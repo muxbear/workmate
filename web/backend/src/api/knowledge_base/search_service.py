@@ -7,8 +7,23 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.knowledge_base.schemas import ChunkMatch, SearchRequest, SearchResponse
+from core.rag.bm25 import SparseConfig
+from core.rag.reranker import RERANK_CANDIDATE_MULTIPLIER
 
 logger = logging.getLogger(__name__)
+
+RRF_K = 60
+DEFAULT_HYBRID_ALPHA = 0.7
+#: 精排候选上限——多数 rerank 接口对单次文档数有上限，且候选越多延迟越高
+MAX_RERANK_CANDIDATES = 50
+
+
+def _coerce_float(value: object, default: float) -> float:
+    """把配置里的数值安全转成 float；非法值回退默认。"""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
 
 
 # ─── 检索上下文 & 结果 ─────────────────────────────────────────────────────────
@@ -21,7 +36,8 @@ class SearchContext:
     query_text: str
     query_embedding: list[float]
     top_k: int
-    alpha: float = 0.7
+    alpha: float = DEFAULT_HYBRID_ALPHA
+    sparse_config: SparseConfig = field(default_factory=SparseConfig)
     extra: dict = field(default_factory=dict)
 
 
@@ -37,60 +53,59 @@ class ScoredChunk:
 # ─── 分数融合工具函数 ──────────────────────────────────────────────────────────
 
 
+def _normalize(pairs: list[tuple[str, float]]) -> dict[str, float]:
+    """把单通道得分 min-max 归一化到 [0, 1]，仅用于展示分维度得分。"""
+    if not pairs:
+        return {}
+    max_s = max(s for _, s in pairs)
+    min_s = min(s for _, s in pairs)
+    if max_s == min_s:
+        return {cid: 1.0 for cid, _ in pairs}
+    span = max_s - min_s
+    return {cid: (s - min_s) / span for cid, s in pairs}
+
+
 def _fuse_scores(
     vec_pairs: list[tuple[str, float]],
     bm25_pairs: list[tuple[str, float]],
     top_k: int,
     alpha: float,
 ) -> list[ScoredChunk]:
-    """RRF（倒数排名融合）——向量和 BM25 两边排名自然交错，无加权偏斜。"""
-    RRF_K = 60
+    """加权 RRF（倒数排名融合）——向量与 BM25 两路排名加权交错。
 
-    vec_norm: dict[str, float] = {}
-    bm25_norm: dict[str, float] = {}
+    ``alpha`` 是**向量通道权重**：``alpha=1`` 时退化为纯向量排序，``alpha=0``
+    时退化为纯 BM25 排序，中间值则按比例调和两路排名。此前 RRF 使用固定权重，
+    导致 ``hybrid_alpha`` / API 的 ``alpha`` 参数完全不改变结果顺序。
 
-    if vec_pairs:
-        max_v = max(s for _, s in vec_pairs)
-        min_v = min(s for _, s in vec_pairs)
-        if max_v == min_v:
-            for cid, _ in vec_pairs:
-                vec_norm[cid] = 1.0
-        else:
-            v_range = max_v - min_v
-            for cid, s in vec_pairs:
-                vec_norm[cid] = (s - min_v) / v_range
+    综合得分取归一化后的 RRF 值本身，因此展示分数与排序**始终一致**（此前展示分
+    用加权归一化和、排序用 RRF，两者可能互相矛盾）。
+    """
+    vec_weight = max(0.0, min(1.0, alpha))
+    bm25_weight = 1.0 - vec_weight
 
-    if bm25_pairs:
-        max_b = max(s for _, s in bm25_pairs)
-        min_b = min(s for _, s in bm25_pairs)
-        if max_b == min_b:
-            for cid, _ in bm25_pairs:
-                bm25_norm[cid] = 1.0
-        else:
-            b_range = max_b - min_b
-            for cid, s in bm25_pairs:
-                bm25_norm[cid] = (s - min_b) / b_range
-
-    # 无权重 RRF——两边排名自然交错，已在两边都排前面的 chunk 得分更高
     rrf: dict[str, float] = {}
     for rank, (cid, _) in enumerate(vec_pairs, start=1):
-        rrf[cid] = 1.0 / (RRF_K + rank)
+        rrf[cid] = rrf.get(cid, 0.0) + vec_weight / (RRF_K + rank)
     for rank, (cid, _) in enumerate(bm25_pairs, start=1):
-        rrf[cid] = rrf.get(cid, 0.0) + 1.0 / (RRF_K + rank)
+        rrf[cid] = rrf.get(cid, 0.0) + bm25_weight / (RRF_K + rank)
 
-    ranked = sorted(rrf.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    if not rrf:
+        return []
 
-    # 综合得分使用 alpha 加权展示
+    ranked = sorted(rrf.items(), key=lambda x: (-x[1], x[0]))[:top_k]
+    max_rrf = ranked[0][1]
+
+    vec_norm = _normalize(vec_pairs)
+    bm25_norm = _normalize(bm25_pairs)
+
     return [
         ScoredChunk(
             chunk_id=cid,
-            score=round(
-                alpha * vec_norm.get(cid, 0.0) + (1 - alpha) * bm25_norm.get(cid, 0.0), 4,
-            ),
+            score=round(value / max_rrf, 4) if max_rrf > 0 else 0.0,
             vec_score=round(v, 4) if (v := vec_norm.get(cid)) is not None else None,
             bm25_score=round(b, 4) if (b := bm25_norm.get(cid)) is not None else None,
         )
-        for cid, _ in ranked
+        for cid, value in ranked
     ]
 
 
@@ -101,6 +116,7 @@ class SearchStrategy(ABC):
     """检索策略抽象接口。"""
 
     name: str
+    requires_embedding: bool = True
 
     @abstractmethod
     async def search(self, ctx: SearchContext, vector_store) -> list[ScoredChunk]:
@@ -128,13 +144,17 @@ class VectorSearchStrategy(SearchStrategy):
 
 
 class BM25SearchStrategy(SearchStrategy):
-    """BM25 检索——稀疏关键词。"""
+    """BM25 检索——稀疏关键词。
+
+    不需要查询向量：因此 embedding 服务不可用时纯 BM25 检索仍可用。
+    """
 
     name = "bm25"
+    requires_embedding = False
 
     async def search(self, ctx: SearchContext, vector_store) -> list[ScoredChunk]:
         pairs = await vector_store.bm25_search(
-            ctx.kb_id, ctx.query_text, ctx.top_k
+            ctx.kb_id, ctx.query_text, ctx.top_k, ctx.sparse_config,
         )
         return [
             ScoredChunk(chunk_id=cid, score=round(s, 4), bm25_score=round(s, 4))
@@ -143,7 +163,7 @@ class BM25SearchStrategy(SearchStrategy):
 
 
 class HybridSearchStrategy(SearchStrategy):
-    """混合检索——向量 + BM25 加权融合，保留各维度得分。"""
+    """混合检索——向量 + BM25 加权 RRF 融合，保留各维度得分。"""
 
     name = "hybrid"
 
@@ -152,7 +172,7 @@ class HybridSearchStrategy(SearchStrategy):
             ctx.kb_id, ctx.query_embedding, ctx.top_k * 2,
         )
         bm25_pairs = await vector_store.bm25_search(
-            ctx.kb_id, ctx.query_text, ctx.top_k * 2,
+            ctx.kb_id, ctx.query_text, ctx.top_k * 2, ctx.sparse_config,
         )
         return _fuse_scores(vec_pairs, bm25_pairs, ctx.top_k, ctx.alpha)
 
@@ -192,13 +212,15 @@ def create_search_registry() -> SearchStrategyRegistry:
 class SearchOrchestrator:
     """检索编排器——模板方法骨架，将具体检索委托给策略。
 
-    依赖通过构造函数注入，由 server.py 在启动时组装。
+    流程：解析知识库配置 → 按需向量化 → 策略检索（+候选扩充）→ 查询切片详情
+    → 可选精排 → 组装响应。依赖通过构造函数注入，由 facade 在启动时组装。
     """
 
     def __init__(self, vector_store, embedding_model) -> None:
         self._vector_store = vector_store
         self._embedding_model = embedding_model
         self._embedding_cache: dict[tuple[str, str | None], object] = {}
+        self._reranker_cache: dict[tuple[str | None, str | None], object] = {}
         self._registry = create_search_registry()
 
     async def search(
@@ -217,49 +239,42 @@ class SearchOrchestrator:
             raise ValueError(f"不支持的检索模式: {request.mode}，可选: {valid}")
 
         top_k = request.top_k
+        kb_config = await self._load_kb_config(db, kb_id)
 
-        # 向量化查询（纯 BM25 不需要，但为简化流程统一执行）
-        embedding_model = self._embedding_model
-        from sqlalchemy import select
+        # alpha：请求显式传入优先，否则用知识库配置的 hybrid_alpha
+        alpha = request.alpha
+        if alpha is None:
+            alpha = _coerce_float(kb_config.get("hybrid_alpha"), DEFAULT_HYBRID_ALPHA)
 
-        from db.models.knowledge_base import KnowledgeBase
+        # 稀疏检索参数（sparse_algo / bm25_k1 / bm25_b）——此前从未被读取
+        sparse_config = SparseConfig.from_config(kb_config)
 
-        kb = (
-            await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-        ).scalar_one_or_none()
-        kb_config = kb.config if kb and isinstance(kb.config, dict) else {}
-        emb_model_name = kb_config.get("embedding_model")
-        if emb_model_name:
-            emb_provider_id = kb_config.get("embedding_provider_id")
-            cache_key = (emb_model_name, emb_provider_id)
-            cached = self._embedding_cache.get(cache_key)
-            if cached is None:
-                from api.knowledge_base.model_provider import load_embedding_model
+        # 精排：启用则多召回候选再重排
+        reranker = await self._resolve_reranker(db, kb_config)
+        fetch_k = (
+            min(max(top_k * RERANK_CANDIDATE_MULTIPLIER, top_k), MAX_RERANK_CANDIDATES)
+            if reranker is not None
+            else top_k
+        )
 
-                try:
-                    cached = await load_embedding_model(
-                        db,
-                        model_name=emb_model_name,
-                        provider_id=emb_provider_id,
-                    )
-                    self._embedding_cache[cache_key] = cached
-                except RuntimeError:
-                    cached = self._embedding_model
-            embedding_model = cached
-
-        try:
-            query_embedding = await embedding_model.aembed_query(request.query)
-        except Exception:
-            logger.exception("Query embedding failed")
-            raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")
+        # 纯 BM25 不需要查询向量——embedding 服务不可用时仍可检索
+        query_embedding: list[float] = []
+        if strategy.requires_embedding:
+            embedding_model = await self._resolve_embedding_model(db, kb_config)
+            try:
+                query_embedding = await embedding_model.aembed_query(request.query)
+            except Exception:
+                logger.exception("Query embedding failed")
+                raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")
 
         # 构建上下文并执行策略
         ctx = SearchContext(
             kb_id=kb_id,
             query_text=request.query,
             query_embedding=query_embedding,
-            top_k=top_k,
-            alpha=request.alpha if request.alpha is not None else 0.7,
+            top_k=fetch_k,
+            alpha=alpha,
+            sparse_config=sparse_config,
         )
 
         try:
@@ -285,21 +300,31 @@ class SearchOrchestrator:
 
         # 保留检索返回的顺序
         chunk_by_id = {c["id"]: c for c in chunk_dicts}
-        results: list[ChunkMatch] = []
+        ordered: list[tuple[ScoredChunk, dict]] = []
         for cid in chunk_ids:
-            c = chunk_by_id.get(cid)
+            chunk = chunk_by_id.get(cid)
             sc = sc_map.get(cid)
-            if c is None:
+            if chunk is None or sc is None:
                 continue
+            ordered.append((sc, chunk))
+
+        # 精排（启用时）：对候选重排并截断到 top_k
+        if reranker is not None and len(ordered) > 1:
+            ordered = await self._apply_rerank(reranker, request.query, ordered, top_k)
+        else:
+            ordered = ordered[:top_k]
+
+        results: list[ChunkMatch] = []
+        for sc, chunk in ordered:
             results.append(ChunkMatch(
-                id=cid,
-                doc_id=c.get("doc_id", ""),
-                doc_name=c.get("doc_name", ""),
-                chunk_index=c.get("chunk_index", 0),
-                content=c.get("chunk_text", ""),
-                score=sc.score if sc else round(0.0, 4),
-                vec_score=sc.vec_score if sc else None,
-                bm25_score=sc.bm25_score if sc else None,
+                id=sc.chunk_id,
+                doc_id=chunk.get("doc_id", ""),
+                doc_name=chunk.get("doc_name", ""),
+                chunk_index=chunk.get("chunk_index", 0),
+                content=chunk.get("chunk_text", ""),
+                score=sc.score,
+                vec_score=sc.vec_score,
+                bm25_score=sc.bm25_score,
             ))
 
         return SearchResponse(
@@ -308,6 +333,99 @@ class SearchOrchestrator:
             total=len(results),
             results=results,
         )
+
+    async def _load_kb_config(self, db: AsyncSession, kb_id: str) -> dict:
+        """读取知识库配置（检索参数与模型选择的来源）。"""
+        from sqlalchemy import select
+
+        from db.models.knowledge_base import KnowledgeBase
+
+        kb = (
+            await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+        ).scalar_one_or_none()
+        return dict(kb.config) if kb and isinstance(kb.config, dict) else {}
+
+    async def _resolve_embedding_model(self, db: AsyncSession, kb_config: dict):
+        """解析知识库配置的 embedding 模型（带缓存）；配置缺失时用默认实例。"""
+        emb_model_name = kb_config.get("embedding_model")
+        if not emb_model_name:
+            return self._embedding_model
+
+        cache_key = (emb_model_name, kb_config.get("embedding_provider_id"))
+        cached = self._embedding_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        from api.knowledge_base.model_provider import load_embedding_model
+
+        try:
+            model = await load_embedding_model(
+                db,
+                model_name=emb_model_name,
+                provider_id=kb_config.get("embedding_provider_id"),
+            )
+        except RuntimeError:
+            logger.warning("知识库配置的 embedding 模型不可用，回退默认实例: %s", emb_model_name)
+            model = self._embedding_model
+        self._embedding_cache[cache_key] = model
+        return model
+
+    async def _resolve_reranker(self, db: AsyncSession, kb_config: dict):
+        """解析知识库配置的 reranker；未启用或模型不可用时返回 ``None``。"""
+        if not kb_config.get("enable_reranker"):
+            return None
+
+        model_name = kb_config.get("reranker_model")
+        provider_id = kb_config.get("reranker_provider_id")
+        cache_key = (model_name, provider_id)
+        cached = self._reranker_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        from api.knowledge_base.model_provider import load_reranker_model
+
+        try:
+            reranker = await load_reranker_model(
+                db, model_name=model_name, provider_id=provider_id,
+            )
+        except RuntimeError as exc:
+            logger.warning("知识库启用了重排序但模型不可用，本次跳过精排: %s", exc)
+            return None
+        self._reranker_cache[cache_key] = reranker
+        return reranker
+
+    async def _apply_rerank(
+        self,
+        reranker,
+        query: str,
+        ordered: list[tuple[ScoredChunk, dict]],
+        top_k: int,
+    ) -> list[tuple[ScoredChunk, dict]]:
+        """用 reranker 重排候选；调用失败时保留原顺序。
+
+        精排只是"锦上添花"，任何异常都不应让整次检索失败。
+        """
+        documents = [chunk.get("chunk_text", "") for _, chunk in ordered]
+        ranked = await reranker.rerank(query, documents, top_n=top_k)
+        if not ranked:
+            logger.info("重排序未返回结果，沿用召回顺序")
+            return ordered[:top_k]
+
+        reranked: list[tuple[ScoredChunk, dict]] = []
+        for index, score in ranked:
+            if not (0 <= index < len(ordered)):
+                continue
+            original, chunk = ordered[index]
+            reranked.append((
+                ScoredChunk(
+                    chunk_id=original.chunk_id,
+                    score=round(float(score), 4),
+                    vec_score=original.vec_score,
+                    bm25_score=original.bm25_score,
+                ),
+                chunk,
+            ))
+        return reranked or ordered[:top_k]
 
     def is_search_supported(self) -> bool:
         """快速检测当前向量库是否支持搜索功能。

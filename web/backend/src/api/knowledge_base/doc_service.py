@@ -26,7 +26,11 @@ from api.knowledge_base.schemas import (
     KBDocUploadResponse,
 )
 from core.rag.loaders import DocumentLoaderRegistry
-from core.rag.splitters import ChunkStrategyRegistry, create_chunk_registry
+from core.rag.splitters import (
+    INDEX_CONFIG_DEFAULTS,
+    ChunkStrategyRegistry,
+    create_chunk_registry,
+)
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
@@ -41,7 +45,10 @@ logger = logging.getLogger(__name__)
 # 各阶段的预估进度基线
 STAGE_PROGRESS = {"queued": 0, "parsing": 15, "chunking": 30, "embedding": 55,
                   "bm25": 70, "extracting": 85, "indexed": 100}
-STAGE_NAMES = ["排队", "解析", "切片", "向量化", "BM25 倒排", "实体抽取", "关系抽取", "入库"]
+# 阶段名必须与文档状态一一对应（见 STAGE_STATUS_ORDER），否则会出现
+# "某个阶段永远 pending / 永远运行中"的展示错误。
+STAGE_NAMES = ["排队", "解析", "切片", "向量化", "稀疏索引", "实体关系抽取", "完成"]
+STAGE_STATUS_ORDER = ["queued", "parsing", "chunking", "embedding", "bm25", "extracting", "indexed"]
 
 ALLOWED_EXTENSIONS = {
     "pdf", "docx", "xlsx", "pptx", "csv", "json", "md", "html", "txt",
@@ -67,16 +74,28 @@ def _get_file_type(filename: str) -> str:
 
 
 def compute_stages(status: str, error_message: str | None = None) -> list[dict]:
-    """根据状态计算 8 阶段状态。"""
-    status_order = ["queued", "parsing", "chunking", "embedding", "bm25", "extracting", "indexed"]
-    stages = []
-    current_idx = status_order.index(status) if status in status_order else -1
+    """根据文档状态计算各阶段状态。
+
+    阶段名与状态一一对应（``STAGE_NAMES[i]`` ↔ ``STAGE_STATUS_ORDER[i]``）。
+    到达 ``indexed`` 时最后一个阶段标记为 ``done``，而不是继续显示"运行中"——
+    此前阶段名有 8 项而状态只有 7 项，导致已完成的文档里「关系抽取」永远转圈、
+    「入库」永远 pending。
+    """
+    stages: list[dict] = []
+    current_idx = (
+        STAGE_STATUS_ORDER.index(status) if status in STAGE_STATUS_ORDER else -1
+    )
 
     for i, name in enumerate(STAGE_NAMES):
         if i < current_idx:
             stages.append({"name": name, "status": "done", "pct": 100})
         elif i == current_idx:
-            stages.append({"name": name, "status": "running", "pct": STAGE_PROGRESS.get(status, 50)})
+            is_final = status == "indexed"
+            stages.append({
+                "name": name,
+                "status": "done" if is_final else "running",
+                "pct": STAGE_PROGRESS.get(status, 50),
+            })
         else:
             stages.append({"name": name, "status": "pending", "pct": 0})
 
@@ -84,6 +103,7 @@ def compute_stages(status: str, error_message: str | None = None) -> list[dict]:
         failed_idx = _infer_failed_stage_index(error_message)
         if failed_idx < len(stages):
             stages[failed_idx]["status"] = "failed"
+            stages[failed_idx]["pct"] = 0
             # 将失败阶段之前的阶段标记为完成（失败前已成功执行）
             for j in range(failed_idx):
                 stages[j]["status"] = "done"
@@ -99,9 +119,8 @@ def _infer_failed_stage_index(error_message: str | None) -> int:
     - "解析" → 1
     - "切片" → 2
     - "向量化" → 3
-    - "BM25" → 4
-    - "实体" → 5
-    - "关系" → 6
+    - "BM25" / "稀疏" → 4
+    - "实体" / "关系" / "图谱" → 5（实体与关系在同一阶段完成）
     """
     if not error_message:
         return 1  # 兜底：无法推断时默认解析阶段
@@ -110,12 +129,10 @@ def _infer_failed_stage_index(error_message: str | None) -> int:
         return 3
     if "切片" in msg:
         return 2
-    if "BM25" in msg:
+    if "BM25" in msg or "稀疏" in msg:
         return 4
-    if "实体" in msg:
+    if "实体" in msg or "关系" in msg or "图谱" in msg:
         return 5
-    if "关系" in msg:
-        return 6
     if "解析" in msg:
         return 1
     return 1  # 兜底
@@ -142,90 +159,111 @@ class DatabaseProgressObserver(ProgressObserver):
     async def on_progress(self, ctx: IndexingContext) -> None:
         try:
             async with self._db_factory() as db:
-                stmt = (
+                doc_values: dict = {
+                    "status": ctx.status,
+                    "progress": ctx.progress,
+                    "error_message": ctx.error_message,
+                    "chunks_count": len(ctx.chunks),
+                    "entities_count": ctx.entities_count,
+                    "relations_count": ctx.relations_count,
+                }
+                # indexed_at 只在索引成功时写入：此前无条件传 None，
+                # 会让每次中间状态更新都把已完成文档的索引时间抹掉。
+                if ctx.status == "indexed":
+                    doc_values["indexed_at"] = datetime.utcnow()
+
+                await db.execute(
                     update(KnowledgeBaseDocument)
                     .where(KnowledgeBaseDocument.id == ctx.doc_id)
-                    .values(
-                        status=ctx.status,
-                        progress=ctx.progress,
-                        error_message=ctx.error_message,
-                        chunks_count=len(ctx.chunks),
-                        entities_count=ctx.entities_count,
-                        relations_count=ctx.relations_count,
-                        indexed_at=datetime.utcnow() if ctx.status == "indexed" else None,
-                    )
+                    .values(**doc_values)
                 )
-                await db.execute(stmt)
 
-                # 文档完成索引时，同步更新 KB 级别计数和状态
-                if ctx.status == "indexed" or ctx.status == "failed":
-                    from db.models.knowledge_base import KnowledgeBase
-                    from db.models.knowledge_base_entity import KnowledgeBaseEntity
-                    from db.models.knowledge_base_relation import KnowledgeBaseRelation
-
-                    # 重新统计 KB 级 chunks / entities / relations
-                    chunks_total = await db.scalar(
-                        select(func.sum(KnowledgeBaseDocument.chunks_count)).where(
-                            KnowledgeBaseDocument.kb_id == ctx.kb_id,
-                            KnowledgeBaseDocument.status == "indexed",
-                        )
-                    )
-                    entity_total = await db.scalar(
-                        select(func.count(func.distinct(KnowledgeBaseEntity.name))).where(
-                            KnowledgeBaseEntity.kb_id == ctx.kb_id,
-                        )
-                    )
-                    relation_total = await db.scalar(
-                        select(func.count()).select_from(
-                            select(
-                                KnowledgeBaseRelation.from_entity,
-                                KnowledgeBaseRelation.to_entity,
-                                KnowledgeBaseRelation.label,
-                            )
-                            .where(KnowledgeBaseRelation.kb_id == ctx.kb_id)
-                            .distinct()
-                            .subquery()
-                        )
-                    )
-
-                    # 检查是否还有未完成的文档
-                    active_count = await db.scalar(
-                        select(func.count()).select_from(KnowledgeBaseDocument).where(
-                            KnowledgeBaseDocument.kb_id == ctx.kb_id,
-                            KnowledgeBaseDocument.status.notin_(["indexed", "failed"]),
-                        )
-                    )
-                    new_status = "ready" if (active_count or 0) == 0 else "indexing"
-
-                    await db.execute(
-                        update(KnowledgeBase)
-                        .where(KnowledgeBase.id == ctx.kb_id)
-                        .values(
-                            chunks_count=chunks_total or 0,
-                            entities_count=entity_total or 0,
-                            relations_count=relation_total or 0,
-                            status=new_status,
-                        )
-                    )
-
-                # 发布通知事件
-                    if ctx.status in ("indexed", "failed"):
-                        try:
-                            await NotificationBus.publish(NotificationEvent(
-                                user_id=ctx.kb_id,  # TODO: replace with actual user_id
-                                type="kb_indexed" if ctx.status == "indexed" else "kb_failed",
-                                title="文档索引完成" if ctx.status == "indexed" else "文档索引失败",
-                                content=f"文档 {ctx.doc_id} {'索引完成' if ctx.status == 'indexed' else '索引失败: ' + (ctx.error_message or '')}",
-                                level="success" if ctx.status == "indexed" else "error",
-                                link=f"/knowledge-base?kb_id={ctx.kb_id}",
-                                metadata={"doc_id": ctx.doc_id, "kb_id": ctx.kb_id},
-                            ))
-                        except Exception:
-                            logger.warning("发布通知事件失败", exc_info=True)
+                # 文档到达终态时，同步更新 KB 级别计数和状态
+                if ctx.status in ("indexed", "failed"):
+                    await self._refresh_kb_state(db, ctx)
+                    await self._publish_notification(db, ctx)
 
                 await db.commit()
         except Exception as e:
             logger.error("DatabaseProgressObserver 写入失败: %s", e)
+
+    async def _refresh_kb_state(self, db, ctx: IndexingContext) -> None:
+        """重新统计 KB 级计数并刷新状态（过程中会取出 KB 行以便复用 user_id）。"""
+        from db.models.knowledge_base import KnowledgeBase
+        from db.models.knowledge_base_entity import KnowledgeBaseEntity
+        from db.models.knowledge_base_relation import KnowledgeBaseRelation
+
+        kb = (
+            await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == ctx.kb_id))
+        ).scalar_one_or_none()
+        if kb is None:
+            return
+
+        chunks_total = await db.scalar(
+            select(func.sum(KnowledgeBaseDocument.chunks_count)).where(
+                KnowledgeBaseDocument.kb_id == ctx.kb_id,
+                KnowledgeBaseDocument.status == "indexed",
+            )
+        )
+        entity_total = await db.scalar(
+            select(func.count(func.distinct(KnowledgeBaseEntity.name))).where(
+                KnowledgeBaseEntity.kb_id == ctx.kb_id,
+            )
+        )
+        relation_total = await db.scalar(
+            select(func.count()).select_from(
+                select(
+                    KnowledgeBaseRelation.from_entity,
+                    KnowledgeBaseRelation.to_entity,
+                    KnowledgeBaseRelation.label,
+                )
+                .where(KnowledgeBaseRelation.kb_id == ctx.kb_id)
+                .distinct()
+                .subquery()
+            )
+        )
+
+        # 检查是否还有未完成的文档
+        active_count = await db.scalar(
+            select(func.count()).select_from(KnowledgeBaseDocument).where(
+                KnowledgeBaseDocument.kb_id == ctx.kb_id,
+                KnowledgeBaseDocument.status.notin_(["indexed", "failed"]),
+            )
+        )
+
+        kb.chunks_count = chunks_total or 0
+        kb.entities_count = entity_total or 0
+        kb.relations_count = relation_total or 0
+        kb.status = "ready" if (active_count or 0) == 0 else "indexing"
+        kb.updated_at = datetime.utcnow()
+
+    async def _publish_notification(self, db, ctx: IndexingContext) -> None:
+        """发布索引终态通知——收件人必须是知识库归属用户，而不是 kb_id。"""
+        from db.models.knowledge_base import KnowledgeBase
+
+        user_id = await db.scalar(
+            select(KnowledgeBase.user_id).where(KnowledgeBase.id == ctx.kb_id)
+        )
+        if not user_id:
+            logger.warning("通知跳过：知识库 %s 不存在", ctx.kb_id)
+            return
+
+        indexed = ctx.status == "indexed"
+        try:
+            await NotificationBus.publish(NotificationEvent(
+                user_id=user_id,
+                type="kb_indexed" if indexed else "kb_failed",
+                title="文档索引完成" if indexed else "文档索引失败",
+                content=(
+                    f"文档 {ctx.doc_id} 索引完成" if indexed
+                    else f"文档 {ctx.doc_id} 索引失败: {ctx.error_message or ''}"
+                ),
+                level="success" if indexed else "error",
+                link=f"/knowledge-base?kb_id={ctx.kb_id}",
+                metadata={"doc_id": ctx.doc_id, "kb_id": ctx.kb_id},
+            ))
+        except Exception:
+            logger.warning("发布通知事件失败", exc_info=True)
 
 
 class LoggingProgressObserver(ProgressObserver):
@@ -259,6 +297,7 @@ class IndexingPipeline:
         self._observers: list[ProgressObserver] = []
         self._embedding_cache: dict[tuple[str, str | None], object] = {}
         self._chunk_registry_cache: dict[tuple, ChunkStrategyRegistry] = {}
+        self._llm_cache: dict[tuple[str | None, str | None], object] = {}
 
     def attach(self, observer: ProgressObserver) -> None:
         self._observers.append(observer)
@@ -289,17 +328,60 @@ class IndexingPipeline:
                 self._embedding_cache[cache_key] = self.embedding_model
         return self._embedding_cache[cache_key]
 
-    def _get_or_create_chunk_registry(self, config: dict, emb_model):
+    async def _get_or_create_llm(self, config: dict):
+        """获取或创建 agentic 切片所需的 LLM 客户端（缓存避免重复创建）。
+
+        使用知识库配置的 LLM（与图谱抽取同一个模型选择）。不可用时返回 ``None``，
+        由调用方回退到 recursive 切片——切片能力缺失不应让整个索引失败。
+        """
+        model_name = config.get("entity_model") or config.get("entityModel")
+        provider_id = config.get("entity_provider_id") or config.get("entityProviderId")
+        cache_key = (model_name, provider_id)
+        if cache_key in self._llm_cache:
+            return self._llm_cache[cache_key]
+
+        from core.rag.llm import ChatClient
+        from db.engine import async_session
+
+        client: object | None = None
+        try:
+            async with async_session() as session:
+                from api.knowledge_base.model_provider import load_llm_model
+
+                name, api_base, api_key = await load_llm_model(
+                    session, model_name=model_name, provider_id=provider_id,
+                )
+            client = ChatClient(model=name, api_base=api_base, api_key=api_key)
+        except RuntimeError as exc:
+            logger.warning("Agentic 切片未找到可用 LLM，将回退 recursive 切片: %s", exc)
+
+        self._llm_cache[cache_key] = client
+        return client
+
+    def _get_or_create_chunk_registry(self, config: dict, emb_model, llm=None):
         """获取或创建带自定义参数的分片注册表。"""
-        chunk_size = config.get("chunk_size", 1024)
-        chunk_overlap = config.get("chunk_overlap", 200)
-        cache_key = (chunk_size, chunk_overlap)
+        chunk_size = config.get("chunk_size") or INDEX_CONFIG_DEFAULTS["chunk_size"]
+        chunk_overlap = config.get("chunk_overlap")
+        if chunk_overlap is None:
+            chunk_overlap = INDEX_CONFIG_DEFAULTS["chunk_overlap"]
+        cache_key = (chunk_size, chunk_overlap, llm is not None)
         if cache_key not in self._chunk_registry_cache:
             self._chunk_registry_cache[cache_key] = create_chunk_registry(
-                {"chunk_size": chunk_size, "chunk_overlap": chunk_overlap},
+                config,
                 embedding_model=emb_model,
+                llm=llm,
             )
         return self._chunk_registry_cache[cache_key]
+
+    def _resolve_strategy(self, config: dict, registry) -> str:
+        """确定实际使用的切片策略：请求的策略不可用时回退 recursive。"""
+        requested = config.get("chunk_strategy") or "recursive"
+        if registry.supports(requested):
+            return requested
+        logger.warning(
+            "切片策略 '%s' 不可用（缺少依赖），本次回退 recursive 切片", requested,
+        )
+        return "recursive"
 
     async def _notify(self, ctx: IndexingContext) -> None:
         for observer in self._observers:
@@ -312,12 +394,14 @@ class IndexingPipeline:
         """模板方法：定义 8 阶段索引骨架。"""
         config = task.config
 
-        # 获取该文档使用的 embedding model 和 chunk registry
+        # 获取该文档使用的 embedding model、切片策略与（agentic 需要的）LLM
         emb_model_name = config.get("embedding_model")
         emb_model = await self._get_or_create_embedding(
             emb_model_name, config.get("embedding_provider_id"),
         )
-        chunk_reg = self._get_or_create_chunk_registry(config, emb_model)
+        requested_strategy = config.get("chunk_strategy") or "recursive"
+        llm = await self._get_or_create_llm(config) if requested_strategy == "agentic" else None
+        chunk_reg = self._get_or_create_chunk_registry(config, emb_model, llm=llm)
 
         ctx = IndexingContext(
             doc_id=task.doc_id,
@@ -330,6 +414,7 @@ class IndexingPipeline:
             progress=0,
             embedding_model=emb_model,
             chunk_registry=chunk_reg,
+            chunk_strategy=self._resolve_strategy(config, chunk_reg),
         )
 
         async def _on_status_change(c: IndexingContext) -> None:

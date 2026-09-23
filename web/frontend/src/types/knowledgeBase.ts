@@ -32,6 +32,8 @@ export interface IndexConfig {
   chunkSize: number
   chunkOverlap: number
   embeddingModel: string
+  /** embedding 模型所属提供商（用于消解同名模型；可为空表示按名称全局解析） */
+  embeddingProviderId: string
   embeddingDim: number
   sparseAlgo: SparseAlgo
   bm25K1: number
@@ -40,6 +42,8 @@ export interface IndexConfig {
   relationModel: string
   enableGraph: boolean
   rerankerModel: string
+  /** reranker 模型所属提供商；配合「模型」页 type=rerank 使用 */
+  rerankerProviderId: string
   enableReranker: boolean
   topK: number
   hybridAlpha: number
@@ -180,12 +184,12 @@ export const LLM_MODEL_OPTIONS = [
   'glm-4.5',
 ] as const
 
-export const RERANKER_MODEL_OPTIONS = [
-  'bge-reranker-v2-m3',
-  'bge-reranker-large',
-  'cohere-rerank-v3',
-  'jina-reranker-v2',
-] as const
+/**
+ * Reranker 模型不再硬编码：从「模型」页面 type=rerank 的模型中读取
+ * （fetchAvailableProviders('rerank')），否则会出现「界面可选但后端无此模型」
+ * 的假配置。
+ */
+export const RERANKER_MODEL_TYPE = 'rerank'
 
 // 文档类型配置
 export interface DocTypeConfig {

@@ -1,6 +1,13 @@
 """向量数据库抽象层——策略模式。
 
-统一 Milvus 和 Chroma 的操作接口，支持向量检索和 BM25 全文检索。
+统一 Milvus 和 Chroma 的操作接口，支持向量检索和 BM25 稀疏检索。
+
+**打分口径约定**：本层所有检索返回 ``(chunk_id, score)`` 且 **score 一律为
+"越大越相关"**——向量侧已把各后端的距离统一换算为余弦相似度，稀疏侧为
+BM25 得分。上层（``search_service``）依赖该约定做融合与展示。
+
+混合检索（RRF 融合）由 ``api.knowledge_base.search_service._fuse_scores`` 统一
+实现，本层不再提供 ``hybrid_search``，避免两套融合公式产生分歧。
 """
 
 import logging
@@ -8,6 +15,13 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from langchain_core.documents import Document
+
+from core.rag.bm25 import (
+    BM25Index,
+    SparseConfig,
+    SparseIndexCache,
+    create_sparse_scorer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,26 +64,42 @@ class BaseVectorStore(ABC):
         self, kb_id: str, chunk_id: str, new_text: str,
         new_embedding: list[float],
     ) -> None:
-        """更新切片文本和向量。"""
+        """更新切片文本和向量（必须保留切片原有元数据）。"""
 
     @abstractmethod
     async def similarity_search(
         self, kb_id: str, query_embedding: list[float], top_k: int
     ) -> list[tuple[str, float]]:
-        """向量相似度搜索。"""
+        """向量相似度搜索，返回 (chunk_id, 余弦相似度)，越大越相关。"""
 
     @abstractmethod
     async def bm25_search(
-        self, kb_id: str, query: str, top_k: int
+        self, kb_id: str, query: str, top_k: int,
+        sparse_config: SparseConfig | None = None,
     ) -> list[tuple[str, float]]:
-        """BM25 全文搜索。"""
+        """BM25 稀疏检索，返回 (chunk_id, BM25 得分)，越大越相关。
+
+        Args:
+            sparse_config: 稀疏算法与 k1/b 参数；缺省用 bm25 默认参数。
+        """
+
+    async def _build_sparse_index(self, kb_id: str) -> BM25Index:
+        """构建（或复用缓存中的）BM25 语料索引。子类需实现 :meth:`_fetch_corpus`。"""
+        cached = self._sparse_cache.get(kb_id)
+        if cached is not None:
+            return cached
+        corpus = await self._fetch_corpus(kb_id)
+        index = BM25Index.build(corpus)
+        self._sparse_cache.put(kb_id, index)
+        return index
 
     @abstractmethod
-    async def hybrid_search(
-        self, kb_id: str, query: str, query_embedding: list[float],
-        top_k: int, alpha: float = 0.7,
-    ) -> list[tuple[str, float]]:
-        """混合搜索（向量 + BM25）。alpha: 向量权重（0=纯BM25, 1=纯向量）。"""
+    async def _fetch_corpus(self, kb_id: str) -> list[tuple[str, str]]:
+        """拉取 ``(chunk_id, chunk_text)`` 全量语料，供 BM25 统计 df / avgdl。
+
+        Milvus 需用 query_iterator 避免默认查询窗口截断，Chroma 直接全量 get。
+        """
+
 
 
 class MilvusVectorStore(BaseVectorStore):
@@ -91,6 +121,7 @@ class MilvusVectorStore(BaseVectorStore):
         self._db_name = db_name
         self._connected = False
         self._collections: dict[str, Any] = {}
+        self._sparse_cache = SparseIndexCache()
 
     async def _ensure_connected(self):
         if self._connected:
@@ -162,6 +193,7 @@ class MilvusVectorStore(BaseVectorStore):
 
             collection.load()
             self._collections[kb_id] = collection
+            self._sparse_cache.invalidate(kb_id)
             logger.info("Milvus collection created: %s (dim=%d)", collection_name, dim)
 
         except Exception as e:
@@ -175,6 +207,7 @@ class MilvusVectorStore(BaseVectorStore):
             from pymilvus import utility
             await utility.drop_collection(collection_name)
             self._collections.pop(kb_id, None)
+            self._sparse_cache.invalidate(kb_id)
             logger.info("Milvus collection deleted: %s", collection_name)
         except Exception as e:
             logger.error("Failed to delete Milvus collection %s: %s", collection_name, e)
@@ -213,6 +246,7 @@ class MilvusVectorStore(BaseVectorStore):
 
         collection.insert(data)
         collection.flush()
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus inserted %d chunks for kb=%s", len(data), kb_id)
         return chunk_ids
 
@@ -227,6 +261,7 @@ class MilvusVectorStore(BaseVectorStore):
 
         collection.delete(f'doc_id == "{doc_id}"')
         collection.flush()
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus deleted chunks for doc=%s in kb=%s", doc_id, kb_id)
 
     async def _get_collection(self, kb_id: str) -> Any:
@@ -277,28 +312,57 @@ class MilvusVectorStore(BaseVectorStore):
         collection = await self._get_collection(kb_id)
         collection.delete(f'id == "{chunk_id}"')
         collection.flush()
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus deleted chunk=%s in kb=%s", chunk_id, kb_id)
 
     async def update_chunk(
         self, kb_id: str, chunk_id: str, new_text: str,
         new_embedding: list[float],
     ) -> None:
+        """更新切片——必须回填全部字段。
+
+        Milvus 的 upsert 语义是「删除 + 插入」，且 schema 未声明 nullable /
+        default_value，pymilvus 在 partial_update=False 时会对缺失字段直接抛
+        ``DataNotMatchException``。因此这里先取出原记录，补齐 doc_id / kb_id /
+        chunk_index / doc_name / doc_type / metadata_ 后再整行 upsert，避免
+        切片更新后丢失文档归属。
+        """
         import time
         collection = await self._get_collection(kb_id)
         now_ms = int(time.time() * 1000)
+
+        existing = await self.get_chunks_by_ids(kb_id, [chunk_id])
+        if not existing:
+            raise ValueError(f"Chunk not found: {chunk_id}")
+        old = existing[0]
+
         collection.upsert([{
             "id": chunk_id,
+            "doc_id": old.get("doc_id", ""),
+            "kb_id": old.get("kb_id", kb_id),
+            "chunk_index": old.get("chunk_index", 0),
             "chunk_text": new_text[:65535],
             "embedding": new_embedding,
+            "doc_name": old.get("doc_name", ""),
+            "doc_type": old.get("doc_type", ""),
+            "metadata_": old.get("metadata_", {}) or {},
             "created_at": now_ms,
         }])
         collection.flush()
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus updated chunk=%s in kb=%s", chunk_id, kb_id)
 
     async def similarity_search(
         self, kb_id: str, query_embedding: list[float], top_k: int
     ) -> list[tuple[str, float]]:
-        """Milvus 向量检索——ANN 搜索 embedding 字段。"""
+        """Milvus 向量检索——ANN 搜索 embedding 字段。
+
+        Milvus 的 ``COSINE`` 度量返回的 ``hit.distance`` **就是余弦相似度本身**
+        （范围 [-1, 1]，越大越相关），并非 [0, 2] 距离。这一点由 pymilvus 自身
+        的 ``metrics_positive_related`` 佐证：COSINE 与 IP / BM25 同属"越大越好"
+        分组，L2 / HAMMING / JACCARD 才是距离分组。因此直接透传即可，不要再做
+        ``1 - distance/2`` 换算（那会把相似度压到 [0.5, 1] 并整体反转）。
+        """
         collection = await self._get_collection(kb_id)
         results = collection.search(
             data=[query_embedding],
@@ -310,95 +374,56 @@ class MilvusVectorStore(BaseVectorStore):
         pairs: list[tuple[str, float]] = []
         if results and results[0]:
             for hit in results[0]:
-                # Milvus COSINE distance: 0=identical, 2=opposite
-                # Convert to similarity: 1 - distance/2 → [0, 1]
-                similarity = 1.0 - (hit.distance / 2.0)
-                pairs.append((hit.id, round(similarity, 6)))
+                pairs.append((hit.id, round(float(hit.distance), 6)))
         logger.info("Milvus similarity search kb=%s top_k=%d returned=%d", kb_id, top_k, len(pairs))
         return pairs
 
-    async def bm25_search(
-        self, kb_id: str, query: str, top_k: int
-    ) -> list[tuple[str, float]]:
-        """Milvus BM25 检索——客户端侧词频打分（避免 LIKE 大小写敏感问题）。
+    async def _fetch_corpus(self, kb_id: str) -> list[tuple[str, str]]:
+        """全量拉取 ``(chunk_id, chunk_text)`` 用作 BM25 语料。
 
-        获取全部 chunk 文本后在客户端侧做大小写不敏感的 TF 评分。
+        使用 ``query_iterator`` 分页，避免 ``query()`` 默认查询窗口（默认 16384
+        行）静默截断导致大知识库稀疏检索漏召回。
         """
-        import re
-
-        query_terms = re.findall(r"\w+", query.lower())
-        if not query_terms:
-            return []
-
         collection = await self._get_collection(kb_id)
-
+        corpus: list[tuple[str, str]] = []
         try:
-            candidates = collection.query(
+            iterator = collection.query_iterator(
                 expr="id != ''",
                 output_fields=["id", "chunk_text"],
+                batch_size=1000,
             )
+            try:
+                while True:
+                    batch = iterator.next()
+                    if not batch:
+                        break
+                    corpus.extend(
+                        (row.get("id", ""), row.get("chunk_text") or "") for row in batch
+                    )
+            finally:
+                iterator.close()
         except Exception:
-            logger.warning("Milvus BM25 query failed for kb=%s", kb_id)
+            logger.exception("Milvus fetch corpus failed for kb=%s", kb_id)
             return []
+        return corpus
 
-        if not candidates:
-            return []
-
-        scores: list[tuple[str, float]] = []
-        for row in candidates:
-            text = (row.get("chunk_text") or "").lower()
-            tf = sum(text.count(t) for t in query_terms)
-            if tf > 0:
-                scores.append((row["id"], float(tf)))
-
-        scores.sort(key=lambda x: x[1], reverse=True)
-        logger.info("Milvus BM25 kb=%s top_k=%d candidates=%d returned=%d",
-                     kb_id, top_k, len(candidates), len(scores[:top_k]))
-        return scores[:top_k]
-
-    async def hybrid_search(
-        self, kb_id: str, query: str, query_embedding: list[float],
-        top_k: int, alpha: float = 0.7,
+    async def bm25_search(
+        self, kb_id: str, query: str, top_k: int,
+        sparse_config: SparseConfig | None = None,
     ) -> list[tuple[str, float]]:
-        """Milvus 混合检索——向量 + BM25 加权融合。"""
-        vec_results = await self.similarity_search(kb_id, query_embedding, top_k * 2)
-        bm25_results = await self.bm25_search(kb_id, query, top_k * 2)
+        """BM25 稀疏检索——真 IDF + 长度归一，算法由 sparse_algo 决定。"""
+        cfg = sparse_config or SparseConfig()
+        if create_sparse_scorer(cfg.sparse_algo) is None:
+            logger.info("Milvus sparse search disabled (sparse_algo=%s) kb=%s", cfg.sparse_algo, kb_id)
+            return []
 
-        vec_scores: dict[str, float] = {}
-        bm25_scores: dict[str, float] = {}
-
-        if vec_results:
-            max_v = max(s for _, s in vec_results)
-            min_v = min(s for _, s in vec_results)
-            if max_v == min_v:
-                for cid, _ in vec_results:
-                    vec_scores[cid] = 1.0
-            else:
-                v_range = max_v - min_v
-                for cid, s in vec_results:
-                    vec_scores[cid] = (s - min_v) / v_range
-
-        if bm25_results:
-            max_b = max(s for _, s in bm25_results)
-            min_b = min(s for _, s in bm25_results)
-            if max_b == min_b:
-                for cid, _ in bm25_results:
-                    bm25_scores[cid] = 1.0
-            else:
-                b_range = max_b - min_b
-                for cid, s in bm25_results:
-                    bm25_scores[cid] = (s - min_b) / b_range
-
-        fused: dict[str, float] = {}
-        for cid in set(vec_scores) | set(bm25_scores):
-            v = vec_scores.get(cid, 0.0)
-            b = bm25_scores.get(cid, 0.0)
-            fused[cid] = alpha * v + (1 - alpha) * b
-
-        ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        logger.info("Milvus hybrid kb=%s top_k=%d vec=%d bm25=%d fused=%d",
-                     kb_id, top_k, len(vec_results), len(bm25_results), len(ranked))
-        return ranked
+        index = await self._build_sparse_index(kb_id)
+        hits = index.search(query, top_k, cfg)
+        logger.info(
+            "Milvus bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
+            kb_id, top_k, cfg.sparse_algo, index.size, len(hits),
+        )
+        return hits
 
 
 class ChromaVectorStore(BaseVectorStore):
@@ -423,6 +448,7 @@ class ChromaVectorStore(BaseVectorStore):
         self._port = port
         self._persist_dir = persist_dir
         self._client: Any = None
+        self._sparse_cache = SparseIndexCache()
 
     def _get_client(self) -> Any:
         """获取或初始化 Chroma 客户端。"""
@@ -453,6 +479,7 @@ class ChromaVectorStore(BaseVectorStore):
             name=collection_name,
             metadata={"hnsw:space": "cosine", "dim": dim},
         )
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma collection created: %s (dim=%d)", collection_name, dim)
 
     async def delete_collection(self, kb_id: str) -> None:
@@ -460,6 +487,7 @@ class ChromaVectorStore(BaseVectorStore):
         collection_name = self._collection_name(kb_id)
         try:
             client.delete_collection(collection_name)
+            self._sparse_cache.invalidate(kb_id)
             logger.info("Chroma collection deleted: %s", collection_name)
         except Exception as e:
             logger.error("Failed to delete Chroma collection %s: %s", collection_name, e)
@@ -494,6 +522,7 @@ class ChromaVectorStore(BaseVectorStore):
             embeddings=embeddings,
             metadatas=metadatas,
         )
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma inserted %d chunks for kb=%s", len(chunk_ids), kb_id)
         return chunk_ids
 
@@ -506,6 +535,7 @@ class ChromaVectorStore(BaseVectorStore):
         )
         if result["ids"]:
             collection.delete(ids=result["ids"])
+            self._sparse_cache.invalidate(kb_id)
             logger.info("Chroma deleted %d chunks for doc=%s in kb=%s", len(result["ids"]), doc_id, kb_id)
 
     async def get_chunks_by_doc_id(self, kb_id: str, doc_id: str) -> list[dict]:
@@ -585,27 +615,63 @@ class ChromaVectorStore(BaseVectorStore):
     async def delete_chunk_by_id(self, kb_id: str, chunk_id: str) -> None:
         collection = self._get_collection(kb_id)
         collection.delete(ids=[chunk_id])
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma deleted chunk=%s in kb=%s", chunk_id, kb_id)
 
     async def update_chunk(
         self, kb_id: str, chunk_id: str, new_text: str,
         new_embedding: list[float],
     ) -> None:
+        """更新切片——Chroma 的 metadata 是整体替换，必须先合并原元数据。
+
+        若直接传 ``metadatas=[{"created_at": ...}]``，doc_id / kb_id /
+        chunk_index 等字段会被清空，切片随即脱离文档归属（``get_chunks_by_doc_id``
+        再也查不到）。
+        """
         import time
 
         collection = self._get_collection(kb_id)
         now_ms = int(time.time() * 1000)
+
+        existing = collection.get(ids=[chunk_id], include=["metadatas"])
+        if not existing["ids"]:
+            raise ValueError(f"Chunk not found: {chunk_id}")
+        meta = dict((existing.get("metadatas") or [{}])[0] or {})
+        meta["created_at"] = now_ms
+
         collection.update(
             ids=[chunk_id],
             documents=[new_text],
             embeddings=[new_embedding],
-            metadatas=[{"created_at": now_ms}],
+            metadatas=[meta],
         )
+        self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma updated chunk=%s in kb=%s", chunk_id, kb_id)
+
+    async def _fetch_corpus(self, kb_id: str) -> list[tuple[str, str]]:
+        """全量拉取 ``(chunk_id, chunk_text)`` 用作 BM25 语料（Chroma get 无窗口限制）。"""
+        collection = self._get_collection(kb_id)
+        try:
+            result = collection.get(include=["documents"])
+        except Exception:
+            logger.exception("Chroma fetch corpus failed for kb=%s", kb_id)
+            return []
+        ids = result.get("ids") or []
+        docs = result.get("documents") or []
+        return [
+            (cid, docs[i] if i < len(docs) else "")
+            for i, cid in enumerate(ids)
+        ]
 
     async def similarity_search(
         self, kb_id: str, query_embedding: list[float], top_k: int,
     ) -> list[tuple[str, float]]:
+        """Chroma 向量检索。
+
+        Chroma 的 cosine ``distances`` 是**距离**（0=完全相同，2=完全相反），
+        必须换算为余弦相似度 ``1 - distance`` 才能与 Milvus 侧口径一致
+        （越大越相关）。此前直接透传 distance，导致"综合/向量"分值方向相反。
+        """
         collection = self._get_collection(kb_id)
         result = collection.query(
             query_embeddings=[query_embedding],
@@ -617,88 +683,33 @@ class ChromaVectorStore(BaseVectorStore):
         if not result["ids"] or not result["ids"][0]:
             return pairs
 
+        distances = (result.get("distances") or [[]])[0]
         for i, cid in enumerate(result["ids"][0]):
-            distance = (result["distances"] or [[]])[0][i] if result.get("distances") else 0.0
-            pairs.append((cid, distance))
+            distance = distances[i] if i < len(distances) else 0.0
+            pairs.append((cid, round(1.0 - float(distance), 6)))
 
         logger.info("Chroma similarity search kb=%s top_k=%d returned=%d", kb_id, top_k, len(pairs))
         return pairs
 
     async def bm25_search(
         self, kb_id: str, query: str, top_k: int,
+        sparse_config: SparseConfig | None = None,
     ) -> list[tuple[str, float]]:
-        """BM25 全文搜索——通过 Chroma where_document 过滤 + TF 打分。
+        """BM25 稀疏检索——与 Milvus 侧共用同一套打分实现。
 
-        Chroma 的全文搜索能力有限，用 $contains 过滤候选文档后按词频排序。
+        此前用 ``where_document={"$contains": 最长词}`` 预过滤再数词频：中文查询
+        的"最长词"就是整句，等于退化成子串精确匹配，且预过滤会破坏 IDF 统计。
+        现改为全量语料上做真 BM25。
         """
-        import re
-
-        collection = self._get_collection(kb_id)
-        query_terms = re.findall(r"\w+", query.lower())
-        if not query_terms:
+        cfg = sparse_config or SparseConfig()
+        if create_sparse_scorer(cfg.sparse_algo) is None:
+            logger.info("Chroma sparse search disabled (sparse_algo=%s) kb=%s", cfg.sparse_algo, kb_id)
             return []
 
-        # Use the longest query term for Chroma full-text filtering
-        longest_term = max(query_terms, key=len)
-        try:
-            result = collection.get(
-                where_document={"$contains": longest_term},
-                include=["documents"],
-            )
-        except Exception:
-            logger.warning("Chroma BM25 get failed for kb=%s, term=%s", kb_id, longest_term)
-            return []
-
-        if not result["ids"]:
-            return []
-
-        scores: list[tuple[str, float]] = []
-        for i, cid in enumerate(result["ids"]):
-            doc_text = ((result["documents"] or [""])[i] or "").lower()
-            tf = sum(doc_text.count(term) for term in query_terms if term)
-            if tf > 0:
-                scores.append((cid, float(tf)))
-
-        scores.sort(key=lambda x: x[1], reverse=True)
-        logger.info("Chroma BM25 kb=%s top_k=%d candidates=%d returned=%d", kb_id, top_k, len(result["ids"]), len(scores[:top_k]))
-        return scores[:top_k]
-
-    async def hybrid_search(
-        self, kb_id: str, query: str, query_embedding: list[float],
-        top_k: int, alpha: float = 0.7,
-    ) -> list[tuple[str, float]]:
-        """混合搜索——向量相似度 + BM25 加权融合。
-
-        alpha: 向量权重 (0=纯BM25, 1=纯向量)
-        """
-        vec_results = await self.similarity_search(kb_id, query_embedding, top_k * 2)
-        bm25_results = await self.bm25_search(kb_id, query, top_k * 2)
-
-        # Build score maps, normalize to [0, 1]
-        vec_scores: dict[str, float] = {}
-        bm25_scores: dict[str, float] = {}
-
-        if vec_results:
-            max_vec = max(s for _, s in vec_results)
-            min_vec = min(s for _, s in vec_results)
-            vec_range = max_vec - min_vec if max_vec != min_vec else 1.0
-            for cid, s in vec_results:
-                vec_scores[cid] = 1.0 - (s - min_vec) / vec_range
-
-        if bm25_results:
-            max_bm25 = max(s for _, s in bm25_results)
-            min_bm25 = min(s for _, s in bm25_results)
-            bm25_range = max_bm25 - min_bm25 if max_bm25 != min_bm25 else 1.0
-            for cid, s in bm25_results:
-                bm25_scores[cid] = (s - min_bm25) / bm25_range
-
-        # Fuse scores
-        fused: dict[str, float] = {}
-        for cid in set(vec_scores) | set(bm25_scores):
-            v = vec_scores.get(cid, 0.0)
-            b = bm25_scores.get(cid, 0.0)
-            fused[cid] = alpha * v + (1 - alpha) * b
-
-        ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        logger.info("Chroma hybrid kb=%s top_k=%d alpha=%.2f returned=%d", kb_id, top_k, alpha, len(ranked))
-        return ranked
+        index = await self._build_sparse_index(kb_id)
+        hits = index.search(query, top_k, cfg)
+        logger.info(
+            "Chroma bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
+            kb_id, top_k, cfg.sparse_algo, index.size, len(hits),
+        )
+        return hits

@@ -1,7 +1,8 @@
 """Tests for VectorStoreFactory."""
 
 import pytest
-from core.rag.vector_store import BaseVectorStore, ChromaVectorStore, MilvusVectorStore
+
+from core.rag.vector_store import BaseVectorStore
 
 
 class FakeVectorStore(BaseVectorStore):
@@ -37,10 +38,10 @@ class FakeVectorStore(BaseVectorStore):
     async def similarity_search(self, kb_id, query_embedding, top_k):
         return []
 
-    async def bm25_search(self, kb_id, query, top_k):
+    async def bm25_search(self, kb_id, query, top_k, sparse_config=None):
         return []
 
-    async def hybrid_search(self, kb_id, query, query_embedding, top_k, alpha=0.7):
+    async def _fetch_corpus(self, kb_id):
         return []
 
 

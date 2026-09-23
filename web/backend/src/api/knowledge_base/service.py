@@ -250,52 +250,9 @@ async def get_indexing_activity(
     ]
 
 
-def compute_stages(status: str, progress: int, error_message: str | None = None) -> list[dict]:
-    """根据文档状态和进度计算 8 阶段状态。"""
-    status_order = [
-        "queued", "parsing", "chunking", "embedding", "bm25", "extracting", "indexed",
-    ]
-    stages = []
-    current_idx = status_order.index(status) if status in status_order else -1
-
-    for i, name in enumerate(STAGE_NAMES):
-        if i < current_idx:
-            stages.append({"name": name, "status": "done", "pct": 100})
-        elif i == current_idx:
-            pct = max(0, progress) if progress >= 0 else 0
-            stages.append({"name": name, "status": "running" if pct < 100 else "done", "pct": pct})
-        else:
-            stages.append({"name": name, "status": "pending", "pct": 0})
-
-    if status == "failed":
-        failed_idx = _infer_failed_stage_index(error_message)
-        if failed_idx < len(stages):
-            stages[failed_idx]["status"] = "failed"
-            for j in range(failed_idx):
-                stages[j]["status"] = "done"
-                stages[j]["pct"] = 100
-
-    return stages
-
-
-def _infer_failed_stage_index(error_message: str | None) -> int:
-    """从错误信息中推断失败阶段索引。"""
-    if not error_message:
-        return 1
-    msg = error_message
-    if "向量化" in msg:
-        return 3
-    if "切片" in msg:
-        return 2
-    if "BM25" in msg:
-        return 4
-    if "实体" in msg:
-        return 5
-    if "关系" in msg:
-        return 6
-    if "解析" in msg:
-        return 1
-    return 1
+# 阶段计算统一由 doc_service.compute_stages 提供——此处曾有一份重复实现，
+# 两份代码的兜底行为不一致（另一份把「关系抽取」映射到已不存在的阶段索引 6），
+# 且无任何调用方，故删除以避免继续漂移。
 
 
 async def reindex_kb(
