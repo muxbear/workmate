@@ -20,6 +20,7 @@ import { marked } from 'marked'
 import { artifactKindLabel, formatFileSize } from '@/utils/format'
 import { buildImageSrcMap } from '@/utils/markdownArtifacts'
 import { useArtifactImages } from '@/composables/useArtifactImages'
+import { useArtifactVideos } from '@/composables/useArtifactVideos'
 import { turnLabel } from '@/utils/artifactGroups'
 import { useChatStore } from '@/stores/chat'
 import { parseBundleTurn } from '@/stores/workspace'
@@ -89,13 +90,37 @@ function escapeAttr(value: string): string {
     .replace(/>/g, '&gt;')
 }
 
+/** 当前消息的产物虚拟路径集合（配图 / 成片相对路径的命中判断） */
+const artifactPaths = computed(() => (props.message.artifacts ?? []).map((item) => item.path))
+
+/** 产物虚拟路径 → 字节数（成片内联上限判断用） */
+const artifactSizes = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const item of props.message.artifacts ?? []) {
+    const size = item.size
+    if (typeof size === 'number' && size > 0) out[item.path] = size
+  }
+  return out
+})
+
 /** 配图需带鉴权拉取字节（<img> 无法携带 Authorization），统一换成 blob 地址 */
 const images = useArtifactImages(
   () => (props.message.role === 'user' ? '' : props.message.content),
   () => ({
     threadId: chatStore.threadId,
     basePath: docPath.value,
-    artifactPaths: (props.message.artifacts ?? []).map((item) => item.path),
+    artifactPaths: artifactPaths.value,
+  }),
+)
+
+/** 成片同理（<video> 同样无法携带 Authorization） */
+const videos = useArtifactVideos(
+  () => (props.message.role === 'user' ? '' : props.message.content),
+  () => ({
+    threadId: chatStore.threadId,
+    basePath: docPath.value,
+    artifactPaths: artifactPaths.value,
+    artifactSizes: artifactSizes.value,
   }),
 )
 
@@ -103,11 +128,12 @@ const renderedContent = computed(() => {
   if (props.message.role === 'user') return props.message.content
   if (!props.message.content) return ''
 
-  const imageMap = buildImageSrcMap(props.message.content, {
+  const context = {
     threadId: chatStore.threadId,
     basePath: docPath.value,
-    artifactPaths: (props.message.artifacts ?? []).map((item) => item.path),
-  })
+    artifactPaths: artifactPaths.value,
+  }
+  const imageMap = buildImageSrcMap(props.message.content, context)
   const renderer = new marked.Renderer()
   renderer.image = ({ href, title, text: alt }) => {
     const raw = href ?? ''
@@ -116,7 +142,9 @@ const renderedContent = computed(() => {
     if (title) attrs.push('title="' + escapeAttr(title) + '"')
     return '<img ' + attrs.join(' ') + '>'
   }
-  return marked.parse(props.message.content, { breaks: true, renderer })
+  // marked 会原样透传 HTML <video> 标签：渲染后再把相对 src 换成已就绪的 blob 地址
+  const parsed = marked.parse(props.message.content, { breaks: true, renderer }) as string
+  return videos.render(parsed)
 })
 
 /** 打包下载本轮交付物（文章 + 同目录配图） */

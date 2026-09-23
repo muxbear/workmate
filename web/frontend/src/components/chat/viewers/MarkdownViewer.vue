@@ -3,9 +3,10 @@ import { computed } from 'vue'
 import { marked } from 'marked'
 import { buildImageSrcMap } from '@/utils/markdownArtifacts'
 import { useArtifactImages } from '@/composables/useArtifactImages'
+import { useArtifactVideos } from '@/composables/useArtifactVideos'
 import type { DocumentPayload } from '@/types/document'
 
-/** Markdown 文档组件：渲染富文本，并把文章内的相对路径配图解析为产物地址 */
+/** Markdown 文档组件：渲染富文本，并把文章内的相对路径配图 / 成片解析为产物地址 */
 const props = defineProps<{ payload: DocumentPayload }>()
 
 /** HTML 属性转义（marked 原样输出地址，映射后需自行转义） */
@@ -27,6 +28,17 @@ const images = useArtifactImages(
   }),
 )
 
+/** 成片同理（<video> 同样无法携带 Authorization） */
+const videos = useArtifactVideos(
+  () => props.payload.text || '',
+  () => ({
+    threadId: props.payload.threadId,
+    basePath: props.payload.basePath,
+    artifactPaths: props.payload.artifactPaths,
+    artifactSizes: props.payload.artifactSizes,
+  }),
+)
+
 const html = computed(() => {
   const text = props.payload.text || ''
   const imageMap = buildImageSrcMap(text, {
@@ -42,7 +54,9 @@ const html = computed(() => {
     if (title) attrs.push('title="' + escapeAttr(title) + '"')
     return '<img ' + attrs.join(' ') + '>'
   }
-  return marked.parse(text, { breaks: true, renderer })
+  // marked 会原样透传 HTML <video> 标签：渲染后再把相对 src 换成已就绪的 blob 地址
+  const parsed = marked.parse(text, { breaks: true, renderer }) as string
+  return videos.render(parsed)
 })
 </script>
 
@@ -138,6 +152,12 @@ const html = computed(() => {
 .markdown-viewer :deep(img) {
   max-width: 100%;
   height: auto;
+}
+
+.markdown-viewer :deep(video) {
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  background: #000;
 }
 
 .markdown-viewer :deep(a) {

@@ -12,7 +12,14 @@
  */
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import MessageContent from '../MessageContent.vue'
-import { needsBytes, pickPreviewKind, unsupportedHint, type FilePreviewKind } from './previewKind'
+import {
+  getFileExt,
+  needsBytes,
+  pickPreviewKind,
+  unsupportedHint,
+  videoMimeType,
+  type FilePreviewKind
+} from './previewKind'
 import type { FilePreviewSource } from './types'
 
 const WordEditor = defineAsyncComponent(() => import('../WordEditor.vue'))
@@ -116,10 +123,13 @@ async function load(): Promise<void> {
       if (!src.readBytes) throw new Error(unsupportedHint(src.name))
       const result = await src.readBytes()
       selfBytes.value = result.bytes
-      if (targetKind === 'image') {
+      if (targetKind === 'image' || targetKind === 'video') {
         // BlobPart 是 TS 类型引用（跨 lib 的字节类型收敛），ESLint no-undef 需豁免
         // eslint-disable-next-line no-undef
-        objectUrl.value = URL.createObjectURL(new Blob([result.bytes as unknown as BlobPart]))
+        const parts = [result.bytes as unknown as BlobPart]
+        // 视频必须给对 MIME，否则 <video> 可能拒绝内联播放
+        const type = targetKind === 'video' ? videoMimeType(getFileExt(src.name)) : undefined
+        objectUrl.value = URL.createObjectURL(type ? new Blob(parts, { type }) : new Blob(parts))
       }
     } else if (targetKind === 'markdown' || targetKind === 'text') {
       const result = await src.readText()
@@ -250,6 +260,14 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
           :name="displayName"
         />
         <img v-else-if="kind === 'image' && objectUrl" class="fpp-image" :src="objectUrl" :alt="displayName" />
+        <video
+          v-else-if="kind === 'video' && objectUrl"
+          class="fpp-video"
+          :src="objectUrl"
+          :title="displayName"
+          controls
+          preload="metadata"
+        ></video>
         <MessageContent
           v-else-if="kind === 'markdown'"
           :content="textContent"
@@ -403,6 +421,16 @@ async function onSave(payload: ArrayBuffer): Promise<void> {
   max-width: 100%;
   margin: 0 auto;
   padding: 8px;
+}
+
+.fpp-video {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  padding: 8px;
+  background: #000;
+  border-radius: 8px;
 }
 
 .fpp-body :deep(.message-content) {

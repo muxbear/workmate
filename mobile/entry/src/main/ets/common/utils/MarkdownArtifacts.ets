@@ -203,3 +203,61 @@ export function buildImageSrcMap(
   }
   return map
 }
+
+// ── 成片(HTML5 <video>)：与 Web 端 `markdownVideos` 同规则 ─────────────
+
+/** 匹配整段视频块: `<video …>…</video>`(无闭合标签时退化为只匹配起始标签) */
+const VIDEO_BLOCK_RE: RegExp = /<video\b[^>]*>(?:[\s\S]*?<\/video>)?/g
+
+/** 匹配标签内的 src 属性(覆盖 `<video src=…>` 与内嵌 `<source src=…>`) */
+const VIDEO_SRC_ATTR_RE: RegExp = /\bsrc\s*=\s*(['"])([^'"]+)\1/g
+
+/**
+ * 提取正文中视频的路径(含内嵌 `<source src>`;去重保序,跳过协议地址)。
+ *
+ * 模型生成的成片引用有两种常见写法,必须都覆盖:
+ *   `<video controls src="标题/成片-1.mp4"></video>`
+ *   `<video controls><source src="标题/成片-1.mp4" type="video/mp4"></video>`
+ */
+export function extractVideoSources(markdown: string): Array<string> {
+  const found: Array<string> = []
+  VIDEO_BLOCK_RE.lastIndex = 0
+  let block: RegExpExecArray | null = VIDEO_BLOCK_RE.exec(markdown)
+  while (block !== null) {
+    VIDEO_SRC_ATTR_RE.lastIndex = 0
+    let attr: RegExpExecArray | null = VIDEO_SRC_ATTR_RE.exec(block[0])
+    while (attr !== null) {
+      const src: string = attr[2].trim()
+      if (src !== '' && !SCHEME_RE.test(src) && !contains(found, src)) {
+        found.push(src)
+      }
+      attr = VIDEO_SRC_ATTR_RE.exec(block[0])
+    }
+    block = VIDEO_BLOCK_RE.exec(markdown)
+  }
+  return found
+}
+
+/**
+ * 把视频路径解析为产物接口地址(解析规则与配图完全一致)。
+ *
+ * 未命中产物清单或缺少 threadId 时返回原值:调用方据此判断"拿不到可播放地址"。
+ */
+export function resolveVideoSrc(rawSrc: string, context: MarkdownImageContext): string {
+  return resolveImageSrc(rawSrc, context)
+}
+
+/** 取成片块内的兜底说明文本(标签之间的文字),没有则返回空串 */
+export function videoBlockCaption(block: string): string {
+  const end: number = block.lastIndexOf('</video>')
+  if (end < 0) {
+    return ''
+  }
+  const open: number = block.indexOf('>')
+  if (open < 0 || open > end) {
+    return ''
+  }
+  let inner: string = block.substring(open + 1, end)
+  inner = inner.replace(/<[^>]*>/g, ' ')
+  return inner.trim()
+}

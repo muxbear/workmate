@@ -25,6 +25,16 @@ const objectUrl = ref('')
 
 const chatStore = useChatStore()
 
+/** 会话产物大小表（成片内联上限判断用） */
+const artifactSizes = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const item of chatStore.threadArtifacts) {
+    const size = item.size
+    if (typeof size === 'number' && size > 0) out[item.path] = size
+  }
+  return out
+})
+
 const payload = computed<DocumentPayload>(() => ({
   name: props.tab.name,
   kind: typeInfo.value.kind,
@@ -34,6 +44,7 @@ const payload = computed<DocumentPayload>(() => ({
   threadId: props.tab.threadId,
   basePath: props.tab.path,
   artifactPaths: chatStore.threadArtifacts.map((item) => item.path),
+  artifactSizes: artifactSizes.value,
 }))
 
 function revokeObjectUrl() {

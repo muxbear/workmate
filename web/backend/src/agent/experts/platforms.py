@@ -12,16 +12,16 @@ PLATFORMS: tuple[str, ...] = ("desktop", "web", "mobile")
 # 各平台运行环境说明（注入专家提示词 / 请求级指令）
 PLATFORM_NOTES: dict[str, str] = {
     "web": (
-        "运行环境是 Linux 沙箱：禁止使用 curl / wget / PowerShell 等命令下载图片，"
-        "配图一律用素材工具保存；文件工具使用以 / 开头的虚拟绝对路径。"
+        "运行环境是 Linux 沙箱：禁止使用 curl / wget / PowerShell 等命令下载素材，"
+        "配图 / 成片一律用素材工具保存；文件工具使用以 / 开头的虚拟绝对路径。"
     ),
     "desktop": (
         "运行环境是用户本地工作区：文件工具的虚拟根 / 即工作区目录，"
-        "配图一律用素材工具保存到工作区，不要依赖 curl / PowerShell 下载图片。"
+        "配图 / 成片一律用素材工具保存到工作区，不要依赖 curl / PowerShell 等命令下载素材。"
     ),
     "mobile": (
         "运行环境与 Web 版一致：智能体在服务端 Linux 沙箱中执行，"
-        "配图一律用素材工具保存，禁止使用 curl / wget / PowerShell 等命令下载图片；"
+        "配图 / 成片一律用素材工具保存，禁止使用 curl / wget / PowerShell 等命令下载素材；"
         "客户端为移动端，交付物通过产物接口（HTTP 预览 / 下载 / 打包）获取，"
         "回复与文档中不要引用本地文件路径。"
     ),

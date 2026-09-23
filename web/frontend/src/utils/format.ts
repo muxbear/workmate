@@ -10,6 +10,7 @@ export function formatFileSize(bytes?: number): string {
 export function artifactKindLabel(mime?: string): string {
   if (!mime) return '文件'
   if (mime.startsWith('image/')) return '图片'
+  if (mime.startsWith('video/')) return '视频'
   if (mime === 'application/pdf') return 'PDF'
   if (mime.startsWith('text/')) return '文本'
   if (mime.includes('word')) return 'Word'

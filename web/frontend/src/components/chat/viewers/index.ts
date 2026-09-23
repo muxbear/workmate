@@ -6,6 +6,7 @@ import HtmlViewer from './HtmlViewer.vue'
 import TextViewer from './TextViewer.vue'
 import TableViewer from './TableViewer.vue'
 import ImageViewer from './ImageViewer.vue'
+import VideoViewer from './VideoViewer.vue'
 import PdfViewer from './PdfViewer.vue'
 import PendingDocumentViewer from './PendingDocumentViewer.vue'
 
@@ -26,6 +27,7 @@ export const DOCUMENT_VIEWERS: Record<DocumentKind, Component> = {
   text: TextViewer,
   table: TableViewer,
   image: ImageViewer,
+  video: VideoViewer,
   pdf: PdfViewer,
   word: PendingDocumentViewer,
   excel: PendingDocumentViewer,

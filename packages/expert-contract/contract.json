@@ -8,11 +8,15 @@
   "deliverable": {
     "root": "<title>.md",
     "resourceDir": "<title>/",
-    "resourcePattern": "figure-{n}.{ext}",
+    "resourcePatterns": {
+      "image": "figure-{n}.{ext}",
+      "video": "成片-{n}.{ext}"
+    },
     "webDeliveryRoot": "/artifacts/<thread_id>/turn-<n>"
   },
   "notes": [
     "能力标识变更必须同步三处镜像，否则两侧契约测试会失败。",
+    "交付物统一形态：文档 <title>.md + 与文档同名的资源目录 <title>/；目录内按资源类别命名（图片 figure-N、成片 成片-N）。该命名是约定而非运行时校验项，各端提示词与测试据此对齐。",
     "新增平台（如 mobile 接入完成后）在 platforms 中登记，并在各端实现 WorkspacePort / DeliverablePort。"
   ]
 }

@@ -50,6 +50,48 @@ def test_builtin_doc_expert_forbids_code_fence_article() -> None:
     assert "![](" in prompt
 
 
+def test_builtin_video_expert_prompt_is_platform_neutral() -> None:
+    """内置「视频创作专家」提示词不含平台专属命令，并绑定素材工具。
+
+    回归守卫：历史上该提示词硬编码了 Windows 命令行与反斜杠路径，
+    在 Web 沙箱（Linux）与桌面默认分类（无 execute 工具）下都无法执行。
+    """
+    from api.experts.service import BUILTIN_EXPERTS
+
+    video = next(item for item in BUILTIN_EXPERTS if item["name"] == "视频创作专家")
+    prompt = str(video["system_prompt"])
+    for banned in (
+        "curl",
+        "wget",
+        "powershell",
+        "PowerShell",
+        "mkdir",
+        "if not exist",
+        "Invoke-WebRequest",
+        "\\",
+    ):
+        assert banned not in prompt
+    assert "{{asset_tool}}" in prompt
+    assert "{{platform_notes}}" in prompt
+    assert video.get("capabilities") == ["video.generate", "document.assemble"]
+
+
+def test_builtin_video_expert_deliverable_contract() -> None:
+    """内置「视频创作专家」声明了"文档 + 同名视频目录"的交付契约与可播放标签。"""
+    from api.experts.service import BUILTIN_EXPERTS
+
+    video = next(item for item in BUILTIN_EXPERTS if item["name"] == "视频创作专家")
+    prompt = str(video["system_prompt"])
+
+    assert "成片-1.mp4" in prompt
+    assert "<video controls" in prompt
+    assert "controls" in prompt
+    assert "正文不要放进代码块" in prompt
+    # 省成本档位可被显式要求（用于试片与端到端验证）
+    assert "duration=2" in prompt
+    assert "480P" in prompt
+
+
 def test_platform_normalization_and_notes() -> None:
     """平台标识规范化：未知值回退 web；三个平台都有运行环境说明。"""
     from agent.experts.platforms import PLATFORMS, normalize_platform, platform_notes

@@ -54,6 +54,14 @@ def test_guess_mime_type() -> None:
     assert guess_mime_type("/workspace/noext") == "application/octet-stream"
 
 
+def test_guess_mime_type_for_video() -> None:
+    """视频成片必须映射为 video/* 且大小写不敏感（否则浏览器不内联播放）。"""
+    assert guess_mime_type("/artifacts/t/turn-1/视频标题/成片-1.mp4") == "video/mp4"
+    assert guess_mime_type("/workspace/clip.WEBM") == "video/webm"
+    assert guess_mime_type("/workspace/clip.mov") == "video/quicktime"
+    assert guess_mime_type("/workspace/clip.m4v") == "video/x-m4v"
+
+
 def test_artifact_to_dict() -> None:
     """产物字典包含路径、名称、类型、大小与来源工具。"""
     item = Artifact(

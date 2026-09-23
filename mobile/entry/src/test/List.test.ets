@@ -5,6 +5,7 @@ import markdownParserTest from './MarkdownParser.test'
 import markdownArtifactsTest from './MarkdownArtifacts.test'
 import artifactGroupsTest from './ArtifactGroups.test'
 import markdownBlocksTest from './MarkdownBlocks.test'
+import markdownVideoTest from './MarkdownVideo.test'
 import sseParserTest from './SseParser.test'
 import storeTest from './Store.test'
 
@@ -16,6 +17,7 @@ export default function testsuite() {
   markdownArtifactsTest()
   artifactGroupsTest()
   markdownBlocksTest()
+  markdownVideoTest()
   sseParserTest()
   storeTest()
 }

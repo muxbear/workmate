@@ -253,6 +253,16 @@ const workspaceVideoPaths = computed(() =>
   props.workspaceId ? extractWorkspaceVideoPaths(props.content) : []
 )
 
+/**
+ * 正文里有本地视频、但没有可用的工作区：给出明确提示而不是静默留白。
+ *
+ * 会话未绑定工作区（或工作区被删除/解绑）时无法读取成片字节，旧实现会让
+ * `<video>` 保持相对路径、表现为空白播放器，用户以为文件坏了（方案 P1-3/P1-4）。
+ */
+const videoNeedsWorkspace = computed(
+  () => !props.workspaceId && extractWorkspaceVideoPaths(props.content).length > 0
+)
+
 function mimeForVideoExt(ext: string): string {
   switch (ext.toLowerCase()) {
     case 'mp4':
@@ -390,6 +400,9 @@ const renderedHtml = computed(() => {
 </script>
 
 <template>
+  <div v-if="videoNeedsWorkspace" class="message-media-hint">
+    此内容包含本地成片，但当前会话未绑定工作区，无法播放；请在已绑定工作区的会话中打开，或先绑定工作区。
+  </div>
   <div
     v-if="contentType === 'markdown' || contentType === 'html'"
     class="message-content message-content--rich"
@@ -405,6 +418,17 @@ const renderedHtml = computed(() => {
 </template>
 
 <style>
+/* 本地成片缺少工作区时的降级提示（不静默留白） */
+.message-media-hint {
+  margin: 6px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--kw-color-border-brand, #d0d7de);
+  border-radius: 8px;
+  color: var(--kw-color-text-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Markdown Content Styles (unscoped — applies to v-html rendered content)
    ═══════════════════════════════════════════════════════════════════════════ */

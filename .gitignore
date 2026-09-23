@@ -14,6 +14,9 @@ Desktop.ini
 ./AGENTS.md
 .codex/
 
+# Playwright
+/.playwright-mcp/
+
 # Docs
 /desktop/docs/
 /web/docs/
@@ -22,6 +25,9 @@ Desktop.ini
 
 # resume
 /resume/
+
+# temp
+/tmp-e2e/
 
 # 日志
 *.log

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import shlex
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -14,6 +15,7 @@ from openai import BadRequestError
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from agent import get_graph_for, get_sandbox_manager
 from agent.context.context import Context
@@ -40,6 +42,7 @@ from api.agent.artifacts import (
     persist_pending_artifacts,
     pick_turn_artifacts,
     record_artifacts,
+    restore_delivery_artifacts,
     scan_delivery_artifacts,
     update_artifact_size,
 )
@@ -973,6 +976,10 @@ async def download_artifact_bundle(
 ):
     """打包下载交付目录（scope=turn 本轮 / scope=thread 整个会话）。
 
+    留存期清理会删除宿主 staging 里的旧交付文件，而持久层副本仍在；因此打包前
+    先按持久层回填缺失文件，否则历史会话会打成空包（方案 P1-1）。zip 落到临时
+    文件后流式返回，避免整包驻留内存（方案 P1-2）。
+
     Args:
         thread_id: 会话 ID。
         scope: ``turn`` 只打包本轮；``thread`` 打包整个会话。
@@ -983,17 +990,35 @@ async def download_artifact_bundle(
         zip 响应；无内容或不属于该用户时返回 404。
     """
     normalized_scope = "thread" if scope == "thread" else "turn"
+    try:
+        await restore_delivery_artifacts(user_id, thread_id)
+    except Exception:
+        logger.warning("打包前回填交付目录失败（thread_id=%s）", thread_id, exc_info=True)
+
     packed = await asyncio.to_thread(
         build_bundle_zip, user_id, thread_id, scope=normalized_scope, turn=turn
     )
     if packed is None:
         raise HTTPException(status_code=404, detail="没有可打包的交付文件")
 
-    archive_name, content = packed
+    archive_name, zip_path, _count = packed
     headers = {
         "Content-Disposition": "attachment; filename*=UTF-8''" + quote(archive_name, safe="")
     }
-    return Response(content=content, media_type="application/zip", headers=headers)
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        headers=headers,
+        background=BackgroundTask(_remove_quietly, zip_path),
+    )
+
+
+def _remove_quietly(path: Path) -> None:
+    """删除临时文件（清理失败不影响已开始的响应）。"""
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        logger.warning("临时 zip 清理失败：%s", path, exc_info=True)
 
 
 async def _ensure_materialized(

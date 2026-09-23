@@ -61,7 +61,7 @@ def build_expert_directive(
         blocks.append(
             "【交付目录】本轮交付目录前缀为 "
             + prefix
-            + "/ ：文章写到该目录下，配图写到与文章同名的子目录中。\n"
+            + "/ ：文档写到该目录下，配图 / 成片等素材写到与文档同名的子目录中。\n"
         )
 
     return directive + ("\n" + "\n".join(blocks) if blocks else "")

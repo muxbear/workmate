@@ -38,7 +38,7 @@ interface Selection {
 interface FileTab {
   key: string // relPath，同文件去重键
   entry: WorkspaceFileEntry
-  kind: 'text' | 'word' | 'pdf'
+  kind: 'text' | 'word' | 'pdf' | 'video'
   content: string
   truncated: boolean
   document?: Uint8Array
@@ -367,8 +367,8 @@ async function openArtifact(
   view.value = 'files'
   let tab = fileTabs.value.find((item) => item.key === meta.relPath)
   const kind =
-    meta.preview === 'word' || meta.preview === 'pdf'
-      ? (meta.preview as 'word' | 'pdf')
+    meta.preview === 'word' || meta.preview === 'pdf' || meta.preview === 'video'
+      ? (meta.preview as 'word' | 'pdf' | 'video')
       : ('text' as const)
   if (!tab) {
     fileTabs.value.push({

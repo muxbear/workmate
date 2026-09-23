@@ -1,7 +1,10 @@
 """专家可用的素材落盘工具（后端代理下载）。
 
 工具名 ``download_asset`` 在桌面端有同名实现（写入本地工作区），
-专家提示词因此可以保持平台无关：只说明"用 download_asset 把配图保存到交付目录"。
+专家提示词因此可以保持平台无关：只说明"用 download_asset 把素材保存到交付目录"。
+
+支持图片与音视频：图片走配图场景，视频走「视频创作专家」成片场景；
+各端一律通过本工具落盘，不再允许模型执行 shell 命令下载素材。
 """
 
 from __future__ import annotations
@@ -42,14 +45,15 @@ def _current_thread_id() -> str:
 
 
 async def download_asset(url: str, rel_path: str) -> dict[str, Any]:
-    """把远程图片保存到本次会话的交付目录并登记为会话产物。
+    """把远程素材（图片 / 视频）保存到本次会话的交付目录并登记为会话产物。
 
-    适用于 AI 图像生成工具返回的临时图片地址：由后端代理下载，沙箱无需出网，
-    图片会立即持久化，沙箱回收后仍可预览、下载与打包。
+    适用于 AI 生成服务返回的临时地址：由后端代理下载，沙箱无需出网，
+    素材会立即持久化，沙箱回收后仍可预览、下载与打包。
 
     Args:
-        url: 图片地址（http/https，通常是图像生成服务返回的临时 URL）。
-        rel_path: 相对交付目录的保存路径，例如 ``文章标题/figure-1.png``。
+        url: 素材地址（http/https，通常是生成服务返回的临时 URL）。
+        rel_path: 相对交付目录的保存路径，例如 ``文章标题/figure-1.png``、
+            ``视频标题/成片-1.mp4``。
 
     Returns:
         成功时返回 ``{"path", "size", "mime_type", "artifact_id", "persisted"}``；

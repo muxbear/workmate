@@ -59,7 +59,9 @@ ALLOWED_MEDIA_TYPES = {
 TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"}
 
 # 单次 HTTP 请求与同步等待轮询的超时（秒），可用 VIDEO_GEN_TIMEOUT_SECONDS 覆盖。
-DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_GEN_TIMEOUT_SECONDS", "240"))
+# 默认 300s 与桌面端 MCP 工具超时（330s）配套：服务商排队时 240s 往往不够，
+# 而短于客户端超时会让客户端白白多等（见方案 D-3）。
+DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_GEN_TIMEOUT_SECONDS", "300"))
 DEFAULT_POLL_INTERVAL_SECONDS = 8.0
 
 mcp = FastMCP("ke-hermes-video-gen")

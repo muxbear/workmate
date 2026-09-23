@@ -5,7 +5,14 @@
  * markdown → MessageContent；文本 → <pre>；图片 / PDF / Word → 各自组件；其余提示不支持。
  */
 
-export type FilePreviewKind = 'markdown' | 'text' | 'image' | 'pdf' | 'word' | 'unsupported'
+export type FilePreviewKind =
+  | 'markdown'
+  | 'text'
+  | 'image'
+  | 'video'
+  | 'pdf'
+  | 'word'
+  | 'unsupported'
 
 const MARKDOWN_EXTS = new Set(['md', 'markdown'])
 
@@ -53,6 +60,7 @@ const TEXT_EXTS = new Set([
 ])
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'])
+const VIDEO_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'avi'])
 const PDF_EXTS = new Set(['pdf'])
 const WORD_EXTS = new Set(['doc', 'docx'])
 
@@ -63,9 +71,27 @@ export function getFileExt(name: string): string {
   return name.slice(index + 1).toLowerCase()
 }
 
-/** 是否需要读取原始字节（图片 / PDF / Word） */
+/** 是否需要读取原始字节（图片 / 视频 / PDF / Word） */
 export function needsBytes(kind: FilePreviewKind): boolean {
-  return kind === 'image' || kind === 'pdf' || kind === 'word'
+  return kind === 'image' || kind === 'video' || kind === 'pdf' || kind === 'word'
+}
+
+/** 视频扩展名对应的 MIME（构造 Blob 时给对类型，浏览器才肯内联播放） */
+export function videoMimeType(ext: string): string {
+  switch (ext) {
+    case 'webm':
+      return 'video/webm'
+    case 'mov':
+      return 'video/quicktime'
+    case 'm4v':
+      return 'video/x-m4v'
+    case 'mkv':
+      return 'video/x-matroska'
+    case 'avi':
+      return 'video/x-msvideo'
+    default:
+      return 'video/mp4'
+  }
 }
 
 /** 按文件名判定预览方式 */
@@ -73,6 +99,7 @@ export function pickPreviewKind(name: string): FilePreviewKind {
   const ext = getFileExt(name)
   if (MARKDOWN_EXTS.has(ext)) return 'markdown'
   if (IMAGE_EXTS.has(ext)) return 'image'
+  if (VIDEO_EXTS.has(ext)) return 'video'
   if (PDF_EXTS.has(ext)) return 'pdf'
   if (WORD_EXTS.has(ext)) return 'word'
   if (TEXT_EXTS.has(ext)) return 'text'

@@ -20,4 +20,18 @@ describe('buildExpertTools（能力声明驱动）', () => {
   it('未知能力不产生任何工具', () => {
     expect(buildExpertTools([], undefined, null, ['unknown.capability'])).toHaveLength(0)
   })
+
+  it('视频创作专家（video.generate + document.assemble）能拿到素材工具', () => {
+    // 视频成片与配图共用 download_asset；缺了它，视频专家只能自己执行 shell 命令下载
+    const names = buildExpertTools([], undefined, null, [
+      'video.generate',
+      'document.assemble'
+    ]).map((tool) => tool.name)
+
+    expect(names).toEqual(['download_asset'])
+  })
+
+  it('仅声明 video.generate 时不产生本地工具（视频生成走 MCP）', () => {
+    expect(buildExpertTools([], undefined, null, ['video.generate'])).toHaveLength(0)
+  })
 })

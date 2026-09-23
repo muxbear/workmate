@@ -5,6 +5,7 @@ export type DocumentKind =
   | 'html'
   | 'json'
   | 'image'
+  | 'video'
   | 'pdf'
   | 'table'
   | 'text'
@@ -39,4 +40,6 @@ export interface DocumentPayload {
   basePath?: string
   /** 会话产物虚拟路径集合（判断相对路径是否命中真实产物） */
   artifactPaths?: string[]
+  /** 产物虚拟路径 → 字节数（成片内联预览上限判断用） */
+  artifactSizes?: Record<string, number>
 }

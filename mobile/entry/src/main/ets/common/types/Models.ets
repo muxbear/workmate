@@ -81,7 +81,21 @@ export interface ImageBlock {
   alt: string
 }
 
-export type ContentBlock = TextBlock | HeadingBlock | TableBlock | ListBlock | ImageBlock
+/**
+ * 成片块(「视频创作专家」交付文档里的 HTML5 `<video>` 标签)。
+ *
+ * src 同样先解析为产物接口地址:接口需要 Authorization,不能直接交给
+ * Video 组件,由 ArtifactVideo 带 token 拉到应用沙箱后再播放。
+ */
+export interface VideoBlock {
+  type: 'video'
+  src: string
+  /** 成片说明(取自 `<video>` 内的兜底文本;无则空串) */
+  caption: string
+}
+
+export type ContentBlock =
+  TextBlock | HeadingBlock | TableBlock | ListBlock | ImageBlock | VideoBlock
 
 export interface ChatMessage {
   id: string

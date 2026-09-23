@@ -138,6 +138,7 @@ declare module 'vue' {
     TopBar: typeof import('./src/components/TopBar.vue')['default']
     TraceTree: typeof import('./src/components/TraceTree.vue')['default']
     UpdateLogCard: typeof import('./src/components/admin/UpdateLogCard.vue')['default']
+    VideoViewer: typeof import('./src/components/chat/viewers/VideoViewer.vue')['default']
     WorkspaceSelector: typeof import('./src/components/chat/WorkspaceSelector.vue')['default']
   }
   export interface ComponentCustomProperties {

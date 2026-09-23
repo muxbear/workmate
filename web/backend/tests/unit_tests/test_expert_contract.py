@@ -28,6 +28,16 @@ def test_contract_file_exists() -> None:
     assert contract["deliverable"]["webDeliveryRoot"].startswith("/artifacts/")
 
 
+def test_contract_declares_resource_patterns_for_images_and_videos() -> None:
+    """交付物契约同时表达配图与成片的命名（成片名为 成片-N，此前只写了 figure-N）。"""
+    deliverable = _load_contract()["deliverable"]
+    patterns = deliverable["resourcePatterns"]
+    assert patterns["image"] == "figure-{n}.{ext}"
+    assert patterns["video"].startswith("成片-")
+    assert deliverable["root"] == "<title>.md"
+    assert deliverable["resourceDir"] == "<title>/"
+
+
 def test_python_mirror_matches_contract() -> None:
     """Python 侧镜像（能力 / 变量 / 素材工具名）与契约一致。"""
     contract = _load_contract()

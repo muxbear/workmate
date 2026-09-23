@@ -8,15 +8,18 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 import time
 import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
@@ -36,6 +39,35 @@ STATUS_PENDING = "pending"
 STATUS_READY = "ready"
 STATUS_FAILED = "failed"
 STATUS_EXPIRED = "expired"
+
+# 分块搬运产物的块大小（4MB）：避免大文件整体读进内存
+COPY_CHUNK_BYTES = 4 * 1024 * 1024
+
+# 已压缩格式：打包时直接 STORED 存原始字节，不再 deflate
+_STORE_ONLY_EXTS: frozenset[str] = frozenset(
+    {
+        "mp4",
+        "m4v",
+        "webm",
+        "mov",
+        "mkv",
+        "avi",
+        "mp3",
+        "wav",
+        "ogg",
+        "flac",
+        "aac",
+        "m4a",
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "zip",
+        "gz",
+        "7z",
+    }
+)
 
 # 视为「写文件」的工具名关键字（包含匹配，忽略大小写）
 _WRITE_TOOL_KEYWORDS: tuple[str, ...] = (
@@ -95,6 +127,13 @@ _MIME_BY_EXT: dict[str, str] = {
     "gif": "image/gif",
     "webp": "image/webp",
     "svg": "image/svg+xml",
+    # 视频成片（「视频创作专家」产物）：缺少映射会退化为 octet-stream，浏览器不内联播放
+    "mp4": "video/mp4",
+    "m4v": "video/x-m4v",
+    "webm": "video/webm",
+    "mov": "video/quicktime",
+    "mkv": "video/x-matroska",
+    "avi": "video/x-msvideo",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -816,6 +855,23 @@ def _artifact_fetch_limits() -> tuple[float, int, list[str]]:
     )
 
 
+def _artifact_fetch_limits_for_media() -> tuple[float, int, int, list[str]]:
+    """读取包含视频的代理下载配置：超时、视频上限、图片上限、域名白名单。
+
+    视频比图片大得多、生成端下载也更慢，因此单独放宽超时与上限；
+    图片仍按其自身上限校验，避免"统一放宽"削弱原有约束。
+    """
+    _timeout, image_max, hosts = _artifact_fetch_limits()
+    video_timeout = _setting_int("ARTIFACT_FETCH_VIDEO_TIMEOUT_SECONDS", 300)
+    video_max_mb = _setting_int("ARTIFACT_FETCH_VIDEO_MAX_MB", 200)
+    return (
+        float(video_timeout) if video_timeout > 0 else 300.0,
+        max(0, video_max_mb) * 1024 * 1024,
+        image_max,
+        hosts,
+    )
+
+
 def _write_bytes_file(target: Any, content: bytes) -> None:
     """把字节写入目标文件（自动创建父目录）。"""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -872,13 +928,14 @@ async def ingest_remote_asset(
     *,
     delivery_dir: str = "",
 ) -> Artifact:
-    """后端代理下载远程图片，落到本轮交付目录并登记、物化为会话产物。
+    """后端代理下载远程素材（图片 / 视频），落到本轮交付目录并登记、物化为会话产物。
 
     Args:
         user_id: 产物所属用户。
         thread_id: 产物所属会话。
-        url: 远程图片地址（仅 http/https）。
-        rel_path: 相对交付目录的保存路径，如 ``文章标题/figure-1.png``。
+        url: 远程素材地址（仅 http/https；图片与视频共用同一通道）。
+        rel_path: 相对交付目录的保存路径，如 ``文章标题/figure-1.png``、
+            ``视频标题/成片-1.mp4``。
         delivery_dir: 本轮交付目录（虚拟绝对路径）；为空时回退到 ``turn-1``。
 
     Returns:
@@ -891,7 +948,7 @@ async def ingest_remote_asset(
     """
     from agent.sandbox.delivery import delivery_virtual_dir, normalize_delivery_rel
     from core.storage.agent_staging import staging_file_path
-    from core.storage.asset_fetcher import fetch_image
+    from core.storage.asset_fetcher import fetch_asset
 
     rel = normalize_delivery_rel(rel_path)
     base = (delivery_dir or delivery_virtual_dir(thread_id, "turn-1")).rstrip("/")
@@ -901,9 +958,13 @@ async def ingest_remote_asset(
     if target is None:
         raise ValueError("非法的交付路径")
 
-    timeout, max_bytes, hosts = _artifact_fetch_limits()
-    asset = await fetch_image(
-        url, timeout=timeout, max_bytes=max_bytes, allowed_hosts=hosts
+    timeout, max_bytes, image_max_bytes, hosts = _artifact_fetch_limits_for_media()
+    asset = await fetch_asset(
+        url,
+        timeout=timeout,
+        max_bytes=max_bytes,
+        image_max_bytes=image_max_bytes,
+        allowed_hosts=hosts,
     )
 
     await asyncio.to_thread(_write_bytes_file, target, asset.content)
@@ -948,23 +1009,83 @@ async def list_bundle_artifacts(
     return [_to_artifact(row) for row in rows]
 
 
+def _delivery_restore_max_bytes() -> int:
+    """交付目录回填的单文件上限（字节）。
+
+    取「产物上限」与「视频素材上限」中的较大者：成片可以比普通产物大得多，
+    用较小值会把成片挡在回填之外，打包与预览就都拿不到它。
+    """
+    limits = (
+        _setting_int("ARTIFACT_MAX_FILE_MB", 100),
+        _setting_int("ARTIFACT_FETCH_VIDEO_MAX_MB", 200),
+    )
+    return max(0, max(limits)) * 1024 * 1024
+
+
+async def copy_store_object_to(store: Any, key: str, target: Path) -> bool:
+    """把持久层对象写到目标文件，返回是否成功。
+
+    本地存储直接复制文件；对象存储分块读取写入——避免像旧实现那样把整个
+    文件（可能是上百兆的成片）读进内存。
+    """
+    total = await asyncio.to_thread(store.size, key)
+    if total is None:
+        return False
+
+    local_path = await asyncio.to_thread(store.local_path, key)
+    await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+    if local_path:
+        await asyncio.to_thread(shutil.copyfile, local_path, target)
+        return True
+
+    offset = 0
+    with target.open("wb") as handle:
+        while True:
+            chunk = await asyncio.to_thread(store.read, key, offset, COPY_CHUNK_BYTES)
+            if not chunk:
+                break
+            handle.write(chunk)
+            offset += len(chunk)
+            if offset >= total:
+                break
+    return True
+
+
+def _zip_compress_type(path: Path) -> int:
+    """按扩展名选择 zip 压缩方式。
+
+    图片 / 音视频 / 压缩包本身已压缩，再走 deflate 只浪费 CPU（大视频尤其明显），
+    直接按 STORED 存原始字节；文本类仍用 deflate。
+    """
+    ext = path.suffix.lower().lstrip(".")
+    if ext in _STORE_ONLY_EXTS:
+        return zipfile.ZIP_STORED
+    return zipfile.ZIP_DEFLATED
+
+
 def build_bundle_zip(
     user_id: str,
     thread_id: str,
     *,
     scope: str = "turn",
     turn: str | None = None,
-) -> tuple[str, bytes] | None:
-    """把交付目录打包成 zip。
+    dest_dir: Path | None = None,
+) -> tuple[str, Path, int] | None:
+    """把交付目录打包成 zip **文件**（边读边写磁盘，不在内存中累积）。
+
+    交付目录里可能有几十兆到上百兆的成片，旧实现把整个 zip 攒在 ``BytesIO`` 里
+    再整体回写响应，内存占用随文件总量线性上升（方案 P1-2）。
 
     Args:
         user_id: 产物所属用户。
         thread_id: 产物所属会话。
         scope: ``turn`` 只打包本轮；``thread`` 打包整个会话（含全部轮次）。
         turn: 指定轮次目录名（缺省取最新一轮）。
+        dest_dir: 临时 zip 的落盘目录（缺省用系统临时目录）。
 
     Returns:
-        ``(下载文件名, zip 字节)``；目录不存在或没有文件时返回 ``None``。
+        ``(下载文件名, zip 路径, 文件数)``；目录不存在或没有文件时返回 ``None``。
+        调用方负责在用完后删除该 zip 文件。
     """
     from agent.sandbox.delivery import (
         delivery_host_dir,
@@ -989,17 +1110,28 @@ def build_bundle_zip(
     if not base.is_dir():
         return None
 
-    buffer = io.BytesIO()
+    handle, raw_path = tempfile.mkstemp(prefix="bundle-", suffix=".zip", dir=dest_dir)
+    os.close(handle)
+    zip_path = Path(raw_path)
     count = 0
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(base.rglob("*")):
-            if not path.is_file():
-                continue
-            archive.write(path, path.relative_to(base).as_posix())
-            count += 1
+    try:
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            for path in sorted(base.rglob("*")):
+                if not path.is_file():
+                    continue
+                archive.write(
+                    path,
+                    path.relative_to(base).as_posix(),
+                    compress_type=_zip_compress_type(path),
+                )
+                count += 1
+    except Exception:
+        zip_path.unlink(missing_ok=True)
+        raise
     if count == 0:
+        zip_path.unlink(missing_ok=True)
         return None
-    return archive_name, buffer.getvalue()
+    return archive_name, zip_path, count
 
 
 async def restore_delivery_artifacts(
@@ -1018,8 +1150,7 @@ async def restore_delivery_artifacts(
         return 0
 
     store = get_artifact_store()
-    max_mb = _setting_int("ARTIFACT_MAX_FILE_MB", 100)
-    max_bytes = max(0, max_mb) * 1024 * 1024
+    max_bytes = _delivery_restore_max_bytes()
 
     restored = 0
     for item in items:
@@ -1033,14 +1164,14 @@ async def restore_delivery_artifacts(
             continue
         if await asyncio.to_thread(target.is_file):
             continue
-        content = await asyncio.to_thread(store.open, item.storage_key)
-        if content is None:
+        size = await asyncio.to_thread(store.size, item.storage_key)
+        if size is None:
             continue
-        if max_bytes and len(content) > max_bytes:
+        if max_bytes and size > max_bytes:
             logger.info("交付产物超过回填大小上限，已跳过：%s", item.path)
             continue
-        await asyncio.to_thread(_write_bytes_file, target, content)
-        restored += 1
+        if await copy_store_object_to(store, item.storage_key, target):
+            restored += 1
 
     if restored:
         logger.info(

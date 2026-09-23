@@ -47,6 +47,19 @@ class Settings(BaseSettings):
     # ---- Server ----
     HOST: str = os.getenv("HOST", "127.0.0.1")
     PORT: int = int(os.getenv("PORT") or 8000)
+    # MCP 广场内置服务的对外基址：客户端（桌面版 / 移动端）要能访问到本服务。
+    # 留空则按 HOST/PORT 推导；部署到远端时务必显式配置，否则同步给客户端的
+    # MCP 地址是回环地址、客户端根本连不上（方案 P1-5）。
+    MCP_PUBLIC_BASE_URL: str = os.getenv("MCP_PUBLIC_BASE_URL", "")
+
+    @property
+    def mcp_public_base_url(self) -> str:
+        """MCP 服务对外基址（已去尾斜杠）。"""
+        configured = (self.MCP_PUBLIC_BASE_URL or "").strip()
+        if configured:
+            return configured.rstrip("/")
+        host = (self.HOST or "127.0.0.1").strip() or "127.0.0.1"
+        return f"http://{host}:{self.PORT}"
 
     # ---- LLM (DeepSeek) ----
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
@@ -135,6 +148,14 @@ class Settings(BaseSettings):
         os.getenv("ARTIFACT_FETCH_MAX_MB", os.getenv("ARTIFACT_MAX_FILE_MB", "100"))
     )
     ARTIFACT_FETCH_ALLOWED_HOSTS: str = os.getenv("ARTIFACT_FETCH_ALLOWED_HOSTS", "")
+    # 视频成片单独的超时与上限（视频体积大、生成端签名有效期长，需放宽；
+    # 上限对齐桌面端工作区媒体白名单的 200MB）
+    ARTIFACT_FETCH_VIDEO_TIMEOUT_SECONDS: int = int(
+        os.getenv("ARTIFACT_FETCH_VIDEO_TIMEOUT_SECONDS", "300")
+    )
+    ARTIFACT_FETCH_VIDEO_MAX_MB: int = int(
+        os.getenv("ARTIFACT_FETCH_VIDEO_MAX_MB", "200")
+    )
 
     @field_validator("ARTIFACT_ROOT", mode="before")
     @classmethod

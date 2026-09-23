@@ -50,6 +50,25 @@ def test_builtin_doc_expert_declares_capabilities() -> None:
     assert _declared_tool_names(doc) == ["download_asset"]
 
 
+def test_builtin_video_expert_declares_capabilities() -> None:
+    """内置「视频创作专家」声明能力，并由能力推导出素材工具关联。"""
+    from api.experts.service import BUILTIN_EXPERTS, _declared_tool_names
+
+    video = next(item for item in BUILTIN_EXPERTS if item["name"] == "视频创作专家")
+    assert video["capabilities"] == ["video.generate", "document.assemble"]
+    assert "tool_names" not in video
+    # 视频落盘与配图共用 download_asset：缺少该关联时专家只能自己执行 shell 命令下载
+    assert _declared_tool_names(video) == ["download_asset"]
+
+
+def test_video_capability_expands_to_mcp_tools() -> None:
+    """video.generate 展开为视频生成 MCP 工具，且不产出内置工具。"""
+    assert capability_builtin_tools(["video.generate"]) == []
+    mcp_tools = capability_mcp_tools(["video.generate"])
+    assert mcp_tools == ["generate_video", "query_video_generation"]
+    assert capabilities_for_mcp_services(["AI 视频生成"]) == ["video.generate"]
+
+
 def test_sync_item_carries_capabilities() -> None:
     """同步项携带能力声明，供桌面端按能力映射本地工具。"""
     from api.experts.schemas import ExpertInfo

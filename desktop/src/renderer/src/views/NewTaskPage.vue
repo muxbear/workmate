@@ -31,6 +31,88 @@ const currentWorkspaceId = computed(
   () => agentStore.currentConversation?.workspace?.id ?? undefined
 )
 
+// ── 消息内成片播放（视频产物直接给出播放入口，不依赖模型是否把 <video> 写进回复）──
+/** 视频产物扩展名（与主进程 doc-artifacts 的白名单保持一致） */
+const VIDEO_ARTIFACT_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'avi'])
+/** 视频对象地址 MIME（Blob 需带对类型，<video> 才肯内联播放） */
+function videoMimeOf(name: string): string {
+  const ext = (name.split('.').pop() ?? '').toLowerCase()
+  if (ext === 'webm') return 'video/webm'
+  if (ext === 'mov') return 'video/quicktime'
+  if (ext === 'm4v') return 'video/x-m4v'
+  if (ext === 'mkv') return 'video/x-matroska'
+  if (ext === 'avi') return 'video/x-msvideo'
+  return 'video/mp4'
+}
+function isVideoArtifact(file: { name: string }): boolean {
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
+  return VIDEO_ARTIFACT_EXTS.has(ext)
+}
+
+/** 视频产物 relPath → blob 地址（已就绪的成片） */
+const videoArtifactSrc = ref<Record<string, string>>({})
+const videoArtifactFailed = ref<Record<string, true>>({})
+/** 已创建的 blob 地址：切换会话/消息时统一释放 */
+const videoArtifactUrls = new Map<string, string>()
+
+function revokeVideoArtifacts(): void {
+  for (const url of videoArtifactUrls.values()) URL.revokeObjectURL(url)
+  videoArtifactUrls.clear()
+  videoArtifactSrc.value = {}
+  videoArtifactFailed.value = {}
+}
+
+async function resolveVideoArtifacts(): Promise<void> {
+  const workspaceId = currentWorkspaceId.value
+  if (!workspaceId) return
+  const targets = new Map<string, { relPath: string; name: string }>()
+  for (const msg of currentMessages.value) {
+    for (const file of msg.files ?? []) {
+      if (isVideoArtifact(file)) targets.set(file.relPath, { relPath: file.relPath, name: file.name })
+    }
+  }
+  // 已就绪的不重复拉取
+  for (const relPath of Array.from(targets.keys())) {
+    if (videoArtifactSrc.value[relPath]) targets.delete(relPath)
+  }
+  if (targets.size === 0) return
+
+  const next: Record<string, string> = { ...videoArtifactSrc.value }
+  const failed: Record<string, true> = { ...videoArtifactFailed.value }
+  await Promise.all(
+    Array.from(targets.values(), async (target) => {
+      try {
+        const res = await window.api.readWorkspaceMediaBytes(workspaceId, target.relPath)
+        const bytes = res?.data?.bytes
+        if (!res?.success || !bytes || bytes.byteLength === 0) throw new Error('empty')
+        const buffer = bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        ) as ArrayBuffer
+        const url = URL.createObjectURL(new Blob([buffer], { type: videoMimeOf(target.name) }))
+        videoArtifactUrls.set(target.relPath, url)
+        next[target.relPath] = url
+        delete failed[target.relPath]
+      } catch {
+        failed[target.relPath] = true
+      }
+    })
+  )
+  videoArtifactSrc.value = next
+  videoArtifactFailed.value = failed
+}
+
+watch(
+  () => [
+    currentWorkspaceId.value ?? '',
+    currentMessages.value.map((msg) => (msg.files ?? []).map((f) => f.relPath).join('|')).join('::')
+  ].join('\u0000'),
+  () => void resolveVideoArtifacts(),
+  { immediate: true }
+)
+
+onUnmounted(revokeVideoArtifacts)
+
 // ── State ──
 const category = ref('work')
 const taskInput = ref('')
@@ -449,6 +531,33 @@ const quickChips = [
   { icon: 'slides', label: '幻灯片' }
 ]
 
+/** 场景快捷入口 → 对应专家名（未登记的场景暂无专家可召唤） */
+const QUICK_CHIP_EXPERTS: Record<string, string> = {
+  视频生成: '视频创作专家',
+  文档处理: '文档写作专家'
+}
+
+/**
+ * 场景快捷入口：直接选中对应专家（与「+」菜单同一条路径：选中 + 插入委派提示词）。
+ *
+ * 这些 chip 以前没有任何点击行为（点了没反应）；没有对应专家的场景给出明确提示，
+ * 而不是静默无响应。
+ */
+function applyQuickChip(label: string): void {
+  const expertName = QUICK_CHIP_EXPERTS[label]
+  if (!expertName) {
+    showToast(`「${label}」暂未配置对应专家`)
+    return
+  }
+  const expert = catalog.experts.find((item) => item.name === expertName)
+  if (!expert) {
+    showToast(`未找到「${expertName}」，请先到「智能体 → 专家」同步专家`)
+    return
+  }
+  catalog.setExpert(expert.id)
+  showToast(`已添加「${expertName}」`)
+}
+
 /** 当前选中的自定义模型 id（发送/重新生成时随 customModelId 传主进程；内置模型为 null） */
 const selectedCustomId = ref<string | null>(null)
 
@@ -471,6 +580,14 @@ const sendMessage = async (payload: PromptPayload): Promise<void> => {
     if (!expertRes.success) {
       showToast(expertRes.error || '设置专家失败')
       return
+    }
+    // 专家依赖的 MCP 服务连不上时（例如视频生成服务不可达）明确提示，避免用户以为专家"坏了"
+    const mcpWarnings = expertRes.data?.mcpWarnings ?? []
+    if (mcpWarnings.length > 0) {
+      console.warn('[NewTaskPage] 专家 MCP 服务加载失败:', mcpWarnings)
+      const first = mcpWarnings[0]
+      const suffix = mcpWarnings.length > 1 ? ` 等 ${mcpWarnings.length} 项` : ''
+      showToast(`「${first.toolName}」未能连接${suffix}，该专家相关能力不可用`)
     }
   } catch (err) {
     console.error('[NewTaskPage] setExperts failed:', err)
@@ -621,7 +738,13 @@ watch(
           </svg>
         </button>
         <div ref="chipsScrollRef" class="chips-scroll">
-          <button v-for="chip in quickChips" :key="chip.label" class="quick-chip">
+          <button
+            v-for="chip in quickChips"
+            :key="chip.label"
+            class="quick-chip"
+            :class="{ 'quick-chip--active': QUICK_CHIP_EXPERTS[chip.label] }"
+            @click="applyQuickChip(chip.label)"
+          >
             <span class="chip-icon">
               <svg
                 v-if="chip.icon === 'doc'"
@@ -1064,16 +1187,27 @@ watch(
                 </div>
                 <!-- 生成文档链接条：live 与历史回显共用同一模板 -->
                 <div v-if="msg.files && msg.files.length" class="msg-artifacts">
-                  <button
-                    v-for="file in msg.files"
-                    :key="file.relPath"
-                    class="msg-artifact-link"
-                    :title="file.relPath"
-                    @click="openDocFromMessage(file)"
-                  >
-                    <span class="msg-artifact-ico">📄</span>
-                    <span class="msg-artifact-name">{{ file.name }}</span>
-                  </button>
+                  <template v-for="file in msg.files" :key="file.relPath">
+                    <!-- 视频产物：直接给出播放入口（不依赖模型是否把 <video> 写进回复） -->
+                    <video
+                      v-if="isVideoArtifact(file) && videoArtifactSrc[file.relPath]"
+                      class="msg-video"
+                      :src="videoArtifactSrc[file.relPath]"
+                      :title="file.relPath"
+                      controls
+                      preload="metadata"
+                    ></video>
+                    <button
+                      v-else
+                      class="msg-artifact-link"
+                      :class="{ 'msg-artifact-link--failed': videoArtifactFailed[file.relPath] }"
+                      :title="file.relPath"
+                      @click="openDocFromMessage(file)"
+                    >
+                      <span class="msg-artifact-ico">📄</span>
+                      <span class="msg-artifact-name">{{ file.name }}</span>
+                    </button>
+                  </template>
                 </div>
               </div>
               <!-- 操作栏：按钮组 + 元信息 -->
@@ -1603,6 +1737,12 @@ watch(
   color: var(--kw-color-brand);
 }
 
+/* 已配置对应专家的场景：高亮提示"点了有反应" */
+.quick-chip--active {
+  border-color: var(--kw-color-brand);
+  color: var(--kw-color-brand);
+}
+
 .chip-icon {
   display: flex;
   align-items: center;
@@ -1654,6 +1794,22 @@ watch(
 
 .msg-artifact-link:hover {
   background: var(--kw-color-brand-hover);
+}
+
+/* 消息内成片播放器（视频产物直接可播） */
+.msg-video {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  max-height: 420px;
+  border-radius: var(--radius-lg, 8px);
+  background: #000;
+}
+
+/* 成片读取失败时给出可见提示，而不是静默消失 */
+.msg-artifact-link--failed {
+  border-color: var(--kw-color-danger, #d9534f);
+  opacity: 0.75;
 }
 
 .msg-artifact-ico {

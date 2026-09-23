@@ -6,8 +6,14 @@
  * 图片地址通过 resolveImageSrc 解析为产物接口地址(需要 threadId/basePath)。
  */
 
-import { ContentBlock, HeadingBlock, ImageBlock, ListBlock, TableBlock, TextBlock } from '../types/Models'
-import { MarkdownImageContext, resolveImageSrc } from './MarkdownArtifacts'
+import { ContentBlock, HeadingBlock, ImageBlock, ListBlock, TableBlock, TextBlock, VideoBlock } from '../types/Models'
+import {
+  MarkdownImageContext,
+  extractVideoSources,
+  resolveImageSrc,
+  resolveVideoSrc,
+  videoBlockCaption
+} from './MarkdownArtifacts'
 
 /** 是否表格分隔行(|---|:--:|) */
 function isTableDivider(line: string): boolean {
@@ -140,6 +146,27 @@ export function markdownToBlocks(markdown: string, context: MarkdownImageContext
         index += 1
       }
       out.push({ type: 'table', headers: headers, rows: rows } as TableBlock)
+      continue
+    }
+
+    // 成片:HTML5 <video> 标签(可能多行,含内嵌 <source>)
+    if (line.startsWith('<video')) {
+      parseParagraphLines(buffer, context, out)
+      buffer = []
+      let blockText: string = line
+      while (blockText.indexOf('</video>') < 0 && index + 1 < lines.length) {
+        index += 1
+        blockText += '\n' + lines[index].trim()
+      }
+      const sources: Array<string> = extractVideoSources(blockText)
+      if (sources.length > 0) {
+        out.push({
+          type: 'video',
+          src: resolveVideoSrc(sources[0], context),
+          caption: videoBlockCaption(blockText)
+        } as VideoBlock)
+      }
+      index += 1
       continue
     }
 

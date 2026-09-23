@@ -22,7 +22,8 @@ const IMAGE_GEN_TOOL_TIMEOUT_MS = 240_000
  * Backend video_gen_server 的默认等待上限 VIDEO_GEN_TIMEOUT_SECONDS 为 240s；
  * 客户端超时需高于服务端，避免视频任务仍在轮询时被 MCP error -32001 提前掐断。
  */
-const VIDEO_GEN_TOOL_TIMEOUT_MS = 300_000
+/** 视频生成：比后端等待窗（VIDEO_GEN_TIMEOUT_SECONDS，默认 300s）多留 30s 网络余量 */
+const VIDEO_GEN_TOOL_TIMEOUT_MS = 330_000
 
 /** 按服务地址缓存已连接的 MCP 客户端，避免每次重建智能体重复建连 */
 const mcpClients = new Map<string, Client>()
@@ -115,13 +116,34 @@ function normalizeMcpConfig(raw: unknown): DesktopMcpConfig | null {
   return { mcpToolId, mcpToolName, transport, url, sseUrl, streamableHttpUrl, config, enabled }
 }
 
+/** MCP 加载失败信息（供上层提示用户，避免"专家静默失去能力"） */
+export interface McpLoadFailure {
+  /** MCP 服务名（如「AI 视频生成」） */
+  toolName: string
+  /** 服务地址（便于排查是不是回环地址连不上） */
+  url: string
+  /** 失败原因 */
+  message: string
+}
+
+export interface BuildExpertMcpToolsOptions {
+  /** 单个 MCP 服务加载失败时回调（上层汇总后提示用户） */
+  onError?: (failure: McpLoadFailure) => void
+}
+
 /**
  * 从专家的 MCP 配置加载工具并注册为专家子智能体工具。
  *
  * 优先使用 Streamable HTTP，其次 SSE；任一服务连接失败只记录警告并跳过，
  * 不会阻塞智能体构建（桌面端 MCP 服务不可用时专家退化为无联网工具）。
+ *
+ * 失败会通过 ``onError`` 上报：专家本地工具可能为 0，若 MCP 再静默失败，
+ * 子智能体会变成"没有任何工具的纯文本模型"，用户完全看不出原因（方案 P1-10）。
  */
-export async function buildExpertMcpTools(mcpConfigs: unknown[]): Promise<DynamicStructuredTool[]> {
+export async function buildExpertMcpTools(
+  mcpConfigs: unknown[],
+  options: BuildExpertMcpToolsOptions = {}
+): Promise<DynamicStructuredTool[]> {
   if (!Array.isArray(mcpConfigs) || mcpConfigs.length === 0) return []
 
   const tools: DynamicStructuredTool[] = []
@@ -138,7 +160,13 @@ export async function buildExpertMcpTools(mcpConfigs: unknown[]): Promise<Dynami
         `[mcp-tools] 专家 MCP 工具「${cfg.mcpToolName}」已加载：${loaded.map((t) => t.name).join('、')}`
       )
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
       console.warn(`[mcp-tools] 加载专家 MCP 工具「${cfg.mcpToolName}」失败，已跳过：`, error)
+      options.onError?.({
+        toolName: cfg.mcpToolName || cfg.mcpToolId || 'MCP 服务',
+        url: cfg.streamableHttpUrl || cfg.sseUrl || cfg.url,
+        message
+      })
     }
   }
   return tools

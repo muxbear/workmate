@@ -9,6 +9,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.dialects.sqlite import JSON as SQLiteJSON
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.config import settings
 from api.mcp.schemas import McpToolResponse
 from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
@@ -264,9 +265,8 @@ BUILTIN_MCP_TOOLS: list[dict] = [
         ],
         "official": True,
         "transport": "streamable_http",
-        "url": "http://127.0.0.1:8001/mcp/web-search/sse",
-        "sse_url": "http://127.0.0.1:8001/mcp/web-search/sse",
-        "streamable_http_url": "http://127.0.0.1:8001/mcp/web-search-http/mcp",
+        # 对外地址由配置基址推导（见 builtin_mcp_urls），不写死回环地址
+        "paths": {"sse": "/mcp/web-search/sse", "streamable_http": "/mcp/web-search-http/mcp"},
     },
     {
         "name": "AI 图像生成",
@@ -286,9 +286,7 @@ BUILTIN_MCP_TOOLS: list[dict] = [
         ],
         "official": True,
         "transport": "streamable_http",
-        "url": "http://127.0.0.1:8001/mcp/image-gen/sse",
-        "sse_url": "http://127.0.0.1:8001/mcp/image-gen/sse",
-        "streamable_http_url": "http://127.0.0.1:8001/mcp/image-gen-http/mcp",
+        "paths": {"sse": "/mcp/image-gen/sse", "streamable_http": "/mcp/image-gen-http/mcp"},
     },
     {
         "name": "AI 视频生成",
@@ -308,16 +306,43 @@ BUILTIN_MCP_TOOLS: list[dict] = [
         ],
         "official": True,
         "transport": "streamable_http",
-        "url": "http://127.0.0.1:8001/mcp/video-gen/sse",
-        "sse_url": "http://127.0.0.1:8001/mcp/video-gen/sse",
-        "streamable_http_url": "http://127.0.0.1:8001/mcp/video-gen-http/mcp",
+        "paths": {"sse": "/mcp/video-gen/sse", "streamable_http": "/mcp/video-gen-http/mcp"},
     },
 ]
 
+# 历史默认地址（旧版本把本机回环地址写死进库）：仅用于识别"可以安全迁移"的行
+_LEGACY_LOOPBACK_HOSTS = ("127.0.0.1:8001", "localhost:8001")
+
+
+def builtin_mcp_urls(item: dict) -> dict[str, str]:
+    """按配置基址推导内置 MCP 服务的对外地址。
+
+    Args:
+        item: 内置服务定义（含 ``paths``）。
+
+    Returns:
+        含 ``url`` / ``sse_url`` / ``streamable_http_url`` 的字典；缺 ``paths`` 时返回空串。
+    """
+    paths = item.get("paths") or {}
+    base = settings.mcp_public_base_url
+    sse_path = str(paths.get("sse") or "")
+    http_path = str(paths.get("streamable_http") or "")
+    return {
+        "url": base + sse_path if sse_path else "",
+        "sse_url": base + sse_path if sse_path else "",
+        "streamable_http_url": base + http_path if http_path else "",
+    }
+
+
+def _is_legacy_loopback(url: str) -> bool:
+    """判断地址是否为旧版本写死的本机回环地址。"""
+    return any(host in (url or "") for host in _LEGACY_LOOPBACK_HOSTS)
+
 
 async def seed_builtin_mcp_tools(db: AsyncSession) -> None:
-    """填充 MCP 广场内置服务，可重复调用：缺失时创建，已有记录仅补全空字段。."""
+    """填充 MCP 广场内置服务，可重复调用：缺失时创建，已有记录补全空字段与旧回环地址。."""
     for item in BUILTIN_MCP_TOOLS:
+        urls = builtin_mcp_urls(item)
         row = (
             await db.execute(select(McpTool).where(McpTool.name == item["name"]))
         ).scalar_one_or_none()
@@ -339,22 +364,30 @@ async def seed_builtin_mcp_tools(db: AsyncSession) -> None:
                     official=item.get("official", False),
                     config_schema=item.get("config_schema", []),
                     transport=item["transport"],
-                    url=item.get("url", ""),
-                    sse_url=item.get("sse_url", ""),
-                    streamable_http_url=item.get("streamable_http_url", ""),
+                    url=urls["url"],
+                    sse_url=urls["sse_url"],
+                    streamable_http_url=urls["streamable_http_url"],
                     command=item.get("command", ""),
                     args=item.get("args", []),
                     env=item.get("env", {}),
                 )
             )
             logger.info("已创建内置 MCP 工具 '%s'", item["name"])
-        else:
-            if not row.url:
-                row.url = item.get("url", "")
-            if not row.sse_url:
-                row.sse_url = item.get("sse_url", "")
-            if not row.streamable_http_url:
-                row.streamable_http_url = item.get("streamable_http_url", "")
-            if not row.transport or row.transport == "stdio":
-                row.transport = item["transport"]
+            continue
+
+        for attr in ("url", "sse_url", "streamable_http_url"):
+            current = str(getattr(row, attr) or "")
+            target = urls[attr]
+            if not target:
+                continue
+            if not current:
+                setattr(row, attr, target)
+                continue
+            # 旧版本把 127.0.0.1:8001 写死进库；配好对外基址后按新基址迁移，
+            # 用户自定义过的地址（非回环）保持不动
+            if current != target and _is_legacy_loopback(current):
+                setattr(row, attr, target)
+                logger.info("已迁移内置 MCP 工具 '%s' 的 %s 到对外基址", item["name"], attr)
+        if not row.transport or row.transport == "stdio":
+            row.transport = item["transport"]
     logger.info("MCP 广场内置服务种子数据检查完成（%d 条）", len(BUILTIN_MCP_TOOLS))

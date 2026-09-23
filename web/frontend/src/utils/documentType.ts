@@ -17,6 +17,12 @@ const EXT_KIND: Record<string, DocumentKind> = {
   bmp: 'image',
   svg: 'image',
   ico: 'image',
+  mp4: 'video',
+  m4v: 'video',
+  webm: 'video',
+  mov: 'video',
+  mkv: 'video',
+  avi: 'video',
   pdf: 'pdf',
   doc: 'word',
   docx: 'word',
@@ -57,6 +63,7 @@ const KIND_LABEL: Record<DocumentKind, string> = {
   html: 'HTML',
   json: 'JSON',
   image: '图片',
+  video: '视频',
   pdf: 'PDF',
   table: '表格',
   text: '文本',
@@ -70,7 +77,16 @@ const KIND_LABEL: Record<DocumentKind, string> = {
 const TEXT_KINDS: DocumentKind[] = ['markdown', 'html', 'json', 'table', 'text']
 
 /** 已提供文档组件的类型；Word / Excel / PPT 需要服务端解析，组件规划中 */
-const READY_KINDS: DocumentKind[] = ['markdown', 'html', 'json', 'table', 'text', 'image', 'pdf']
+const READY_KINDS: DocumentKind[] = [
+  'markdown',
+  'html',
+  'json',
+  'table',
+  'text',
+  'image',
+  'video',
+  'pdf',
+]
 
 /** 取文件名小写扩展名（无扩展名返回空串） */
 export function fileExtension(name: string): string {
@@ -89,6 +105,7 @@ function kindFromMime(mimeType: string): DocumentKind {
   const mime = (mimeType || '').toLowerCase()
   if (!mime) return 'binary'
   if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
   if (mime === 'application/pdf') return 'pdf'
   if (mime.includes('json')) return 'json'
   if (mime.includes('html')) return 'html'

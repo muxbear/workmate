@@ -225,4 +225,55 @@ describe('AgentManager', () => {
     await manager.setExperts([])
     expect(createDeepAgentMock.mock.calls.length).toBe(afterFirst + 1)
   })
+
+  it('P1-10: 专家 MCP 服务加载失败时回传告警（含专家名），供渲染层提示', async () => {
+    await manager.init('local')
+
+    const expert = {
+      id: 'expert-video',
+      name: '视频创作专家',
+      title: '视频创作专家',
+      tags: [],
+      desc: '',
+      color: '',
+      icon: '',
+      category: 'content_creation',
+      rating: 0,
+      users: '0',
+      initials: '视',
+      systemPrompt: '你是视频创作专家',
+      tools: [],
+      skills: [],
+      providerId: null,
+      modelId: null,
+      modelName: null,
+      modelType: null,
+      // 指向一个必然连不上的地址，触发 MCP 加载失败
+      mcpConfigs: [
+        {
+          mcpToolId: 'mcp-video',
+          mcpToolName: 'AI 视频生成',
+          transport: 'streamable_http',
+          url: '',
+          sseUrl: '',
+          streamableHttpUrl: 'http://127.0.0.1:59999/mcp/video-gen-http/mcp',
+          config: {},
+          enabled: true
+        }
+      ],
+      promptTemplate: '',
+      expertiseAreas: [],
+      isExpert: true
+    } as never
+
+    const result = await manager.setExperts([expert])
+    expect(result.mcpWarnings.length).toBeGreaterThan(0)
+    expect(result.mcpWarnings[0].toolName).toContain('视频创作专家')
+    expect(result.mcpWarnings[0].toolName).toContain('AI 视频生成')
+    expect(result.mcpWarnings[0].url).toContain('video-gen-http/mcp')
+
+    // 同一批专家复用已构建的 agent 时，告警仍应回传（否则用户只在第一轮看到提示）
+    const again = await manager.setExperts([expert])
+    expect(again.mcpWarnings).toHaveLength(result.mcpWarnings.length)
+  }, 30_000)
 })

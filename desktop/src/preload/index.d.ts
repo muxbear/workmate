@@ -8,6 +8,16 @@ export interface IpcResult<T> {
   error?: string
 }
 
+/** MCP 服务加载失败信息（专家能力静默缺失时用于提示用户） */
+export interface McpLoadFailure {
+  /** MCP 服务名（含专家名，便于定位） */
+  toolName: string
+  /** 服务地址 */
+  url: string
+  /** 失败原因 */
+  message: string
+}
+
 /** 输入消息部件：纯文本段或文件引用（路径；文件内容由主进程权威读取） */
 export interface MessageTextPart {
   type: 'text'
@@ -34,7 +44,7 @@ export interface DocArtifactFile {
 }
 
 /** 右侧栏文档预览类型（与工作空间文件打开组件映射一致） */
-export type ArtifactPreviewKind = 'text' | 'word' | 'pdf' | 'browser' | 'unsupported'
+export type ArtifactPreviewKind = 'text' | 'word' | 'pdf' | 'video' | 'browser' | 'unsupported'
 
 /** 主进程推送的文档产物元信息（agent:artifact-start 载荷） */
 export interface AgentArtifactMeta {
@@ -143,8 +153,8 @@ export interface AgentAPI {
   polishText(text: string): Promise<IpcResult<string>>
   /** 将远程图片 URL 解析为本地 ke-img:// 缓存地址（主进程下载并落盘；失败返回 error） */
   resolveRemoteImage(url: string): Promise<IpcResult<{ url: string }>>
-  /** 设置当前选中的专家为子智能体；调用完成后才可发送消息 */
-  setExperts(experts: DesktopExpert[]): Promise<IpcResult<null>>
+  /** 设置当前选中的专家为子智能体；返回本次（或上次）构建时 MCP 服务的加载失败信息 */
+  setExperts(experts: DesktopExpert[]): Promise<IpcResult<{ mcpWarnings: McpLoadFailure[] }>>
 }
 
 export interface AuthAPI {

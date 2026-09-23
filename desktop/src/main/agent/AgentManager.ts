@@ -7,7 +7,7 @@ import { AgentBuilder } from './AgentBuilder'
 import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
 import { createModelFromCredential, resolveDefaultModel, type ChatModel } from './ModelFactory'
 import { buildExpertTools, buildExpertSkills } from './tools/DesktopToolRegistry'
-import { buildExpertMcpTools } from './tools/McpToolRegistry'
+import { buildExpertMcpTools, type McpLoadFailure } from './tools/McpToolRegistry'
 
 /** 智能体生命周期管理（单例由调用方持有） */
 /** 将桌面版专家数据转换为 DeepAgents SubAgent 配置。 */
@@ -44,7 +44,8 @@ async function resolveExpertModel(
 
 async function expertToSubAgent(
   expert: DesktopExpert,
-  modelService?: ModelService
+  modelService?: ModelService,
+  onMcpError?: (failure: McpLoadFailure) => void
 ): Promise<SubAgent> {
   return {
     name: expert.name,
@@ -58,7 +59,7 @@ async function expertToSubAgent(
         expert.modelName,
         expert.capabilities ?? []
       ),
-      ...(await buildExpertMcpTools(expert.mcpConfigs))
+      ...(await buildExpertMcpTools(expert.mcpConfigs, { onError: onMcpError }))
     ],
     skills: buildExpertSkills(expert.skills)
   }
@@ -86,6 +87,8 @@ export class AgentManager {
   private skills: string[] = []
   private experts: DesktopExpert[] = []
   private expertMode: 'selected' | 'all' = 'selected'
+  /** 最近一次构建时的 MCP 加载失败信息（供调用方提示用户） */
+  private mcpWarnings: McpLoadFailure[] = []
   /** 专家集合签名（id 排序拼接）：集合未变化时复用已构建的 agent，避免每轮重建 */
   private expertSignature = ''
   private currentMode: WorkMode = 'local'
@@ -129,10 +132,18 @@ export class AgentManager {
     if (this.skills.length > 0 && mode === 'local') this.builder.setSkills(this.skills)
 
     if (this.experts.length > 0 && (this.expertMode === 'selected' || this.expertMode === 'all')) {
-      this.builder.setSubagents(
-        await Promise.all(this.experts.map((expert) => expertToSubAgent(expert, this.modelService)))
+      const failures: McpLoadFailure[] = []
+      const subagents = await Promise.all(
+        this.experts.map((expert) =>
+          expertToSubAgent(expert, this.modelService, (failure) => {
+            failures.push({ ...failure, toolName: `${expert.name} · ${failure.toolName}` })
+          })
+        )
       )
+      this.mcpWarnings = failures
+      this.builder.setSubagents(subagents)
     } else {
+      this.mcpWarnings = []
       this.builder.setSubagents([])
     }
 
@@ -212,8 +223,12 @@ export class AgentManager {
     return this
   }
 
-  /** 设置专家并重建 agent；调用方必须 await 后再发送消息。 */
-  async setExperts(experts: DesktopExpert[]): Promise<void> {
+  /**
+   * 设置专家并重建 agent；调用方必须 await 后再发送消息。
+   *
+   * @returns 本次（或上次构建）的 MCP 加载失败信息，供渲染层提示用户
+   */
+  async setExperts(experts: DesktopExpert[]): Promise<{ mcpWarnings: McpLoadFailure[] }> {
     const signature = experts
       .map((expert) => expert.id)
       .sort()
@@ -221,11 +236,12 @@ export class AgentManager {
     this.experts = experts
     if (signature === this.expertSignature && this.agent) {
       // 同一批专家（例如同一会话连续多轮对话）：跳过重建，省下 agent/checkpointer 重建开销
-      return
+      return { mcpWarnings: this.mcpWarnings }
     }
     if (!this.builder) throw new Error('AgentManager not initialized')
     this.expertSignature = signature
     this.initPromise = this.buildAgent(this.currentMode)
     await this.initPromise
+    return { mcpWarnings: this.mcpWarnings }
   }
 }

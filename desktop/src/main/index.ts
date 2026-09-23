@@ -810,8 +810,9 @@ app.whenReady().then(() => {
       if (!Array.isArray(experts)) {
         return { success: false, error: '参数错误' }
       }
-      await agentManager.setExperts(experts as DesktopExpert[])
-      return { success: true, data: null }
+      const result = await agentManager.setExperts(experts as DesktopExpert[])
+      // MCP 服务连不上时专家会静默失去能力（如视频生成），把告警回传渲染层提示用户
+      return { success: true, data: { mcpWarnings: result.mcpWarnings } }
     } catch (err) {
       console.error('[main] set experts failed:', err)
       const message = err instanceof Error ? err.message : String(err)

@@ -235,4 +235,67 @@ describe('invokeSendMessage（文档产物流事件）', () => {
     expect(send.mock.calls.some((c) => c[0] === 'agent:artifact-start')).toBe(false)
     expect(artifacts).toHaveLength(0)
   })
+
+  it('download_asset 落盘的成片登记为 video 产物（消息内可直接播放）', async () => {
+    // 成片由工具直接落盘、不经 write_file：以前不登记 → 对话里没有任何播放入口（方案 D-4）
+    async function* toolCalls() {
+      yield {
+        name: 'download_asset',
+        callId: 'call_dl',
+        input: { url: 'https://cdn.example.com/a.mp4', rel_path: '橘猫窗台打哈欠-3/成片-1.mp4' },
+        output: Promise.resolve(
+          JSON.stringify({
+            relPath: '橘猫窗台打哈欠-3/成片-1.mp4',
+            absPath: 'E:\\temp\\Ke-Work\\橘猫窗台打哈欠-3\\成片-1.mp4',
+            size: 1111878,
+            mime: 'video/mp4',
+            path: '橘猫窗台打哈欠-3/成片-1.mp4',
+            mime_type: 'video/mp4'
+          })
+        )
+      }
+    }
+    const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
+    const win = makeWin()
+    let artifacts: unknown[] = []
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1', workspace: { id: 'ws1', name: '空间' } },
+      undefined,
+      (list) => {
+        artifacts = list
+      }
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    const starts = send.mock.calls.filter((c) => c[0] === 'agent:artifact-start')
+    expect(starts).toHaveLength(1)
+    expect((starts[0][1] as { relPath: string }).relPath).toBe('橘猫窗台打哈欠-3/成片-1.mp4')
+    expect((starts[0][1] as { preview: string }).preview).toBe('video')
+    expect((artifacts[0] as { ext: string }).ext).toBe('mp4')
+  })
+
+  it('download_asset 落盘的非白名单文件不登记（如 .tmp）', async () => {
+    async function* toolCalls() {
+      yield {
+        name: 'download_asset',
+        callId: 'call_dl2',
+        input: { url: 'https://cdn.example.com/a.bin', rel_path: '缓存/临时.tmp' },
+        output: Promise.resolve(JSON.stringify({ relPath: '缓存/临时.tmp', mime: 'application/octet-stream' }))
+      }
+    }
+    const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
+    const win = makeWin()
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1' },
+      undefined,
+      () => {}
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    expect(send.mock.calls.some((c) => c[0] === 'agent:artifact-start')).toBe(false)
+  })
 })

@@ -125,6 +125,27 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * 从 `download_asset` 的工具输出里取保存路径。
+ *
+ * 该工具返回 JSON（`{ relPath, absPath, size, mime, path, mime_type }`）；
+ * 素材由工具直接落盘、不经过 write_file，因此必须从输出里登记，
+ * 否则成片不会出现在消息产物区（方案 D-4）。
+ */
+function assetRelPathFromOutput(output: unknown): string {
+  const text = contentToText(output).trim()
+  if (!text) return ''
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    const candidate = parsed.relPath ?? parsed.path ?? parsed.rel_path
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  } catch {
+    // 非纯 JSON：走下面的正则兜底
+  }
+  const matched = text.match(/"(?:relPath|path|rel_path)"\s*:\s*"([^"]+)"/)
+  return matched ? matched[1].trim() : ''
+}
+
 export async function invokeSendMessage(
   messages: BaseMessage[],
   win: BrowserWindow | null,
@@ -223,6 +244,18 @@ export async function invokeSendMessage(
         : null
       if (found) {
         await pushArtifact(found.artifact, content, call.output as Promise<unknown> | undefined)
+      }
+      return
+    }
+    if (call.name === 'download_asset') {
+      // 素材（配图 / 成片）由工具直接落盘，不经 write_file：从工具输出登记为消息产物
+      const output = await Promise.resolve(call.output).catch(() => undefined)
+      const relPath = assetRelPathFromOutput(output)
+      const found = relPath
+        ? docArtifactFromWriteInput(relPath, config.workspace?.id ?? null)
+        : null
+      if (found) {
+        await pushArtifact(found.artifact, '', undefined)
       }
       return
     }

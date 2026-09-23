@@ -54,12 +54,13 @@ export function buildExpertTools(
       new DynamicStructuredTool({
         name: 'download_asset',
         description:
-          '把远程图片（如 AI 生成配图返回的临时地址）下载到工作区交付目录，返回保存路径、大小与类型。',
+          '把远程素材（AI 生成服务返回的图片或视频临时地址）下载到工作区交付目录，' +
+          '返回保存路径、大小与类型。图片与视频共用本工具，不要用 shell 命令下载素材。',
         schema: z.object({
-          url: z.string().describe('图片地址（http/https）'),
+          url: z.string().describe('素材地址（http/https）'),
           rel_path: z
             .string()
-            .describe('相对交付目录的保存路径，如 文章标题/figure-1.png')
+            .describe('相对交付目录的保存路径，如 文章标题/figure-1.png、视频标题/成片-1.mp4')
         }),
         func: async ({ url, rel_path }, _runManager, config) => {
           const workspaceDir = resolveWorkspaceDir(config)

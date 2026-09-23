@@ -1,5 +1,11 @@
 import { onScopeDispose, ref, watch, type Ref } from 'vue'
-import { fetchArtifactObjectUrl } from '@/services/artifactApi'
+import {
+  artifactCacheKey as cacheKey,
+  loadArtifactObjectUrl as load,
+  releaseArtifactObjectUrl as release,
+  retainArtifactObjectUrl as retain,
+  syncArtifactObjectRefs,
+} from '@/utils/artifactObjectCache'
 import {
   extractImageSources,
   resolveArtifactImage,
@@ -11,59 +17,13 @@ import {
  *
  * 产物下载接口需要 Bearer 鉴权，而浏览器 <img> 无法携带 Authorization 头，
  * 直接渲染产物地址会 401 裂图（消息气泡与右侧预览都会命中）。这里统一改为
- * 「带鉴权拉取字节 → 生成 blob 对象地址 → 渲染时替换」，并在同一会话内共享缓存。
+ * 「带鉴权拉取字节 → 生成 blob 对象地址 → 渲染时替换」，并在同一会话内共享缓存
+ * （缓存实现见 `@/utils/artifactObjectCache`，与成片加载共用）。
  */
 
 /** 鉴权图片就绪前的占位图（1×1 透明），避免闪现裂图 */
 export const PENDING_IMAGE_PLACEHOLDER =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-
-/** 已就绪的产物图片对象地址（跨组件共享，避免气泡与预览重复下载） */
-const objectUrls = new Map<string, string>()
-/** 进行中的拉取（并发去重） */
-const inflight = new Map<string, Promise<string | null>>()
-/** 引用计数：最后一个使用者卸载时释放对象地址 */
-const holders = new Map<string, number>()
-
-function cacheKey(threadId: string, path: string): string {
-  return threadId + '::' + path
-}
-
-function retain(key: string): void {
-  holders.set(key, (holders.get(key) ?? 0) + 1)
-}
-
-function release(key: string): void {
-  const next = (holders.get(key) ?? 0) - 1
-  if (next > 0) {
-    holders.set(key, next)
-    return
-  }
-  holders.delete(key)
-  const url = objectUrls.get(key)
-  if (url) {
-    URL.revokeObjectURL(url)
-    objectUrls.delete(key)
-  }
-}
-
-function load(key: string, threadId: string, path: string): Promise<string | null> {
-  const cached = objectUrls.get(key)
-  if (cached) return Promise.resolve(cached)
-  const running = inflight.get(key)
-  if (running) return running
-  const task = fetchArtifactObjectUrl(threadId, path)
-    .then((url) => {
-      if (url) objectUrls.set(key, url)
-      return url
-    })
-    .catch(() => null)
-    .finally(() => {
-      inflight.delete(key)
-    })
-  inflight.set(key, task)
-  return task
-}
 
 /** 配图加载句柄：给自定义 Markdown 渲染器使用 */
 export interface ArtifactImages {
@@ -106,13 +66,7 @@ export function useArtifactImages(
 
     // 依赖变化时同步引用计数：不再需要的地址及时释放
     const keys = new Set(Array.from(targets.values(), (item) => item.key))
-    for (const key of active) {
-      if (!keys.has(key)) release(key)
-    }
-    for (const key of keys) {
-      if (!active.has(key)) retain(key)
-    }
-    active = keys
+    active = syncArtifactObjectRefs(active, keys)
 
     if (targets.size === 0) {
       if (!disposed) {
