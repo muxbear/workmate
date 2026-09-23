@@ -1,5 +1,7 @@
-/** 模型类型 */
-export type ModelType =
+import { ref } from 'vue'
+
+/** 内置的已知模型类型（用于配色/图标的默认值） */
+export type KnownModelType =
   | 'llm'
   | 'vision'
   | 'audio'
@@ -9,6 +11,20 @@ export type ModelType =
   | 'speech'
   | 'multimodal'
   | 'rerank'
+
+/**
+ * 模型类型。
+ *
+ * 可选值由「参数配置」页面的 `model_type` 分组下发，管理员可增删改任意编码，
+ * 因此这里保留已知类型的自动补全，同时允许任意字符串（`string & {}`）。
+ */
+export type ModelType = KnownModelType | (string & {})
+
+/** 「参数配置」页面下发的模型类型选项 */
+export interface ModelTypeOption {
+  value: string
+  label: string
+}
 
 /** 模型状态 */
 export type ModelStatus = 'active' | 'beta' | 'deprecated' | 'inactive'
@@ -36,6 +52,16 @@ export interface AIModel {
   type: ModelType
   status: ModelStatus
   contextWindow?: number
+  /** 最大输入长度（tokens，单次提示上限） */
+  maxInputTokens?: number
+  /** 最大输出长度（tokens，生成上限） */
+  maxOutputTokens?: number
+  /** 每分钟请求数上限 */
+  rpm?: number
+  /** 每分钟 token 上限 */
+  tpm?: number
+  /** 模型级 API 地址覆盖；为空时继承提供商的 apiBase */
+  apiBase?: string
   callCount: number
   params: ModelParam[]
   description: string
@@ -61,11 +87,17 @@ export interface Provider {
   sortOrder?: number
 }
 
-/** 模型类型元数据 */
-export const MODEL_TYPE_META: Record<
-  ModelType,
-  { label: string; color: string; bg: string; border: string; emoji: string }
-> = {
+/** 模型类型元数据（配色/图标） */
+export interface ModelTypeMeta {
+  label: string
+  color: string
+  bg: string
+  border: string
+  emoji: string
+}
+
+/** 内置类型的配色与图标；展示名会被「参数配置」下发的标签覆盖 */
+export const MODEL_TYPE_META: Record<KnownModelType, ModelTypeMeta> = {
   llm: {
     label: '大语言模型',
     color: '#a5b4fc',
@@ -129,6 +161,52 @@ export const MODEL_TYPE_META: Record<
     border: 'rgba(239,68,68,0.25)',
     emoji: '📊',
   },
+}
+
+/** 未登记类型的兜底样式——保证管理员自定义类型不会让界面取到 undefined */
+const FALLBACK_TYPE_META: ModelTypeMeta = {
+  label: '未知类型',
+  color: '#cbd5e1',
+  bg: 'rgba(148,163,184,0.1)',
+  border: 'rgba(148,163,184,0.25)',
+  emoji: '🧩',
+}
+
+/**
+ * 「参数配置」下发的类型标签（覆盖内置展示名）。
+ *
+ * 用 ref 而非普通 Map：模板里大量通过 getModelTypeMeta() 取标签，若容器不是
+ * 响应式的，标签晚于模型列表到达时界面不会刷新。
+ */
+const runtimeTypeLabels = ref<Record<string, string>>({})
+
+/**
+ * 记录「参数配置」下发的模型类型选项。
+ *
+ * 只需登记标签：配色与图标仍按内置表取，未登记的类型走兜底样式。
+ */
+export function registerModelTypeOptions(options: ModelTypeOption[]): void {
+  const next: Record<string, string> = {}
+  for (const option of options) {
+    if (option?.value) next[option.value] = option.label || option.value
+  }
+  runtimeTypeLabels.value = next
+}
+
+/**
+ * 安全取模型类型元数据。
+ *
+ * 类型可选值来自「参数配置」，因此 `MODEL_TYPE_META[type]` 这种直接索引在
+ * 管理员新增类型时会返回 undefined 并在模板里崩掉（`.bg` of undefined）。
+ * 所有需要展示类型标签/配色的地方都应改用本函数。
+ */
+export function getModelTypeMeta(type: string | undefined | null): ModelTypeMeta {
+  const code = (type || '').trim()
+  const builtin = code ? (MODEL_TYPE_META as Record<string, ModelTypeMeta>)[code] : undefined
+  const label = code ? runtimeTypeLabels.value[code] : undefined
+
+  if (builtin) return label ? { ...builtin, label } : builtin
+  return { ...FALLBACK_TYPE_META, label: label || code || FALLBACK_TYPE_META.label }
 }
 
 /** 提供商状态元数据 */

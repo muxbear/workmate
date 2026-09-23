@@ -25,6 +25,23 @@ class AIModel(Base):
     type: Mapped[str] = mapped_column(String(16), nullable=False, comment="模型类型: llm, vision, audio, video, embedding, image-gen, speech, rerank")
     status: Mapped[str] = mapped_column(String(16), default="active", comment="模型状态: active, beta, deprecated")
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="上下文窗口大小（tokens）")
+    max_input_tokens: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="最大输入长度（tokens，单次提示上限）"
+    )
+    max_output_tokens: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="最大输出长度（tokens，生成上限）"
+    )
+    rpm: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="每分钟请求数上限（RPM）"
+    )
+    tpm: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="每分钟 token 上限（TPM）"
+    )
+    api_base: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        comment="模型级 API 地址覆盖；为空时继承提供商的 api_base",
+    )
     call_count: Mapped[int] = mapped_column(Integer, default=0, comment="调用次数")
     description: Mapped[str] = mapped_column(Text, default="", comment="描述")
     release_date: Mapped[str | None] = mapped_column(String(16), nullable=True, comment="发布日期（如 2024-05）")

@@ -30,6 +30,7 @@ declare module 'vue' {
     DataScopeSelector: typeof import('./src/components/admin/DataScopeSelector.vue')['default']
     DepartmentTreeNode: typeof import('./src/components/admin/DepartmentTreeNode.vue')['default']
     DocumentViewer: typeof import('./src/components/chat/DocumentViewer.vue')['default']
+    ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCard: typeof import('element-plus/es')['ElCard']

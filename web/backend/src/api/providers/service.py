@@ -56,6 +56,11 @@ def _model_to_response(m: AIModel) -> ModelResponse:
         type=m.type,
         status=m.status,
         context_window=m.context_window,
+        max_input_tokens=m.max_input_tokens,
+        max_output_tokens=m.max_output_tokens,
+        rpm=m.rpm,
+        tpm=m.tpm,
+        api_base=m.api_base,
         call_count=m.call_count,
         description=m.description,
         release_date=m.release_date,
@@ -246,6 +251,11 @@ async def create_model(
         type=req.type,
         status=req.status,
         context_window=req.context_window,
+        max_input_tokens=req.max_input_tokens,
+        max_output_tokens=req.max_output_tokens,
+        rpm=req.rpm,
+        tpm=req.tpm,
+        api_base=(req.api_base or "").strip() or None,
         description=req.description,
         release_date=req.release_date,
         params=[p.model_dump() for p in req.params],
@@ -269,6 +279,11 @@ async def update_model(
     model.type = req.type
     model.status = req.status
     model.context_window = req.context_window
+    model.max_input_tokens = req.max_input_tokens
+    model.max_output_tokens = req.max_output_tokens
+    model.rpm = req.rpm
+    model.tpm = req.tpm
+    model.api_base = (req.api_base or "").strip() or None
     model.call_count = req.call_count
     model.description = req.description
     model.release_date = req.release_date
@@ -310,6 +325,13 @@ async def clone_model(
         type=original.type,
         status=original.status,
         context_window=original.context_window,
+        # 规格字段属于模型固有属性，克隆必须一并继承，否则副本会静默丢掉
+        # 长度上限、限流额度与 API_BASE 覆盖。
+        max_input_tokens=original.max_input_tokens,
+        max_output_tokens=original.max_output_tokens,
+        rpm=original.rpm,
+        tpm=original.tpm,
+        api_base=original.api_base,
         call_count=0,
         description=original.description,
         release_date=original.release_date,

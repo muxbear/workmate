@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOOKUP_LIMIT = 50
 
 
+def effective_api_base(model: AIModel, provider: Provider) -> str:
+    """取模型实际应使用的 API 地址——模型级覆盖优先，为空时继承提供商。
+
+    「模型」页面允许为单个模型单独填写 API_BASE（同一提供商下不同模型走不同
+    网关/地域时使用）。所有构造客户端的调用方都应经由此函数取地址，否则该
+    字段会退化成「界面能填但不生效」的假配置。
+    """
+    return (model.api_base or "").strip() or (provider.api_base or "").strip()
+
+
 async def select_usable_models(
     db: AsyncSession,
     *,
@@ -40,8 +50,9 @@ async def select_usable_models(
     """按「模型」页面的配置取用可用模型行。.
 
     排序规则为「显式默认优先 → 提供商顺序 → 模型顺序 → 创建时间」；
-    提供商缺 ``api_base``、``api_key`` 解密失败或为空的行会被跳过并记日志，
-    因此返回的每一项都保证可直接用于构造 LLM / Embedding 客户端。
+    地址与密钥均缺失（``effective_api_base`` 为空、``api_key`` 解密失败或为空）
+    的行会被跳过并记日志，因此返回的每一项都保证可直接用于构造 LLM / Embedding
+    客户端。
 
     Args:
         db: 数据库会话。
@@ -54,6 +65,7 @@ async def select_usable_models(
 
     Returns:
         ``(model, provider, api_key)`` 列表，``api_key`` 为已解密的明文。
+        取地址请用 :func:`effective_api_base`。
     """
     conditions = [AIModel.type.in_(tuple(types)), AIModel.status == status]
     if model_name:
@@ -83,7 +95,7 @@ async def select_usable_models(
 
     rows: list[tuple[AIModel, Provider, str]] = []
     for model, provider in (await db.execute(stmt)).all():
-        if not (provider.api_base or "").strip():
+        if not effective_api_base(model, provider):
             continue
         try:
             api_key = decrypt_api_key(provider.api_key)

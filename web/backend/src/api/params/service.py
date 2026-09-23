@@ -22,6 +22,92 @@ GROUP_TYPE = "group"
 PARENTS_SCOPE = "parents"
 CHILDREN_SCOPE = "children"
 
+# ── 模型类型参数分组 ──────────────────────────────────────────────────────────
+# 「模型」页面添加模型时的「模型类型」下拉，取值来自本分组的子参数：
+#   param_value = 类型编码（写入 ai_models.type）
+#   param_label = 下拉中展示的名称
+# 管理员可在「参数配置」页面自由增删改，模型页面即时生效。
+MODEL_TYPE_PARENT_CODE = "model_type"
+
+#: 首次启动时的默认模型类型（仅在该分组不存在时写入，之后不再覆盖管理员的改动）
+DEFAULT_MODEL_TYPES: list[tuple[str, str]] = [
+    ("llm", "大语言模型"),
+    ("vision", "视觉模型"),
+    ("audio", "音频模型"),
+    ("video", "视频模型"),
+    ("embedding", "向量模型"),
+    ("image-gen", "图像生成"),
+    ("speech", "语音合成"),
+    ("multimodal", "多模态"),
+    ("rerank", "重排序模型"),
+]
+
+
+async def seed_builtin_params(db: AsyncSession) -> None:
+    """初始化内置参数分组（幂等）。
+
+    仅在分组缺失时创建默认项：分组一旦存在就不再补写，避免把管理员删掉的
+    类型又"复活"。需要一个「已存在则补齐」的语义时应显式调用 backfill，
+    而不是放宽这里的条件。
+    """
+    if await _get_by_code(db, MODEL_TYPE_PARENT_CODE) is not None:
+        return
+
+    db.add(
+        SystemParam(
+            param_code=MODEL_TYPE_PARENT_CODE,
+            parent_code=None,
+            param_label="模型类型",
+            param_name="model_type",
+            param_value=None,
+            param_type=GROUP_TYPE,
+            description="「模型」页面添加模型时可选用的模型类型（值写入模型的 type 字段）",
+            sort_order=0,
+        )
+    )
+    for index, (code, label) in enumerate(DEFAULT_MODEL_TYPES, start=1):
+        db.add(
+            SystemParam(
+                param_code=f"{MODEL_TYPE_PARENT_CODE}_{code.replace('-', '_')}",
+                parent_code=MODEL_TYPE_PARENT_CODE,
+                param_label=label,
+                param_name=code,
+                param_value=code,
+                param_type="string",
+                description=f"{label}（{code}）",
+                sort_order=index,
+            )
+        )
+    logger.info("已初始化模型类型参数分组（%d 项）", len(DEFAULT_MODEL_TYPES))
+
+
+async def list_model_types(db: AsyncSession) -> list[dict[str, str]]:
+    """读取可选的模型类型，供「模型」页面渲染下拉。
+
+    分组未配置或未填写任何有效值时回退到 :data:`DEFAULT_MODEL_TYPES`，
+    保证模型页面始终可用（不因管理员清空配置而变成空下拉）。
+
+    Returns:
+        ``[{"value": 类型编码, "label": 展示名}, ...]``，按分组内排序。
+    """
+    result = await db.execute(
+        select(SystemParam)
+        .where(SystemParam.parent_code == MODEL_TYPE_PARENT_CODE)
+        .order_by(SystemParam.sort_order, SystemParam.created_at)
+    )
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in result.scalars().all():
+        code = (row.param_value or row.param_name or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        options.append({"value": code, "label": (row.param_label or code).strip()})
+
+    if not options:
+        return [{"value": code, "label": label} for code, label in DEFAULT_MODEL_TYPES]
+    return options
+
 
 async def _get_by_id(db: AsyncSession, param_id: str) -> SystemParam | None:
     """Get a parameter row by id."""

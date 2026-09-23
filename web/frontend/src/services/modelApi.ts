@@ -2,7 +2,7 @@
  * Model API — 模型管理接口
  */
 import instance from './request'
-import type { Provider, AIModel, ModelParam } from '@/types/model'
+import type { Provider, AIModel, ModelParam, ModelTypeOption } from '@/types/model'
 
 /* ------------------------------------------------------------------ */
 /*  snake_case ↔ camelCase 转换                                       */
@@ -29,6 +29,11 @@ function toModel(raw: Record<string, unknown>): AIModel {
     type: raw.type as AIModel['type'],
     status: raw.status as AIModel['status'],
     contextWindow: raw.context_window as number | undefined,
+    maxInputTokens: raw.max_input_tokens as number | undefined,
+    maxOutputTokens: raw.max_output_tokens as number | undefined,
+    rpm: raw.rpm as number | undefined,
+    tpm: raw.tpm as number | undefined,
+    apiBase: (raw.api_base as string) ?? undefined,
     callCount: (raw.call_count as number) ?? 0,
     params: ((raw.params as Record<string, unknown>[]) ?? []).map(toModelParam),
     description: (raw.description as string) ?? '',
@@ -62,6 +67,11 @@ function toModelPayload(data: AIModel): Record<string, unknown> {
     type: data.type,
     status: data.status,
     context_window: data.contextWindow ?? null,
+    max_input_tokens: data.maxInputTokens ?? null,
+    max_output_tokens: data.maxOutputTokens ?? null,
+    rpm: data.rpm ?? null,
+    tpm: data.tpm ?? null,
+    api_base: data.apiBase?.trim() ? data.apiBase.trim() : null,
     call_count: data.callCount,
     description: data.description,
     release_date: data.releaseDate ?? null,
@@ -90,6 +100,20 @@ function toProviderPayload(data: Provider): Record<string, unknown> {
 export async function fetchProviders(): Promise<Provider[]> {
   const res = await instance.get('/providers')
   return (res.data.data as Record<string, unknown>[]).map(toProvider)
+}
+
+/**
+ * 获取可选的模型类型。
+ *
+ * 取值来自「参数配置」页面的 `model_type` 分组；后端在未配置时回退到内置列表，
+ * 因此这里不会返回空数组。
+ */
+export async function fetchModelTypes(): Promise<ModelTypeOption[]> {
+  const res = await instance.get('/providers/model-types')
+  return ((res.data.data as Record<string, unknown>[]) ?? []).map((raw) => ({
+    value: String(raw.value ?? ''),
+    label: String(raw.label ?? raw.value ?? ''),
+  }))
 }
 
 export async function createProvider(data: Provider): Promise<Provider> {

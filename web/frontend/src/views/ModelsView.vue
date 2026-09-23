@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus,
@@ -26,7 +26,7 @@ import {
 } from 'lucide-vue-next'
 import { useModelStore } from '@/stores/model'
 import type { Provider, AIModel, ModelType, ModelStatus, ModelParam } from '@/types/model'
-import { MODEL_TYPE_META, MODEL_STATUS_META } from '@/types/model'
+import { MODEL_TYPE_META, MODEL_STATUS_META, getModelTypeMeta } from '@/types/model'
 
 const store = useModelStore()
 
@@ -118,17 +118,57 @@ const modelForm = ref({
   type: 'llm' as ModelType,
   status: 'active' as ModelStatus,
   contextWindow: undefined as number | undefined,
+  maxInputTokens: undefined as number | undefined,
+  maxOutputTokens: undefined as number | undefined,
+  rpm: undefined as number | undefined,
+  tpm: undefined as number | undefined,
+  apiBase: '',
   description: '',
   params: [] as ModelParam[],
 })
+
+/**
+ * 可选的模型类型——来自「参数配置」页面的 model_type 分组。
+ *
+ * 若正在编辑的模型使用了已被管理员从配置中删除的类型，则临时把它补进选项：
+ * 否则下拉会失配成空白，用户保存时会静默把类型改掉。
+ */
+const modelTypeOptions = computed(() => {
+  const options =
+    store.modelTypes.length > 0
+      ? [...store.modelTypes]
+      : Object.keys(MODEL_TYPE_META).map((value) => ({
+          value,
+          label: getModelTypeMeta(value).label,
+        }))
+
+  const current = modelForm.value.type
+  if (current && !options.some((opt) => opt.value === current)) {
+    options.push({ value: current, label: getModelTypeMeta(current).label })
+  }
+  return options
+})
+
+/** 数字输入框的取值处理：留空 => undefined（后端存 NULL） */
+function toOptionalNumber(value: string): number | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
 
 function openNewModel() {
   modelForm.value = {
     displayName: '',
     name: '',
-    type: 'llm',
+    type: (modelTypeOptions.value[0]?.value ?? 'llm') as ModelType,
     status: 'active',
     contextWindow: undefined,
+    maxInputTokens: undefined,
+    maxOutputTokens: undefined,
+    rpm: undefined,
+    tpm: undefined,
+    apiBase: '',
     description: '',
     params: [
       {
@@ -161,6 +201,11 @@ function openEditModel(m: AIModel) {
     type: m.type,
     status: m.status,
     contextWindow: m.contextWindow,
+    maxInputTokens: m.maxInputTokens,
+    maxOutputTokens: m.maxOutputTokens,
+    rpm: m.rpm,
+    tpm: m.tpm,
+    apiBase: m.apiBase ?? '',
     description: m.description,
     params: m.params.map((p) => ({ ...p })),
   }
@@ -178,6 +223,11 @@ async function handleSaveModel() {
       // 默认模型标记由后端「设为默认」接口维护，这里只是保持类型完整。
       isDefault: editingModel.value?.isDefault ?? false,
       contextWindow: modelForm.value.contextWindow,
+      maxInputTokens: modelForm.value.maxInputTokens,
+      maxOutputTokens: modelForm.value.maxOutputTokens,
+      rpm: modelForm.value.rpm,
+      tpm: modelForm.value.tpm,
+      apiBase: modelForm.value.apiBase.trim(),
     }
     await store.saveModel(store.selectedProvider.id, data)
     ElMessage.success(editingModel.value ? '模型已更新' : '模型已添加')
@@ -683,15 +733,15 @@ onMounted(() => {
         :style="
           store.modelTypeFilter === type
             ? {
-                background: MODEL_TYPE_META[type].bg,
-                borderColor: MODEL_TYPE_META[type].border,
-                color: MODEL_TYPE_META[type].color,
+                background: getModelTypeMeta(type).bg,
+                borderColor: getModelTypeMeta(type).border,
+                color: getModelTypeMeta(type).color,
               }
             : {}
         "
         @click="store.modelTypeFilter = store.modelTypeFilter === type ? 'all' : type"
       >
-        {{ MODEL_TYPE_META[type].emoji }} {{ MODEL_TYPE_META[type].label }}
+        {{ getModelTypeMeta(type).emoji }} {{ getModelTypeMeta(type).label }}
         <span class="stat-chip-value">{{ count }}</span>
       </button>
     </div>
@@ -811,12 +861,12 @@ onMounted(() => {
                 :class="{ active: store.modelTypeFilter === type }"
                 :style="
                   store.modelTypeFilter === type
-                    ? { background: MODEL_TYPE_META[type].bg, color: MODEL_TYPE_META[type].color }
+                    ? { background: getModelTypeMeta(type).bg, color: getModelTypeMeta(type).color }
                     : {}
                 "
                 @click="store.modelTypeFilter = store.modelTypeFilter === type ? 'all' : type"
               >
-                {{ MODEL_TYPE_META[type].emoji }} {{ MODEL_TYPE_META[type].label }}
+                {{ getModelTypeMeta(type).emoji }} {{ getModelTypeMeta(type).label }}
               </button>
             </div>
             <button class="btn-add-model" @click="openNewModel">
@@ -876,12 +926,12 @@ onMounted(() => {
               <span
                 class="model-type-badge"
                 :style="{
-                  color: MODEL_TYPE_META[m.type].color,
-                  background: MODEL_TYPE_META[m.type].bg,
-                  borderColor: MODEL_TYPE_META[m.type].border,
+                  color: getModelTypeMeta(m.type).color,
+                  background: getModelTypeMeta(m.type).bg,
+                  borderColor: getModelTypeMeta(m.type).border,
                 }"
               >
-                {{ MODEL_TYPE_META[m.type].emoji }} {{ MODEL_TYPE_META[m.type].label }}
+                {{ getModelTypeMeta(m.type).emoji }} {{ getModelTypeMeta(m.type).label }}
               </span>
               <span class="model-ctx">{{ formatContext(m.contextWindow) }}</span>
               <span
@@ -1115,8 +1165,8 @@ onMounted(() => {
                 <div class="form-group">
                   <label class="form-label">模型类型</label>
                   <select v-model="modelForm.type" class="form-select">
-                    <option v-for="(meta, t) in MODEL_TYPE_META" :key="t" :value="t">
-                      {{ meta.emoji }} {{ meta.label }}
+                    <option v-for="opt in modelTypeOptions" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
                     </option>
                   </select>
                 </div>
@@ -1132,16 +1182,92 @@ onMounted(() => {
                   <label class="form-label">上下文窗口</label>
                   <input
                     type="number"
+                    min="0"
                     :value="modelForm.contextWindow"
                     @input="
-                      modelForm.contextWindow = ($event.target as HTMLInputElement).value
-                        ? Number(($event.target as HTMLInputElement).value)
-                        : undefined
+                      modelForm.contextWindow = toOptionalNumber(
+                        ($event.target as HTMLInputElement).value,
+                      )
                     "
                     placeholder="128000"
                     class="form-input"
                   />
                 </div>
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label class="form-label">最大输入长度</label>
+                  <input
+                    type="number"
+                    min="0"
+                    :value="modelForm.maxInputTokens"
+                    @input="
+                      modelForm.maxInputTokens = toOptionalNumber(
+                        ($event.target as HTMLInputElement).value,
+                      )
+                    "
+                    placeholder="单次提示上限（tokens，选填）"
+                    class="form-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">最大输出长度</label>
+                  <input
+                    type="number"
+                    min="0"
+                    :value="modelForm.maxOutputTokens"
+                    @input="
+                      modelForm.maxOutputTokens = toOptionalNumber(
+                        ($event.target as HTMLInputElement).value,
+                      )
+                    "
+                    placeholder="生成上限（tokens，选填）"
+                    class="form-input"
+                  />
+                </div>
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label class="form-label">RPM</label>
+                  <input
+                    type="number"
+                    min="0"
+                    :value="modelForm.rpm"
+                    @input="
+                      modelForm.rpm = toOptionalNumber(
+                        ($event.target as HTMLInputElement).value,
+                      )
+                    "
+                    placeholder="每分钟请求数（选填）"
+                    class="form-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">TPM</label>
+                  <input
+                    type="number"
+                    min="0"
+                    :value="modelForm.tpm"
+                    @input="
+                      modelForm.tpm = toOptionalNumber(
+                        ($event.target as HTMLInputElement).value,
+                      )
+                    "
+                    placeholder="每分钟 token 数（选填）"
+                    class="form-input"
+                  />
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">API_BASE</label>
+                <input
+                  v-model="modelForm.apiBase"
+                  placeholder="留空则继承提供商的 API 地址"
+                  class="form-input form-input--mono"
+                />
+                <p class="form-hint">
+                  同一提供商下不同模型走不同网关时填写；留空即使用提供商的地址。
+                </p>
               </div>
               <div class="form-group">
                 <label class="form-label">描述</label>
@@ -1219,13 +1345,13 @@ onMounted(() => {
               <span
                 class="drawer-type-badge"
                 :style="{
-                  color: MODEL_TYPE_META[viewingModel.type].color,
-                  background: MODEL_TYPE_META[viewingModel.type].bg,
-                  borderColor: MODEL_TYPE_META[viewingModel.type].border,
+                  color: getModelTypeMeta(viewingModel.type).color,
+                  background: getModelTypeMeta(viewingModel.type).bg,
+                  borderColor: getModelTypeMeta(viewingModel.type).border,
                 }"
               >
-                {{ MODEL_TYPE_META[viewingModel.type].emoji }}
-                {{ MODEL_TYPE_META[viewingModel.type].label }}
+                {{ getModelTypeMeta(viewingModel.type).emoji }}
+                {{ getModelTypeMeta(viewingModel.type).label }}
               </span>
             </div>
             <button class="modal-close" @click="viewingModel = null">
@@ -1244,6 +1370,30 @@ onMounted(() => {
                 <span class="drawer-value"
                   >{{ formatContext(viewingModel.contextWindow) }} tokens</span
                 >
+              </div>
+              <div v-if="viewingModel.maxInputTokens" class="drawer-info-row">
+                <span class="drawer-label">最大输入长度</span>
+                <span class="drawer-value"
+                  >{{ formatContext(viewingModel.maxInputTokens) }} tokens</span
+                >
+              </div>
+              <div v-if="viewingModel.maxOutputTokens" class="drawer-info-row">
+                <span class="drawer-label">最大输出长度</span>
+                <span class="drawer-value"
+                  >{{ formatContext(viewingModel.maxOutputTokens) }} tokens</span
+                >
+              </div>
+              <div v-if="viewingModel.rpm" class="drawer-info-row">
+                <span class="drawer-label">RPM</span>
+                <span class="drawer-value">{{ viewingModel.rpm.toLocaleString() }} 次/分钟</span>
+              </div>
+              <div v-if="viewingModel.tpm" class="drawer-info-row">
+                <span class="drawer-label">TPM</span>
+                <span class="drawer-value">{{ viewingModel.tpm.toLocaleString() }} tokens/分钟</span>
+              </div>
+              <div v-if="viewingModel.apiBase" class="drawer-info-row">
+                <span class="drawer-label">API_BASE</span>
+                <span class="drawer-value drawer-value--mono">{{ viewingModel.apiBase }}</span>
               </div>
               <div class="drawer-info-row">
                 <span class="drawer-label">系统调用总次数</span>
@@ -2193,6 +2343,13 @@ onMounted(() => {
 
 .form-input::placeholder {
   color: var(--foreground-muted);
+}
+
+.form-hint {
+  margin: 4px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+  line-height: 1.5;
 }
 .form-input:focus {
   border-color: var(--color-accent);

@@ -207,6 +207,141 @@ async def test_reorder_models_invalidates_graph(seeded: AsyncSession, _no_graph_
 # ---- 禁用模型时清理默认标记 ----
 
 
+# ---- 模型规格字段（最大输入/输出、RPM/TPM、API_BASE）----
+
+
+def _create_req(**overrides) -> ModelCreateRequest:
+    payload = {
+        "name": "spec-model",
+        "display_name": "Spec Model",
+        "type": "llm",
+    }
+    payload.update(overrides)
+    return ModelCreateRequest(**payload)
+
+
+async def test_create_model_persists_spec_fields(seeded: AsyncSession):
+    """可选的规格字段应完整落库并回传。"""
+    created = await create_model(
+        seeded,
+        "p1",
+        _create_req(
+            max_input_tokens=120000,
+            max_output_tokens=16000,
+            rpm=500,
+            tpm=200000,
+            api_base="https://model.example.com/v1",
+        ),
+        user_id="u1",
+    )
+
+    assert created.max_input_tokens == 120000
+    assert created.max_output_tokens == 16000
+    assert created.rpm == 500
+    assert created.tpm == 200000
+    assert created.api_base == "https://model.example.com/v1"
+
+    row = (
+        await seeded.execute(select(AIModel).where(AIModel.id == created.id))
+    ).scalar_one()
+    assert row.max_input_tokens == 120000
+    assert row.max_output_tokens == 16000
+    assert row.rpm == 500
+    assert row.tpm == 200000
+
+
+async def test_create_model_spec_fields_are_optional(seeded: AsyncSession):
+    """全部留空时不为 NULL 报错，保持未声明语义。"""
+    created = await create_model(seeded, "p1", _create_req(), user_id="u1")
+
+    assert created.max_input_tokens is None
+    assert created.max_output_tokens is None
+    assert created.rpm is None
+    assert created.tpm is None
+    assert created.api_base is None
+
+
+async def test_blank_api_base_is_stored_as_none(seeded: AsyncSession):
+    """空白 api_base 统一存 NULL，避免「空串也算覆盖」把提供商地址顶掉。"""
+    created = await create_model(seeded, "p1", _create_req(api_base="   "), user_id="u1")
+
+    assert created.api_base is None
+
+
+async def test_context_window_preserved_alongside_max_input(seeded: AsyncSession):
+    """上下文窗口与最大输入长度是两个独立字段，互不覆盖。"""
+    created = await create_model(
+        seeded,
+        "p1",
+        _create_req(context_window=128000, max_input_tokens=96000),
+        user_id="u1",
+    )
+
+    assert created.context_window == 128000
+    assert created.max_input_tokens == 96000
+
+
+async def test_negative_spec_values_rejected(seeded: AsyncSession):
+    """负值非法：RPM/TPM/长度都应为非负。"""
+    with pytest.raises(ValueError):
+        _create_req(rpm=-1)
+
+    with pytest.raises(ValueError):
+        _create_req(max_output_tokens=-5)
+
+
+async def test_clone_copies_spec_fields(seeded: AsyncSession):
+    """克隆必须继承规格字段，否则副本丢上限/额度/地址覆盖。"""
+    created = await create_model(
+        seeded,
+        "p1",
+        _create_req(
+            max_input_tokens=96000,
+            max_output_tokens=8000,
+            rpm=100,
+            tpm=50000,
+            api_base="https://model.example.com/v1",
+        ),
+        user_id="u1",
+    )
+
+    cloned = await clone_model(seeded, "p1", created.id, user_id="u1")
+
+    assert cloned.max_input_tokens == 96000
+    assert cloned.max_output_tokens == 8000
+    assert cloned.rpm == 100
+    assert cloned.tpm == 50000
+    assert cloned.api_base == "https://model.example.com/v1"
+    assert cloned.name.endswith("-clone")
+
+
+async def test_update_model_replaces_spec_fields(seeded: AsyncSession):
+    """更新时清空字段应写回 NULL，而不是保留旧值。"""
+    from api.providers.schemas import ModelUpdateRequest
+    from api.providers.service import update_model
+
+    created = await create_model(
+        seeded, "p1", _create_req(rpm=100, api_base="https://a.example.com/v1"), user_id="u1",
+    )
+
+    updated = await update_model(
+        seeded,
+        "p1",
+        created.id,
+        ModelUpdateRequest(
+            name=created.name,
+            display_name=created.display_name,
+            type=created.type,
+            rpm=None,
+            api_base=None,
+        ),
+        user_id="u1",
+    )
+
+    assert updated.rpm is None
+    assert updated.api_base is None
+
+
 async def test_disabling_default_model_clears_flag(seeded: AsyncSession):
     """禁用默认模型时同步清掉标记，避免页面残留「默认」徽标。"""
     await set_default_model(seeded, "p1", "m1", "u1")

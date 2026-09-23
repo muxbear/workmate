@@ -18,6 +18,7 @@ from agent.models.resolver import (
 )
 from core.security import encrypt_api_key
 from db.base import Base
+from db.model_lookup import effective_api_base
 from db.models.ai_model import AIModel
 from db.models.provider import Provider
 
@@ -64,8 +65,9 @@ def _model(
     type_: str = "llm",
     status: str = "active",
     is_default: bool = False,
+    api_base: str | None = None,
 ) -> AIModel:
-    """构造模型行。"""
+    """构造模型行；api_base 为模型级地址覆盖（None 表示继承提供商）。"""
     return AIModel(
         id=mid,
         provider_id=pid,
@@ -75,6 +77,7 @@ def _model(
         status=status,
         sort_order=sort_order,
         is_default=is_default,
+        api_base=api_base,
     )
 
 
@@ -311,6 +314,87 @@ async def test_resolve_llm_raises_for_unknown_model(db_session: AsyncSession):
 
     with pytest.raises(RuntimeError, match="未找到模型"):
         await resolve_llm("p1", "other-model", db_session)
+
+
+# ---- 模型级 API_BASE 覆盖 ----
+
+
+def test_effective_api_base_prefers_model_override():
+    """模型级地址优先于提供商。"""
+    provider = _provider(pid="p1", name="P", sort_order=0, api_base="https://provider.example.com/v1")
+    model = _model(mid="m1", pid="p1", name="m", api_base="https://model.example.com/v1")
+    assert effective_api_base(model, provider) == "https://model.example.com/v1"
+
+
+def test_effective_api_base_falls_back_to_provider():
+    """模型未填地址时继承提供商。"""
+    provider = _provider(pid="p1", name="P", sort_order=0, api_base="https://provider.example.com/v1")
+    assert effective_api_base(_model(mid="m1", pid="p1", name="m"), provider) == (
+        "https://provider.example.com/v1"
+    )
+
+
+def test_effective_api_base_ignores_blank_override():
+    """模型地址为空白字符串时按未填处理，不能覆盖成空。"""
+    provider = _provider(pid="p1", name="P", sort_order=0, api_base="https://provider.example.com/v1")
+    model = _model(mid="m1", pid="p1", name="m", api_base="   ")
+    assert effective_api_base(model, provider) == "https://provider.example.com/v1"
+
+
+def test_effective_api_base_empty_when_both_blank():
+    provider = _provider(pid="p1", name="P", sort_order=0, api_base="")
+    assert effective_api_base(_model(mid="m1", pid="p1", name="m"), provider) == ""
+
+
+async def test_model_override_used_by_default_resolution(db_session: AsyncSession):
+    """默认解析必须走模型级地址，否则该字段是「能填不生效」的假配置。"""
+    await _add(
+        db_session,
+        _provider(pid="p1", name="P", sort_order=0, api_base="https://provider.example.com/v1"),
+        _model(mid="m1", pid="p1", name="m", api_base="https://model.example.com/v1"),
+    )
+
+    resolved = await resolve_default_llm(db_session)
+
+    assert resolved.openai_api_base == "https://model.example.com/v1"
+
+
+async def test_model_override_used_by_explicit_resolution(db_session: AsyncSession):
+    await _add(
+        db_session,
+        _provider(pid="p1", name="P", sort_order=0, api_base="https://provider.example.com/v1"),
+        _model(mid="m1", pid="p1", name="m", api_base="https://model.example.com/v1"),
+    )
+
+    resolved = await resolve_llm("p1", "m1", db_session)
+
+    assert resolved.openai_api_base == "https://model.example.com/v1"
+
+
+async def test_model_override_rescues_provider_without_api_base(db_session: AsyncSession):
+    """提供商未填地址但模型填了：该模型应可用，而不是被判为不可用。"""
+    await _add(
+        db_session,
+        _provider(pid="p1", name="NoBaseProvider", sort_order=0, api_base=""),
+        _model(mid="m1", pid="p1", name="m", api_base="https://model.example.com/v1"),
+    )
+
+    resolved = await resolve_default_llm(db_session)
+
+    assert resolved.model_name == "m"
+    assert resolved.openai_api_base == "https://model.example.com/v1"
+
+
+async def test_blank_override_still_rejected_when_provider_blank(db_session: AsyncSession):
+    """两边都没有地址时仍然拦截（不得回落到 api.openai.com）。"""
+    await _add(
+        db_session,
+        _provider(pid="p1", name="NoBaseProvider", sort_order=0, api_base=""),
+        _model(mid="m1", pid="p1", name="m", api_base="   "),
+    )
+
+    with pytest.raises(ModelNotConfiguredError, match="api_base"):
+        await resolve_llm("p1", "m1", db_session)
 
 
 async def test_resolve_llm_raises_when_provider_has_no_key(db_session: AsyncSession):

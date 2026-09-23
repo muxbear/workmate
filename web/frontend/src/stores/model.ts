@@ -1,12 +1,24 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Provider, AIModel, ModelType } from '@/types/model'
+import {
+  MODEL_TYPE_META,
+  getModelTypeMeta,
+  registerModelTypeOptions,
+  type Provider,
+  type AIModel,
+  type ModelType,
+  type ModelTypeOption,
+} from '@/types/model'
 import * as api from '@/services/modelApi'
+
+/** 内置类型编码——仅在「参数配置」不可用时兜底 */
+const BUILTIN_MODEL_TYPE_OPTIONS = Object.keys(MODEL_TYPE_META)
 
 export const useModelStore = defineStore('model', () => {
   /* ---------- state ---------- */
   const providers = ref<Provider[]>([])
   const selectedProviderId = ref<string | null>(null)
+  const modelTypes = ref<ModelTypeOption[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
   const providerSearch = ref('')
@@ -67,7 +79,14 @@ export const useModelStore = defineStore('model', () => {
     loading.value = true
     error.value = null
     try {
-      providers.value = await api.fetchProviders()
+      // 类型选项与提供商并行拉取：类型用于「添加模型」的下拉，缺失时退化到内置表
+      const [providerList, typeOptions] = await Promise.all([
+        api.fetchProviders(),
+        fetchModelTypes(),
+      ])
+      providers.value = providerList
+      modelTypes.value = typeOptions
+      registerModelTypeOptions(typeOptions)
       if (!selectedProviderId.value && providers.value.length > 0) {
         selectedProviderId.value = providers.value[0].id
       }
@@ -75,6 +94,18 @@ export const useModelStore = defineStore('model', () => {
       error.value = err instanceof Error ? err.message : '加载模型列表失败'
     } finally {
       loading.value = false
+    }
+  }
+
+  /** 拉取「参数配置」里配置的模型类型；失败时静默回退到内置类型。 */
+  async function fetchModelTypes(): Promise<ModelTypeOption[]> {
+    try {
+      return await api.fetchModelTypes()
+    } catch {
+      return BUILTIN_MODEL_TYPE_OPTIONS.map((value) => ({
+        value,
+        label: getModelTypeMeta(value).label,
+      }))
     }
   }
 
@@ -208,6 +239,7 @@ export const useModelStore = defineStore('model', () => {
   return {
     providers,
     selectedProviderId,
+    modelTypes,
     loading,
     error,
     providerSearch,
@@ -220,6 +252,7 @@ export const useModelStore = defineStore('model', () => {
     typeCounts,
     providerTypeCounts,
     fetchAll,
+    fetchModelTypes,
     selectProvider,
     saveProvider,
     deleteProvider,

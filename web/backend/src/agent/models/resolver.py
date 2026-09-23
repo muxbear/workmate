@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
-from db.model_lookup import select_usable_models
+from db.model_lookup import effective_api_base, select_usable_models
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,7 +93,7 @@ async def _resolve_default_llm_from(db: AsyncSession) -> ChatOpenAI:
         raise ModelNotConfiguredError(NO_CHAT_MODEL_MESSAGE)
 
     model, provider, api_key = rows[0]
-    target = _ModelTarget(model.name, provider.api_base, api_key)
+    target = _ModelTarget(model.name, effective_api_base(model, provider), api_key)
     logger.info(
         "默认对话模型为 %s（提供商 %s）%s",
         model.name,
@@ -147,14 +147,6 @@ async def _resolve_llm_from(
     if not api_key:
         raise RuntimeError(f"模型提供商 {provider.name} 未配置 api_key")
 
-    # api_base 为空时 openai SDK 会回落到 https://api.openai.com/v1，
-    # 等于把这个提供商的密钥发往 OpenAI。提供商允许只配 response_url /
-    # anthropic_url，所以这里必须显式拦截。
-    if not (provider.api_base or "").strip():
-        raise ModelNotConfiguredError(
-            f"提供商 {provider.name} 未配置 OpenAI 兼容地址（api_base），无法用于对话模型"
-        )
-
     model = (
         await db.execute(
             select(AIModel).where(
@@ -165,4 +157,14 @@ async def _resolve_llm_from(
     if model is None:
         raise RuntimeError(f"模型提供商 {provider.name} 下未找到模型 {model_id}")
 
-    return _build_chat_model(_ModelTarget(model.name, provider.api_base, api_key))
+    # 地址优先取模型级覆盖，其次继承提供商。为空时 openai SDK 会回落到
+    # https://api.openai.com/v1，等于把这个提供商的密钥发往 OpenAI。提供商允许
+    # 只配 response_url / anthropic_url，所以这里必须显式拦截。
+    base_url = effective_api_base(model, provider)
+    if not base_url:
+        raise ModelNotConfiguredError(
+            f"模型 {model.display_name} 与提供商 {provider.name} 均未配置 "
+            "OpenAI 兼容地址（api_base），无法用于对话模型"
+        )
+
+    return _build_chat_model(_ModelTarget(model.name, base_url, api_key))

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.rag.embedding import get_embedding_model
 from core.rag.reranker import RerankerClient
-from db.model_lookup import select_usable_models
+from db.model_lookup import effective_api_base, select_usable_models
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def load_embedding_model(
     logger.info("知识库使用 embedding 模型 %s（提供商 %s）", model.name, provider.name)
     return get_embedding_model(
         model_name=model.name,
-        api_base=provider.api_base,
+        api_base=effective_api_base(model, provider),
         api_key=api_key,
     )
 
@@ -66,7 +66,7 @@ async def load_llm_model(
         raise RuntimeError("知识库未找到可用的 LLM 模型，请在“模型”页面配置 type=llm 的模型")
     model, provider, api_key = row
     logger.info("知识库图谱抽取使用 LLM 模型 %s（提供商 %s）", model.name, provider.name)
-    return model.name, provider.api_base, api_key
+    return model.name, effective_api_base(model, provider), api_key
 
 
 async def load_embedding_model_for_kb(
@@ -129,6 +129,6 @@ async def load_reranker_model(
     logger.info("知识库重排序使用模型 %s（提供商 %s）", model.name, provider.name)
     return RerankerClient(
         model=model.name,
-        api_base=provider.api_base,
+        api_base=effective_api_base(model, provider),
         api_key=api_key,
     )

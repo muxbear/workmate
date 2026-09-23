@@ -353,6 +353,17 @@ async def init_db():
                 logger.info("Adding is_default column to ai_models table")
                 await conn.execute(text("ALTER TABLE ai_models ADD COLUMN is_default BOOLEAN DEFAULT FALSE"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_models_is_default ON ai_models (is_default)"))
+            # 模型规格与限流元数据（均为可空：留空表示未声明）
+            for column, ddl in (
+                ("max_input_tokens", "INTEGER"),
+                ("max_output_tokens", "INTEGER"),
+                ("rpm", "INTEGER"),
+                ("tpm", "INTEGER"),
+                ("api_base", "VARCHAR(512)"),
+            ):
+                if column not in existing:
+                    logger.info("Adding %s column to ai_models table", column)
+                    await conn.execute(text(f"ALTER TABLE ai_models ADD COLUMN {column} {ddl}"))
 
         if await _table_exists(conn, 'mcp_tools'):
             existing = await _get_existing_columns(conn, 'mcp_tools')

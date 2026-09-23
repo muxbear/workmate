@@ -33,6 +33,23 @@ from core.response import ApiResponse, ok
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
 
+@router.get("/model-types", response_model=ApiResponse[list[dict[str, str]]])
+@handle_errors
+async def model_type_options(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user_id),
+):
+    """获取可选的模型类型（供「模型」页面添加模型时的下拉使用）。
+
+    取值来自「参数配置」页面的 `model_type` 分组。这里只要求登录，不要求
+    `admin:params`——模型页面本身对所有登录用户开放，若沿用参数配置的权限，
+    非管理员会拿到空下拉。管理员改配置、普通用户读结果。
+    """
+    from api.params.service import list_model_types
+
+    return ok(await list_model_types(db))
+
+
 @router.get("", response_model=ApiResponse[list[ProviderResponse]])
 @handle_errors
 async def provider_list(

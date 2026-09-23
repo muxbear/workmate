@@ -21,13 +21,21 @@ class ModelParamSchema(BaseModel):
 # ---- 模型请求 ----
 
 class ModelCreateRequest(BaseModel):
-    """创建模型的请求体。"""
+    """创建模型的请求体。
+
+    下列规格字段均为可选：留空表示未声明，不做推断。
+    """
 
     name: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=128)
     type: str = Field(min_length=1, max_length=16)
     status: str = "active"
     context_window: int | None = None
+    max_input_tokens: int | None = Field(default=None, ge=0)
+    max_output_tokens: int | None = Field(default=None, ge=0)
+    rpm: int | None = Field(default=None, ge=0)
+    tpm: int | None = Field(default=None, ge=0)
+    api_base: str | None = Field(default=None, max_length=512)
     description: str = ""
     release_date: str | None = None
     params: list[ModelParamSchema] = []
@@ -41,6 +49,11 @@ class ModelUpdateRequest(BaseModel):
     type: str = Field(min_length=1, max_length=16)
     status: str = "active"
     context_window: int | None = None
+    max_input_tokens: int | None = Field(default=None, ge=0)
+    max_output_tokens: int | None = Field(default=None, ge=0)
+    rpm: int | None = Field(default=None, ge=0)
+    tpm: int | None = Field(default=None, ge=0)
+    api_base: str | None = Field(default=None, max_length=512)
     call_count: int = 0
     description: str = ""
     release_date: str | None = None
@@ -58,6 +71,11 @@ class ModelResponse(BaseModel):
     type: str
     status: str
     context_window: int | None = None
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    rpm: int | None = None
+    tpm: int | None = None
+    api_base: str | None = None
     call_count: int = 0
     description: str
     release_date: str | None = None
