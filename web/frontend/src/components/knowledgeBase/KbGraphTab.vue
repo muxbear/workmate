@@ -14,7 +14,11 @@ import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { reExtractGraph as reExtractGraphApi } from '@/services/knowledgeBaseApi'
 import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph'
 
-const props = defineProps<{ kb: KB }>()
+const props = defineProps<{
+  kb: KB
+  /** 只读态（公共库 / 他人分享）：隐藏「重新抽取图谱」 */
+  readonly?: boolean
+}>()
 
 const store = useKnowledgeBaseStore()
 const {
@@ -260,7 +264,13 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
 
-        <el-button size="small" type="primary" :loading="reExtracting" @click="handleReExtract">
+        <el-button
+          v-if="!readonly"
+          size="small"
+          type="primary"
+          :loading="reExtracting"
+          @click="handleReExtract"
+        >
           重建图谱
         </el-button>
       </div>

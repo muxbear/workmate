@@ -15,6 +15,8 @@ import {
 
 const props = defineProps<{
   modelValue: IndexConfig
+  /** 只读态：整个表单禁用（公共库 / 他人分享的库） */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +30,7 @@ watchEffect(() => {
 })
 
 function set<K extends keyof IndexConfig>(key: K, value: IndexConfig[K]) {
+  if (props.readonly) return
   ;(draft as Record<string, unknown>)[key] = value
   emit('update:modelValue', { ...draft })
 }
@@ -145,7 +148,7 @@ function onRerankModelChange(name: string) {
 </script>
 
 <template>
-  <div class="index-config-form">
+  <div class="index-config-form" :class="{ 'is-readonly': readonly }">
     <!-- 文档切片 -->
     <div class="section-card">
       <h3 class="section-title">
@@ -375,6 +378,12 @@ function onRerankModelChange(name: string) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 只读态：整体禁用交互并降低视觉权重（set() 亦有兜底拦截） */
+.index-config-form.is-readonly {
+  pointer-events: none;
+  opacity: 0.75;
 }
 
 /* Section card */

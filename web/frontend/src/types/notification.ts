@@ -3,6 +3,7 @@ export type NotificationLevel = 'info' | 'success' | 'warning' | 'error'
 export type NotificationType =
   | 'kb_indexed'
   | 'kb_failed'
+  | 'kb_shared'
   | 'cron_success'
   | 'cron_failed'
   | 'agent_error'

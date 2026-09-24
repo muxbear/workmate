@@ -251,6 +251,9 @@ async def init_db():
     from db.models.expert_skill import ExpertSkill  # noqa: F401
     from db.models.expert_tool import ExpertTool  # noqa: F401
     from db.models.expert_version import ExpertVersion  # noqa: F401
+    from db.models.knowledge_base_share import (
+        KnowledgeBaseShare,  # noqa: F401  ensure table is registered
+    )
     from db.models.oauth2_client import OAuth2Client  # noqa: F401
     from db.models.oauth2_consent import OAuth2Consent  # noqa: F401
     from db.models.oauth2_refresh_token import OAuth2RefreshToken  # noqa: F401
@@ -396,6 +399,24 @@ async def init_db():
                     await conn.execute(text("ALTER TABLE mcp_tools ADD COLUMN env JSONB DEFAULT '{}'::jsonb"))
             await conn.execute(text("UPDATE mcp_tools SET transport='sse', url='http://127.0.0.1:8001/mcp/web-search/sse', sse_url='http://127.0.0.1:8001/mcp/web-search/sse', streamable_http_url='http://127.0.0.1:8001/mcp/web-search-http/mcp' WHERE name='联网搜索' AND (sse_url IS NULL OR sse_url='')"))
             await conn.execute(text("UPDATE mcp_tools SET transport='streamable_http', url='http://127.0.0.1:8001/mcp/image-gen/sse', sse_url='http://127.0.0.1:8001/mcp/image-gen/sse', streamable_http_url='http://127.0.0.1:8001/mcp/image-gen-http/mcp' WHERE name='AI 图像生成' AND (streamable_http_url IS NULL OR streamable_http_url='')"))
+
+        # 迁移：为 knowledge_bases 添加可见范围列（历史库一律置 private，保持原有可见性）
+        if await _table_exists(conn, "knowledge_bases"):
+            kb_columns = await _get_existing_columns(conn, "knowledge_bases")
+            if "visibility" not in kb_columns:
+                logger.info("Adding visibility column to knowledge_bases table")
+                await conn.execute(
+                    text(
+                        "ALTER TABLE knowledge_bases "
+                        "ADD COLUMN visibility VARCHAR(16) DEFAULT 'private'"
+                    )
+                )
+            await conn.execute(
+                text(
+                    "UPDATE knowledge_bases SET visibility = 'private' "
+                    "WHERE visibility IS NULL OR visibility = ''"
+                )
+            )
 
 
     # Seed built-in RBAC data

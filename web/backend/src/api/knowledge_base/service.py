@@ -1,13 +1,14 @@
-"""知识库业务逻辑——CRUD + 统计。"""
+"""知识库业务逻辑——CRUD + 统计 + 访问权限解析。"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.knowledge_base.schemas import (
@@ -20,6 +21,11 @@ from api.knowledge_base.schemas import (
 )
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
+from db.models.knowledge_base_share import (
+    SHARE_STATUS_ACCEPTED,
+    KnowledgeBaseShare,
+)
+from db.models.user import Account
 
 if TYPE_CHECKING:
     from api.knowledge_base.mediator import KnowledgeBaseMediator
@@ -27,6 +33,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STAGE_NAMES = ["排队", "解析", "切片", "向量化", "BM25 倒排", "实体抽取", "关系抽取", "入库"]
+
+# 知识库可见范围
+VISIBILITY_PRIVATE = "private"
+VISIBILITY_PUBLIC = "public"
+
+# 列表 scope 取值
+SCOPE_PERSONAL = "personal"        # 我创建的（保持历史默认行为）
+SCOPE_PUBLIC = "public"            # 全站公共库
+SCOPE_SHARED_WITH_ME = "shared_with_me"  # 别人分享给我且我已接受
+SCOPE_ALL = "all"                  # 概览：自己 + 公共 + 分享给我
+
+
+class KBAccess(StrEnum):
+    """当前用户对某知识库的访问级别。"""
+
+    OWNER = "owner"        # 自己创建：可读写
+    GRANTEE = "grantee"    # 已接受的分享：只读
+    PUBLIC = "public"      # 公共库：只读
+    NONE = "none"          # 无权限
+
+
+def _readable_condition(user_id: str):
+    """构造「当前用户可读」的 SQL 条件（自己 ∪ 已接受分享 ∪ 公共库）。
+
+    所有放宽可见性的查询都必须复用本函数，避免各处自行拼条件导致越权。
+    """
+    return or_(
+        KnowledgeBase.user_id == user_id,
+        KnowledgeBase.visibility == VISIBILITY_PUBLIC,
+        KnowledgeBase.id.in_(
+            select(KnowledgeBaseShare.kb_id).where(
+                KnowledgeBaseShare.grantee_id == user_id,
+                KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
+            )
+        ),
+    )
 
 
 def _format_bytes(size_bytes: int) -> str:
@@ -41,8 +83,17 @@ def _format_bytes(size_bytes: int) -> str:
     return f"{s:.1f} PB"
 
 
-def _kb_to_response(kb: KnowledgeBase) -> KBResponse:
-    """ORM 模型 → 响应对象。"""
+def _kb_to_response(
+    kb: KnowledgeBase,
+    *,
+    viewer_id: str | None = None,
+    owner_name: str | None = None,
+) -> KBResponse:
+    """ORM 模型 → 响应对象。
+
+    ``viewer_id`` 用于标记 ``is_owner``——前端据此切换到只读态；
+    为空时按所有者视角处理（创建/更新的返回值）。
+    """
     return KBResponse(
         id=kb.id,
         name=kb.name,
@@ -58,7 +109,22 @@ def _kb_to_response(kb: KnowledgeBase) -> KBResponse:
         config=IndexConfigSchema(**kb.config) if kb.config else IndexConfigSchema(),
         created_at=kb.created_at,
         updated_at=kb.updated_at,
+        visibility=kb.visibility or VISIBILITY_PRIVATE,
+        is_owner=viewer_id is None or kb.user_id == viewer_id,
+        owner_name=owner_name,
     )
+
+
+async def _load_owner_names(db: AsyncSession, user_ids: list[str]) -> dict[str, str]:
+    """按用户 ID 批量加载展示名（昵称优先，其次用户名）。"""
+    ids = [uid for uid in dict.fromkeys(user_ids) if uid]
+    if not ids:
+        return {}
+    rows = (await db.execute(select(Account).where(Account.id.in_(ids)))).scalars().all()
+    return {
+        a.id: (a.nickname or a.username or a.id)
+        for a in rows
+    }
 
 
 async def list_kbs(
@@ -67,13 +133,32 @@ async def list_kbs(
     page: int = 1,
     page_size: int = 12,
     search: str | None = None,
+    scope: str = SCOPE_PERSONAL,
 ) -> KBListResponse:
-    """获取知识库列表（分页 + 模糊搜索）。"""
+    """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。
+
+    scope 取值见 ``SCOPE_*`` 常量；默认 ``personal`` 保持历史行为（只返回本人创建）。
+    """
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
     offset = (page - 1) * page_size
 
-    conditions: list = [KnowledgeBase.user_id == user_id]
+    if scope == SCOPE_PUBLIC:
+        # 公共库：只展示别人的（自己的公共库已归入「个人知识库」）
+        scope_condition = KnowledgeBase.visibility == VISIBILITY_PUBLIC
+    elif scope == SCOPE_SHARED_WITH_ME:
+        scope_condition = KnowledgeBase.id.in_(
+            select(KnowledgeBaseShare.kb_id).where(
+                KnowledgeBaseShare.grantee_id == user_id,
+                KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
+            )
+        )
+    elif scope == SCOPE_ALL:
+        scope_condition = _readable_condition(user_id)
+    else:
+        scope_condition = KnowledgeBase.user_id == user_id
+
+    conditions: list = [scope_condition]
     if search:
         pattern = f"%{search}%"
         conditions.append(
@@ -98,22 +183,34 @@ async def list_kbs(
         stmt = stmt.params(q=pattern)
     rows = (await db.execute(stmt)).scalars().all()
 
+    owner_names = await _load_owner_names(db, [r.user_id for r in rows])
+
     return KBListResponse(
-        items=[_kb_to_response(r) for r in rows],
+        items=[
+            _kb_to_response(r, viewer_id=user_id, owner_name=owner_names.get(r.user_id))
+            for r in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,
     )
 
 
-async def get_kb_stats(db: AsyncSession, user_id: str) -> KBStatsResponse:
-    """获取知识库统计信息。"""
+async def get_kb_stats(
+    db: AsyncSession, user_id: str, scope: str = SCOPE_PERSONAL,
+) -> KBStatsResponse:
+    """获取知识库统计信息（默认只统计本人创建，scope=all 时统计全部可见库）。"""
+    scope_condition = (
+        _readable_condition(user_id)
+        if scope == SCOPE_ALL
+        else KnowledgeBase.user_id == user_id
+    )
     base = select(
         func.coalesce(func.sum(KnowledgeBase.docs_count), 0),
         func.coalesce(func.sum(KnowledgeBase.chunks_count), 0),
         func.coalesce(func.sum(KnowledgeBase.entities_count), 0),
         func.count(KnowledgeBase.id),
-    ).where(KnowledgeBase.user_id == user_id)
+    ).where(scope_condition)
     result = (await db.execute(base)).one()
     total_docs, total_chunks, total_entities, total_kbs = result
 
@@ -122,7 +219,7 @@ async def get_kb_stats(db: AsyncSession, user_id: str) -> KBStatsResponse:
             select(func.count())
             .select_from(KnowledgeBase)
             .where(
-                KnowledgeBase.user_id == user_id,
+                scope_condition,
                 KnowledgeBase.status == "indexing",
             )
         )
@@ -163,6 +260,7 @@ async def create_kb(
         config=req.config.model_dump(),
         user_id=user_id,
         status="draft",
+        visibility=req.visibility or VISIBILITY_PRIVATE,
     )
     db.add(kb)
     await db.flush()
@@ -179,9 +277,12 @@ async def create_kb(
 
 
 async def get_kb(db: AsyncSession, kb_id: str, user_id: str) -> KBResponse:
-    """获取知识库详情。"""
-    kb = await _get_kb_or_404(db, kb_id, user_id)
-    return _kb_to_response(kb)
+    """获取知识库详情（本人所有 / 已接受分享 / 公共库均可读）。"""
+    kb, _access = await require_kb_readable(db, kb_id, user_id)
+    owner_names = await _load_owner_names(db, [kb.user_id])
+    return _kb_to_response(
+        kb, viewer_id=user_id, owner_name=owner_names.get(kb.user_id)
+    )
 
 
 async def update_kb(
@@ -230,10 +331,10 @@ async def delete_kb(
 async def get_indexing_activity(
     db: AsyncSession, kb_id: str, user_id: str, limit: int = 5,
 ) -> list:
-    """获取最近索引活动。"""
+    """获取最近索引活动（可读即可查看）。"""
     from db.models.knowledge_base_document import KnowledgeBaseDocument
 
-    await _get_kb_or_404(db, kb_id, user_id)
+    await require_kb_readable(db, kb_id, user_id)
     stmt = (
         select(KnowledgeBaseDocument)
         .where(KnowledgeBaseDocument.kb_id == kb_id)
@@ -334,16 +435,56 @@ async def reindex_kb(
     return {"kb_id": kb_id, "docs_enqueued": enqueued, "status": "indexing"}
 
 
-async def _get_kb_or_404(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:
-    """获取知识库或抛出 404。"""
+async def resolve_kb_access(
+    db: AsyncSession, kb_id: str, user_id: str
+) -> tuple[KnowledgeBase | None, KBAccess]:
+    """解析当前用户对指定知识库的访问级别。
+
+    判定顺序：所有者 → 已接受的分享接收人 → 公共库 → 无权限。
+    知识库不存在时返回 ``(None, KBAccess.NONE)``。
+    """
     kb = (
+        await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+    ).scalar_one_or_none()
+    if kb is None:
+        return None, KBAccess.NONE
+    if kb.user_id == user_id:
+        return kb, KBAccess.OWNER
+    share = (
         await db.execute(
-            select(KnowledgeBase).where(
-                KnowledgeBase.id == kb_id,
-                KnowledgeBase.user_id == user_id,
+            select(KnowledgeBaseShare).where(
+                KnowledgeBaseShare.kb_id == kb_id,
+                KnowledgeBaseShare.grantee_id == user_id,
+                KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
             )
         )
     ).scalar_one_or_none()
-    if kb is None:
+    if share is not None:
+        return kb, KBAccess.GRANTEE
+    if kb.visibility == VISIBILITY_PUBLIC:
+        return kb, KBAccess.PUBLIC
+    return kb, KBAccess.NONE
+
+
+async def _get_kb_or_404(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:
+    """获取「本人所有」的知识库或抛出 404——**写路径专用**。
+
+    读路径请改用 ``require_kb_readable``，它会额外放行已接受的分享与公共库。
+    """
+    kb, access = await resolve_kb_access(db, kb_id, user_id)
+    if kb is None or access is not KBAccess.OWNER:
         raise HTTPException(status_code=404, detail="知识库不存在")
     return kb
+
+
+async def require_kb_readable(
+    db: AsyncSession, kb_id: str, user_id: str
+) -> tuple[KnowledgeBase, KBAccess]:
+    """获取「当前用户可读」的知识库或抛出 404——**读路径专用**。
+
+    返回访问级别，调用方可用它决定是否展示写操作（GRANTEE / PUBLIC 为只读）。
+    """
+    kb, access = await resolve_kb_access(db, kb_id, user_id)
+    if kb is None or access is KBAccess.NONE:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    return kb, access

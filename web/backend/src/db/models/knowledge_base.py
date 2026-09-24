@@ -24,6 +24,9 @@ class KnowledgeBase(Base):
     relations_count: Mapped[int] = mapped_column(Integer, default=0)
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    visibility: Mapped[str] = mapped_column(
+        String(16), default="private", comment="private 私有 | public 公共（所有人可只读浏览）"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

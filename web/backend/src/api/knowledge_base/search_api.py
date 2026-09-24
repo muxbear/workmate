@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db
 from api.knowledge_base.schemas import SearchRequest, SearchResponse
-from api.knowledge_base.service import _get_kb_or_404
+from api.knowledge_base.service import require_kb_readable
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,8 @@ async def search_knowledge_base(
     - vector: 纯向量语义检索
     - bm25: 纯关键词检索
     """
-    await _get_kb_or_404(db, kb_id, user_id)
+    # 检索为只读操作：本人所有 / 已接受的分享 / 公共库均可检索
+    await require_kb_readable(db, kb_id, user_id)
 
     orchestrator = request.app.state.search_orchestrator
     if orchestrator is None:

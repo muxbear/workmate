@@ -111,7 +111,66 @@ export interface KB {
   entitiesData: Entity[]
   relationsData: Relation[]
   tags: string[]
+  /** 可见范围：private 私有 | public 公共（所有人可只读浏览） */
+  visibility: KBVisibility
+  /** 当前登录用户是否是该知识库的所有者；false 时页面进入只读态 */
+  isOwner: boolean
+  /** 所有者展示名（公共库/被分享的库用于标识来源） */
+  ownerName: string | null
 }
+
+// ─── 可见范围 / 分享 ──────────────────────────────────────────────────────
+
+// 知识库可见范围
+export type KBVisibility = 'private' | 'public'
+
+// 分享状态
+export type ShareStatus = 'pending' | 'accepted' | 'rejected' | 'revoked'
+
+// 左栏栏目标识
+export type KbScope = 'overview' | 'public' | 'personal' | 'sharedByMe' | 'sharedWithMe'
+
+// 一条分享记录
+export interface KBShare {
+  id: string
+  kbId: string
+  /** 知识库名称（仅「共享给我的」场景由后端填充） */
+  kbName: string | null
+  userId: string
+  username: string | null
+  nickname: string
+  avatar: string
+  status: ShareStatus
+  permission: string
+  createdAt: string
+  acceptedAt: string | null
+}
+
+export interface KBShareListResponse {
+  items: KBShare[]
+  total: number
+}
+
+export interface ShareStatusConfig {
+  label: string
+  cls: string
+}
+
+export const SHARE_STATUS_CONFIG: Record<ShareStatus, ShareStatusConfig> = {
+  pending: { label: '待接受', cls: 'share-pending' },
+  accepted: { label: '已接受', cls: 'share-accepted' },
+  rejected: { label: '已拒绝', cls: 'share-rejected' },
+  revoked: { label: '已取消', cls: 'share-revoked' },
+}
+
+// 可见范围配置
+export const KB_VISIBILITY_CONFIG: Record<KBVisibility, { label: string; cls: string }> = {
+  private: { label: '私有', cls: 'vis-private' },
+  public: { label: '公共', cls: 'vis-public' },
+}
+
+/** 左栏每个分组的子项预览条数（超出走「查看更多」） */
+export const KB_GROUP_PREVIEW_LIMIT = 8
 
 // 知识库状态配置
 export interface KBStatusConfig {
@@ -242,6 +301,7 @@ export interface CreateKBRequest {
   description: string
   tags: string[]
   config: IndexConfig
+  visibility?: KBVisibility
 }
 
 // 文档切片

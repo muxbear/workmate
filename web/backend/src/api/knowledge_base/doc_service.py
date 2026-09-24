@@ -603,9 +603,9 @@ async def list_documents(
     search: str | None = None,
     status: str | None = None,
 ) -> dict:
-    """获取文档列表（分页 + 筛选）。"""
-    from api.knowledge_base.service import _get_kb_or_404
-    await _get_kb_or_404(db, kb_id, user_id)
+    """获取文档列表（分页 + 筛选）。可读即可浏览。"""
+    from api.knowledge_base.service import require_kb_readable
+    await require_kb_readable(db, kb_id, user_id)
 
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
@@ -660,9 +660,9 @@ async def list_documents(
 async def get_document(
     db: AsyncSession, kb_id: str, doc_id: str, user_id: str,
 ) -> KBDocResponse:
-    """获取文档详情（含流水线状态）。"""
-    from api.knowledge_base.service import _get_kb_or_404
-    await _get_kb_or_404(db, kb_id, user_id)
+    """获取文档详情（含流水线状态）。可读即可查看。"""
+    from api.knowledge_base.service import require_kb_readable
+    await require_kb_readable(db, kb_id, user_id)
 
     doc = (
         await db.execute(

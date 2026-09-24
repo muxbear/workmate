@@ -1,7 +1,9 @@
 """切片管理 API 路由——查询/更新/删除切片。
 
-所有接口都校验知识库归属（与 doc_api / kb_api 一致），避免凭 kb_id 越权读写
-他人切片；写入类接口使用**知识库自身配置的** embedding 模型重新向量化。
+所有接口都校验知识库访问权限：**查询类**放行本人 / 已接受分享 / 公共库
+（``require_kb_readable``），**写入类**仅限所有者（``_get_kb_or_404``），
+避免凭 kb_id 越权读写他人切片；写入类接口使用**知识库自身配置的**
+embedding 模型重新向量化。
 """
 
 from fastapi import APIRouter, Depends, Request
@@ -17,7 +19,7 @@ from api.knowledge_base.chunk_service import (
 )
 from api.knowledge_base.model_provider import load_embedding_model_for_kb
 from api.knowledge_base.schemas import BatchChunkRequest, ChunkUpdateRequest
-from api.knowledge_base.service import _get_kb_or_404
+from api.knowledge_base.service import _get_kb_or_404, require_kb_readable
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-切片"])
 
@@ -43,8 +45,8 @@ async def api_list_chunks(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """列出文档所有切片。"""
-    await _get_kb_or_404(db, kb_id, user_id)
+    """列出文档所有切片。可读即可浏览。"""
+    await require_kb_readable(db, kb_id, user_id)
     vs = _get_vector_store(request)
     if vs is None:
         return {"code": 500, "data": [], "message": "向量库未初始化"}
@@ -61,8 +63,8 @@ async def api_get_chunk_detail(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """获取切片详情（含上下文）。"""
-    await _get_kb_or_404(db, kb_id, user_id)
+    """获取切片详情（含上下文）。可读即可查看。"""
+    await require_kb_readable(db, kb_id, user_id)
     vs = _get_vector_store(request)
     if vs is None:
         return {"code": 500, "data": None, "message": "向量库未初始化"}

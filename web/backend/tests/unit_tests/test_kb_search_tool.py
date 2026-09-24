@@ -1,7 +1,10 @@
-"""Tests for kb_search / list_knowledge_bases 的用户隔离。
+"""Tests for kb_search / list_knowledge_bases 的可见范围隔离。
 
 这些工具此前完全按 ``kb_id`` 查询且会「自动取第一个 ready 的知识库」，等于把
 其他用户的知识库暴露给任意会话。此处用内存 SQLite 覆盖真实 WHERE 条件。
+
+可见范围：「自己创建的 ∪ 已接受的分享 ∪ 公共库」，未授权（含仅收到邀请但
+未接受）的知识库仍必须被拒绝。
 """
 
 import importlib
@@ -13,6 +16,11 @@ from sqlalchemy.pool import StaticPool
 from api.knowledge_base.schemas import SearchResponse
 from api.knowledge_base.search_service import set_search_orchestrator
 from db.models.knowledge_base import KnowledgeBase
+from db.models.knowledge_base_share import (
+    SHARE_STATUS_ACCEPTED,
+    SHARE_STATUS_PENDING,
+    KnowledgeBaseShare,
+)
 
 # 注意：agent.tools.__init__ 会把同名函数导出到包命名空间，因此
 # `from agent.tools import kb_search` 拿到的是函数而非模块，必须走 importlib。
@@ -52,6 +60,7 @@ async def sessionmaker():
     )
     async with engine.begin() as conn:
         await conn.run_sync(KnowledgeBase.__table__.create)
+        await conn.run_sync(KnowledgeBaseShare.__table__.create)
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
     yield maker
@@ -75,10 +84,31 @@ async def seed(sessionmaker, rows: list[dict]) -> None:
         await session.commit()
 
 
-def kb_row(kb_id: str, name: str, user_id: str, status: str = "ready") -> dict:
+def kb_row(
+    kb_id: str, name: str, user_id: str, status: str = "ready",
+    visibility: str = "private",
+) -> dict:
     return {
         "id": kb_id, "name": name, "user_id": user_id, "status": status,
         "description": "", "config": {}, "tags": [], "docs_count": 1,
+        "visibility": visibility,
+    }
+
+
+async def seed_shares(sessionmaker, rows: list[dict]) -> None:
+    async with sessionmaker() as session:
+        for row in rows:
+            session.add(KnowledgeBaseShare(**row))
+        await session.commit()
+
+
+def share_row(
+    share_id: str, kb_id: str, owner_id: str, grantee_id: str,
+    status: str = SHARE_STATUS_ACCEPTED,
+) -> dict:
+    return {
+        "id": share_id, "kb_id": kb_id, "owner_id": owner_id,
+        "grantee_id": grantee_id, "status": status, "permission": "read",
     }
 
 
@@ -99,7 +129,7 @@ class TestUserIsolation:
 
         result = await call_search(kb_id="kb-b")
 
-        assert "不属于当前用户" in result["error"]
+        assert "无权访问" in result["error"]
         assert patched_env.calls == [], "不得对他人知识库发起检索"
         assert result["results"] == []
 
@@ -236,3 +266,80 @@ class TestListKnowledgeBases:
         result = await kb_search_module._list_kb_async()
         assert result["total"] == 0
         assert "error" in result
+
+
+class TestWidenedVisibility:
+    """公共库与已接受分享对 Agent 可见；未授权/待接受仍必须被拒绝。"""
+
+    async def test_public_kb_is_searchable(self, monkeypatch, patched_env, sessionmaker):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [
+            kb_row("kb-pub", "公共库", USER_B, visibility="public"),
+        ])
+
+        result = await call_search(kb_id="kb-pub")
+
+        assert result["total"] == 1
+        assert patched_env.calls[0][0] == "kb-pub"
+
+    async def test_accepted_share_is_searchable(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-b", "他人知识库", USER_B)])
+        await seed_shares(sessionmaker, [
+            share_row("s1", "kb-b", USER_B, USER_A, SHARE_STATUS_ACCEPTED),
+        ])
+
+        result = await call_search(kb_id="kb-b")
+
+        assert result["total"] == 1
+        assert patched_env.calls[0][0] == "kb-b"
+
+    async def test_pending_share_is_rejected(self, monkeypatch, patched_env, sessionmaker):
+        """只收到邀请但未接受时不得检索。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-b", "他人知识库", USER_B)])
+        await seed_shares(sessionmaker, [
+            share_row("s1", "kb-b", USER_B, USER_A, SHARE_STATUS_PENDING),
+        ])
+
+        result = await call_search(kb_id="kb-b")
+
+        assert "无权访问" in result["error"]
+        assert patched_env.calls == []
+
+    async def test_share_to_other_user_does_not_leak(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """分享给 B 的库不能让 A 读到。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-c", "他人知识库", "user-c")])
+        await seed_shares(sessionmaker, [
+            share_row("s1", "kb-c", "user-c", USER_B, SHARE_STATUS_ACCEPTED),
+        ])
+
+        result = await call_search(kb_id="kb-c")
+
+        assert "无权访问" in result["error"]
+        assert patched_env.calls == []
+
+    async def test_list_includes_public_and_accepted_shares(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [
+            kb_row("kb-a", "我的", USER_A),
+            kb_row("kb-pub", "公共库", USER_B, visibility="public"),
+            kb_row("kb-b", "分享给我", USER_B),
+            kb_row("kb-c", "别人的私有库", "user-c"),
+        ])
+        await seed_shares(sessionmaker, [
+            share_row("s1", "kb-b", USER_B, USER_A, SHARE_STATUS_ACCEPTED),
+        ])
+
+        result = await kb_search_module._list_kb_async()
+
+        assert sorted(kb["kb_id"] for kb in result["knowledge_bases"]) == [
+            "kb-a", "kb-b", "kb-pub",
+        ]

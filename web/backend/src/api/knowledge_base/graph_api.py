@@ -9,7 +9,10 @@ from api.knowledge_base.graph_service import (
     get_graph_data,
     rebuild_graph_for_kb,
 )
-from api.knowledge_base.service import _get_kb_or_404
+from api.knowledge_base.service import (
+    _get_kb_or_404,
+    require_kb_readable,
+)
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-图谱"])
 
@@ -21,8 +24,8 @@ async def get_graph(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """获取知识图谱数据（实体 + 关系）。"""
-    await _get_kb_or_404(db, kb_id, user_id)
+    """获取知识图谱数据（实体 + 关系）。可读即可查看。"""
+    await require_kb_readable(db, kb_id, user_id)
     result = await get_graph_data(db, kb_id, entity_type)
     return {"code": 0, "data": result, "message": "ok"}
 
@@ -35,6 +38,9 @@ async def get_entity(
     user_id: str = Depends(get_current_user_id),
 ):
     """获取实体详情。"""
+    # 该接口此前只按 kb_id 查询、未做归属校验，等于把任意知识库的实体暴露给
+    # 任何已登录用户；补上可读校验（本人 / 已接受分享 / 公共库）。
+    await require_kb_readable(db, kb_id, user_id)
     result = await get_entity_detail(db, kb_id, entity_id)
     if result is None:
         return {"code": 404, "data": None, "message": "实体不存在"}

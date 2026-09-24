@@ -7,6 +7,9 @@ import type {
   CreateKBRequest,
   SearchResult,
   IndexConfig,
+  KBVisibility,
+  KBShare,
+  KBShareListResponse,
 } from '@/types/knowledgeBase'
 
 // ─── 后端原始类型 ──────────────────────────────────────────────────────────
@@ -26,6 +29,9 @@ interface RawKB {
   config: Record<string, unknown>
   created_at: string
   updated_at: string
+  visibility?: string
+  is_owner?: boolean
+  owner_name?: string | null
 }
 
 interface RawDoc {
@@ -93,6 +99,10 @@ function mapKB(raw: RawKB): KB {
     entitiesData: [],
     relationsData: [],
     tags: raw.tags || [],
+    visibility: (raw.visibility as KB['visibility']) || 'private',
+    // 后端缺省视为本人所有（创建/更新接口的返回体即此语义）
+    isOwner: raw.is_owner ?? true,
+    ownerName: raw.owner_name ?? null,
   }
 }
 
@@ -116,14 +126,35 @@ function mapDoc(raw: RawDoc): KBDoc {
 
 // ─── 知识库 CRUD ──────────────────────────────────────────────────────────
 
+/** 列表可见范围：personal 我创建的 | public 公共库 | shared_with_me 分享给我 | all 全部可见 */
+export type KBListScope = 'personal' | 'public' | 'shared_with_me' | 'all'
+
+export interface KBPage {
+  items: KB[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export async function fetchKBPage(params?: {
+  page?: number
+  page_size?: number
+  search?: string
+  scope?: KBListScope
+}): Promise<KBPage> {
+  const res = await instance.get('/knowledge-bases', { params })
+  const data = res.data.data as PaginatedData<RawKB>
+  return { ...data, items: data.items.map(mapKB) }
+}
+
 export async function fetchKnowledgeBases(params?: {
   page?: number
   page_size?: number
   search?: string
+  scope?: KBListScope
 }): Promise<KB[]> {
-  const res = await instance.get('/knowledge-bases', { params })
-  const data = res.data.data as PaginatedData<RawKB>
-  return data.items.map(mapKB)
+  const page = await fetchKBPage(params)
+  return page.items
 }
 
 export async function fetchKnowledgeBase(id: string): Promise<KB | null> {
@@ -165,8 +196,8 @@ export interface KBStatsResponse {
   indexing: number
 }
 
-export async function fetchStats(): Promise<KBStatsResponse> {
-  const res = await instance.get('/knowledge-bases/stats')
+export async function fetchStats(scope: 'personal' | 'all' = 'personal'): Promise<KBStatsResponse> {
+  const res = await instance.get('/knowledge-bases/stats', { params: { scope } })
   const d = res.data.data as { total_kbs: number; total_docs: number; total_chunks: number; total_entities: number; total_indexing: number }
   return {
     totalKbs: d.total_kbs,
@@ -175,6 +206,105 @@ export async function fetchStats(): Promise<KBStatsResponse> {
     totalEntities: d.total_entities,
     indexing: d.total_indexing,
   }
+}
+
+// ─── 分享 / 可见范围 ──────────────────────────────────────────────────────
+
+interface RawShare {
+  id: string
+  kb_id: string
+  kb_name?: string | null
+  user_id: string
+  username: string | null
+  nickname: string
+  avatar: string
+  status: string
+  permission: string
+  created_at: string
+  accepted_at: string | null
+}
+
+function mapShare(raw: RawShare): KBShare {
+  return {
+    id: raw.id,
+    kbId: raw.kb_id,
+    kbName: raw.kb_name ?? null,
+    userId: raw.user_id,
+    username: raw.username ?? null,
+    nickname: raw.nickname || raw.username || raw.user_id,
+    avatar: raw.avatar || '',
+    status: raw.status as KBShare['status'],
+    permission: raw.permission || 'read',
+    createdAt: raw.created_at,
+    acceptedAt: raw.accepted_at ?? null,
+  }
+}
+
+function mapShareList(data: unknown): KBShareListResponse {
+  const d = data as { items?: RawShare[]; total?: number }
+  const items = (d.items || []).map(mapShare)
+  return { items, total: d.total ?? items.length }
+}
+
+/** 邀请用户浏览知识库（仅所有者，只读授权） */
+export async function createKbShares(kbId: string, userIds: string[]): Promise<KBShareListResponse> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/shares`, { user_ids: userIds })
+  return mapShareList(res.data.data)
+}
+
+/** 列出某知识库的分享记录（仅所有者） */
+export async function fetchKbShares(kbId: string): Promise<KBShareListResponse> {
+  const res = await instance.get(`/knowledge-bases/${kbId}/shares`)
+  return mapShareList(res.data.data)
+}
+
+/** 删除单个被分享用户（仅所有者） */
+export async function deleteKbShare(kbId: string, shareId: string): Promise<void> {
+  await instance.delete(`/knowledge-bases/${kbId}/shares/${shareId}`)
+}
+
+/** 取消该知识库的全部分享（仅所有者） */
+export async function cancelKbShares(kbId: string): Promise<number> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/shares/cancel`)
+  return (res.data.data as { revoked: number })?.revoked ?? 0
+}
+
+/** 「共享给我的」：已接受的分享 + 待处理的邀请 */
+export async function fetchShareInvitations(): Promise<KBShareListResponse> {
+  const res = await instance.get('/knowledge-bases/shares/invitations')
+  return mapShareList(res.data.data)
+}
+
+/** 我分享出去的全部记录（跨知识库） */
+export async function fetchSharesByMe(): Promise<KBShareListResponse> {
+  const res = await instance.get('/knowledge-bases/shares/by-me')
+  return mapShareList(res.data.data)
+}
+
+/** 搜索可分享的用户（仅返回 ID/用户名/昵称/头像） */
+export async function searchShareCandidates(search: string): Promise<KBShare[]> {
+  const res = await instance.get('/knowledge-bases/share-candidates', {
+    params: { search },
+  })
+  return (res.data.data as RawShare[]).map(mapShare)
+}
+
+/** 接受分享邀请 */
+export async function acceptKbShare(shareId: string): Promise<KBShare> {
+  const res = await instance.post(`/knowledge-bases/shares/${shareId}/accept`)
+  return mapShare(res.data.data as RawShare)
+}
+
+/** 拒绝分享邀请 */
+export async function rejectKbShare(shareId: string): Promise<KBShare> {
+  const res = await instance.post(`/knowledge-bases/shares/${shareId}/reject`)
+  return mapShare(res.data.data as RawShare)
+}
+
+/** 发布 / 取消发布公共知识库（仅所有者） */
+export async function updateKbVisibility(kbId: string, visibility: KBVisibility): Promise<KB> {
+  const res = await instance.patch(`/knowledge-bases/${kbId}/visibility`, { visibility })
+  return mapKB(res.data.data as RawKB)
 }
 
 // ─── 文档管理 ─────────────────────────────────────────────────────────────

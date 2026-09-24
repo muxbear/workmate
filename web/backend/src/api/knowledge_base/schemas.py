@@ -1,6 +1,7 @@
 """Knowledge Base API — Pydantic schemas."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +40,9 @@ class KBCreateRequest(BaseModel):
     description: str = ""
     tags: list[str] = []
     config: IndexConfigSchema = Field(default_factory=IndexConfigSchema)
+    visibility: Literal["private", "public"] | None = Field(
+        default=None, description="可见范围，缺省 private"
+    )
 
 
 class KBUpdateRequest(BaseModel):
@@ -47,6 +51,9 @@ class KBUpdateRequest(BaseModel):
     description: str | None = None
     tags: list[str] | None = None
     config: IndexConfigSchema | None = None
+    visibility: Literal["private", "public"] | None = Field(
+        default=None, description="可见范围：private 私有 | public 公共"
+    )
 
 
 class KBResponse(BaseModel):
@@ -65,6 +72,9 @@ class KBResponse(BaseModel):
     config: IndexConfigSchema
     created_at: datetime
     updated_at: datetime
+    visibility: str = "private"
+    is_owner: bool = True
+    owner_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -229,6 +239,44 @@ class BatchChunkRequest(BaseModel):
     action: str  # "save_all" | "delete"
     chunks: list[dict] = []     # [{id, content}, ...]
     chunk_ids: list[str] = []   # for delete action
+
+
+# ─── Share ──────────────────────────────────────────────────────────────────
+
+
+class KBShareCreateRequest(BaseModel):
+    """邀请用户浏览知识库请求。"""
+    user_ids: list[str] = Field(..., min_length=1, max_length=50)
+
+
+class KBShareResponse(BaseModel):
+    """单条分享记录（含被邀请人展示信息）。
+
+    ``kb_name`` 仅在「共享给我的」场景填充——接收方需要显示知识库名称，
+    而该库里可能对他不可读（如邀请被拒绝后），不能靠再查列表兜底。
+    """
+    id: str
+    kb_id: str
+    user_id: str
+    username: str | None = None
+    nickname: str = ""
+    avatar: str = ""
+    status: str
+    permission: str = "read"
+    created_at: datetime
+    accepted_at: datetime | None = None
+    kb_name: str | None = None
+
+
+class KBShareListResponse(BaseModel):
+    """分享记录列表。"""
+    items: list[KBShareResponse]
+    total: int
+
+
+class KBVisibilityUpdateRequest(BaseModel):
+    """发布 / 取消发布公共库请求。"""
+    visibility: Literal["private", "public"]
 
 
 # ─── Core Response ──────────────────────────────────────────────────────────

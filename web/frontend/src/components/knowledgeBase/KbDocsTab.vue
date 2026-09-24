@@ -16,6 +16,8 @@ import KbFragmentEditor from './KbFragmentEditor.vue'
 
 const props = defineProps<{
   kb: KB
+  /** 只读态（公共库 / 他人分享）：隐藏上传、删除、重试与切片编辑 */
+  readonly?: boolean
 }>()
 
 const store = useKnowledgeBaseStore()
@@ -119,7 +121,12 @@ function handleEditFragment(doc: KBDoc) {
                 class="search-input"
               />
             </div>
-            <button class="btn-upload" :disabled="uploading" @click="uploadVisible = true">
+            <button
+              v-if="!readonly"
+              class="btn-upload"
+              :disabled="uploading"
+              @click="uploadVisible = true"
+            >
               <Upload :size="16" class="btn-icon" />{{ uploading ? '上传中…' : '上传文档' }}
             </button>
           </div>
@@ -182,7 +189,7 @@ function handleEditFragment(doc: KBDoc) {
                           <Eye :size="14" />
                         </button>
                       </el-tooltip>
-                      <el-tooltip content="编辑分片" placement="top" :show-after="300">
+                      <el-tooltip v-if="!readonly" content="编辑分片" placement="top" :show-after="300">
                         <button
                           class="action-btn action-edit"
                           @click.stop="handleEditFragment(doc)"
@@ -193,14 +200,14 @@ function handleEditFragment(doc: KBDoc) {
                         </button>
                       </el-tooltip>
                       <button
-                        v-if="doc.status === 'failed'"
+                        v-if="!readonly && doc.status === 'failed'"
                         class="action-btn"
                         @click.stop="handleRetry(doc.id)"
                         title="重试"
                       >
                         <RefreshCw :size="14" />
                       </button>
-                      <el-tooltip content="删除" placement="top" :show-after="300">
+                      <el-tooltip v-if="!readonly" content="删除" placement="top" :show-after="300">
                         <button class="action-btn action-del" @click.stop="handleDelete(doc.id)" title="删除">
                           <Trash2 :size="14" />
                         </button>
@@ -211,7 +218,7 @@ function handleEditFragment(doc: KBDoc) {
                 <tr v-if="filteredDocs.length === 0">
                   <td colspan="6" class="empty-cell">
                     <FolderOpen :size="32" class="empty-icon" />
-                    <p>暂无文档，点击右上角上传</p>
+                    <p>{{ readonly ? '暂无文档' : '暂无文档，点击右上角上传' }}</p>
                   </td>
                 </tr>
               </tbody>

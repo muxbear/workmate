@@ -10,6 +10,7 @@ from api.knowledge_base.schemas import (
     KBUpdateRequest,
 )
 from api.knowledge_base.service import (
+    SCOPE_PERSONAL,
     create_kb,
     delete_kb,
     get_indexing_activity,
@@ -41,22 +42,32 @@ async def list_knowledge_bases(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=12, ge=1, le=100),
     search: str | None = Query(default=None),
+    scope: str = Query(
+        default=SCOPE_PERSONAL,
+        description="personal 我创建的 | public 公共库 | shared_with_me 分享给我 | all 全部可见",
+    ),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """获取知识库列表（分页 + 模糊搜索）。"""
-    result = await list_kbs(db, user_id, page=page, page_size=page_size, search=search)
+    """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。"""
+    result = await list_kbs(
+        db, user_id, page=page, page_size=page_size, search=search, scope=scope,
+    )
     return ok(result)
 
 
 @router.get("/stats")
 @handle_errors
 async def get_stats(
+    scope: str = Query(
+        default=SCOPE_PERSONAL,
+        description="personal 仅本人 | all 全部可见（概览用）",
+    ),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
     """获取知识库统计信息。"""
-    result = await get_kb_stats(db, user_id)
+    result = await get_kb_stats(db, user_id, scope=scope)
     return ok(result)
 
 

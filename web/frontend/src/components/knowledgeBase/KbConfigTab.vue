@@ -7,6 +7,8 @@ import KbIndexConfigForm from './KbIndexConfigForm.vue'
 
 const props = defineProps<{
   config: IndexConfig
+  /** 只读态（公共库 / 他人分享）：表单禁用，隐藏保存按钮 */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -39,9 +41,9 @@ function handleSaveAndReindex() {
 <template>
   <div class="config-tab">
     <div class="config-layout">
-      <!-- 配置表单 -->
+      <!-- 配置表单（只读态仅可查看） -->
       <div class="config-main">
-        <KbIndexConfigForm v-model="draft" />
+        <KbIndexConfigForm v-model="draft" :readonly="readonly" />
       </div>
 
       <!-- 预览面板 -->
@@ -52,7 +54,7 @@ function handleSaveAndReindex() {
           </h3>
           <KbConfigSummary :config="draft" />
           <div class="divider" />
-          <div class="preview-actions">
+          <div v-if="!readonly" class="preview-actions">
             <button class="btn-save" @click="handleSave">
               <Save :size="16" class="btn-icon" />保存配置
             </button>
@@ -63,6 +65,7 @@ function handleSaveAndReindex() {
               <CheckCircle2 :size="14" />已保存
             </div>
           </div>
+          <p v-else class="readonly-hint">他人分享或公共知识库的配置仅可查看</p>
         </div>
       </div>
     </div>
@@ -70,6 +73,13 @@ function handleSaveAndReindex() {
 </template>
 
 <style scoped>
+.readonly-hint {
+  margin: 0;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+}
+
 .config-tab {
   width: 100%;
   height: 100%;

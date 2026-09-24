@@ -10,6 +10,8 @@ import KbConfigSummary from './KbConfigSummary.vue'
 
 const props = defineProps<{
   kb: KB
+  /** 只读态（公共库 / 他人分享）：隐藏写操作入口 */
+  readonly?: boolean
 }>()
 
 const recentDocs = computed(() => props.kb.documents.slice(0, 5))

@@ -1,0 +1,316 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
+import * as api from '@/services/knowledgeBaseApi'
+import type { KB, KBShare } from '@/types/knowledgeBase'
+
+vi.mock('@/services/knowledgeBaseApi', () => ({
+  fetchKBPage: vi.fn(),
+  fetchKnowledgeBases: vi.fn(),
+  fetchKnowledgeBase: vi.fn(),
+  createKnowledgeBase: vi.fn(),
+  updateKnowledgeBase: vi.fn(),
+  deleteKnowledgeBase: vi.fn(),
+  fetchStats: vi.fn(),
+  fetchKbShares: vi.fn(),
+  createKbShares: vi.fn(),
+  deleteKbShare: vi.fn(),
+  cancelKbShares: vi.fn(),
+  fetchShareInvitations: vi.fn(),
+  fetchSharesByMe: vi.fn(),
+  searchShareCandidates: vi.fn(),
+  acceptKbShare: vi.fn(),
+  rejectKbShare: vi.fn(),
+  updateKbVisibility: vi.fn(),
+}))
+
+function kb(overrides: Partial<KB> = {}): KB {
+  return {
+    id: 'kb-1',
+    name: '产品手册',
+    description: '内部产品文档',
+    status: 'ready',
+    docs: 1,
+    chunks: 10,
+    entities: 2,
+    relations: 1,
+    size: '1.0 KB',
+    updatedAt: '2026-09-01',
+    config: {} as KB['config'],
+    documents: [],
+    entitiesData: [],
+    relationsData: [],
+    tags: [],
+    visibility: 'private',
+    isOwner: true,
+    ownerName: null,
+    ...overrides,
+  }
+}
+
+function share(overrides: Partial<KBShare> = {}): KBShare {
+  return {
+    id: 'share-1',
+    kbId: 'kb-1',
+    kbName: '产品手册',
+    userId: 'user-b',
+    username: 'bob',
+    nickname: '鲍勃',
+    avatar: '',
+    status: 'pending',
+    permission: 'read',
+    createdAt: '2026-09-01T10:00:00',
+    acceptedAt: null,
+    ...overrides,
+  }
+}
+
+const STATS = {
+  totalKbs: 1, totalDocs: 1, totalChunks: 10, totalEntities: 2, indexing: 0,
+}
+
+const mocked = vi.mocked(api)
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  vi.clearAllMocks()
+  mocked.fetchStats.mockResolvedValue(STATS)
+  mocked.fetchKBPage.mockResolvedValue({
+    items: [], total: 0, page: 1, page_size: 12,
+  })
+  mocked.fetchShareInvitations.mockResolvedValue({ items: [], total: 0 })
+  mocked.fetchSharesByMe.mockResolvedValue({ items: [], total: 0 })
+})
+
+describe('知识库 store —— 左栏导航', () => {
+  it('默认停在概览，四个分组默认展开', () => {
+    const store = useKnowledgeBaseStore()
+    expect(store.activeNav).toBe('overview')
+    expect(store.groupExpanded).toMatchObject({
+      public: true, personal: true, sharedByMe: true, sharedWithMe: true,
+    })
+  })
+
+  it('切换分组会折叠 / 展开', () => {
+    const store = useKnowledgeBaseStore()
+    store.toggleGroup('public')
+    expect(store.groupExpanded.public).toBe(false)
+    store.toggleGroup('public')
+    expect(store.groupExpanded.public).toBe(true)
+  })
+})
+
+describe('知识库 store —— 分组加载', () => {
+  it('公共知识库走 public scope', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-pub', visibility: 'public', isOwner: false })],
+      total: 1,
+      page: 1,
+      page_size: 12,
+    })
+
+    await store.loadGroup('public', 1)
+
+    expect(mocked.fetchKBPage).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'public' }),
+    )
+    expect(store.groups.public.items).toHaveLength(1)
+    expect(store.groups.public.total).toBe(1)
+    expect(store.groups.public.loaded).toBe(true)
+  })
+
+  it('个人知识库走 personal scope', async () => {
+    const store = useKnowledgeBaseStore()
+    await store.loadGroup('personal', 1)
+    expect(mocked.fetchKBPage).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'personal' }),
+    )
+  })
+
+  it('「共享给我的」列表取服务端已接受结果，邀请记录独立维护', async () => {
+    const store = useKnowledgeBaseStore()
+    // 邀请接口同时返回待接受与已接受；列表接口只返回已接受的库
+    mocked.fetchShareInvitations.mockResolvedValue({
+      items: [
+        share({ id: 's-accepted', kbId: 'kb-a', status: 'accepted' }),
+        share({ id: 's-pending', kbId: 'kb-b', status: 'pending' }),
+      ],
+      total: 2,
+    })
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-a', isOwner: false })],
+      total: 1,
+      page: 1,
+      page_size: 12,
+    })
+
+    await store.loadGroup('sharedWithMe', 1)
+
+    expect(mocked.fetchKBPage).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'shared_with_me' }),
+    )
+    expect(store.groups.sharedWithMe.items.map((k) => k.id)).toEqual(['kb-a'])
+    expect(store.groups.sharedWithMe.total).toBe(1)
+    // 待接受的邀请仍进入角标与接受/拒绝入口
+    expect(store.pendingInvitationCount).toBe(1)
+    expect(store.acceptedInvitations().map((s) => s.kbId)).toEqual(['kb-a'])
+  })
+
+  it('「我的共享知识」只收录我分享出去的库', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.fetchSharesByMe.mockResolvedValue({
+      items: [share({ kbId: 'kb-shared', status: 'accepted' })],
+      total: 1,
+    })
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-shared' }), kb({ id: 'kb-private-only' })],
+      total: 2,
+      page: 1,
+      page_size: 100,
+    })
+
+    await store.loadGroup('sharedByMe', 1)
+
+    expect(store.groups.sharedByMe.items.map((k) => k.id)).toEqual(['kb-shared'])
+    expect(store.ownedSharesFor('kb-shared')).toHaveLength(1)
+  })
+
+  it('分组预览按 8 条截断并暴露「还有更多」', async () => {
+    const store = useKnowledgeBaseStore()
+    const items = Array.from({ length: 20 }, (_, i) => kb({ id: `kb-${i}` }))
+    mocked.fetchKBPage.mockResolvedValue({
+      items, total: 20, page: 1, page_size: 12,
+    })
+
+    await store.loadGroup('personal', 1)
+
+    expect(store.groupPreview('personal')).toHaveLength(8)
+    expect(store.groupHasMore('personal')).toBe(true)
+  })
+})
+
+describe('知识库 store —— 分享', () => {
+  it('邀请后按服务端结果刷新「我的共享知识」', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.createKbShares.mockResolvedValue({
+      items: [share({ status: 'pending' })],
+      total: 1,
+    })
+    mocked.fetchSharesByMe.mockResolvedValue({
+      items: [share({ status: 'pending' })],
+      total: 1,
+    })
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-1' })], total: 1, page: 1, page_size: 100,
+    })
+
+    await store.inviteShares('kb-1', ['user-b'])
+
+    expect(mocked.createKbShares).toHaveBeenCalledWith('kb-1', ['user-b'])
+    expect(store.ownedSharesFor('kb-1')).toHaveLength(1)
+    expect(store.sharesByMe['kb-1'][0].status).toBe('pending')
+    expect(store.groups.sharedByMe.items.map((k) => k.id)).toEqual(['kb-1'])
+  })
+
+  it('删除单个被分享用户后该库不再出现在「我的共享」', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.deleteKbShare.mockResolvedValue(undefined)
+    // 移除后服务端不再返回该分享记录
+    mocked.fetchSharesByMe.mockResolvedValue({ items: [], total: 0 })
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-1' })], total: 1, page: 1, page_size: 100,
+    })
+
+    await store.removeShare('kb-1', 'share-1')
+
+    expect(mocked.deleteKbShare).toHaveBeenCalledWith('kb-1', 'share-1')
+    expect(store.ownedSharesFor('kb-1')).toHaveLength(0)
+    expect(store.groups.sharedByMe.items).toHaveLength(0)
+  })
+
+  it('取消全部分享后清空该库的分享记录', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.cancelKbShares.mockResolvedValue(1)
+    mocked.fetchSharesByMe.mockResolvedValue({ items: [], total: 0 })
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-1' })], total: 1, page: 1, page_size: 100,
+    })
+
+    await store.cancelShares('kb-1')
+
+    expect(mocked.cancelKbShares).toHaveBeenCalledWith('kb-1')
+    expect(store.ownedSharesFor('kb-1')).toHaveLength(0)
+    expect(store.groups.sharedByMe.items).toHaveLength(0)
+  })
+
+  it('接受 / 拒绝邀请会刷新「共享给我的」', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.acceptKbShare.mockResolvedValue(share({ status: 'accepted' }))
+    mocked.rejectKbShare.mockResolvedValue(share({ status: 'rejected' }))
+
+    await store.respondInvitation('share-1', true)
+    expect(mocked.acceptKbShare).toHaveBeenCalledWith('share-1')
+
+    await store.respondInvitation('share-2', false)
+    expect(mocked.rejectKbShare).toHaveBeenCalledWith('share-2')
+    expect(mocked.fetchShareInvitations).toHaveBeenCalled()
+  })
+
+  it('发布公共库会同步概览列表与公共栏目', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.updateKbVisibility.mockResolvedValue(
+      kb({ visibility: 'public' }),
+    )
+    store.selectedKb = kb()
+
+    await store.setVisibility('kb-1', 'public')
+
+    expect(mocked.updateKbVisibility).toHaveBeenCalledWith('kb-1', 'public')
+    expect(store.selectedKb?.visibility).toBe('public')
+    expect(mocked.fetchKBPage).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'public' }),
+    )
+  })
+})
+
+describe('知识库 store —— 概览', () => {
+  it('概览拉取全部可见范围与全局统计', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [kb({ id: 'kb-mine' }), kb({ id: 'kb-pub', isOwner: false })],
+      total: 2,
+      page: 1,
+      page_size: 100,
+    })
+    mocked.fetchStats.mockResolvedValue({ ...STATS, totalKbs: 2 })
+
+    await store.fetchKbs()
+
+    expect(mocked.fetchKBPage).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'all' }),
+    )
+    expect(mocked.fetchStats).toHaveBeenCalledWith('all')
+    expect(store.kbs).toHaveLength(2)
+    expect(store.stats.totalKbs).toBe(2)
+  })
+
+  it('概览本地检索匹配名称 / 描述 / 标签', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.fetchKBPage.mockResolvedValue({
+      items: [
+        kb({ id: 'kb-1', name: '产品手册', tags: ['doc'] }),
+        kb({ id: 'kb-2', name: '研发规范', description: '代码风格' }),
+      ],
+      total: 2,
+      page: 1,
+      page_size: 100,
+    })
+    await store.fetchKbs()
+
+    store.searchQuery = '代码'
+    expect(store.filteredKbs.map((k) => k.id)).toEqual(['kb-2'])
+    store.searchQuery = 'doc'
+    expect(store.filteredKbs.map((k) => k.id)).toEqual(['kb-1'])
+  })
+})
