@@ -326,10 +326,42 @@ function onRerankModelChange(name: string) {
           />
         </div>
       </div>
+      <div class="field-row">
+        <div class="field flex-1">
+          <label class="field-label">
+            最低相似度: {{ draft.minSimilarity.toFixed(2) }}
+          </label>
+          <el-slider
+            :model-value="draft.minSimilarity"
+            :min="0" :max="0.9" :step="0.01"
+            @update:model-value="(v: number) => set('minSimilarity', v)"
+          />
+          <div class="hint-text">
+            最高余弦相似度低于该值时，判定「知识库中没有相关内容」并返回空结果。
+            默认 0.53 由黄金集校准（有答案的查询 ≥0.55、无答案的 ≤0.51）。
+          </div>
+        </div>
+        <div class="field flex-1">
+          <label class="field-label">
+            相对截断: {{ draft.scoreThreshold > 0 ? `${draft.scoreThreshold.toFixed(2)}×榜首` : '关闭' }}
+          </label>
+          <el-slider
+            :model-value="draft.scoreThreshold"
+            :min="0" :max="0.9" :step="0.05"
+            @update:model-value="(v: number) => set('scoreThreshold', v)"
+          />
+          <div class="hint-text">
+            丢弃低于「最高分 × 该比例」的结果，用于压缩长尾。默认关闭——
+            绝对门槛已经处理了"完全没有相关内容"。
+          </div>
+        </div>
+      </div>
       <div class="toggle-row">
         <div class="toggle-info">
           <div class="toggle-label">启用 Reranker</div>
-          <div class="toggle-desc">先召回 Top-K×4 候选，再由重排序模型精排</div>
+          <div class="toggle-desc">
+            先召回 Top-K×4 候选，再由重排序模型精排（实测 MRR 0.86 → 0.93，延迟 +0.5s）
+          </div>
         </div>
         <el-switch
           :model-value="draft.enableReranker"

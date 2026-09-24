@@ -5,6 +5,8 @@ splitters=1000），且前端 provider 选择字段不在 schema 中（被 pydan
 导致「选了提供商却按模型名全局解析」。
 """
 
+import pytest
+
 from api.knowledge_base.schemas import IndexConfigSchema
 from core.rag.bm25 import DEFAULT_B, DEFAULT_K1, SPARSE_ALGO_BM25
 from core.rag.splitters import INDEX_CONFIG_DEFAULTS
@@ -23,9 +25,19 @@ class TestDefaultsConsistency:
         assert config.bm25_k1 == DEFAULT_K1
         assert config.bm25_b == DEFAULT_B
 
-    def test_reranker_disabled_by_default(self):
-        """新知识库默认不启用精排——未接入却默认开启会误导用户。"""
-        assert IndexConfigSchema().enable_reranker is False
+    def test_reranker_enabled_by_default(self):
+        """新知识库默认启用精排（迭代 2）。
+
+        此前默认关闭，导致"配置页有开关但绝大多数库从来没开过"，精排等于白配。
+        模型不可用时检索会如实返回 ``rerank_applied=false``，不会假装生效。
+        """
+        assert IndexConfigSchema().enable_reranker is True
+
+    def test_relevance_threshold_defaults(self):
+        """门槛默认值：余弦 0.53（黄金集校准值）；相对截断默认关闭。"""
+        config = IndexConfigSchema()
+        assert config.min_similarity == pytest.approx(0.53)
+        assert config.score_threshold == pytest.approx(0.0)
 
 
 class TestFrontendPayloadContract:

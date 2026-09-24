@@ -29,3 +29,6 @@ workspace/
 
 # 日志
 *.log
+
+# 检索质量评测的临时报告（基线文件 tests/rag_eval/baseline.json 需要提交）
+tests/rag_eval/current.json

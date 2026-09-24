@@ -1,0 +1,90 @@
+{
+  "top_k": 10,
+  "overrides": {
+    "rerank": null,
+    "min_similarity": null,
+    "score_threshold": null
+  },
+  "modes": {
+    "hybrid": {
+      "hit@k": 0.9697,
+      "recall@k": 0.9697,
+      "mrr": 0.9303,
+      "ndcg@k": 0.9164,
+      "false_positive_rate": 0.1538,
+      "positive_cases": 33,
+      "negative_cases": 13,
+      "latency_p50_ms": 1171.0,
+      "latency_p95_ms": 1349.4,
+      "by_category": {
+        "colloquial": 1.0,
+        "cross_doc": 1.0,
+        "keyword": 1.0,
+        "semantic": 0.9091
+      },
+      "misses": [
+        "k8s-micro-02"
+      ],
+      "false_positives": [
+        "lc-neg-04",
+        "lc-neg-05"
+      ]
+    },
+    "vector": {
+      "hit@k": 0.9394,
+      "recall@k": 0.9394,
+      "mrr": 0.8889,
+      "ndcg@k": 0.8924,
+      "false_positive_rate": 0.1538,
+      "positive_cases": 33,
+      "negative_cases": 13,
+      "latency_p50_ms": 1170.6,
+      "latency_p95_ms": 1247.2,
+      "by_category": {
+        "colloquial": 1.0,
+        "cross_doc": 1.0,
+        "keyword": 0.9375,
+        "semantic": 0.9091
+      },
+      "misses": [
+        "k8s-micro-01",
+        "k8s-micro-02"
+      ],
+      "false_positives": [
+        "lc-neg-04",
+        "lc-neg-05"
+      ]
+    },
+    "bm25": {
+      "hit@k": 0.9394,
+      "recall@k": 0.9394,
+      "mrr": 0.8924,
+      "ndcg@k": 0.888,
+      "false_positive_rate": 0.6154,
+      "positive_cases": 33,
+      "negative_cases": 13,
+      "latency_p50_ms": 609.2,
+      "latency_p95_ms": 706.4,
+      "by_category": {
+        "colloquial": 1.0,
+        "cross_doc": 1.0,
+        "keyword": 1.0,
+        "semantic": 0.8182
+      },
+      "misses": [
+        "k8s-mysql-03",
+        "k8s-micro-02"
+      ],
+      "false_positives": [
+        "k8s-neg-01",
+        "k8s-neg-05",
+        "k8s-neg-06",
+        "k8s-neg-07",
+        "lc-neg-04",
+        "lc-neg-05",
+        "lc-neg-01",
+        "lc-neg-02"
+      ]
+    }
+  }
+}

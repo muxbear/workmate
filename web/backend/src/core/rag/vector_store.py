@@ -26,6 +26,9 @@ from core.rag.bm25 import (
 
 logger = logging.getLogger(__name__)
 
+#: HNSW 搜索宽度下界——Milvus 要求 ef >= limit，否则整次检索报错
+_HNSW_MIN_EF = 64
+
 #: Milvus 表达式允许的 ID 形态——UUID 与类 UUID 标识符（字母数字、``-``、``_``）。
 #: Milvus 的 expr 没有参数化绑定，只能把值拼进表达式字符串，因此进入表达式之前
 #: 必须先做白名单校验：``chunk_id='x" or id != "'`` 这类输入会构造出
@@ -393,10 +396,14 @@ class MilvusVectorStore(BaseVectorStore):
         ``1 - distance/2`` 换算（那会把相似度压到 [0.5, 1] 并整体反转）。
         """
         collection = await self._get_collection(kb_id)
+        # HNSW 的 ef（搜索宽度）必须 >= limit(=k)，否则 Milvus 直接报错：
+        # "ef(64) should be larger than k(80)"。此前 ef 写死 64，一旦候选数超过
+        # 64（开启精排后 hybrid 会按 top_k*8 取候选，top_k>=9 即触发）整次检索失败。
+        ef = max(_HNSW_MIN_EF, top_k * 2)
         results = collection.search(
             data=[query_embedding],
             anns_field="embedding",
-            param={"metric_type": "COSINE", "params": {"ef": 64}},
+            param={"metric_type": "COSINE", "params": {"ef": ef}},
             limit=top_k,
             output_fields=[],
         )

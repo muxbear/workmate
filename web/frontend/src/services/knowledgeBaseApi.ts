@@ -6,6 +6,8 @@ import type {
   DocChunk,
   CreateKBRequest,
   SearchOutcome,
+  SearchResult,
+  SearchParams,
   IndexConfig,
   KBVisibility,
   KBShare,
@@ -80,6 +82,9 @@ function mapConfig(raw: Record<string, unknown>): IndexConfig {
     enableReranker: (raw.enable_reranker as boolean) ?? false,
     topK: (raw.top_k as number) || 5,
     hybridAlpha: (raw.hybrid_alpha as number) || 0.7,
+    // 门槛：0.53 是后端校准后的默认值，旧配置里没有这两个键时按它兜底
+    minSimilarity: (raw.min_similarity as number) ?? 0.53,
+    scoreThreshold: (raw.score_threshold as number) ?? 0,
   }
 }
 
@@ -492,6 +497,9 @@ function configToSnake(config: IndexConfig): Record<string, unknown> {
     enable_reranker: config.enableReranker,
     top_k: config.topK,
     hybrid_alpha: config.hybridAlpha,
+    // 检索门槛（迭代 2 新增）——不带上就会在保存配置时被后端按默认值覆盖
+    min_similarity: config.minSimilarity,
+    score_threshold: config.scoreThreshold,
   }
 }
 
@@ -521,35 +529,58 @@ export async function searchKnowledgeBase(
   query: string,
   mode: string,
   topK: number = 5,
+  params: SearchParams = {},
 ): Promise<SearchOutcome> {
   const res = await instance.post(`/knowledge-bases/${kbId}/search`, {
     query,
     mode,
     top_k: topK,
+    // 未传的项由后端按「知识库配置 > 系统默认」解析
+    alpha: params.alpha,
+    min_similarity: params.minSimilarity,
+    score_threshold: params.scoreThreshold,
+    enable_rerank: params.enableRerank,
   })
   const data = res.data.data as {
     results: {
       id: string
+      doc_id: string
       doc_name: string
       content: string
+      chunk_index: number
       score: number
+      score_kind?: string
       vec_score: number | null
       bm25_score: number | null
+      page: number | null
+      section?: string
     }[]
     rerank_requested?: boolean
     rerank_applied?: boolean
+    no_relevant_result?: boolean
+    min_similarity?: number | null
+    filtered_count?: number
   }
   return {
     results: (data.results || []).map((r) => ({
       id: r.id,
+      docId: r.doc_id,
       doc: r.doc_name,
       chunk: r.content,
+      chunkIndex: r.chunk_index,
       score: r.score,
-      vec: r.vec_score ?? 0,
-      bm25: r.bm25_score ?? 0,
+      scoreKind: (r.score_kind || '') as SearchResult['scoreKind'],
+      // 原始分可能是 0（真实值），因此用 ?? 而不是 || 兜底
+      vec: r.vec_score ?? null,
+      bm25: r.bm25_score ?? null,
+      page: r.page ?? null,
+      section: r.section || '',
     })),
     rerankRequested: data.rerank_requested ?? false,
     rerankApplied: data.rerank_applied ?? false,
+    noRelevantResult: data.no_relevant_result ?? false,
+    minSimilarity: data.min_similarity ?? null,
+    filteredCount: data.filtered_count ?? 0,
   }
 }
 

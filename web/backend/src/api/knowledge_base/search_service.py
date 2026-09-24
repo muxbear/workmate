@@ -1,5 +1,6 @@
 """知识库检索服务——策略模式 + 注册表 + 模板方法编排器."""
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -16,6 +17,25 @@ RRF_K = 60
 DEFAULT_HYBRID_ALPHA = 0.7
 #: 精排候选上限——多数 rerank 接口对单次文档数有上限，且候选越多延迟越高
 MAX_RERANK_CANDIDATES = 50
+
+#: 分数含义常量——`ChunkMatch.score_kind` 与前端标注共用
+SCORE_KIND_COSINE = "cosine"
+SCORE_KIND_BM25 = "bm25"
+SCORE_KIND_RRF = "rrf"
+SCORE_KIND_RERANK = "rerank"
+
+#: 默认最低余弦相似度，由黄金集校准（text-embedding-v4 + 现有两个知识库）：
+#: 有真实命中的查询最高相似度落在 0.551~0.918，而"库里没有答案"的查询最高只有
+#: 0.232~0.511 —— 取间隙中点 0.53，两侧各留 ~0.02 余量：
+#:   * 0.35（最初凭经验取的值）只挡掉 4/11 个负样本，误召回率 0.64；
+#:   * 0.60 会开始丢掉真实命中（30 条正样本损失 3 条）。
+#: **换嵌入模型或语料后应重新校准**：`uv run python scripts/rag_eval.py` +
+#: tests/rag_eval/golden.jsonl 即为校准工具。每个知识库可用 min_similarity 覆盖。
+DEFAULT_MIN_SIMILARITY = 0.53
+
+#: 相对截断默认关闭：绝对门槛已经处理了"根本没有相关内容"，
+#: 再按比例截长尾会悄悄丢掉中等相关的结果，交给用户显式开启。
+DEFAULT_SCORE_THRESHOLD = 0.0
 
 
 def _coerce_float(value: object, default: float) -> float:
@@ -43,14 +63,46 @@ class SearchContext:
 
 @dataclass
 class ScoredChunk:
-    """带分维度得分的检索结果项。"""
+    """带分维度得分的检索结果项。
+
+    ``vec_score`` / ``bm25_score`` 一律是**原始分**（余弦相似度 / BM25 得分），
+    ``score`` 的语义由 ``score_kind`` 标注。
+    """
     chunk_id: str
     score: float
     vec_score: float | None = None
     bm25_score: float | None = None
+    score_kind: str = ""
 
 
 # ─── 分数融合工具函数 ──────────────────────────────────────────────────────────
+
+
+def _citation_fields(chunk: dict) -> tuple[int | None, str]:
+    """从切片元数据里取出引用定位信息（页码 / 章节）。
+
+    元数据由索引阶段写入 ``metadata_``：``page`` 来自 loader，``section`` 用标题层级
+    兜底（markdown 切片保留 h1/h2）。向量库两种后端对 JSON 字段的处理不同
+    （Milvus 存对象、Chroma 存字符串），这里统一解析。
+    """
+    meta = chunk.get("metadata_") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+
+    raw_page = meta.get("page", meta.get("page_ref"))
+    page: int | None = None
+    if isinstance(raw_page, int):
+        page = raw_page
+    elif isinstance(raw_page, str) and raw_page.strip().isdigit():
+        page = int(raw_page.strip())
+
+    section = meta.get("section") or meta.get("h1") or meta.get("h2") or ""
+    return page, str(section)
 
 
 def _normalize(pairs: list[tuple[str, float]]) -> dict[str, float]:
@@ -99,6 +151,7 @@ def _single_channel_fallback(
             score=round(score, 4),
             vec_score=round(score, 4) if is_vec else None,
             bm25_score=None if is_vec else round(score, 4),
+            score_kind=SCORE_KIND_COSINE if is_vec else SCORE_KIND_BM25,
         )
         for cid, score in ordered
     ]
@@ -142,15 +195,18 @@ def _fuse_scores(
         )
         return _single_channel_fallback(vec_pairs, bm25_pairs, top_k)
 
-    vec_norm = _normalize(vec_pairs)
-    bm25_norm = _normalize(bm25_pairs)
+    # 分维度得分一律回传**原始分**（余弦 / BM25）。此前这里用候选集内 min-max
+    # 相对值，导致同一字段在混合与单路模式下同名不同义，前端无法如实展示。
+    raw_vec = dict(vec_pairs)
+    raw_bm25 = dict(bm25_pairs)
 
     return [
         ScoredChunk(
             chunk_id=cid,
             score=round(value / max_rrf, 4) if max_rrf > 0 else 0.0,
-            vec_score=round(v, 4) if (v := vec_norm.get(cid)) is not None else None,
-            bm25_score=round(b, 4) if (b := bm25_norm.get(cid)) is not None else None,
+            vec_score=round(v, 4) if (v := raw_vec.get(cid)) is not None else None,
+            bm25_score=round(b, 4) if (b := raw_bm25.get(cid)) is not None else None,
+            score_kind=SCORE_KIND_RRF,
         )
         for cid, value in ranked
     ]
@@ -185,7 +241,10 @@ class VectorSearchStrategy(SearchStrategy):
             ctx.kb_id, ctx.query_embedding, ctx.top_k
         )
         return [
-            ScoredChunk(chunk_id=cid, score=round(s, 4), vec_score=round(s, 4))
+            ScoredChunk(
+                chunk_id=cid, score=round(s, 4), vec_score=round(s, 4),
+                score_kind=SCORE_KIND_COSINE,
+            )
             for cid, s in pairs
         ]
 
@@ -204,7 +263,10 @@ class BM25SearchStrategy(SearchStrategy):
             ctx.kb_id, ctx.query_text, ctx.top_k, ctx.sparse_config,
         )
         return [
-            ScoredChunk(chunk_id=cid, score=round(s, 4), bm25_score=round(s, 4))
+            ScoredChunk(
+                chunk_id=cid, score=round(s, 4), bm25_score=round(s, 4),
+                score_kind=SCORE_KIND_BM25,
+            )
             for cid, s in pairs
         ]
 
@@ -296,11 +358,32 @@ class SearchOrchestrator:
         # 稀疏检索参数（sparse_algo / bm25_k1 / bm25_b）——此前从未被读取
         sparse_config = SparseConfig.from_config(kb_config)
 
+        # 门槛：请求显式传入 > 知识库配置 > 系统默认
+        min_similarity = request.min_similarity
+        if min_similarity is None:
+            min_similarity = _coerce_float(
+                kb_config.get("min_similarity"), DEFAULT_MIN_SIMILARITY,
+            )
+        score_threshold = request.score_threshold
+        if score_threshold is None:
+            score_threshold = _coerce_float(
+                kb_config.get("score_threshold"), DEFAULT_SCORE_THRESHOLD,
+            )
+
         # 精排：启用则多召回候选再重排
         # rerank_requested 反映"配置要求精排"，rerank_applied 反映"是否真的生效"——
         # 两者分开返回，避免模型不可用/接口报错时用户以为精排已经起作用。
-        rerank_requested = bool(kb_config.get("enable_reranker"))
-        reranker = await self._resolve_reranker(db, kb_config)
+        # 请求级开关优先（高级检索面板 / 评测脚本用它做单次覆盖）
+        enable_rerank = request.enable_rerank
+        if enable_rerank is None:
+            enable_rerank = kb_config.get("enable_reranker", True)
+        rerank_requested = bool(enable_rerank)
+        reranker = None
+        if rerank_requested:
+            # 只覆盖"是否启用"，reranker_model / provider 仍取知识库配置，
+            # 否则请求级开关会顺带把用户选的模型换成默认模型。
+            rerank_config = {**kb_config, "enable_reranker": True}
+            reranker = await self._resolve_reranker(db, rerank_config)
         fetch_k = (
             min(max(top_k * RERANK_CANDIDATE_MULTIPLIER, top_k), MAX_RERANK_CANDIDATES)
             if reranker is not None
@@ -339,6 +422,31 @@ class SearchOrchestrator:
                 rerank_requested=rerank_requested, rerank_applied=False,
             )
 
+        # 绝对门槛：最高余弦相似度低于门槛 → 判定「该库没有相关内容」并返回空。
+        # 纯 BM25 模式没有余弦可比（BM25 分无上界，任何绝对值都没有意义），
+        # 因此这类模式下不做绝对门槛，只用相对截断（见下）。
+        max_cosine = max(
+            (sc.vec_score for sc in scored_chunks if sc.vec_score is not None),
+            default=None,
+        )
+        if (
+            max_cosine is not None
+            and min_similarity > 0
+            and max_cosine < min_similarity
+        ):
+            logger.info(
+                "判定无相关内容 kb=%s max_cosine=%.3f < %.3f，返回空结果",
+                kb_id, max_cosine, min_similarity,
+            )
+            return SearchResponse(
+                query=request.query, mode=request.mode, total=0, results=[],
+                rerank_requested=rerank_requested, rerank_applied=False,
+                score_kind=scored_chunks[0].score_kind,
+                no_relevant_result=True,
+                min_similarity=round(min_similarity, 4),
+                filtered_count=len(scored_chunks),
+            )
+
         # 查询 chunk 详情
         chunk_ids = [sc.chunk_id for sc in scored_chunks]
         sc_map = {sc.chunk_id: sc for sc in scored_chunks}
@@ -370,6 +478,7 @@ class SearchOrchestrator:
 
         results: list[ChunkMatch] = []
         for sc, chunk in ordered:
+            page, section = _citation_fields(chunk)
             results.append(ChunkMatch(
                 id=sc.chunk_id,
                 doc_id=chunk.get("doc_id", ""),
@@ -377,9 +486,22 @@ class SearchOrchestrator:
                 chunk_index=chunk.get("chunk_index", 0),
                 content=chunk.get("chunk_text", ""),
                 score=sc.score,
+                score_kind=sc.score_kind,
                 vec_score=sc.vec_score,
                 bm25_score=sc.bm25_score,
+                page=page,
+                section=section,
             ))
+
+        # 相对截断（默认关闭）：丢掉与榜首差距过大的尾部结果。
+        # 语义是"相对榜首"，因此对任何量纲都成立，不会像绝对阈值那样误伤。
+        filtered = 0
+        if score_threshold > 0 and results:
+            top_score = max(r.score for r in results)
+            floor = top_score * score_threshold
+            kept = [r for r in results if r.score >= floor]
+            filtered = len(results) - len(kept)
+            results = kept
 
         return SearchResponse(
             query=request.query,
@@ -388,6 +510,9 @@ class SearchOrchestrator:
             results=results,
             rerank_requested=rerank_requested,
             rerank_applied=rerank_applied,
+            score_kind=results[0].score_kind if results else "",
+            min_similarity=round(min_similarity, 4) if max_cosine is not None else None,
+            filtered_count=filtered,
         )
 
     async def _load_kb_config(self, db: AsyncSession, kb_id: str) -> dict:
@@ -427,8 +552,15 @@ class SearchOrchestrator:
         return model
 
     async def _resolve_reranker(self, db: AsyncSession, kb_config: dict):
-        """解析知识库配置的 reranker；未启用或模型不可用时返回 ``None``。"""
-        if not kb_config.get("enable_reranker"):
+        """解析知识库配置的 reranker；未启用或模型不可用时返回 ``None``。
+
+        配置里**没有**该键时（旧库的配置 JSON 早于该字段）按"开启"处理——
+        新建库的 schema 默认就是开启，否则同一份配置在新旧库上行为不一致。
+        """
+        enabled = kb_config.get("enable_reranker")
+        if enabled is None:
+            enabled = True
+        if not enabled:
             return None
 
         model_name = kb_config.get("reranker_model")
@@ -482,6 +614,7 @@ class SearchOrchestrator:
                     score=round(float(score), 4),
                     vec_score=original.vec_score,
                     bm25_score=original.bm25_score,
+                    score_kind=SCORE_KIND_RERANK,
                 ),
                 chunk,
             ))

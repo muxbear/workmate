@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Zap, Sparkle, Hash, Wand2, FileSearch, AlertTriangle } from 'lucide-vue-next'
-import type { KB, SearchMode, SearchResult } from '@/types/knowledgeBase'
+import {
+  Search, Zap, Sparkle, Hash, Wand2, FileSearch, AlertTriangle, SlidersHorizontal, Quote,
+} from 'lucide-vue-next'
+import type { KB, SearchMode, SearchResult, ScoreKind } from '@/types/knowledgeBase'
+import { SCORE_KIND_LABEL } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
 
 const props = defineProps<{
@@ -18,6 +21,76 @@ const searching = ref(false)
 const rerankRequested = ref(false)
 /** 精排是否真的生效（模型不可用/接口报错时为 false，此时结果是召回原始顺序） */
 const rerankApplied = ref(false)
+/** 判定「库里没有相关内容」——与"检索失败"是两回事 */
+const noRelevantResult = ref(false)
+/** 检索失败原因——失败时页面上要留痕，不能只有一个转瞬即逝的 toast */
+const searchError = ref('')
+/** 本次生效的最低余弦门槛与过滤条数 */
+const effectiveMinSimilarity = ref<number | null>(null)
+const filteredCount = ref(0)
+
+/** 高级参数是否展开 */
+const showAdvanced = ref(false)
+
+/**
+ * 高级检索参数——留空表示"用知识库配置"。
+ *
+ * 这几项都是**单次检索的覆盖**，不改知识库配置；想改默认值请去「索引配置」页签。
+ */
+const advanced = reactive<{
+  topK: number | null
+  alpha: number | null
+  minSimilarity: number | null
+  scoreThreshold: number
+  enableRerank: boolean
+}>({
+  topK: null,
+  alpha: null,
+  minSimilarity: null,
+  scoreThreshold: 0,
+  enableRerank: true,
+})
+
+/** 当前生效的 Top-K（未覆盖时用知识库配置） */
+const effectiveTopK = computed(() => advanced.topK ?? props.kb.config.topK ?? 5)
+
+const relevanceLabel = (scoreKind: SearchResult['scoreKind'], score: number, index: number) => {
+  // 相关度标签按"分数含义 + 排名"给出，避免把不同量纲的分都叫"综合分"
+  if (scoreKind === 'rerank') {
+    if (score >= 0.6) return { text: '高相关', cls: 'rel-high' }
+    if (score >= 0.3) return { text: '相关', cls: 'rel-mid' }
+    return { text: '弱相关', cls: 'rel-low' }
+  }
+  if (scoreKind === 'cosine') {
+    if (score >= 0.7) return { text: '高相关', cls: 'rel-high' }
+    if (score >= 0.55) return { text: '相关', cls: 'rel-mid' }
+    return { text: '弱相关', cls: 'rel-low' }
+  }
+  // 融合分 / BM25 没有绝对量纲，只能按名次给"排序位次"而非相关度承诺
+  return index < 3
+    ? { text: '排序靠前', cls: 'rel-mid' }
+    : { text: '排序靠后', cls: 'rel-low' }
+}
+
+const scoreTitle = (r: SearchResult) => {
+  const label = r.scoreKind ? SCORE_KIND_LABEL[r.scoreKind as ScoreKind] : '得分'
+  const parts = [`${label}: ${r.score.toFixed(3)}`]
+  if (r.vec !== null) parts.push(`余弦相似度: ${r.vec.toFixed(3)}`)
+  if (r.bm25 !== null) parts.push(`BM25: ${r.bm25.toFixed(2)}`)
+  return parts.join('\n')
+}
+
+/** 复制引用（文档名 + 章节 + 页码），便于粘到别的文档里核对来源 */
+async function copyCitation(r: SearchResult) {
+  const where = [r.section, r.page ? `第 ${r.page} 页` : ''].filter(Boolean).join(' · ')
+  const text = `《${r.doc}》${where ? ` ${where}` : ''}（切片 #${r.chunkIndex}）`
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制引用')
+  } catch {
+    ElMessage.warning(text)
+  }
+}
 
 const modeOptions: { key: SearchMode; label: string; desc: string; icon: typeof Sparkle }[] = [
   { key: 'hybrid', label: '混合检索', desc: '向量 + BM25 融合', icon: Wand2 },
@@ -27,11 +100,12 @@ const modeOptions: { key: SearchMode; label: string; desc: string; icon: typeof 
 
 const currentConfig = computed(() => [
   `Embedding: ${props.kb.config.embeddingModel}`,
-  `Top-K: ${props.kb.config.topK}`,
-  `α: ${props.kb.config.hybridAlpha}`,
-  props.kb.config.enableReranker && props.kb.config.rerankerModel
+  `Top-K: ${effectiveTopK.value}`,
+  mode.value === 'hybrid' ? `α: ${advanced.alpha ?? props.kb.config.hybridAlpha}` : '',
+  props.kb.config.rerankerModel
     ? `Reranker: ${props.kb.config.rerankerModel}`
     : '',
+  `相似度门槛: ${advanced.minSimilarity ?? props.kb.config.minSimilarity ?? 0.53}`,
 ].filter(Boolean).join(' · '))
 
 async function runSearch() {
@@ -39,15 +113,25 @@ async function runSearch() {
   if (!q) return
   searching.value = true
   try {
+    searchError.value = ''
     const outcome = await kbApi.searchKnowledgeBase(
       props.kb.id,
       q,
       mode.value,
-      props.kb.config.topK || 5,
+      effectiveTopK.value,
+      {
+        alpha: advanced.alpha ?? undefined,
+        minSimilarity: advanced.minSimilarity ?? undefined,
+        scoreThreshold: advanced.scoreThreshold || undefined,
+        enableRerank: advanced.enableRerank,
+      },
     )
     results.value = outcome.results
     rerankRequested.value = outcome.rerankRequested
     rerankApplied.value = outcome.rerankApplied
+    noRelevantResult.value = outcome.noRelevantResult
+    effectiveMinSimilarity.value = outcome.minSimilarity
+    filteredCount.value = outcome.filteredCount
     searched.value = true
   } catch (err: unknown) {
     // 此前只 console.error：检索失败时用户看到的是"命中 0 条"，无从判断原因
@@ -55,6 +139,9 @@ async function runSearch() {
     results.value = []
     rerankRequested.value = false
     rerankApplied.value = false
+    noRelevantResult.value = false
+    filteredCount.value = 0
+    searchError.value = msg
     searched.value = true
     ElMessage.error(msg)
     console.error('Search failed:', msg)
@@ -111,9 +198,79 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
         </button>
       </div>
 
+      <div class="advanced-toggle">
+        <button class="link-btn" @click="showAdvanced = !showAdvanced">
+          <SlidersHorizontal :size="14" />
+          {{ showAdvanced ? '收起高级参数' : '高级参数（Top-K / 权重 / 相似度门槛 / 精排）' }}
+        </button>
+      </div>
+
+      <div v-if="showAdvanced" class="advanced-panel">
+        <div class="adv-item">
+          <span class="adv-label">返回条数 Top-K</span>
+          <el-slider
+            :model-value="effectiveTopK"
+            :min="1"
+            :max="50"
+            :show-tooltip="false"
+            @update:model-value="advanced.topK = $event as number"
+          />
+          <span class="adv-value">{{ effectiveTopK }}</span>
+        </div>
+        <div v-if="mode === 'hybrid'" class="adv-item">
+          <span class="adv-label">向量权重 α</span>
+          <el-slider
+            :model-value="advanced.alpha ?? props.kb.config.hybridAlpha"
+            :min="0"
+            :max="1"
+            :step="0.05"
+            :show-tooltip="false"
+            @update:model-value="advanced.alpha = $event as number"
+          />
+          <span class="adv-value">{{ (advanced.alpha ?? props.kb.config.hybridAlpha).toFixed(2) }}</span>
+        </div>
+        <div class="adv-item">
+          <span class="adv-label">最低相似度</span>
+          <el-slider
+            :model-value="advanced.minSimilarity ?? props.kb.config.minSimilarity ?? 0.53"
+            :min="0"
+            :max="0.9"
+            :step="0.01"
+            :show-tooltip="false"
+            @update:model-value="advanced.minSimilarity = $event as number"
+          />
+          <span class="adv-value">
+            {{ (advanced.minSimilarity ?? props.kb.config.minSimilarity ?? 0.53).toFixed(2) }}
+          </span>
+        </div>
+        <div class="adv-item">
+          <span class="adv-label">相对截断</span>
+          <el-slider
+            v-model="advanced.scoreThreshold"
+            :min="0"
+            :max="0.9"
+            :step="0.05"
+            :show-tooltip="false"
+          />
+          <span class="adv-value">
+            {{ advanced.scoreThreshold > 0 ? `≥ ${advanced.scoreThreshold.toFixed(2)}×榜首` : '关闭' }}
+          </span>
+        </div>
+        <div class="adv-item adv-switch">
+          <span class="adv-label">启用精排</span>
+          <el-switch v-model="advanced.enableRerank" size="small" />
+        </div>
+      </div>
+
       <div class="config-info">
         {{ currentConfig }}
       </div>
+    </div>
+
+    <!-- 检索失败 -->
+    <div v-if="searchError" class="search-error">
+      <AlertTriangle :size="16" />
+      <span>{{ searchError }}</span>
     </div>
 
     <!-- 检索结果 -->
@@ -128,21 +285,45 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
           下方为召回原始顺序。请检查「模型」页面中 rerank 模型的 API_BASE 配置。
         </span>
       </div>
-      <div class="results-count">
+      <div v-if="noRelevantResult" class="no-relevant">
+        <AlertTriangle :size="16" />
+        <div>
+          <div class="no-relevant-title">知识库中没有找到相关内容</div>
+          <div class="no-relevant-desc">
+            最高相似度低于门槛（{{ effectiveMinSimilarity ?? '—' }}），
+            已过滤 {{ filteredCount }} 条低相关结果——这些内容库里确实没有讲过，
+            而不是"检索出错"。可换用更贴近原文的关键词，或切到 BM25 模式；
+            确认库里有资料时可在「高级参数」里降低门槛。
+          </div>
+        </div>
+      </div>
+
+      <div v-if="results.length > 0" class="results-count">
         命中 {{ results.length }} 条结果
         <span v-if="rerankApplied" class="rerank-ok">已精排</span>
+        <span v-if="filteredCount > 0" class="filter-ok">已过滤 {{ filteredCount }} 条低相关</span>
       </div>
       <div v-for="(r, i) in results" :key="r.id" class="card result-card">
         <div class="result-header">
           <el-tag size="small" type="info" class="result-rank">#{{ i + 1 }}</el-tag>
           <span class="result-doc">{{ r.doc }}</span>
-          <div class="result-scores">
-            <span class="score-label">综合</span>
-            <span class="score-value score-primary">{{ r.score.toFixed(2) }}</span>
-            <span class="score-label">| 向量</span>
-            <span class="score-value">{{ r.vec.toFixed(2) }}</span>
-            <span class="score-label">| BM25</span>
-            <span class="score-value">{{ r.bm25.toFixed(2) }}</span>
+          <span v-if="r.section" class="result-cite">· {{ r.section }}</span>
+          <span v-if="r.page" class="result-cite">· 第 {{ r.page }} 页</span>
+          <span :class="['rel-badge', relevanceLabel(r.scoreKind, r.score, i).cls]">
+            {{ relevanceLabel(r.scoreKind, r.score, i).text }}
+          </span>
+          <div class="result-scores" :title="scoreTitle(r)">
+            <span class="score-label">
+              {{ r.scoreKind ? SCORE_KIND_LABEL[r.scoreKind as ScoreKind] : '得分' }}
+            </span>
+            <span class="score-value score-primary">{{ r.score.toFixed(3) }}</span>
+            <span v-if="r.vec !== null" class="score-label">| 余弦 {{ r.vec.toFixed(3) }}</span>
+            <span v-if="r.bm25 !== null" class="score-label">| BM25 {{ r.bm25.toFixed(2) }}</span>
+            <el-tooltip content="复制引用" placement="top" :show-after="300">
+              <button class="copy-cite" @click.stop="copyCitation(r)">
+                <Quote :size="12" />
+              </button>
+            </el-tooltip>
           </div>
         </div>
         <p class="result-chunk">
@@ -307,6 +488,145 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 .results-count {
   font-size: var(--font-size-sm);
   color: var(--foreground-secondary);
+}
+
+.advanced-toggle {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--brand-primary, #6366f1);
+}
+
+.advanced-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-muted, rgba(148, 163, 184, 0.06));
+}
+
+.adv-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.adv-label {
+  flex: 0 0 92px;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--foreground-secondary);
+}
+
+.adv-item :deep(.el-slider) {
+  flex: 1;
+}
+
+.adv-value {
+  flex: 0 0 76px;
+  text-align: right;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--foreground-secondary);
+}
+
+.adv-switch {
+  justify-content: space-between;
+}
+
+.search-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: var(--radius-card);
+  background: rgba(244, 63, 94, 0.08);
+  color: var(--status-error-text, #f43f5e);
+  font-size: var(--font-size-sm);
+}
+
+.no-relevant {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  color: var(--foreground-secondary);
+}
+
+.no-relevant-title {
+  margin-bottom: 4px;
+  color: var(--foreground-primary, inherit);
+  font-size: var(--font-size-md, 14px);
+}
+
+.no-relevant-desc {
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.result-cite {
+  font-size: var(--font-size-xs, 12px);
+  color: var(--foreground-secondary);
+}
+
+.rel-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: var(--font-size-xs, 12px);
+  white-space: nowrap;
+}
+
+.rel-high {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--status-ready-text, #10b981);
+}
+
+.rel-mid {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.rel-low {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--foreground-secondary);
+}
+
+.filter-ok {
+  margin-left: 8px;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--foreground-secondary);
+}
+
+.copy-cite {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--foreground-secondary);
+  cursor: pointer;
+}
+
+.copy-cite:hover {
+  color: var(--brand-primary, #6366f1);
 }
 
 .rerank-ok {

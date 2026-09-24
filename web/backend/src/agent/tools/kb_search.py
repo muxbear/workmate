@@ -33,7 +33,7 @@ def kb_search(
     kb_id: str = "",
     kb_name: str = "",
     mode: str = "hybrid",
-    top_k: int = 5,
+    top_k: int | None = None,
 ) -> dict[str, Any]:
     """搜索知识库中的内容，支持混合检索、向量检索和 BM25 关键词检索。
 
@@ -47,10 +47,14 @@ def kb_search(
         kb_id: 知识库 ID（优先使用）。不知道时传空字符串，通过 kb_name 匹配。
         kb_name: 知识库名称（模糊匹配）。仅 kb_id 为空时生效。
         mode: 检索模式，"hybrid"（RRF 混合，推荐）、"vector"（语义）、"bm25"（关键词）。
-        top_k: 返回结果数量，默认 5；越界值会被夹到 [1, 50]。
+        top_k: 返回结果数量；不传则使用该知识库配置的 Top-K（默认 5），越界值夹到 [1, 50]。
 
     Returns:
-        {"total": int, "results": [{"doc": str, "content": str, "score": float, ...}]}
+        {"total": int, "results": [{"doc": str, "content": str, "score": float,
+         "score_kind": str, "page": int|None, "section": str, "chunk_index": int, ...}]}
+        - ``no_relevant_result=True`` 表示该知识库中没有相关内容（不是"检索失败"），
+          此时应如实告诉用户"知识库里没有"，不要自行编造答案；
+        - 引用时请带上 ``doc`` 与 ``section``/``page``，便于用户核对原文。
         失败时返回 {"error": str, ...}，其中：
         - kb_id 无效 → 附 available_kbs；
         - 多个候选知识库 → 附 candidates；
@@ -189,6 +193,26 @@ async def _resolve_kb_id(user_id: str, kb_id: str, kb_name: str) -> tuple[str, d
     }
 
 
+async def _load_kb_config(kb_id: str) -> dict:
+    """读取知识库配置（检索参数来源）。读取失败按空配置处理。"""
+    from sqlalchemy import select
+
+    from db.engine import async_session
+    from db.models.knowledge_base import KnowledgeBase
+
+    try:
+        async with async_session() as db:
+            kb = (
+                await db.execute(
+                    select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+                )
+            ).scalar_one_or_none()
+    except Exception:  # noqa: BLE001 - 配置读取失败不应让检索失败
+        logger.warning("读取知识库配置失败 kb=%s", kb_id, exc_info=True)
+        return {}
+    return dict(kb.config) if kb is not None and isinstance(kb.config, dict) else {}
+
+
 async def _kb_search_async(
     query: str, kb_id: str, kb_name: str, mode: str, top_k: int
 ) -> dict[str, Any]:
@@ -218,10 +242,15 @@ async def _kb_search_async(
             "results": [],
             "hint": "mode 只能是 " + " / ".join(valid_modes) + " 之一，默认用 hybrid。",
         }
-    try:
-        clamped_top_k = max(1, min(int(top_k), 50))
-    except (TypeError, ValueError):
-        clamped_top_k = 5
+    # top_k 未显式传入时用知识库配置的 Top-K——此前工具硬编码 5，
+    # 用户在配置页设的 Top-K 对智能体完全无效（配置与行为漂移）。
+    if top_k is None:
+        clamped_top_k = None
+    else:
+        try:
+            clamped_top_k = max(1, min(int(top_k), 50))
+        except (TypeError, ValueError):
+            clamped_top_k = None
 
     user_id = _current_user_id()
     if not user_id:
@@ -237,7 +266,15 @@ async def _kb_search_async(
     if not resolved_id:
         return error_payload or {"error": "未解析到知识库", "total": 0, "results": []}
 
-    req = SearchRequest(query=query.strip(), mode=normalized_mode, top_k=clamped_top_k)
+    kb_config = await _load_kb_config(resolved_id)
+    effective_top_k = clamped_top_k if clamped_top_k is not None else int(
+        kb_config.get("top_k") or 5
+    )
+    req = SearchRequest(
+        query=query.strip(),
+        mode=normalized_mode,
+        top_k=max(1, min(effective_top_k, 50)),
+    )
 
     async with async_session() as db:
         try:
@@ -260,6 +297,19 @@ async def _kb_search_async(
                 "hint": "请稍后重试；若持续失败请检查知识库与向量库状态。",
             }
 
+        if resp.total == 0 and resp.no_relevant_result:
+            # 明确区分"库里有内容但都不相关"与"没查到"：模型应如实转述，
+            # 而不是拿着低相关片段编答案。
+            return {
+                "total": 0,
+                "results": [],
+                "no_relevant_result": True,
+                "hint": (
+                    "该知识库中未找到与问题相关的内容（最高相似度低于门槛）。"
+                    "请直接告诉用户知识库里没有这方面资料，或建议更换关键词/知识库。"
+                ),
+            }
+
         return {
             "total": resp.total,
             "results": [
@@ -267,11 +317,18 @@ async def _kb_search_async(
                     "doc": r.doc_name,
                     "content": r.content,
                     "score": r.score,
+                    "score_kind": r.score_kind,
                     "vec_score": r.vec_score,
                     "bm25_score": r.bm25_score,
+                    # 引用定位：doc_id/chunk_index 供前端跳转，page/section 供用户复核
+                    "doc_id": r.doc_id,
+                    "chunk_index": r.chunk_index,
+                    "page": r.page,
+                    "section": r.section,
                 }
                 for r in resp.results
             ],
+            "rerank_applied": resp.rerank_applied,
         }
 
 

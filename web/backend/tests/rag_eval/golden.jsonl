@@ -1,0 +1,46 @@
+{"id": "k8s-install-01", "kb": "kubernetes", "category": "keyword", "query": "如何搭建 Kubernetes 环境", "expect_docs": ["第2章 云原生应用实战-搭建Kubernetes环境.md"], "expect_keywords": ["kubeadm"]}
+{"id": "k8s-install-02", "kb": "kubernetes", "category": "keyword", "query": "kubeadm 初始化集群", "expect_docs": ["第2章 云原生应用实战-搭建Kubernetes环境.md"], "expect_keywords": ["kubeadm", "init"]}
+{"id": "k8s-install-03", "kb": "kubernetes", "category": "semantic", "query": "怎么安装 Kubernetes 集群的镜像包", "expect_docs": ["第2章 云原生应用实战-搭建Kubernetes环境.md"], "expect_keywords": []}
+{"id": "k8s-install-04", "kb": "kubernetes", "category": "colloquial", "query": "我想自己搭一套 k8s 玩一玩，要看哪一章", "expect_docs": ["第2章 云原生应用实战-搭建Kubernetes环境.md"], "expect_keywords": []}
+{"id": "k8s-mysql-01", "kb": "kubernetes", "category": "keyword", "query": "MySQL 主从复制怎么配置", "expect_docs": ["第3章 云原生应用实战-Kubernetes部署MySql主从.md"], "expect_keywords": ["slave", "master"]}
+{"id": "k8s-mysql-02", "kb": "kubernetes", "category": "keyword", "query": "StatefulSet 部署 mysql", "expect_docs": ["第3章 云原生应用实战-Kubernetes部署MySql主从.md"], "expect_keywords": ["StatefulSet"]}
+{"id": "k8s-mysql-03", "kb": "kubernetes", "category": "semantic", "query": "数据库读写分离在 k8s 里怎么做", "expect_docs": ["第3章 云原生应用实战-Kubernetes部署MySql主从.md"], "expect_keywords": []}
+{"id": "k8s-mysql-04", "kb": "kubernetes", "category": "colloquial", "query": "主从库同步那一段在哪里", "expect_docs": ["第3章 云原生应用实战-Kubernetes部署MySql主从.md"], "expect_keywords": []}
+{"id": "k8s-nacos-01", "kb": "kubernetes", "category": "keyword", "query": "Nacos 集群部署", "expect_docs": ["第4章 云原生应用实战-Kubernetes部署Nacos集群.md"], "expect_keywords": ["nacos"]}
+{"id": "k8s-nacos-02", "kb": "kubernetes", "category": "semantic", "query": "服务注册中心怎么在集群里跑起来", "expect_docs": ["第4章 云原生应用实战-Kubernetes部署Nacos集群.md"], "expect_keywords": []}
+{"id": "k8s-seata-01", "kb": "kubernetes", "category": "keyword", "query": "Seata 分布式事务部署", "expect_docs": ["第5章 云原生应用实战-Kubernetes部署Seata.md"], "expect_keywords": ["seata"]}
+{"id": "k8s-seata-02", "kb": "kubernetes", "category": "semantic", "query": "分布式事务中间件怎么部署", "expect_docs": ["第5章 云原生应用实战-Kubernetes部署Seata.md"], "expect_keywords": []}
+{"id": "k8s-redis-01", "kb": "kubernetes", "category": "keyword", "query": "Redis 集群怎么部署", "expect_docs": ["第6章 云原生应用实战-Kubernetes部署Redis集群.md"], "expect_keywords": ["redis"]}
+{"id": "k8s-redis-02", "kb": "kubernetes", "category": "keyword", "query": "redis-cluster 分片集群", "expect_docs": ["第6章 云原生应用实战-Kubernetes部署Redis集群.md"], "expect_keywords": ["redis-cluster"]}
+{"id": "k8s-redis-03", "kb": "kubernetes", "category": "semantic", "query": "缓存中间件集群化部署的步骤", "expect_docs": ["第6章 云原生应用实战-Kubernetes部署Redis集群.md"], "expect_keywords": []}
+{"id": "k8s-redis-04", "kb": "kubernetes", "category": "colloquial", "query": "redis 主从和分片是怎么讲的", "expect_docs": ["第6章 云原生应用实战-Kubernetes部署Redis集群.md"], "expect_keywords": []}
+{"id": "k8s-jenkins-01", "kb": "kubernetes", "category": "keyword", "query": "Jenkins 流水线 Jenkinsfile", "expect_docs": ["第7章 云原生应用实战-Kubernetes部署Jenkins.md"], "expect_keywords": ["Jenkinsfile"]}
+{"id": "k8s-jenkins-02", "kb": "kubernetes", "category": "semantic", "query": "怎么在容器里做持续集成", "expect_docs": ["第7章 云原生应用实战-Kubernetes部署Jenkins.md"], "expect_keywords": []}
+{"id": "k8s-jenkins-03", "kb": "kubernetes", "category": "colloquial", "query": "自动构建这块内容在哪", "expect_docs": ["第7章 云原生应用实战-Kubernetes部署Jenkins.md"], "expect_keywords": []}
+{"id": "k8s-micro-01", "kb": "kubernetes", "category": "keyword", "query": "微服务部署到 Kubernetes", "expect_docs": ["第8章 云原生应用实战-Kubernetes部署微服务.md"], "expect_keywords": []}
+{"id": "k8s-micro-02", "kb": "kubernetes", "category": "semantic", "query": "业务服务怎么发布到集群里", "expect_docs": ["第8章 云原生应用实战-Kubernetes部署微服务.md"], "expect_keywords": []}
+{"id": "k8s-cross-01", "kb": "kubernetes", "category": "cross_doc", "query": "Ingress 暴露服务", "expect_docs": ["第2章 云原生应用实战-搭建Kubernetes环境.md", "第8章 云原生应用实战-Kubernetes部署微服务.md"], "expect_keywords": ["ingress"], "min_expected": 1}
+{"id": "k8s-cross-02", "kb": "kubernetes", "category": "cross_doc", "query": "用 helm 安装中间件", "expect_docs": ["第3章 云原生应用实战-Kubernetes部署MySql主从.md", "第6章 云原生应用实战-Kubernetes部署Redis集群.md"], "expect_keywords": ["helm"], "min_expected": 1}
+{"id": "k8s-neg-01", "kb": "kubernetes", "category": "negative", "query": "LangChain 里怎么定义 Agent", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-02", "kb": "kubernetes", "category": "negative", "query": "北京明天天气怎么样", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-03", "kb": "kubernetes", "category": "negative", "query": "公司差旅报销的流程是什么", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-04", "kb": "kubernetes", "category": "negative", "query": "怎么做红烧肉", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-05", "kb": "kubernetes", "category": "negative", "query": "Python 的 GIL 是什么", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-06", "kb": "kubernetes", "category": "negative", "query": "如何训练一个扩散模型", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-07", "kb": "kubernetes", "category": "negative", "query": "劳动合同法关于试用期的规定", "expect_docs": [], "expect_keywords": []}
+{"id": "k8s-neg-08", "kb": "kubernetes", "category": "negative", "query": "怎么用 Excel 做透视表", "expect_docs": [], "expect_keywords": []}
+{"id": "lc-tool-01", "kb": "langchain", "category": "keyword", "query": "LangChain 里怎么定义工具", "expect_docs": [], "expect_keywords": ["tool", "工具"]}
+{"id": "lc-tool-02", "kb": "langchain", "category": "semantic", "query": "让模型能调用外部函数要怎么写", "expect_docs": [], "expect_keywords": ["工具", "tool"]}
+{"id": "lc-neg-04", "kb": "langchain", "category": "negative", "query": "什么是 ReAct 智能体", "expect_docs": [], "expect_keywords": []}
+{"id": "lc-agent-02", "kb": "langchain", "category": "semantic", "query": "智能体怎么自己决定用哪个工具", "expect_docs": [], "expect_keywords": ["agent", "智能体"]}
+{"id": "lc-rag-01", "kb": "langchain", "category": "keyword", "query": "检索增强生成 RAG", "expect_docs": [], "expect_keywords": ["rag"]}
+{"id": "lc-rag-02", "kb": "langchain", "category": "semantic", "query": "怎么把多轮对话的历史带给模型", "expect_docs": [], "expect_keywords": ["对话", "记忆"]}
+{"id": "lc-mem-01", "kb": "langchain", "category": "keyword", "query": "对话记忆怎么持久化", "expect_docs": [], "expect_keywords": ["记忆", "memory"]}
+{"id": "lc-neg-05", "kb": "langchain", "category": "negative", "query": "怎么配置 embedding 模型", "expect_docs": [], "expect_keywords": []}
+{"id": "lc-prompt-01", "kb": "langchain", "category": "semantic", "query": "提示词模板怎么做参数化", "expect_docs": [], "expect_keywords": ["prompt", "提示"]}
+{"id": "lc-stream-01", "kb": "langchain", "category": "keyword", "query": "流式输出 stream", "expect_docs": [], "expect_keywords": ["stream", "流式"]}
+{"id": "lc-neg-01", "kb": "langchain", "category": "negative", "query": "Kubernetes 的 Service 有哪几种类型", "expect_docs": [], "expect_keywords": []}
+{"id": "lc-neg-02", "kb": "langchain", "category": "negative", "query": "如何给 React 组件做单元测试", "expect_docs": [], "expect_keywords": []}
+{"id": "lc-neg-03", "kb": "langchain", "category": "negative", "query": "上海地铁几点停运", "expect_docs": [], "expect_keywords": []}
+{"id": "lc-msg-01", "kb": "langchain", "category": "keyword", "query": "怎么构造结构化输出", "expect_docs": [], "expect_keywords": ["结构化", "输出"]}
+{"id": "lc-graph-01", "kb": "langchain", "category": "keyword", "query": "LangGraph 用来做什么", "expect_docs": [], "expect_keywords": ["LangGraph"]}

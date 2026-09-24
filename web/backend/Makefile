@@ -1,4 +1,4 @@
-.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests rag_eval rag_baseline
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -11,6 +11,14 @@ test:
 
 integration_tests:
 	python -m pytest tests/integration_tests 
+
+# 检索质量评测：与 tests/rag_eval/baseline.json 对比，指标劣化即可判定回归
+rag_eval:
+	python scripts/rag_eval.py --json tests/rag_eval/current.json --compare tests/rag_eval/baseline.json
+
+# 重新生成基线（确认改动确实提升质量后再执行）
+rag_baseline:
+	python scripts/rag_eval.py --json tests/rag_eval/baseline.json
 
 test_watch:
 	python -m ptw --snapshot-update --now . -- -vv tests/unit_tests

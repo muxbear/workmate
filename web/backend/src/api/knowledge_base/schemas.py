@@ -27,9 +27,16 @@ class IndexConfigSchema(BaseModel):
     enable_graph: bool = Field(default=True)
     reranker_model: str = Field(default="bge-reranker-v2-m3")
     reranker_provider_id: str | None = Field(default=None, description="reranker 模型所属提供商")
-    enable_reranker: bool = Field(default=False)
+    #: 精排默认开启：它是当前性价比最高的质量开关（默认关闭时"配了但没生效"，
+    #: 用户很难发现）。模型不可用时检索会如实标注 rerank_applied=false。
+    enable_reranker: bool = Field(default=True)
     top_k: int = Field(default=5, ge=1, le=50)
     hybrid_alpha: float = Field(default=0.7, ge=0.0, le=1.0)
+    #: 最低余弦相似度——最高相似度低于该值时判定"知识库中没有相关内容"。
+    #: 0.53 由黄金集校准（见 search_service.DEFAULT_MIN_SIMILARITY）
+    min_similarity: float = Field(default=0.53, ge=0.0, le=1.0)
+    #: 相对截断：丢弃低于「最高分 × 该比例」的结果，0 表示不截断
+    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 # ─── KnowledgeBase ──────────────────────────────────────────────────────────
@@ -181,18 +188,48 @@ class SearchRequest(BaseModel):
     mode: str = Field(default="hybrid", description="检索模式: hybrid | vector | bm25")
     top_k: int = Field(default=5, ge=1, le=50, description="返回结果数量")
     alpha: float | None = Field(default=None, ge=0.0, le=1.0, description="混合检索向量权重")
+    min_similarity: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="最低余弦相似度——最高相似度低于该值时判定"
+                    "「知识库中没有相关内容」并返回空结果；None 表示用知识库配置或系统默认",
+    )
+    score_threshold: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="相对截断比例——丢弃低于「最高分 × 该比例」的结果；"
+                    "None 表示用知识库配置（默认关闭）",
+    )
+    enable_rerank: bool | None = Field(
+        default=None,
+        description="是否启用精排；None 表示用知识库配置（默认启用）。"
+                    "评测与高级检索面板用它做单次覆盖。",
+    )
 
 
 class ChunkMatch(BaseModel):
-    """匹配到的分片。"""
+    """匹配到的分片。
+
+    分数口径（**每个字段的含义是固定的**，不再随模式变化）：
+
+    - ``score``：最终排序分，含义由 ``score_kind`` 标注——
+      ``cosine``（余弦相似度）/ ``bm25``（BM25 得分）/ ``rrf``（归一化融合分，
+      榜首恒为 1.0）/ ``rerank``（精排相关度）；
+    - ``vec_score`` / ``bm25_score``：**原始**余弦相似度与 BM25 得分。
+      此前混合模式下这两个字段是候选集内的 min-max 相对值，与单路模式的原始分
+      同名不同义，前端把两者都当"得分"展示会误导用户。
+    """
     id: str
     doc_id: str
     doc_name: str
     chunk_index: int
     content: str
     score: float
+    #: score 的含义：cosine | bm25 | rrf | rerank
+    score_kind: str = ""
     vec_score: float | None = None
     bm25_score: float | None = None
+    #: 引用定位（来源页码与章节路径），来自切片元数据
+    page: int | None = None
+    section: str = ""
 
 
 class SearchResponse(BaseModel):
@@ -205,6 +242,14 @@ class SearchResponse(BaseModel):
     rerank_requested: bool = False
     #: 精排是否**实际生效**（模型不可用或调用失败时为 False）
     rerank_applied: bool = False
+    #: 结果分（score）的含义：cosine | bm25 | rrf | rerank
+    score_kind: str = ""
+    #: 是否判定为「知识库中没有相关内容」——最高余弦低于门槛，结果被清空
+    no_relevant_result: bool = False
+    #: 本次生效的最低余弦门槛（None 表示该模式不做绝对门槛，如纯 BM25）
+    min_similarity: float | None = None
+    #: 被门槛过滤掉的条数（绝对门槛或相对截断）
+    filtered_count: int = 0
 
 
 # ─── Chunk ───────────────────────────────────────────────────────────────────

@@ -24,9 +24,12 @@ const defaultConfig: IndexConfig = {
   embeddingModel: '', embeddingProviderId: '', embeddingDim: 1024,
   sparseAlgo: 'bm25', bm25K1: 1.5, bm25B: 0.75,
   entityModel: '', relationModel: '', enableGraph: true,
-  // 默认不启用精排：需先在「模型」页配置 type=rerank 的模型
-  rerankerModel: '', rerankerProviderId: '', enableReranker: false,
+  // 默认启用精排（与后端一致）：模型不可用时检索会标注"精排未生效"，不会假装生效。
+  // rerankerModel 留空，由后端按「模型」页 type=rerank 的配置解析。
+  rerankerModel: '', rerankerProviderId: '', enableReranker: true,
   topK: 10, hybridAlpha: 0.5,
+  // 门槛与后端默认一致（0.53 由黄金集校准，见 search_service.DEFAULT_MIN_SIMILARITY）
+  minSimilarity: 0.53, scoreThreshold: 0,
 }
 
 const name = ref('')

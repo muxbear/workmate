@@ -91,12 +91,19 @@ class TestFuseScores:
         result = _fuse_scores(vec, bm25, top_k=3, alpha=0.5)
         assert result[0].chunk_id == "both"
 
-    def test_per_channel_scores_are_normalized(self):
+    def test_per_channel_scores_are_raw(self):
+        """分维度得分回传**原始分**（余弦 / BM25）。
+
+        此前是候选集内 min-max 相对值，与单路模式的原始分同名不同义——
+        前端把两者都当"得分"展示会误导用户（同样标 1.00 的可能是余弦 0.88，
+        也可能只是"本批里最高"）。
+        """
         result = _fuse_scores([("a", 10.0), ("b", 0.0)], [("a", 100.0)], top_k=2, alpha=0.5)
         by_id = {c.chunk_id: c for c in result}
-        assert by_id["a"].vec_score == pytest.approx(1.0)
+        assert by_id["a"].vec_score == pytest.approx(10.0)
         assert by_id["b"].vec_score == pytest.approx(0.0)
-        assert by_id["a"].bm25_score == pytest.approx(1.0)
+        assert by_id["a"].bm25_score == pytest.approx(100.0)
+        assert by_id["a"].score_kind == "rrf"
 
 
 # ─── 策略注册表 ──────────────────────────────────────────────────────────────
@@ -455,8 +462,26 @@ class TestRerankAppliedFlag:
         assert response.rerank_applied is False
         assert response.total == 2
 
-    async def test_requested_false_when_not_configured(self):
+    async def test_requested_true_when_config_key_absent(self):
+        """配置里没有该键时按"启用"处理（迭代 2 起精排默认开启）。
+
+        此前默认关闭——"配置页有这个开关但绝大多数库从来没开过"，
+        精排等于白配。
+        """
         orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
+        )
+
+        assert response.rerank_requested is True
+        # 本次没有可用 reranker（替身返回 None），因此未生效
+        assert response.rerank_applied is False
+
+    async def test_explicit_disable_is_respected(self):
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_reranker": False},
             vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
         )
         response = await orchestrator.search(
@@ -465,6 +490,22 @@ class TestRerankAppliedFlag:
 
         assert response.rerank_requested is False
         assert response.rerank_applied is False
+
+    async def test_request_flag_overrides_kb_config(self):
+        """请求级开关（高级面板 / 评测脚本）优先于知识库配置。"""
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_reranker": False},
+            reranker=FakeReranker(),
+            vec=[("c0", 0.9), ("c1", 0.8)],
+            chunks={"c0": make_chunk("c0"), "c1": make_chunk("c1")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1",
+            SearchRequest(query="q", mode="vector", top_k=2, enable_rerank=True),
+        )
+
+        assert response.rerank_requested is True
+        assert response.rerank_applied is True
 
     async def test_partial_rerank_result_is_topped_up(self):
         """精排只返回部分候选时，用召回顺序补足，条数不应变少。"""
@@ -490,3 +531,208 @@ class TestHybridStrategyCandidateExpansion:
         assert store.vec_top_k == [8]
         assert store.bm25_top_k == [8]
 
+
+# ─── 迭代 2：相关度门槛、相对截断与引用 ──────────────────────────────────────
+
+
+class TestRelevanceGate:
+    """绝对门槛：最高余弦低于门槛 → 判定「库内没有相关内容」。"""
+
+    async def test_unrelated_query_returns_empty(self):
+        orchestrator, _, _ = make_orchestrator(
+            # 全部低于默认门槛 0.53（实测"完全无关的问题"最高 0.51）
+            vec=[("c0", 0.34), ("c1", 0.30), ("c2", 0.21)],
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(3)},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="无关问题", mode="vector", top_k=5),
+        )
+
+        assert response.total == 0
+        assert response.results == []
+        assert response.no_relevant_result is True
+        assert response.filtered_count == 3
+        assert response.min_similarity == pytest.approx(0.53)
+
+    async def test_relevant_query_passes_gate(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.88), ("c1", 0.42)],
+            chunks={"c0": make_chunk("c0"), "c1": make_chunk("c1")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="相关问题", mode="vector", top_k=5),
+        )
+
+        assert response.total == 2
+        assert response.no_relevant_result is False
+
+    async def test_gate_can_be_disabled_via_request(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.10)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1",
+            SearchRequest(query="q", mode="vector", top_k=5, min_similarity=0.0),
+        )
+
+        assert response.total == 1
+        assert response.no_relevant_result is False
+
+    async def test_gate_reads_kb_config(self):
+        """知识库配置里的门槛高于默认值时同样生效。"""
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"min_similarity": 0.9},
+            vec=[("c0", 0.80)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        assert response.total == 0
+        assert response.min_similarity == pytest.approx(0.9)
+
+    async def test_request_threshold_overrides_kb_config(self):
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"min_similarity": 0.9},
+            vec=[("c0", 0.80)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1",
+            SearchRequest(query="q", mode="vector", top_k=5, min_similarity=0.5),
+        )
+
+        assert response.total == 1
+
+    async def test_bm25_only_result_skips_absolute_gate(self):
+        """纯 BM25 没有余弦可比（量纲无界），不做绝对门槛。"""
+        orchestrator, _, _ = make_orchestrator(
+            bm25=[("c0", 1.2)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="bm25", top_k=5),
+        )
+
+        assert response.total == 1
+        assert response.min_similarity is None
+
+
+class TestRelativeThreshold:
+    async def test_tail_below_ratio_is_trimmed(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9), ("c1", 0.8), ("c2", 0.4)],
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(3)},
+        )
+        response = await orchestrator.search(
+            None, "kb-1",
+            SearchRequest(query="q", mode="vector", top_k=5, score_threshold=0.9),
+        )
+
+        # 榜首 0.9，floor=0.81 → 只留下 c0
+        assert [r.id for r in response.results] == ["c0"]
+        assert response.filtered_count == 2
+
+    async def test_disabled_by_default(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9), ("c1", 0.4)],
+            chunks={"c0": make_chunk("c0"), "c1": make_chunk("c1")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        assert response.total == 2
+        assert response.filtered_count == 0
+
+
+class TestScoreSemantics:
+    async def test_vector_mode_reports_cosine(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.77)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        match = response.results[0]
+        assert match.score_kind == "cosine"
+        assert match.score == pytest.approx(0.77)
+        assert match.vec_score == pytest.approx(0.77)
+        assert response.score_kind == "cosine"
+
+    async def test_hybrid_reports_raw_channel_scores(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.81)], bm25=[("c0", 6.5)],
+            chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="hybrid", top_k=5),
+        )
+
+        match = response.results[0]
+        assert match.score_kind == "rrf"
+        # 原始分如实回传，不再是"本批最高 = 1.0"
+        assert match.vec_score == pytest.approx(0.81)
+        assert match.bm25_score == pytest.approx(6.5)
+
+    async def test_reranked_results_report_rerank_kind(self):
+        orchestrator, _, _ = make_orchestrator(
+            reranker=FakeReranker(order=[(1, 0.95), (0, 0.20)]),
+            vec=[("c0", 0.9), ("c1", 0.8)],
+            chunks={"c0": make_chunk("c0"), "c1": make_chunk("c1")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
+        )
+
+        assert response.results[0].score_kind == "rerank"
+        assert response.results[0].score == pytest.approx(0.95)
+        assert response.score_kind == "rerank"
+
+
+class TestCitations:
+    async def test_page_and_section_come_from_metadata(self):
+        chunk = make_chunk("c0")
+        chunk["metadata_"] = {"page": 12, "h1": "第一章", "h2": "1.1 概述"}
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": chunk},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        match = response.results[0]
+        assert match.page == 12
+        assert match.section == "第一章"
+
+    async def test_string_page_is_coerced(self):
+        chunk = make_chunk("c0")
+        chunk["metadata_"] = {"page": "7"}
+        orchestrator, _, _ = make_orchestrator(vec=[("c0", 0.9)], chunks={"c0": chunk})
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        assert response.results[0].page == 7
+
+    async def test_chroma_json_string_metadata_is_parsed(self):
+        """Chroma 把 metadata_ 存成 JSON 字符串，解析失败时不能崩。"""
+        chunk = make_chunk("c0")
+        chunk["metadata_"] = '{"page": 3, "h1": "概览"}'
+        orchestrator, _, _ = make_orchestrator(vec=[("c0", 0.9)], chunks={"c0": chunk})
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        assert response.results[0].page == 3
+        assert response.results[0].section == "概览"
+
+    async def test_missing_metadata_is_safe(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=5),
+        )
+
+        assert response.results[0].page is None
+        assert response.results[0].section == ""

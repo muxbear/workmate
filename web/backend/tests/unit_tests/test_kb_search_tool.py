@@ -114,7 +114,8 @@ def share_row(
 
 async def call_search(**kwargs) -> dict:
     """直接调用异步实现，避免 asyncio.run 嵌套。"""
-    params = {"query": "查询", "kb_id": "", "kb_name": "", "mode": "hybrid", "top_k": 5}
+    # top_k 默认 None：与工具签名一致（未显式传入时跟随知识库配置）
+    params = {"query": "查询", "kb_id": "", "kb_name": "", "mode": "hybrid", "top_k": None}
     params.update(kwargs)
     return await kb_search_module._kb_search_async(**params)
 
@@ -318,9 +319,50 @@ class TestSearchBehaviour:
         assert result["results"][0] == {
             "doc": "手册.pdf", "content": "命中内容", "score": 0.9,
             "vec_score": 0.8, "bm25_score": None,
+            # 引用定位：模型可据此给出可核查的出处
+            "doc_id": "d1", "chunk_index": 0, "page": None, "section": "",
+            "score_kind": "",
         }
         assert patched_env.calls[0][1].mode == "vector"
         assert patched_env.calls[0][1].top_k == 3
+
+    async def test_missing_top_k_uses_kb_config(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """未显式传 top_k 时用知识库配置的 Top-K——此前工具硬编码 5，
+        用户在配置页设的值对智能体完全无效。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [{
+            **kb_row("kb-a", "我的", USER_A), "config": {"top_k": 12},
+        }])
+
+        await call_search(kb_id="kb-a")
+
+        assert patched_env.calls[0][1].top_k == 12
+
+    async def test_no_relevant_result_is_distinguished(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """「库里没有相关内容」必须与「检索失败」区分开，模型才能如实回答。"""
+        from api.knowledge_base.schemas import SearchResponse
+
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        async def empty_search(db, kb_id, request):
+            patched_env.calls.append((kb_id, request))
+            return SearchResponse(
+                query=request.query, mode=request.mode, total=0, results=[],
+                no_relevant_result=True, min_similarity=0.35, filtered_count=6,
+            )
+
+        patched_env.search = empty_search  # type: ignore[method-assign]
+        result = await call_search(kb_id="kb-a")
+
+        assert result["total"] == 0
+        assert result["no_relevant_result"] is True
+        assert "未找到" in result["hint"]
+        assert "error" not in result
 
     async def test_orchestrator_missing(self, monkeypatch, sessionmaker):
         monkeypatch.setattr("db.engine.async_session", sessionmaker)

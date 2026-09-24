@@ -48,6 +48,10 @@ export interface IndexConfig {
   enableReranker: boolean
   topK: number
   hybridAlpha: number
+  /** 最低余弦相似度——最高相似度低于该值时判定"库中没有相关内容" */
+  minSimilarity: number
+  /** 相对截断比例（0 表示关闭）：丢弃低于「最高分 × 该比例」的结果 */
+  scoreThreshold: number
 }
 
 // 索引阶段
@@ -283,23 +287,56 @@ export const SEARCH_MODE_CONFIG: Record<SearchMode, SearchModeConfig> = {
   bm25: { label: 'BM25', desc: '稀疏关键词' },
 }
 
+// 分数含义：与后端 score_kind 一一对应
+export type ScoreKind = 'cosine' | 'bm25' | 'rrf' | 'rerank'
+
+export const SCORE_KIND_LABEL: Record<ScoreKind, string> = {
+  cosine: '向量相似度',
+  bm25: '关键词得分',
+  rrf: '融合排序分',
+  rerank: '精排相关度',
+}
+
 // 检索结果
 export interface SearchResult {
   id: string
+  docId: string
   doc: string
   chunk: string
+  chunkIndex: number
   score: number
-  vec: number
-  bm25: number
+  /** score 的含义——UI 必须按它如实标注，不能一律叫"综合分" */
+  scoreKind: ScoreKind | ''
+  /** 原始余弦相似度 */
+  vec: number | null
+  /** 原始 BM25 得分 */
+  bm25: number | null
+  /** 引用定位：来源页码与章节 */
+  page: number | null
+  section: string
 }
 
-// 检索返回：结果 + 精排实际状态
+// 检索返回：结果 + 门槛与精排的实际状态
 export interface SearchOutcome {
   results: SearchResult[]
   /** 知识库配置是否要求精排 */
   rerankRequested: boolean
   /** 精排是否**实际生效**（模型不可用或调用失败时为 false） */
   rerankApplied: boolean
+  /** 是否判定「库中没有相关内容」（最高相似度低于门槛，结果被清空） */
+  noRelevantResult: boolean
+  /** 本次生效的最低余弦门槛 */
+  minSimilarity: number | null
+  /** 被门槛过滤掉的条数 */
+  filteredCount: number
+}
+
+/** 高级检索参数（检索页可覆盖知识库配置） */
+export interface SearchParams {
+  alpha?: number
+  minSimilarity?: number
+  scoreThreshold?: number
+  enableRerank?: boolean
 }
 
 // 视图模式
