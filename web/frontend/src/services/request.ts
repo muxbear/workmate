@@ -15,6 +15,16 @@ function getAccessToken(): string | null {
   return null
 }
 
+/**
+ * 取当前 access token —— 供 EventSource 使用。
+ *
+ * 浏览器的 EventSource 不能自定义请求头，因此通知流与知识库索引进度流都通过
+ * 查询参数携带 token（后端对应接口用 decode_token 校验）。
+ */
+export function getStreamToken(): string | null {
+  return getAccessToken()
+}
+
 function getRefreshTokenValue(): string | null {
   try {
     const raw = sessionStorage.getItem(TOKEN_STORAGE_KEY)

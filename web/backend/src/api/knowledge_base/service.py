@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -32,7 +34,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-STAGE_NAMES = ["排队", "解析", "切片", "向量化", "BM25 倒排", "实体抽取", "关系抽取", "入库"]
+# 说明：阶段名与状态口径统一在 doc_service（STAGE_NAMES / STAGE_STATUS_ORDER /
+# compute_stages）。本文件曾有一份 8 项的重复常量（"BM25 倒排 / 实体抽取 / 关系抽取
+# / 入库"），与实现不符且无调用方，已删除以免继续误导。
 
 # 知识库可见范围
 VISIBILITY_PRIVATE = "private"
@@ -323,9 +327,33 @@ async def delete_kb(
     user_id: str,
     vector_store: BaseVectorStore | None = None,
     mediator: KnowledgeBaseMediator | None = None,
+    scheduler=None,
 ) -> None:
-    """删除知识库——级联删除文档、实体、关系和向量数据。"""
+    """删除知识库——级联删除文档、实体、关系、分享、任务与向量数据。
+
+    删除前先取消该库所有在跑的索引任务，否则任务会继续向向量库写入（形成无法
+    回收的孤儿向量）；同时清理磁盘上的原始文件与分享记录——此前磁盘目录与
+    ``knowledge_base_shares`` 都留了下来，库删了分享还在。
+    """
+    from agent.config import settings
+
     kb = await _get_kb_or_404(db, kb_id, user_id)
+
+    # 取消所有在跑/排队中的索引任务
+    if scheduler is not None:
+        from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+        doc_ids = list(
+            (
+                await db.execute(
+                    select(KnowledgeBaseDocument.id).where(
+                        KnowledgeBaseDocument.kb_id == kb_id
+                    )
+                )
+            ).scalars().all()
+        )
+        for doc_id in doc_ids:
+            await scheduler.cancel(doc_id)
 
     # 向量库清理（优先使用中介者）
     if mediator:
@@ -336,8 +364,19 @@ async def delete_kb(
         except Exception as e:
             logger.error("Failed to delete vector collection kb=%s: %s", kb_id, e)
 
-    # Delete related records
-    for table in ["knowledge_base_documents", "knowledge_base_entities", "knowledge_base_relations"]:
+    # 磁盘上的原始文件（整库目录）
+    kb_upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
+    if os.path.isdir(kb_upload_dir):
+        shutil.rmtree(kb_upload_dir, ignore_errors=True)
+
+    # Delete related records（含分享与索引任务）
+    for table in (
+        "knowledge_base_documents",
+        "knowledge_base_entities",
+        "knowledge_base_relations",
+        "knowledge_base_shares",
+        "knowledge_base_index_tasks",
+    ):
         await db.execute(text(f"DELETE FROM {table} WHERE kb_id = :kb_id"), {"kb_id": kb_id})
 
     await db.delete(kb)
@@ -382,9 +421,13 @@ async def reindex_kb(
     """保存索引配置并重新索引所有文档。
 
     1. 更新 KB 配置
-    2. 清空向量库集合
+    2. 清空向量库集合（保留旧集合直到新建成功）
     3. 重置所有文档为 queued 状态
-    4. 重新入队所有文档
+    4. **提交事务**后重新入队所有文档
+
+    Returns:
+        ``{"reindexed": int, "collection_ready": bool}``——调用方负责提交事务；
+        入队已完成（入队前已提交，见下）。
     """
     kb = await _get_kb_or_404(db, kb_id, user_id)
 
@@ -393,17 +436,21 @@ async def reindex_kb(
         kb.config = config.model_dump()
         kb.updated_at = datetime.utcnow()
 
-    # Recreate vector collection
+    # Recreate vector collection。
+    # 注意：``create_collection`` 内部会先删掉同名集合（Milvus 与 Chroma 实现皆然），
+    # 因此这一步失败就意味着旧向量已丢——这里不再像此前那样只记日志，而是把结果
+    # 如实上报（collection_ready），避免"库被清空但界面显示一切正常"。
+    # 真正的原子切换（建新集合 → 校验 → 别名切换）安排在迭代 4（T4.5）。
+    collection_ready = True
     if vector_store:
+        dim = int(
+            (config.embedding_dim if config else kb.config.get("embedding_dim")) or 1024
+        )
         try:
-            await vector_store.delete_collection(kb_id)
-        except Exception as e:
-            logger.warning("Failed to delete vector collection for reindex kb=%s: %s", kb_id, e)
-        try:
-            dim = (config.embedding_dim if config else kb.config.get("embedding_dim", 1024))
             await vector_store.create_collection(kb_id, dim)
         except Exception as e:
-            logger.error("Failed to create vector collection for reindex kb=%s: %s", kb_id, e)
+            collection_ready = False
+            logger.error("重建向量集合失败 kb=%s: %s", kb_id, e)
 
     # Reset all documents to queued
     from db.models.knowledge_base_document import KnowledgeBaseDocument
@@ -411,16 +458,37 @@ async def reindex_kb(
     await db.execute(
         update(KnowledgeBaseDocument)
         .where(KnowledgeBaseDocument.kb_id == kb_id)
-        .values(status="queued", progress=0, error_message=None, indexed_at=None)
+        .values(
+            status="queued", progress=0, error_message=None,
+            graph_error=None, indexed_at=None,
+            chunks_count=0, entities_count=0, relations_count=0,
+        )
     )
 
-    # Re-enqueue all documents
+    # 清空旧的图谱数据（重建后由抽取阶段重新写入）
+    await db.execute(
+        text("DELETE FROM knowledge_base_entities WHERE kb_id = :kb_id"), {"kb_id": kb_id}
+    )
+    await db.execute(
+        text("DELETE FROM knowledge_base_relations WHERE kb_id = :kb_id"), {"kb_id": kb_id}
+    )
+
     docs = (
         await db.execute(
             select(KnowledgeBaseDocument)
             .where(KnowledgeBaseDocument.kb_id == kb_id)
         )
     ).scalars().all()
+
+    kb.status = "indexing"
+    kb.chunks_count = 0
+    kb.entities_count = 0
+    kb.relations_count = 0
+    kb.updated_at = datetime.utcnow()
+
+    # **先提交再入队**：进度观察者用独立 session 更新文档行，未提交时会更新到 0 行，
+    # 随后还可能被本事务的重置语句覆盖回 queued（进度丢失）。
+    await db.commit()
 
     from api.knowledge_base.doc_service import IndexingTask
 
@@ -435,17 +503,14 @@ async def reindex_kb(
                 config=kb.config,
             ))
             enqueued += 1
-
-    # Reset KB counters and set status to indexing
-    kb.status = "indexing"
-    kb.chunks_count = 0
-    kb.entities_count = 0
-    kb.relations_count = 0
-    kb.updated_at = datetime.utcnow()
+    elif docs:
+        logger.warning("reindex 未提供调度器，%d 个文档停留在 queued", len(docs))
 
     logger.info(
-        "Reindex kb=%s: %d docs enqueued, config updated", kb_id, enqueued
+        "Reindex kb=%s: %d docs enqueued, collection_ready=%s",
+        kb_id, enqueued, collection_ready,
     )
+    return {"reindexed": enqueued, "collection_ready": collection_ready}
 
     return {"kb_id": kb_id, "docs_enqueued": enqueued, "status": "indexing"}
 

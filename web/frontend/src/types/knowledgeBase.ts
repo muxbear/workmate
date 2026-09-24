@@ -13,6 +13,7 @@ export type DocStatus =
   | 'extracting'
   | 'indexed'
   | 'failed'
+  | 'canceled'
 
 // 切片策略
 export type ChunkStrategy = 'fixed' | 'recursive' | 'semantic' | 'markdown' | 'agentic'
@@ -23,8 +24,8 @@ export type SparseAlgo = 'bm25' | 'bm25_plus' | 'tf_idf' | 'none'
 // 文档类型
 export type DocType = 'pdf' | 'md' | 'docx' | 'csv' | 'image' | 'html'
 
-// 索引流水线阶段状态
-export type StageStatus = 'pending' | 'running' | 'done' | 'failed'
+// 索引流水线阶段状态（canceled 表示用户在该阶段取消了索引）
+export type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'canceled'
 
 // 索引配置
 export interface IndexConfig {
@@ -69,6 +70,8 @@ export interface KBDoc {
   relations: number
   uploadedAt: string
   errorMessage: string | null
+  /** 图谱抽取失败原因（索引本身成功，图谱页签会因此为空） */
+  graphError: string | null
   stages: DocStage[]
   config: IndexConfig | null
 }
@@ -200,6 +203,7 @@ export const DOC_STATUS_CONFIG: Record<DocStatus, DocStatusConfig> = {
   extracting: { label: '实体抽取', cls: 'doc-status-extracting' },
   indexed: { label: '已索引', cls: 'doc-status-indexed' },
   failed: { label: '失败', cls: 'doc-status-failed' },
+  canceled: { label: '已取消', cls: 'doc-status-canceled' },
 }
 
 // 切片策略选项
@@ -302,7 +306,6 @@ export interface SearchOutcome {
 export type ViewMode = 'grid' | 'list'
 
 // 文档流水线阶段名称
-export const DOC_STAGE_NAMES = ['排队', '解析', '切片', '向量化', 'BM25 倒排', '实体抽取', '关系抽取', '入库']
 
 // 创建知识库请求
 export interface CreateKBRequest {

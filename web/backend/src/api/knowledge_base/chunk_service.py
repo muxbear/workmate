@@ -136,6 +136,39 @@ async def delete_chunk(
     await vector_store.delete_chunk_by_id(kb_id, chunk_id)
 
 
+async def refresh_counters_after_chunk_change(
+    vector_store: BaseVectorStore,
+    db,
+    kb_id: str,
+    doc_id: str,
+) -> None:
+    """切片增删改后同步计数（并提交事务）。
+
+    切片是直接改向量库的，关系库里的 ``chunks_count`` 只是快照——不重算就会一直
+    虚高，知识库的分片总数也跟着错（此前切片级增删改完全不更新任何计数）。
+    """
+    from sqlalchemy import select
+
+    from api.knowledge_base.doc_service import recalc_doc_counters, recalc_kb_counters
+    from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+    try:
+        rows = await vector_store.get_chunks_by_doc_id(kb_id, doc_id)
+        doc = (
+            await db.execute(
+                select(KnowledgeBaseDocument).where(KnowledgeBaseDocument.id == doc_id)
+            )
+        ).scalar_one_or_none()
+        if doc is not None:
+            doc.chunks_count = len(rows)
+    except Exception:  # noqa: BLE001 - 计数校正失败不应让写操作报错
+        logger.warning("重算切片数失败 kb=%s doc=%s", kb_id, doc_id, exc_info=True)
+
+    await recalc_doc_counters(db, doc_id)
+    await recalc_kb_counters(db, kb_id)
+    await db.commit()
+
+
 async def batch_operation(
     vector_store: BaseVectorStore,
     embedding_model,

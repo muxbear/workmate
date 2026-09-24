@@ -97,6 +97,10 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
 
   /** 索引进度轮询定时器 */
   let indexPollTimer: ReturnType<typeof setInterval> | null = null
+  /** SSE 通道（EventSource）；不可用时为 null，走轮询 */
+  let indexStream: EventSource | null = null
+  /** SSE 期间的兜底刷新定时器 */
+  let indexFallbackTimer: ReturnType<typeof setInterval> | null = null
 
   // ─── 计算属性 ──────────────────────────────────────────────────────────
 
@@ -400,6 +404,12 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
+  async function cancelDoc(kbId: string, docId: string) {
+    const updatedDoc = await kbApi.cancelDocument(kbId, docId)
+    applyDocPatch(updatedDoc)
+    statsPatch(await kbApi.fetchStats('all'))
+  }
+
   async function reindexKb(kbId: string, config: IndexConfig) {
     const result = await kbApi.reindexKnowledgeBase(kbId, config)
     if (selectedKb.value && selectedKb.value.id === kbId) {
@@ -421,32 +431,110 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     return kbApi.searchKnowledgeBase(kbId, query, mode)
   }
 
-  // ─── 索引进度轮询 ──────────────────────────────────────────────────────
+  // ─── 索引进度：SSE 为主、轮询兜底 ───────────────────────────────────────
 
+  /** 把一次进度事件（或接口返回的文档）合并进当前知识库 */
+  function applyDocPatch(patch: KBDoc) {
+    if (!selectedKb.value) return
+    selectedKb.value = {
+      ...selectedKb.value,
+      documents: selectedKb.value.documents.map((d) =>
+        d.id === patch.id ? { ...d, ...patch } : d,
+      ),
+    }
+    if (selectedDoc.value?.id === patch.id) {
+      selectedDoc.value = { ...selectedDoc.value, ...patch }
+    }
+  }
+
+  /** 兜底刷新：拉一次文档列表并同步计数（SSE 丢事件或断开时使用） */
+  async function refreshActiveDocuments() {
+    const kb = selectedKb.value
+    if (!kb) return
+    try {
+      const docData = await kbApi.fetchDocuments(kb.id, { page_size: 100 })
+      if (selectedKb.value && selectedKb.value.id === kb.id) {
+        selectedKb.value = { ...selectedKb.value, documents: docData.items }
+      }
+      statsPatch(await kbApi.fetchStats('all'))
+    } catch {
+      // 静默忽略：下一次事件或轮询会纠正
+    }
+  }
+
+  function isTerminal(status: KBDoc['status']) {
+    return status === 'indexed' || status === 'failed' || status === 'canceled'
+  }
+
+  /**
+   * 订阅索引进度。
+   *
+   * 优先用 SSE（索引完成 1 秒内可见、不再整表轮询）；拿不到 token 或环境不支持
+   * EventSource 时退回 5 秒轮询。SSE 期间仍保留一个 30 秒的兜底轮询——事件是
+   * 可丢弃的状态快照，兜底刷新能纠正任何丢失。
+   */
   function startIndexPolling() {
     stopIndexPolling()
-    indexPollTimer = setInterval(async () => {
-      if (!selectedKb.value) return
-      const kbId = selectedKb.value.id
+    const kb = selectedKb.value
+    if (!kb) return
 
-      // 只对有索引中文档的知识库做轮询
-      const hasActive = selectedKb.value.documents.some(
-        (d) => d.status !== 'indexed' && d.status !== 'failed',
-      )
-      if (!hasActive) return
-
+    const url = kbApi.buildIndexingStreamUrl(kb.id)
+    if (url && typeof EventSource !== 'undefined') {
       try {
-        // 重新拉取文档列表
-        const docData = await kbApi.fetchDocuments(kbId, { page_size: 100 })
-        if (selectedKb.value) {
-          selectedKb.value = {
-            ...selectedKb.value,
-            documents: docData.items,
+        indexStream = new EventSource(url)
+        indexStream.onmessage = (event: MessageEvent<string>) => {
+          try {
+            const payload = JSON.parse(event.data) as {
+              doc_id: string
+              status: KBDoc['status']
+              progress: number
+              chunks_count: number
+              entities_count?: number
+              relations_count?: number
+              error_message: string | null
+              graph_error?: string | null
+              stages?: KBDoc['stages']
+            }
+            const current = selectedKb.value?.documents.find(
+              (d) => d.id === payload.doc_id,
+            )
+            // 只更新本地已有的行：事件里带的是增量字段，凭空造对象会产生缺字段的文档
+            if (current) {
+              applyDocPatch({
+                ...current,
+                status: payload.status,
+                progress: Math.max(payload.progress ?? 0, 0),
+                chunks: payload.chunks_count ?? current.chunks,
+                entities: payload.entities_count ?? current.entities,
+                relations: payload.relations_count ?? current.relations,
+                errorMessage: payload.error_message,
+                graphError: payload.graph_error ?? current.graphError,
+                stages: payload.stages?.length ? payload.stages : current.stages,
+              })
+            }
+            if (isTerminal(payload.status)) {
+              void refreshActiveDocuments()
+            }
+          } catch {
+            // 事件格式异常时忽略，兜底轮询会纠正
           }
         }
+        indexStream.onerror = () => {
+          // EventSource 会自动重连；连续失败由兜底轮询兜住
+        }
+        indexFallbackTimer = setInterval(refreshActiveDocuments, 30000)
+        return
       } catch {
-        // 轮询失败静默忽略
+        indexStream = null
       }
+    }
+
+    // 回退路径：5 秒轮询（仅在存在未完成文档时才真正拉取）
+    indexPollTimer = setInterval(async () => {
+      const current = selectedKb.value
+      if (!current) return
+      if (!current.documents.some((d) => !isTerminal(d.status))) return
+      await refreshActiveDocuments()
     }, 5000)
   }
 
@@ -454,6 +542,14 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     if (indexPollTimer) {
       clearInterval(indexPollTimer)
       indexPollTimer = null
+    }
+    if (indexFallbackTimer) {
+      clearInterval(indexFallbackTimer)
+      indexFallbackTimer = null
+    }
+    if (indexStream) {
+      indexStream.close()
+      indexStream = null
     }
   }
 
@@ -499,6 +595,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     uploadDocs,
     deleteDoc,
     retryDoc,
+    cancelDoc,
     reindexKb,
     searchKb,
     startIndexPolling,

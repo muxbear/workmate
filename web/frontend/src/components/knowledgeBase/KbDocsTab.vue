@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Search, Upload, Trash2, RefreshCw, FolderOpen,
+  Search, Upload, Trash2, RefreshCw, FolderOpen, Ban, CircleAlert,
   FileType2, FileCode2, FileText, FileSpreadsheet, FileImage, Globe,
   Eye, Scissors,
 } from 'lucide-vue-next'
@@ -20,11 +20,19 @@ const props = defineProps<{
   readonly?: boolean
 }>()
 
+// 注意：computed 必须在 props 之后定义（下面 selectedDoc 会用到 props.kb）
+
 const store = useKnowledgeBaseStore()
 
 const search = ref('')
 const uploadVisible = ref(false)
-const selectedDoc = ref<KBDoc | null>(null)
+// 只存 id，面板用 computed 从最新列表里取——列表在 SSE/轮询后会被整体替换，
+// 若这里存对象引用，面板会永远显示打开那一刻的快照（行徽标却在更新，自相矛盾）
+const selectedDocId = ref<string | null>(null)
+
+const selectedDoc = computed(
+  () => props.kb.documents.find((d) => d.id === selectedDocId.value) ?? null,
+)
 const detailDoc = ref<KBDoc | null>(null)
 const editDoc = ref<KBDoc | null>(null)
 
@@ -71,11 +79,35 @@ async function handleRetry(docId: string) {
   }
 }
 
+/** 正在索引的文档（可取消）：排除终态 */
+// 排队中与各执行阶段都可取消——批量上传超过并发上限（默认 3）时，
+// 队列里的文档同样需要能停下来
+const TERMINAL_STATUSES = ['indexed', 'failed', 'canceled']
+
+function isActive(status: KBDoc['status']) {
+  return !TERMINAL_STATUSES.includes(status)
+}
+
+function canRetry(status: KBDoc['status']) {
+  // 后端只拒绝"已索引完成"的重试，其余状态（失败/已取消/卡在中间态）都可重跑
+  return status !== 'indexed'
+}
+
+async function handleCancel(docId: string) {
+  try {
+    await store.cancelDoc(props.kb.id, docId)
+    ElMessage.success('已取消索引')
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '取消失败'
+    ElMessage.error(msg)
+  }
+}
+
 function toggleDocPanel(doc: KBDoc) {
-  if (selectedDoc.value?.id === doc.id) {
-    selectedDoc.value = null
+  if (selectedDocId.value === doc.id) {
+    selectedDocId.value = null
   } else {
-    selectedDoc.value = doc
+    selectedDocId.value = doc.id
   }
 }
 
@@ -173,8 +205,16 @@ function handleEditFragment(doc: KBDoc) {
                         <KbDocStatusBadge :status="doc.status" />
                       </el-tooltip>
                       <KbDocStatusBadge v-else :status="doc.status" />
+                      <el-tooltip
+                        v-if="doc.graphError"
+                        :content="`图谱未生成：${doc.graphError}`"
+                        placement="top"
+                        :show-after="300"
+                      >
+                        <CircleAlert :size="13" class="graph-warn" />
+                      </el-tooltip>
                       <el-progress
-                        v-if="doc.status !== 'indexed' && doc.status !== 'queued' && doc.status !== 'failed'"
+                        v-if="isActive(doc.status) && doc.status !== 'queued'"
                         :percentage="Math.round(doc.progress)"
                         :stroke-width="3"
                         :show-text="false"
@@ -199,14 +239,34 @@ function handleEditFragment(doc: KBDoc) {
                           <Scissors :size="14" />
                         </button>
                       </el-tooltip>
-                      <button
-                        v-if="!readonly && doc.status === 'failed'"
-                        class="action-btn"
-                        @click.stop="handleRetry(doc.id)"
-                        title="重试"
+                      <el-tooltip
+                        v-if="!readonly && canRetry(doc.status)"
+                        content="重试"
+                        placement="top"
+                        :show-after="300"
                       >
-                        <RefreshCw :size="14" />
-                      </button>
+                        <button
+                          class="action-btn"
+                          @click.stop="handleRetry(doc.id)"
+                          title="重试"
+                        >
+                          <RefreshCw :size="14" />
+                        </button>
+                      </el-tooltip>
+                      <el-tooltip
+                        v-if="!readonly && isActive(doc.status)"
+                        content="取消索引"
+                        placement="top"
+                        :show-after="300"
+                      >
+                        <button
+                          class="action-btn"
+                          @click.stop="handleCancel(doc.id)"
+                          title="取消索引"
+                        >
+                          <Ban :size="14" />
+                        </button>
+                      </el-tooltip>
                       <el-tooltip v-if="!readonly" content="删除" placement="top" :show-after="300">
                         <button class="action-btn action-del" @click.stop="handleDelete(doc.id)" title="删除">
                           <Trash2 :size="14" />
@@ -228,7 +288,7 @@ function handleEditFragment(doc: KBDoc) {
 
         <!-- 索引流水线面板 -->
         <div v-if="selectedDoc" class="docs-panel">
-          <KbIndexingPipeline :doc="selectedDoc" @close="selectedDoc = null" />
+          <KbIndexingPipeline :doc="selectedDoc" @close="selectedDocId = null" />
         </div>
       </div>
 
@@ -396,6 +456,11 @@ function handleEditFragment(doc: KBDoc) {
 .col-status { width: 180px; cursor: pointer; }
 .col-status:hover { background: rgba(59, 130, 246, 0.06); }
 .col-action { width: 150px; text-align: right; }
+
+.graph-warn {
+  color: var(--status-warning-text, #f59e0b);
+  flex-shrink: 0;
+}
 
 .action-row {
   display: flex;

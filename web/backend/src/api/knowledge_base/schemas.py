@@ -119,6 +119,8 @@ class KBDocResponse(BaseModel):
     uploaded_at: datetime
     indexed_at: datetime | None = None
     error_message: str | None = None
+    #: 图谱抽取失败原因（索引本身仍成功）
+    graph_error: str | None = None
     stages: list[DocStageInfo] = []
     config: IndexConfigSchema | None = None
 
@@ -135,7 +137,7 @@ class KBDocListResponse(BaseModel):
 
 # 说明：上传接口直接返回 KBDocResponse（完整字段），此处不再单独定义
 # KBDocUploadResponse——它此前只声明 7 个字段，与文档列表的形状不一致，
-# 前端读取 progress/chunks_count/stages 会拿到 undefined。
+# 前端读取 progress/chunks_count/stages 会拿到 undefined（见 T0.7）。
 
 
 # ─── Graph ──────────────────────────────────────────────────────────────────

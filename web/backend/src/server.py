@@ -106,13 +106,34 @@ async def lifespan(app: FastAPI):
     # 初始化知识库子系统
     await _init_knowledge_base(app)
 
-    async with web_search_mcp.session_manager.run():
-        async with image_gen_mcp.session_manager.run():
-            async with video_gen_mcp.session_manager.run():
-                yield
-    await artifact_maintenance.stop()
-    await automation_scheduler.stop()
-    await shutdown_graph()
+    # 恢复上次进程遗留的索引任务：队列此前只在内存里，重启会让进行中的文档
+    # 永久卡在中间态且不可重试（2026-09-24 前）。
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is not None:
+        try:
+            recovered = await scheduler.recover_pending()
+            if recovered:
+                logging.getLogger(__name__).info("已恢复 %d 个索引任务", recovered)
+        except Exception:
+            logging.getLogger(__name__).exception("索引任务恢复失败（不影响服务启动）")
+
+    try:
+        async with web_search_mcp.session_manager.run():
+            async with image_gen_mcp.session_manager.run():
+                async with video_gen_mcp.session_manager.run():
+                    yield
+    finally:
+        # 收尾必须放在 finally：任一 session_manager 抛异常时，此前这些 stop()
+        # 会被整体跳过，留下未收尾的任务行与后台循环。
+        if scheduler is not None:
+            # 先停调度器：取消运行中任务并退回 queued，等下次启动继续
+            try:
+                await scheduler.shutdown()
+            except Exception:
+                logging.getLogger(__name__).exception("索引调度器停止失败")
+        await artifact_maintenance.stop()
+        await automation_scheduler.stop()
+        await shutdown_graph()
 
 
 app = FastAPI(

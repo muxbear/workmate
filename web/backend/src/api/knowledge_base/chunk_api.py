@@ -15,6 +15,7 @@ from api.knowledge_base.chunk_service import (
     delete_chunk,
     get_chunk_detail,
     list_chunks,
+    refresh_counters_after_chunk_change,
     update_chunk,
 )
 from api.knowledge_base.model_provider import load_embedding_model_for_kb
@@ -124,6 +125,7 @@ async def api_update_chunk(
         return {"code": 404, "data": None, "message": str(e)}
     except Exception:
         return {"code": 500, "data": None, "message": "切片更新失败，请查看后端日志"}
+    await refresh_counters_after_chunk_change(vs, db, kb_id, doc_id)
     return {"code": 0, "data": chunk.model_dump(), "message": "ok"}
 
 
@@ -147,6 +149,7 @@ async def api_delete_chunk(
         await delete_chunk(vs, kb_id, doc_id, chunk_id)
     except ValueError as e:
         return {"code": 404, "data": None, "message": str(e)}
+    await refresh_counters_after_chunk_change(vs, db, kb_id, doc_id)
     return {"code": 0, "data": None, "message": "ok"}
 
 
@@ -188,4 +191,5 @@ async def api_batch_chunk_operation(
         result = await batch_operation(vs, emb, kb_id, doc_id, body)
     except ValueError as e:
         return {"code": 404, "data": None, "message": str(e)}
+    await refresh_counters_after_chunk_change(vs, db, kb_id, doc_id)
     return {"code": 0, "data": result, "message": "ok"}

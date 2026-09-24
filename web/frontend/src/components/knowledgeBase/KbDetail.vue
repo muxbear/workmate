@@ -86,12 +86,31 @@ async function handleReindex() {
   }
   try {
     reindexing.value = true
-    await store.reindexKb(props.kb.id, props.kb.config)
-    ElMessage.success('已开始重新索引')
+    const result = await store.reindexKb(props.kb.id, props.kb.config)
+    warnIfCollectionBroken(result)
   } catch (err: unknown) {
     ElMessage.error(err instanceof Error ? err.message : '重新索引失败')
   } finally {
     reindexing.value = false
+  }
+}
+
+/**
+ * 重新索引后提示结果。
+ *
+ * ``collectionReady=false`` 表示向量集合重建失败——旧向量此时已不可用，
+ * 必须显式告警，否则用户会以为"只是慢"。
+ */
+function warnIfCollectionBroken(
+  result: { reindexed: number; collectionReady: boolean },
+  successText = '已开始重新索引',
+) {
+  if (result.collectionReady) {
+    ElMessage.success(successText)
+  } else {
+    ElMessage.error(
+      `向量集合重建失败，${result.reindexed} 个文档的索引结果不可用，请联系管理员检查向量库`,
+    )
   }
 }
 
@@ -102,8 +121,8 @@ function handleConfigSave(config: typeof props.kb.config) {
 async function handleSaveAndReindex(config: typeof props.kb.config) {
   try {
     reindexing.value = true
-    await store.reindexKb(props.kb.id, config)
-    ElMessage.success('配置已保存，正在重新索引全部文档')
+    const result = await store.reindexKb(props.kb.id, config)
+    warnIfCollectionBroken(result, '配置已保存，正在重新索引全部文档')
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '重新索引失败'
     ElMessage.error(msg)

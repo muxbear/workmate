@@ -251,6 +251,9 @@ async def init_db():
     from db.models.expert_skill import ExpertSkill  # noqa: F401
     from db.models.expert_tool import ExpertTool  # noqa: F401
     from db.models.expert_version import ExpertVersion  # noqa: F401
+    from db.models.knowledge_base_index_task import (
+        KnowledgeBaseIndexTask,  # noqa: F401  ensure table is registered
+    )
     from db.models.knowledge_base_share import (
         KnowledgeBaseShare,  # noqa: F401  ensure table is registered
     )
@@ -343,6 +346,16 @@ async def init_db():
                 logger.info("Adding sort_order column to providers table")
                 await conn.execute(text("ALTER TABLE providers ADD COLUMN sort_order INTEGER DEFAULT 0"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_providers_sort_order ON providers (sort_order)"))
+
+        # 迁移：知识库文档增加 graph_error 列（图谱抽取失败原因，列已存在时跳过）。
+        # 知识库索引任务表（knowledge_base_index_tasks）由 create_all 自动创建。
+        if await _table_exists(conn, "knowledge_base_documents"):
+            existing = await _get_existing_columns(conn, "knowledge_base_documents")
+            if "graph_error" not in existing:
+                logger.info("Adding graph_error column to knowledge_base_documents table")
+                await conn.execute(
+                    text("ALTER TABLE knowledge_base_documents ADD COLUMN graph_error TEXT")
+                )
 
         if await _table_exists(conn, 'ai_models'):
             existing = await _get_existing_columns(conn, 'ai_models')

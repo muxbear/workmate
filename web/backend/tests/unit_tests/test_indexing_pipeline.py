@@ -7,10 +7,13 @@
 - 切片策略不可用时应回退而非失败。
 """
 
+import asyncio
+
 import pytest
 
 from api.knowledge_base.doc_service import (
     STAGE_NAMES,
+    STAGE_PROGRESS,
     STAGE_STATUS_ORDER,
     _infer_failed_stage_index,
     compute_stages,
@@ -283,3 +286,247 @@ class TestCreateChunkRegistry:
         assert registry.supports("fixed")
         assert registry.supports("recursive")
         assert registry.supports("markdown")
+
+
+# ─── 迭代 1：阶段超时、初始化失败、切片元数据 ────────────────────────────────
+
+
+class RecordingObserver:
+    """记录每次状态变更（替代数据库观察者）。"""
+
+    def __init__(self):
+        self.events: list[tuple[str, str | None]] = []
+
+    async def on_progress(self, ctx: IndexingContext) -> None:
+        self.events.append((ctx.status, ctx.error_message))
+
+
+class FakeLoaderRegistry:
+    def __init__(self, documents=None):
+        self.documents = documents if documents is not None else [_document("正文")]
+
+    def load(self, file_path, file_type):
+        return self.documents
+
+
+def _document(text: str, **metadata):
+    from langchain_core.documents import Document
+
+    return Document(page_content=text, metadata=dict(metadata))
+
+
+class RecordingVectorStore:
+    """记录写入的切片。"""
+
+    def __init__(self):
+        self.added: list = []
+
+    async def add_documents(self, kb_id, documents, embeddings):
+        self.added.extend(documents)
+        return [f"c{i}" for i in range(len(documents))]
+
+
+class PassthroughChunkRegistry:
+    """把每个 Document 原样当作一个切片（顺带保留 metadata）。"""
+
+    def __init__(self, delay: float = 0.0):
+        self.delay = delay
+
+    def supports(self, name: str) -> bool:
+        return True
+
+    def get(self, name: str):
+        raise ValueError(name)
+
+    async def async_split(self, name, documents):
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        return list(documents)
+
+
+class FakeEmbeddingModel:
+    async def aembed_documents(self, texts):
+        return [[0.1, 0.2] for _ in texts]
+
+
+class ExplodingEmbeddingResolver:
+    """模拟模型页未配置 embedding：解析阶段直接抛错。"""
+
+    def __init__(self):
+        self.embedding_model = None
+        self.loader_registry = FakeLoaderRegistry()
+        self.chunk_registry = PassthroughChunkRegistry()
+        self.vector_store = RecordingVectorStore()
+        self.graph_service = FakeGraphService()
+        self._observers = []
+
+    def attach(self, observer):
+        self._observers.append(observer)
+
+
+async def _drive(pipeline, task_config=None):
+    """跑一次完整流水线（用真实 IndexingPipeline 的执行骨架）。"""
+    from api.knowledge_base.doc_service import IndexingTask, IndexingPipeline
+
+    task = IndexingTask(
+        kb_id="kb-1", doc_id="doc-1", file_path="/tmp/a.md",
+        file_type="md", config=task_config or {},
+    )
+    await pipeline.execute(task)
+
+
+def _make_pipeline(
+    *,
+    chunk_registry=None,
+    vector_store=None,
+    loader_registry=None,
+    graph_service=None,
+    stage_timeout: float = 600.0,
+):
+    from api.knowledge_base.doc_service import IndexingPipeline
+
+    class _Pipeline(IndexingPipeline):
+        async def _get_or_create_embedding(self, model_name, provider_id=None):
+            return FakeEmbeddingModel()
+
+        async def _get_or_create_llm(self, config):
+            return None
+
+    pipeline = _Pipeline(
+        loader_registry=loader_registry or FakeLoaderRegistry(),
+        chunk_registry=chunk_registry or PassthroughChunkRegistry(),
+        embedding_model=FakeEmbeddingModel(),
+        vector_store=vector_store or RecordingVectorStore(),
+        graph_service=graph_service or FakeGraphService(),
+        stage_timeout=stage_timeout,
+    )
+    return pipeline
+
+
+class TestStageTimeout:
+    async def test_hanging_stage_fails_with_timeout_message(self):
+        """回归：没有超时保护时，一次挂死会永久占住并发槽。"""
+        pipeline = _make_pipeline(
+            chunk_registry=PassthroughChunkRegistry(delay=5.0),
+            stage_timeout=0.05,
+        )
+        observer = RecordingObserver()
+        pipeline.attach(observer)
+
+        await asyncio.wait_for(_drive(pipeline), timeout=3.0)
+
+        assert observer.events[-1][0] == "failed"
+        assert "超时" in (observer.events[-1][1] or "")
+
+    async def test_fast_stage_completes(self):
+        pipeline = _make_pipeline(stage_timeout=5.0)
+        observer = RecordingObserver()
+        pipeline.attach(observer)
+
+        await _drive(pipeline)
+
+        assert observer.events[-1][0] == "indexed"
+
+
+class TestPrepareFailure:
+    async def test_initialisation_error_marks_document_failed(self):
+        """回归：前置段异常逃逸会让文档永久停在 queued 且不可重试。"""
+        pipeline = _make_pipeline()
+
+        async def boom(model_name, provider_id=None):
+            raise RuntimeError("未找到可用的 embedding 模型")
+
+        pipeline._get_or_create_embedding = boom  # type: ignore[method-assign]
+        observer = RecordingObserver()
+        pipeline.attach(observer)
+
+        await _drive(pipeline)
+
+        assert observer.events[-1][0] == "failed"
+        assert "索引初始化失败" in (observer.events[-1][1] or "")
+
+
+class TestChunkMetadata:
+    async def test_chunk_index_is_global_across_documents(self):
+        """回归：多 Document（多页/多段）各自从 0 编号，导致切片顺序与前后文错乱。"""
+        docs = [
+            _document("第一段", chunk_index=0, h1="章一"),
+            _document("第二段", chunk_index=0, h1="章一"),
+            _document("第三段", chunk_index=0, page=7),
+        ]
+        store = RecordingVectorStore()
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs), vector_store=store,
+        )
+
+        await _drive(pipeline)
+
+        assert [d.metadata["chunk_index"] for d in store.added] == [0, 1, 2]
+
+    async def test_page_and_section_are_preserved(self):
+        """页码/章节此前被丢弃，检索结果无法给出定位。"""
+        docs = [_document("正文", page=12, h1="第一章", h2="1.1 概述")]
+        store = RecordingVectorStore()
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs), vector_store=store,
+        )
+
+        await _drive(pipeline)
+
+        meta = store.added[0].metadata["metadata_"]
+        assert meta["page"] == 12
+        assert meta["h1"] == "第一章"
+        assert meta["h2"] == "1.1 概述"
+
+
+class TestGraphError:
+    async def test_extraction_failure_is_recorded_and_index_still_succeeds(self):
+        """回归：抽取异常被吞掉后，界面无法区分"没有实体"与"抽取崩了"。"""
+
+        class ExplodingGraph:
+            async def extract_entities_and_relations(self, *args, **kwargs):
+                raise RuntimeError("图谱模型不可用")
+
+        pipeline = _make_pipeline(graph_service=ExplodingGraph())
+        observer = RecordingObserver()
+        pipeline.attach(observer)
+
+        await _drive(pipeline)
+
+        assert observer.events[-1][0] == "indexed"
+
+
+class TestTimeoutAttribution:
+    async def test_timeout_reports_the_actual_stage(self):
+        """回归：任何阶段超时都被报成"解析"阶段——文案恒为英文状态名，而
+        `_infer_failed_stage_index` 只认中文关键词，于是全部落到兜底值 1。"""
+
+        class HangingEmbedding:
+            async def aembed_documents(self, texts):
+                await asyncio.sleep(5)
+                return []
+
+        # 预热线程池：首次 asyncio.to_thread 会带上 langchain 的惰性导入开销
+        # （实测约 1.4 秒），那是框架冷启动而不是策略本身慢，不应算进超时预算。
+        warmup = create_chunk_registry({})
+        await warmup.async_split("recursive", [_document("预热")])
+
+        pipeline = _make_pipeline(stage_timeout=1.0)
+
+        async def hanging_embedding(model_name, provider_id=None):
+            return HangingEmbedding()
+
+        pipeline._get_or_create_embedding = hanging_embedding  # type: ignore[method-assign]
+        observer = RecordingObserver()
+        pipeline.attach(observer)
+
+        await asyncio.wait_for(_drive(pipeline), timeout=8.0)
+
+        status, message = observer.events[-1]
+        assert status == "failed"
+        assert "向量化" in (message or ""), message
+
+        # 失败阶段应定位到「向量化」（索引 3），而不是兜底的「解析」
+        stages = compute_stages("failed", message, STAGE_PROGRESS["embedding"])
+        assert stages[3]["status"] == "failed"
+        assert stages[1]["status"] == "done"

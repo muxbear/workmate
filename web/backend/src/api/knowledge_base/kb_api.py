@@ -221,10 +221,15 @@ async def delete_knowledge_base(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """删除知识库。"""
+    """删除知识库（同时取消在跑的索引任务、清理磁盘文件与分享记录）。"""
+    from api.knowledge_base.doc_service import IndexingScheduler
+
     vector_store = _get_vector_store(request)
     mediator = _get_mediator(request)
-    await delete_kb(db, kb_id, user_id, vector_store, mediator=mediator)
+    await delete_kb(
+        db, kb_id, user_id, vector_store,
+        mediator=mediator, scheduler=IndexingScheduler.instance(),
+    )
     await db.commit()
     return ok(None)
 
@@ -251,7 +256,10 @@ async def reindex_knowledge_base(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """保存索引配置并重新索引知识库中的所有文档。"""
+    """保存索引配置并重新索引知识库中的所有文档。
+
+    事务与入队顺序由 ``reindex_kb`` 内部保证（先提交、后入队），此处不再重复提交。
+    """
     vector_store = _get_vector_store(request)
 
     from api.knowledge_base.doc_service import IndexingScheduler
@@ -263,5 +271,4 @@ async def reindex_knowledge_base(
         vector_store=vector_store,
         scheduler=scheduler,
     )
-    await db.commit()
     return ok(result)

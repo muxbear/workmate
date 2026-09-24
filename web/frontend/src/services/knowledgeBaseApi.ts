@@ -1,5 +1,5 @@
 // 知识库 API 服务
-import instance from './request'
+import instance, { getStreamToken } from './request'
 import type {
   KB,
   KBDoc,
@@ -47,6 +47,7 @@ interface RawDoc {
   uploaded_at: string
   indexed_at: string | null
   error_message: string | null
+  graph_error?: string | null
   stages: { name: string; status: string; pct: number }[]
   config: Record<string, unknown> | null
 }
@@ -121,6 +122,7 @@ function mapDoc(raw: RawDoc): KBDoc {
     relations: raw.relations_count ?? 0,
     uploadedAt: raw.uploaded_at?.split('T')[0] || '',
     errorMessage: raw.error_message || null,
+    graphError: raw.graph_error || null,
     stages: (raw.stages || []) as KBDoc['stages'],
     config: raw.config ? mapConfig(raw.config as Record<string, unknown>) : null,
   }
@@ -331,6 +333,18 @@ export async function uploadDocuments(
   return (res.data.data as RawDoc[]).map(mapDoc)
 }
 
+/**
+ * 构造索引进度 SSE 地址（token 走查询参数，因为 EventSource 不能设置请求头）。
+ *
+ * 无 token 时返回 null，调用方应回退到轮询。
+ */
+export function buildIndexingStreamUrl(kbId: string): string | null {
+  const token = getStreamToken()
+  if (!token) return null
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  return `${baseURL}/knowledge-bases/${kbId}/indexing/stream?token=${encodeURIComponent(token)}`
+}
+
 export async function fetchDocuments(
   kbId: string,
   params?: { page?: number; page_size?: number; search?: string; status?: string },
@@ -338,6 +352,14 @@ export async function fetchDocuments(
   const res = await instance.get(`/knowledge-bases/${kbId}/documents`, { params })
   const data = res.data.data as PaginatedData<RawDoc>
   return { ...data, items: data.items.map(mapDoc) }
+}
+
+/** 取消文档的索引任务（排队中或执行中均可） */
+export async function cancelDocument(kbId: string, docId: string): Promise<KBDoc> {
+  const res = await instance.post(
+    `/knowledge-bases/${kbId}/documents/${docId}/cancel`,
+  )
+  return mapDoc(res.data.data as RawDoc)
 }
 
 export async function fetchDocument(
@@ -473,14 +495,25 @@ function configToSnake(config: IndexConfig): Record<string, unknown> {
   }
 }
 
+export interface ReindexResult {
+  /** 已重新入队的文档数 */
+  reindexed: number
+  /** 向量集合是否重建成功——为 false 时旧向量已不可用，需要处理 */
+  collectionReady: boolean
+}
+
 export async function reindexKnowledgeBase(
   kbId: string,
   config: IndexConfig,
-): Promise<{ kb_id: string; docs_enqueued: number; status: string }> {
+): Promise<ReindexResult> {
   const res = await instance.post(`/knowledge-bases/${kbId}/reindex`, configToSnake(config), {
     timeout: 600000,
   })
-  return res.data.data as { kb_id: string; docs_enqueued: number; status: string }
+  const d = (res.data.data ?? {}) as { reindexed?: number; collection_ready?: boolean }
+  return {
+    reindexed: d.reindexed ?? 0,
+    collectionReady: d.collection_ready ?? true,
+  }
 }
 
 export async function searchKnowledgeBase(

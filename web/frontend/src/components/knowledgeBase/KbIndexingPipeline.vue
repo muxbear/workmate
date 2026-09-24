@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
-  X, CheckCircle2, CircleAlert, Loader2, Minus, Workflow,
-  Pause, FileText, Scissors, Sparkle, Hash, Brain, GitBranch, Database,
+  X, CheckCircle2, CircleAlert, Loader2, Minus, Workflow, Ban,
+  Pause, FileText, Scissors, Sparkle, Hash, GitBranch,
 } from 'lucide-vue-next'
 import type { KBDoc } from '@/types/knowledgeBase'
 
@@ -13,12 +13,15 @@ defineEmits<{
   close: []
 }>()
 
-const stageIcons = [Pause, FileText, Scissors, Sparkle, Hash, Brain, GitBranch, Database]
+// 与后端 STAGE_NAMES 一一对应（排队/解析/切片/向量化/稀疏索引/实体关系抽取/完成）。
+// 此前这里是 8 个图标配 8 个阶段的旧常量，后端只有 7 个阶段，最后一个图标永远用不到。
+const stageIcons = [Pause, FileText, Scissors, Sparkle, Hash, GitBranch, CheckCircle2]
 
 function stageClass(status: string) {
   if (status === 'done') return 'stage-done'
   if (status === 'running') return 'stage-running'
   if (status === 'failed') return 'stage-failed'
+  if (status === 'canceled') return 'stage-canceled'
   return 'stage-pending'
 }
 
@@ -26,6 +29,7 @@ function stageStatusIcon(status: string) {
   if (status === 'done') return CheckCircle2
   if (status === 'running') return Loader2
   if (status === 'failed') return CircleAlert
+  if (status === 'canceled') return Ban
   return Minus
 }
 </script>
@@ -223,6 +227,12 @@ function stageStatusIcon(status: string) {
   background: rgba(244, 63, 94, 0.1);
   border-color: rgba(244, 63, 94, 0.3);
   color: var(--status-error-text);
+}
+
+.stage-canceled {
+  background: rgba(148, 163, 184, 0.1);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: var(--foreground-secondary);
 }
 
 .stage-pending {

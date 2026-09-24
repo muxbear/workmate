@@ -125,10 +125,11 @@ class KnowledgeBaseFacade:
         pipeline.attach(DatabaseProgressObserver(async_session))
         pipeline.attach(LoggingProgressObserver())
 
-        # 索引调度器（单例）
+        # 索引调度器（单例）——注入会话工厂，用于任务表持久化与启动恢复
         scheduler = IndexingScheduler(
             pipeline=pipeline,
             max_concurrent=settings.INDEXING_MAX_CONCURRENT,
+            session_factory=async_session,
         )
         self._pipeline = pipeline
         self._scheduler = scheduler

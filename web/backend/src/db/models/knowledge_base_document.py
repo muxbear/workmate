@@ -28,4 +28,7 @@ class KnowledgeBaseDocument(Base):
     )
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 图谱抽取失败原因——抽取失败不影响文档索引成功，此前异常被吞掉后
+    #: 用户在界面上无法区分"这篇文档没有实体"与"抽取崩了"
+    graph_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="文档级别的自定义索引配置")

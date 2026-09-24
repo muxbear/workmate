@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CheckCircle2, Loader2, CircleAlert, Minus } from 'lucide-vue-next'
+import { CheckCircle2, Loader2, CircleAlert, Minus, Ban } from 'lucide-vue-next'
 import type { DocStatus } from '@/types/knowledgeBase'
 import { DOC_STATUS_CONFIG } from '@/types/knowledgeBase'
 
@@ -11,13 +11,14 @@ const props = defineProps<{
 const config = computed(() => DOC_STATUS_CONFIG[props.status])
 
 const isRunning = computed(
-  () => !['queued', 'indexed', 'failed'].includes(props.status),
+  () => !['queued', 'indexed', 'failed', 'canceled'].includes(props.status),
 )
 
 const icon = computed(() => {
   if (isRunning.value) return Loader2
   if (props.status === 'indexed') return CheckCircle2
   if (props.status === 'failed') return CircleAlert
+  if (props.status === 'canceled') return Ban
   return Minus
 })
 </script>
@@ -84,6 +85,12 @@ const icon = computed(() => {
   background: rgba(244, 63, 94, 0.15);
   color: var(--status-error-text);
   border-color: rgba(244, 63, 94, 0.3);
+}
+
+.doc-status-canceled {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--foreground-secondary);
+  border-color: rgba(148, 163, 184, 0.3);
 }
 
 .spin-icon {
