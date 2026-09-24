@@ -55,8 +55,9 @@ class FakeMilvusCollection:
         self.iterator_batch_size: int | None = None
         self.iterators: list[FakeMilvusIterator] = []
 
-    def search(self, data, anns_field, param, limit, output_fields):
+    def search(self, data, anns_field, param, limit, output_fields, expr=None):
         self.search_calls += 1
+        self.last_expr = expr
         return [self.hits[:limit]]
 
     def query(self, expr, output_fields=None, **kwargs):
@@ -421,3 +422,45 @@ class TestChromaUpdateChunk:
         store, _ = make_chroma_store()
         with pytest.raises(ValueError, match="Chunk not found"):
             await store.update_chunk("kb-1", "missing", "x", [0.0] * 8)
+
+
+# ─── 元数据过滤（迭代 3 T3.6） ────────────────────────────────────────────────
+
+
+class TestMilvusMetadataFilter:
+    async def test_doc_id_filter_is_pushed_down(self):
+        """按文档过滤在**检索时**生效（Milvus expr），而不是事后筛结果。"""
+        store, collection = make_milvus_store(hits=[FakeMilvusHit("c1", 0.9)])
+        await store.similarity_search(
+            "kb-1", [0.1] * 8, top_k=3, doc_ids=["doc-1", "doc-2"],
+        )
+
+        assert collection.last_expr == 'doc_id in ["doc-1", "doc-2"]'
+
+    async def test_doc_type_filter_is_pushed_down(self):
+        store, collection = make_milvus_store(hits=[FakeMilvusHit("c1", 0.9)])
+        await store.similarity_search("kb-1", [0.1] * 8, top_k=3, doc_types=["pdf", "md"])
+
+        assert collection.last_expr == 'doc_type in ["pdf", "md"]'
+
+    async def test_both_filters_are_combined(self):
+        store, collection = make_milvus_store(hits=[FakeMilvusHit("c1", 0.9)])
+        await store.similarity_search(
+            "kb-1", [0.1] * 8, top_k=3, doc_ids=["doc-1"], doc_types=["pdf"],
+        )
+
+        assert collection.last_expr == 'doc_id in ["doc-1"] and doc_type in ["pdf"]'
+
+    async def test_no_filter_sends_no_expr(self):
+        store, collection = make_milvus_store(hits=[FakeMilvusHit("c1", 0.9)])
+        await store.similarity_search("kb-1", [0.1] * 8, top_k=3)
+
+        assert collection.last_expr is None
+
+    async def test_filter_values_are_validated(self):
+        """过滤值同样走白名单校验，不能借过滤条件注入表达式。"""
+        store, _ = make_milvus_store(hits=[])
+        with pytest.raises(ValueError):
+            await store.similarity_search(
+                "kb-1", [0.1] * 8, top_k=3, doc_ids=['x" or id != "'],
+            )

@@ -34,6 +34,7 @@ def kb_search(
     kb_name: str = "",
     mode: str = "hybrid",
     top_k: int | None = None,
+    kb_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """搜索知识库中的内容，支持混合检索、向量检索和 BM25 关键词检索。
 
@@ -48,6 +49,9 @@ def kb_search(
         kb_name: 知识库名称（模糊匹配）。仅 kb_id 为空时生效。
         mode: 检索模式，"hybrid"（RRF 混合，推荐）、"vector"（语义）、"bm25"（关键词）。
         top_k: 返回结果数量；不传则使用该知识库配置的 Top-K（默认 5），越界值夹到 [1, 50]。
+        kb_ids: 跨知识库联合检索——在这些知识库里一起找（最多 5 个），
+            结果按排名融合并标注来源库。**每个库都会做权限校验**，
+            不可读的库会被拒绝。不知道有哪些库时先调用 list_knowledge_bases。
 
     Returns:
         {"total": int, "results": [{"doc": str, "content": str, "score": float,
@@ -60,7 +64,7 @@ def kb_search(
         - 多个候选知识库 → 附 candidates；
         - mode 非法 → 附 available_modes。
     """
-    return asyncio.run(_kb_search_async(query, kb_id, kb_name, mode, top_k))
+    return asyncio.run(_kb_search_async(query, kb_id, kb_name, mode, top_k, kb_ids))
 
 
 async def _load_readable_kbs(user_id: str) -> list[Any]:
@@ -214,7 +218,8 @@ async def _load_kb_config(kb_id: str) -> dict:
 
 
 async def _kb_search_async(
-    query: str, kb_id: str, kb_name: str, mode: str, top_k: int
+    query: str, kb_id: str, kb_name: str, mode: str, top_k: int,
+    kb_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     from api.knowledge_base.schemas import SearchRequest
     from api.knowledge_base.search_service import (
@@ -266,6 +271,24 @@ async def _kb_search_async(
     if not resolved_id:
         return error_payload or {"error": "未解析到知识库", "total": 0, "results": []}
 
+    # 跨库检索：逐个校验可读性。编排器本身不做权限判定（权限在 API 层与本工具），
+    # 因此这里必须把住关口——否则模型传一个他人的 kb_id 就能读到别人的库。
+    extra_ids: list[str] = []
+    if kb_ids:
+        readable_ids = {kb.id for kb in await _load_readable_kbs(user_id)}
+        requested = [k for k in dict.fromkeys(kb_ids) if k and k != resolved_id]
+        denied = [k for k in requested if k not in readable_ids]
+        if denied:
+            available = await _load_readable_kbs(user_id)
+            return {
+                "error": f"以下知识库不存在或无权访问：{denied}",
+                "available_kbs": _summarize_kbs(available),
+                "total": 0,
+                "results": [],
+                "hint": "只能检索当前用户可读的知识库；请用 list_knowledge_bases 确认。",
+            }
+        extra_ids = requested[:4]  # 加上主库共最多 5 个
+
     kb_config = await _load_kb_config(resolved_id)
     effective_top_k = clamped_top_k if clamped_top_k is not None else int(
         kb_config.get("top_k") or 5
@@ -274,6 +297,7 @@ async def _kb_search_async(
         query=query.strip(),
         mode=normalized_mode,
         top_k=max(1, min(effective_top_k, 50)),
+        kb_ids=[resolved_id, *extra_ids] if extra_ids else None,
     )
 
     async with async_session() as db:
@@ -315,6 +339,7 @@ async def _kb_search_async(
             "results": [
                 {
                     "doc": r.doc_name,
+                    "kb_name": r.kb_name or None,
                     "content": r.content,
                     "score": r.score,
                     "score_kind": r.score_kind,

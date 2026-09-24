@@ -546,6 +546,8 @@ export async function searchKnowledgeBase(
     enable_rerank: params.enableRerank,
     max_chunks_per_doc: params.maxChunksPerDoc,
     dedup_similarity: params.dedupSimilarity,
+    doc_ids: params.docIds,
+    doc_types: params.docTypes,
   })
   const data = res.data.data as {
     results: {
@@ -560,6 +562,8 @@ export async function searchKnowledgeBase(
       bm25_score: number | null
       page: number | null
       section?: string
+      kb_id?: string
+      kb_name?: string
     }[]
     rerank_requested?: boolean
     rerank_applied?: boolean
@@ -567,6 +571,7 @@ export async function searchKnowledgeBase(
     min_similarity?: number | null
     filtered_count?: number
     deduped_count?: number
+    searched_kb_ids?: string[]
   }
   return {
     results: (data.results || []).map((r) => ({
@@ -582,6 +587,8 @@ export async function searchKnowledgeBase(
       bm25: r.bm25_score ?? null,
       page: r.page ?? null,
       section: r.section || '',
+      kbId: r.kb_id || '',
+      kbName: r.kb_name || '',
     })),
     rerankRequested: data.rerank_requested ?? false,
     rerankApplied: data.rerank_applied ?? false,
@@ -589,6 +596,7 @@ export async function searchKnowledgeBase(
     minSimilarity: data.min_similarity ?? null,
     filteredCount: data.filtered_count ?? 0,
     dedupedCount: data.deduped_count ?? 0,
+    searchedKbIds: data.searched_kb_ids ?? [],
   }
 }
 

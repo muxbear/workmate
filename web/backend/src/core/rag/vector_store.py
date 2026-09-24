@@ -106,9 +106,33 @@ class BaseVectorStore(ABC):
 
     @abstractmethod
     async def similarity_search(
-        self, kb_id: str, query_embedding: list[float], top_k: int
+        self, kb_id: str, query_embedding: list[float], top_k: int,
+        doc_ids: list[str] | None = None,
+        doc_types: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        """向量相似度搜索，返回 (chunk_id, 余弦相似度)，越大越相关。"""
+        """向量相似度搜索，返回 (chunk_id, 余弦相似度)，越大越相关。
+
+        Args:
+            doc_ids: 只在这些文档内检索（``None`` 表示不限）。
+            doc_types: 只在这些文件类型内检索（``None`` 表示不限）。
+
+        过滤在**检索时**生效（而非事后筛结果），因此不会因为"前 K 条都不符合
+        过滤条件"而漏掉本该命中的切片。
+        """
+
+    @staticmethod
+    def _build_filter_expr(
+        doc_ids: list[str] | None, doc_types: list[str] | None,
+    ) -> str:
+        """构造 Milvus 过滤表达式（供两个后端复用，Chroma 侧自行转换）。"""
+        clauses: list[str] = []
+        if doc_ids:
+            ids = ", ".join(f'"{safe_expr_id(x, "doc_id")}"' for x in doc_ids)
+            clauses.append(f"doc_id in [{ids}]")
+        if doc_types:
+            types = ", ".join(f'"{safe_expr_id(t, "doc_type")}"' for t in doc_types)
+            clauses.append(f"doc_type in [{types}]")
+        return " and ".join(clauses)
 
     @abstractmethod
     async def bm25_search(
@@ -404,9 +428,11 @@ class MilvusVectorStore(BaseVectorStore):
         logger.info("Milvus updated chunk=%s in kb=%s", chunk_id, kb_id)
 
     async def similarity_search(
-        self, kb_id: str, query_embedding: list[float], top_k: int
+        self, kb_id: str, query_embedding: list[float], top_k: int,
+        doc_ids: list[str] | None = None,
+        doc_types: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        """Milvus 向量检索——ANN 搜索 embedding 字段。
+        """Milvus 向量检索——ANN 搜索 embedding 字段（支持元数据过滤）。
 
         Milvus 的 ``COSINE`` 度量返回的 ``hit.distance`` **就是余弦相似度本身**
         （范围 [-1, 1]，越大越相关），并非 [0, 2] 距离。这一点由 pymilvus 自身
@@ -419,11 +445,13 @@ class MilvusVectorStore(BaseVectorStore):
         # "ef(64) should be larger than k(80)"。此前 ef 写死 64，一旦候选数超过
         # 64（开启精排后 hybrid 会按 top_k*8 取候选，top_k>=9 即触发）整次检索失败。
         ef = max(_HNSW_MIN_EF, top_k * 2)
+        expr = self._build_filter_expr(doc_ids, doc_types)
         results = collection.search(
             data=[query_embedding],
             anns_field="embedding",
             param={"metric_type": "COSINE", "params": {"ef": ef}},
             limit=top_k,
+            expr=expr or None,
             output_fields=[],
         )
         pairs: list[tuple[str, float]] = []
@@ -731,18 +759,32 @@ class ChromaVectorStore(BaseVectorStore):
 
     async def similarity_search(
         self, kb_id: str, query_embedding: list[float], top_k: int,
+        doc_ids: list[str] | None = None,
+        doc_types: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        """Chroma 向量检索。
+        """Chroma 向量检索（支持元数据过滤）。
 
         Chroma 的 cosine ``distances`` 是**距离**（0=完全相同，2=完全相反），
         必须换算为余弦相似度 ``1 - distance`` 才能与 Milvus 侧口径一致
         （越大越相关）。此前直接透传 distance，导致"综合/向量"分值方向相反。
         """
         collection = self._get_collection(kb_id)
+        where: dict | None = None
+        if doc_ids and doc_types:
+            where = {"$and": [
+                {"doc_id": {"$in": list(doc_ids)}},
+                {"doc_type": {"$in": list(doc_types)}},
+            ]}
+        elif doc_ids:
+            where = {"doc_id": {"$in": list(doc_ids)}}
+        elif doc_types:
+            where = {"doc_type": {"$in": list(doc_types)}}
+
         result = collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
             include=[],
+            **({"where": where} if where else {}),
         )
 
         pairs: list[tuple[str, float]] = []

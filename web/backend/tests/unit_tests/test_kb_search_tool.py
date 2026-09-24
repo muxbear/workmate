@@ -321,7 +321,7 @@ class TestSearchBehaviour:
             "vec_score": 0.8, "bm25_score": None,
             # 引用定位：模型可据此给出可核查的出处
             "doc_id": "d1", "chunk_index": 0, "page": None, "section": "",
-            "score_kind": "",
+            "score_kind": "", "kb_name": None,
         }
         assert patched_env.calls[0][1].mode == "vector"
         assert patched_env.calls[0][1].top_k == 3
@@ -372,6 +372,39 @@ class TestSearchBehaviour:
         result = await call_search(kb_id="kb-a")
 
         assert "搜索服务未就绪" in result["error"]
+
+
+class TestMultiKbSearch:
+    async def test_unreadable_kb_in_kb_ids_is_rejected(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """编排器不做权限判定，工具必须逐个校验 kb_ids——否则模型传一个他人的
+        kb_id 就能读到别人的库。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [
+            kb_row("kb-a", "我的", USER_A),
+            kb_row("kb-b", "他人的", USER_B),
+        ])
+
+        result = await call_search(kb_id="kb-a", kb_ids=["kb-b"])
+
+        assert "无权访问" in result["error"]
+        assert patched_env.calls == [], "不得对无权访问的库发起检索"
+
+    async def test_readable_kb_ids_are_passed_through(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [
+            kb_row("kb-a", "我的甲", USER_A),
+            kb_row("kb-c", "我的乙", USER_A),
+        ])
+
+        result = await call_search(kb_id="kb-a", kb_ids=["kb-c"])
+        request = patched_env.calls[0][1]
+
+        assert request.kb_ids == ["kb-a", "kb-c"]
+        assert result["total"] == 1
 
 
 class TestListKnowledgeBases:

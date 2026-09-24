@@ -135,7 +135,21 @@ class SearchContext:
     top_k: int
     alpha: float = DEFAULT_HYBRID_ALPHA
     sparse_config: SparseConfig = field(default_factory=SparseConfig)
+    #: 元数据过滤：限定文档与文件类型（None 表示不限）
+    doc_ids: list[str] | None = None
+    doc_types: list[str] | None = None
     extra: dict = field(default_factory=dict)
+
+
+def _matches_filter(
+    chunk: dict, doc_ids: list[str] | None, doc_types: list[str] | None,
+) -> bool:
+    """切片是否落在过滤范围内（用于事后兜底过滤与 BM25 通道）。"""
+    if doc_ids and chunk.get("doc_id") not in set(doc_ids):
+        return False
+    if doc_types and chunk.get("doc_type") not in set(doc_types):
+        return False
+    return True
 
 
 @dataclass
@@ -289,6 +303,35 @@ def _fuse_scores(
     ]
 
 
+def _fuse_across_kbs(
+    per_kb: list[list[tuple[str, float]]],
+    top_k: int,
+) -> list[tuple[str, float]]:
+    """跨知识库的 RRF 融合——每个库的排名各算一路。
+
+    用排名而非分数融合：不同库可能用不同 embedding 模型、不同稀疏参数，
+    余弦/BM25 的量纲不可直接比较（同一个 0.7 在不同模型下含义不同）。
+
+    Args:
+        per_kb: 每个知识库的 ``(chunk_id, score)`` 列表，已按各自库内相关性降序。
+        top_k: 融合后保留条数。
+
+    Returns:
+        ``(chunk_id, rrf_score)``，按 RRF 降序；分数已归一化到 (0, 1]。
+    """
+    rrf: dict[str, float] = {}
+    for channel in per_kb:
+        for rank, (chunk_id, _) in enumerate(channel, start=1):
+            rrf[chunk_id] = rrf.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank)
+
+    if not rrf:
+        return []
+
+    ranked = sorted(rrf.items(), key=lambda item: (-item[1], item[0]))[:top_k]
+    top = ranked[0][1] or 1.0
+    return [(chunk_id, round(value / top, 4)) for chunk_id, value in ranked]
+
+
 # ─── 检索策略（策略模式）───────────────────────────────────────────────────────
 
 
@@ -315,7 +358,8 @@ class VectorSearchStrategy(SearchStrategy):
 
     async def search(self, ctx: SearchContext, vector_store) -> list[ScoredChunk]:
         pairs = await vector_store.similarity_search(
-            ctx.kb_id, ctx.query_embedding, ctx.top_k
+            ctx.kb_id, ctx.query_embedding, ctx.top_k,
+            doc_ids=ctx.doc_ids, doc_types=ctx.doc_types,
         )
         return [
             ScoredChunk(
@@ -356,6 +400,7 @@ class HybridSearchStrategy(SearchStrategy):
     async def search(self, ctx: SearchContext, vector_store) -> list[ScoredChunk]:
         vec_pairs = await vector_store.similarity_search(
             ctx.kb_id, ctx.query_embedding, ctx.top_k * 2,
+            doc_ids=ctx.doc_ids, doc_types=ctx.doc_types,
         )
         bm25_pairs = await vector_store.bm25_search(
             ctx.kb_id, ctx.query_text, ctx.top_k * 2, ctx.sparse_config,
@@ -424,6 +469,13 @@ class SearchOrchestrator:
             valid = ", ".join(self._registry.supported_modes)
             raise ValueError(f"不支持的检索模式: {request.mode}，可选: {valid}")
 
+        # 跨库联合检索：给定多个知识库时走多库编排（单库时保持原路径，零行为变化）
+        extra_kbs = [k for k in (request.kb_ids or []) if k and k != kb_id]
+        if extra_kbs:
+            return await self._search_multi(
+                db, kb_id, extra_kbs, request, strategy,
+            )
+
         top_k = request.top_k
         kb_config = await self._load_kb_config(db, kb_id)
 
@@ -461,6 +513,11 @@ class SearchOrchestrator:
                 kb_config.get("dedup_similarity"), DEFAULT_DEDUP_SIMILARITY,
             )
 
+        # 元数据过滤：只在指定文档 / 文件类型内检索（逐次查询生效，不落库）
+        doc_ids = list(request.doc_ids) if request.doc_ids else None
+        doc_types = list(request.doc_types) if request.doc_types else None
+        has_filter = bool(doc_ids or doc_types)
+
         # 精排：启用则多召回候选再重排
         # rerank_requested 反映"配置要求精排"，rerank_applied 反映"是否真的生效"——
         # 两者分开返回，避免模型不可用/接口报错时用户以为精排已经起作用。
@@ -479,10 +536,14 @@ class SearchOrchestrator:
         # 候选倍数：精排要 4 倍候选；仅去冗余时取 3 倍，保证丢掉的条数能补回来
         if reranker is not None:
             candidate_multiplier = RERANK_CANDIDATE_MULTIPLIER
-        elif dedup_similarity > 0 or max_per_doc > 0:
+        elif dedup_similarity > 0 or max_per_doc > 0 or has_filter:
             candidate_multiplier = DEDUP_CANDIDATE_MULTIPLIER
         else:
             candidate_multiplier = 1
+        if has_filter:
+            # BM25 通道的过滤是事后应用的（客户端语料索引按全量统计 IDF），
+            # 再多取一些候选，避免"过滤后条数不够"。
+            candidate_multiplier = max(candidate_multiplier, 4)
         fetch_k = min(max(top_k * candidate_multiplier, top_k), MAX_RERANK_CANDIDATES)
 
         # 纯 BM25 不需要查询向量——embedding 服务不可用时仍可检索
@@ -503,6 +564,8 @@ class SearchOrchestrator:
             top_k=fetch_k,
             alpha=alpha,
             sparse_config=sparse_config,
+            doc_ids=doc_ids,
+            doc_types=doc_types,
         )
 
         try:
@@ -572,6 +635,14 @@ class SearchOrchestrator:
                 reranker, request.query, ordered, top_k,
             )
 
+        # 元数据过滤兜底：向量通道已在检索时过滤，这里覆盖 BM25 通道并防止
+        # 任何通道漏过滤（过滤条件为空时是空操作）
+        filter_dropped = 0
+        if has_filter:
+            kept = [(sc, c) for sc, c in ordered if _matches_filter(c, doc_ids, doc_types)]
+            filter_dropped = len(ordered) - len(kept)
+            ordered = kept
+
         # 去冗余：丢掉近重复切片与超出单文档配额的候选，用后面的候选补足 top_k
         ordered, deduped_count = _prune_redundant(
             ordered, top_k, max_per_doc, dedup_similarity,
@@ -592,6 +663,7 @@ class SearchOrchestrator:
                 bm25_score=sc.bm25_score,
                 page=page,
                 section=section,
+                kb_id=chunk.get("kb_id", kb_id),
             ))
 
         # 相对截断（默认关闭）：丢掉与榜首差距过大的尾部结果。
@@ -613,9 +685,233 @@ class SearchOrchestrator:
             rerank_applied=rerank_applied,
             score_kind=results[0].score_kind if results else "",
             min_similarity=round(min_similarity, 4) if max_cosine is not None else None,
-            filtered_count=filtered,
+            filtered_count=filtered + filter_dropped,
             deduped_count=deduped_count,
+            searched_kb_ids=[kb_id],
         )
+
+    async def _search_multi(
+        self,
+        db: AsyncSession,
+        primary_kb_id: str,
+        extra_kb_ids: list[str],
+        request: SearchRequest,
+        strategy,
+    ) -> SearchResponse:
+        """跨库联合检索——逐库召回，再按排名融合。
+
+        为什么按排名而不是分数融合：各库可能用不同 embedding 模型与稀疏参数，
+        余弦/BM25 的量纲不可比（同一个 0.7 在不同模型下含义不同）。
+
+        流程：逐库按自身配置召回 → **逐库做绝对门槛**（某个库没有相关内容时它不
+        参与融合，而不是用低相关结果稀释其他库）→ 跨库 RRF → 统一精排 → 过滤 →
+        去冗余。
+        """
+        kb_ids = [primary_kb_id, *extra_kb_ids]
+        top_k = request.top_k
+        candidate_k = top_k * DEDUP_CANDIDATE_MULTIPLIER
+
+        # ── 逐库召回：每库用自己的 embedding 模型与检索参数 ──
+        per_kb_pairs: list[list[tuple[str, float]]] = []
+        chunk_to_kb: dict[str, str] = {}
+        searched_kb_ids: list[str] = []
+
+        for kb_id in kb_ids:
+            kb_config = await self._load_kb_config(db, kb_id)
+            alpha = request.alpha
+            if alpha is None:
+                alpha = _coerce_float(kb_config.get("hybrid_alpha"), DEFAULT_HYBRID_ALPHA)
+            min_similarity = request.min_similarity
+            if min_similarity is None:
+                min_similarity = _coerce_float(
+                    kb_config.get("min_similarity"), DEFAULT_MIN_SIMILARITY,
+                )
+
+            query_embedding: list[float] = []
+            if strategy.requires_embedding:
+                embedding_model = await self._resolve_embedding_model(db, kb_config)
+                try:
+                    query_embedding = await embedding_model.aembed_query(request.query)
+                except Exception:
+                    logger.exception("Query embedding failed for kb=%s", kb_id)
+                    raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")
+
+            ctx = SearchContext(
+                kb_id=kb_id,
+                query_text=request.query,
+                query_embedding=query_embedding,
+                top_k=candidate_k,
+                alpha=alpha,
+                sparse_config=SparseConfig.from_config(kb_config),
+                doc_ids=list(request.doc_ids) if request.doc_ids else None,
+                doc_types=list(request.doc_types) if request.doc_types else None,
+            )
+            try:
+                chunks = await strategy.search(ctx, self._vector_store)
+            except Exception:
+                logger.exception("多库检索：kb=%s 召回失败，跳过该库", kb_id)
+                continue
+            if not chunks:
+                continue
+
+            # 逐库绝对门槛：该库没有相关内容时不参与融合
+            max_cosine = max(
+                (c.vec_score for c in chunks if c.vec_score is not None), default=None,
+            )
+            if (
+                max_cosine is not None
+                and min_similarity > 0
+                and max_cosine < min_similarity
+            ):
+                logger.info(
+                    "多库检索：kb=%s 判定无相关内容（max_cosine=%.3f < %.3f）",
+                    kb_id, max_cosine, min_similarity,
+                )
+                continue
+
+            per_kb_pairs.append([(c.chunk_id, c.score) for c in chunks])
+            for chunk in chunks:
+                chunk_to_kb[chunk.chunk_id] = kb_id
+            searched_kb_ids.append(kb_id)
+
+        if not per_kb_pairs:
+            return SearchResponse(
+                query=request.query, mode=request.mode, total=0, results=[],
+                no_relevant_result=True, searched_kb_ids=[],
+            )
+
+        # ── 跨库融合 ──
+        merged = dict(_fuse_across_kbs(per_kb_pairs, candidate_k))
+
+        # 切片详情按库分组查询（切片存放在各库自己的 collection 里）
+        ordered: list[tuple[ScoredChunk, dict]] = []
+        by_kb: dict[str, list[str]] = {}
+        for chunk_id in merged:
+            by_kb.setdefault(chunk_to_kb[chunk_id], []).append(chunk_id)
+
+        for kb_id, ids in by_kb.items():
+            try:
+                chunk_dicts = await self._vector_store.get_chunks_by_ids(
+                    kb_id, ids, include_embeddings=True,
+                )
+            except Exception:
+                logger.exception("多库检索：kb=%s 查询切片详情失败", kb_id)
+                continue
+            for chunk in chunk_dicts:
+                chunk_id = chunk.get("id", "")
+                ordered.append((
+                    ScoredChunk(
+                        chunk_id=chunk_id,
+                        score=merged.get(chunk_id, 0.0),
+                        score_kind=SCORE_KIND_RRF,
+                    ),
+                    chunk,
+                ))
+
+        if not ordered:
+            return SearchResponse(
+                query=request.query, mode=request.mode, total=0, results=[],
+                no_relevant_result=True, searched_kb_ids=searched_kb_ids,
+            )
+
+        # ── 统一精排（以主库配置的 reranker 为准）──
+        kb_config = await self._load_kb_config(db, primary_kb_id)
+        rerank_requested = (
+            request.enable_rerank
+            if request.enable_rerank is not None
+            else bool(kb_config.get("enable_reranker", True))
+        )
+        reranker = None
+        if rerank_requested:
+            reranker = await self._resolve_reranker(
+                db, {**kb_config, "enable_reranker": True},
+            )
+
+        rerank_applied = False
+        if reranker is not None and len(ordered) > 1:
+            ordered, rerank_applied = await self._apply_rerank(
+                reranker, request.query, ordered, top_k,
+            )
+
+        # ── 过滤与去冗余：与单库路径同一套规则 ──
+        doc_ids = list(request.doc_ids) if request.doc_ids else None
+        doc_types = list(request.doc_types) if request.doc_types else None
+        filter_dropped = 0
+        if doc_ids or doc_types:
+            kept = [item for item in ordered if _matches_filter(item[1], doc_ids, doc_types)]
+            filter_dropped = len(ordered) - len(kept)
+            ordered = kept
+
+        max_per_doc = request.max_chunks_per_doc
+        if max_per_doc is None:
+            max_per_doc = int(_coerce_float(
+                kb_config.get("max_chunks_per_doc"), DEFAULT_MAX_CHUNKS_PER_DOC,
+            ))
+        dedup_similarity = request.dedup_similarity
+        if dedup_similarity is None:
+            dedup_similarity = _coerce_float(
+                kb_config.get("dedup_similarity"), DEFAULT_DEDUP_SIMILARITY,
+            )
+
+        pruned, deduped_count = _prune_redundant(
+            ordered, top_k, max_per_doc, dedup_similarity,
+        )
+
+        kb_names = await self._load_kb_names(db, searched_kb_ids)
+        results = [
+            ChunkMatch(
+                id=sc.chunk_id,
+                doc_id=chunk.get("doc_id", ""),
+                doc_name=chunk.get("doc_name", ""),
+                chunk_index=chunk.get("chunk_index", 0),
+                content=chunk.get("chunk_text", ""),
+                score=sc.score,
+                score_kind=sc.score_kind,
+                page=_citation_fields(chunk)[0],
+                section=_citation_fields(chunk)[1],
+                kb_id=chunk.get("kb_id", ""),
+                kb_name=kb_names.get(chunk.get("kb_id", ""), ""),
+            )
+            for sc, chunk in pruned
+        ]
+
+        return SearchResponse(
+            query=request.query,
+            mode=request.mode,
+            total=len(results),
+            results=results,
+            rerank_requested=rerank_requested,
+            rerank_applied=rerank_applied,
+            score_kind=SCORE_KIND_RERANK if rerank_applied else SCORE_KIND_RRF,
+            filtered_count=filter_dropped,
+            deduped_count=deduped_count,
+            searched_kb_ids=searched_kb_ids,
+        )
+
+    async def _load_kb_names(
+        self, db: AsyncSession, kb_ids: list[str],
+    ) -> dict[str, str]:
+        """批量取知识库名称（跨库检索时标注结果出处）。
+
+        走调用方注入的会话，而不是另开全局引擎——否则测试无法替换、也会绕开
+        请求级事务。
+        """
+        from sqlalchemy import select
+
+        from db.models.knowledge_base import KnowledgeBase
+
+        try:
+            rows = (
+                await db.execute(
+                    select(KnowledgeBase.id, KnowledgeBase.name).where(
+                        KnowledgeBase.id.in_(kb_ids)
+                    )
+                )
+            ).all()
+        except Exception:  # noqa: BLE001 - 名称缺失不应让检索失败
+            logger.warning("读取知识库名称失败: %s", kb_ids, exc_info=True)
+            return {}
+        return {kb_id: name for kb_id, name in rows}
 
     async def _load_kb_config(self, db: AsyncSession, kb_id: str) -> dict:
         """读取知识库配置（检索参数与模型选择的来源）。"""

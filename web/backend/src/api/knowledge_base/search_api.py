@@ -31,6 +31,10 @@ async def search_knowledge_base(
     """
     # 检索为只读操作：本人所有 / 已接受的分享 / 公共库均可检索
     await require_kb_readable(db, kb_id, user_id)
+    # 跨库检索时逐个校验——任一个不可读即拒绝，避免"顺带"读到无权限的库
+    for extra_id in req_body.kb_ids or []:
+        if extra_id != kb_id:
+            await require_kb_readable(db, extra_id, user_id)
 
     orchestrator = request.app.state.search_orchestrator
     if orchestrator is None:

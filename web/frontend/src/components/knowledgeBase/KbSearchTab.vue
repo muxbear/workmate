@@ -30,6 +30,8 @@ const effectiveMinSimilarity = ref<number | null>(null)
 const filteredCount = ref(0)
 /** 本次因近重复/单文档配额被丢弃的条数 */
 const dedupedCount = ref(0)
+/** 本次实际检索的知识库（>1 时说明是跨库检索，结果需标注来源） */
+const searchedKbCount = ref(0)
 
 /** 高级参数是否展开 */
 const showAdvanced = ref(false)
@@ -47,6 +49,8 @@ const advanced = reactive<{
   enableRerank: boolean
   maxChunksPerDoc: number
   dedupSimilarity: number
+  docIds: string[]
+  docTypes: string[]
 }>({
   topK: null,
   alpha: null,
@@ -55,7 +59,14 @@ const advanced = reactive<{
   enableRerank: true,
   maxChunksPerDoc: 0,      // 0 表示不限制（沿用知识库配置时也传默认值）
   dedupSimilarity: 0.92,
+  docIds: [],
+  docTypes: [],
 })
+
+/** 可选的文件类型（取自该知识库已上传的文档，去重后排序） */
+const availableDocTypes = computed(() =>
+  [...new Set(props.kb.documents.map((d) => d.type))].sort(),
+)
 
 /** 当前生效的 Top-K（未覆盖时用知识库配置） */
 const effectiveTopK = computed(() => advanced.topK ?? props.kb.config.topK ?? 5)
@@ -132,6 +143,8 @@ async function runSearch() {
         enableRerank: advanced.enableRerank,
         maxChunksPerDoc: advanced.maxChunksPerDoc,
         dedupSimilarity: advanced.dedupSimilarity,
+        docIds: advanced.docIds.length ? advanced.docIds : undefined,
+        docTypes: advanced.docTypes.length ? advanced.docTypes : undefined,
       },
     )
     results.value = outcome.results
@@ -141,6 +154,7 @@ async function runSearch() {
     effectiveMinSimilarity.value = outcome.minSimilarity
     filteredCount.value = outcome.filteredCount
     dedupedCount.value = outcome.dedupedCount
+    searchedKbCount.value = outcome.searchedKbIds.length
     searched.value = true
   } catch (err: unknown) {
     // 此前只 console.error：检索失败时用户看到的是"命中 0 条"，无从判断原因
@@ -291,6 +305,38 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
             {{ advanced.dedupSimilarity > 0 ? `≥ ${advanced.dedupSimilarity.toFixed(2)}` : '关闭' }}
           </span>
         </div>
+        <div v-if="props.kb.documents.length > 1" class="adv-item adv-select">
+          <span class="adv-label">限定文档</span>
+          <el-select
+            v-model="advanced.docIds"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="全部文档"
+            size="small"
+            class="adv-select-input"
+          >
+            <el-option
+              v-for="d in props.kb.documents"
+              :key="d.id"
+              :label="d.name"
+              :value="d.id"
+            />
+          </el-select>
+        </div>
+        <div v-if="availableDocTypes.length > 1" class="adv-item adv-select">
+          <span class="adv-label">限定类型</span>
+          <el-select
+            v-model="advanced.docTypes"
+            multiple
+            collapse-tags
+            placeholder="全部类型"
+            size="small"
+            class="adv-select-input"
+          >
+            <el-option v-for="t in availableDocTypes" :key="t" :label="t" :value="t" />
+          </el-select>
+        </div>
         <div class="adv-item adv-switch">
           <span class="adv-label">启用精排</span>
           <el-switch v-model="advanced.enableRerank" size="small" />
@@ -343,6 +389,9 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
         <div class="result-header">
           <el-tag size="small" type="info" class="result-rank">#{{ i + 1 }}</el-tag>
           <span class="result-doc">{{ r.doc }}</span>
+          <span v-if="searchedKbCount > 1 && r.kbName" class="result-kb">
+            来自《{{ r.kbName }}》
+          </span>
           <span v-if="r.section" class="result-cite">· {{ r.section }}</span>
           <span v-if="r.page" class="result-cite">· 第 {{ r.page }} 页</span>
           <span :class="['rel-badge', relevanceLabel(r.scoreKind, r.score, i).cls]">
@@ -584,6 +633,14 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
   justify-content: space-between;
 }
 
+.adv-select {
+  align-items: flex-start;
+}
+
+.adv-select-input {
+  flex: 1;
+}
+
 .search-error {
   display: flex;
   align-items: center;
@@ -616,6 +673,15 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 .no-relevant-desc {
   font-size: var(--font-size-sm);
   line-height: 1.6;
+}
+
+.result-kb {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+  font-size: var(--font-size-xs, 12px);
+  white-space: nowrap;
 }
 
 .result-cite {

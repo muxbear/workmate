@@ -16,6 +16,7 @@ from api.knowledge_base.search_service import (
     ScoredChunk,
     SearchContext,
     SearchOrchestrator,
+    _fuse_across_kbs,
     _fuse_scores,
     _prune_redundant,
     create_search_registry,
@@ -150,18 +151,26 @@ class FakeEmbedding:
 class FakeStore:
     """只实现编排器用到的接口。"""
 
-    def __init__(self, vec=None, bm25=None, chunks=None):
+    def __init__(self, vec=None, bm25=None, chunks=None, per_kb_vec=None, per_kb_chunks=None):
         self.vec = vec or []
         self.bm25 = bm25 or []
         self.chunks = chunks or {}
+        #: 跨库检索用例用：按 kb_id 提供不同的召回结果与切片
+        self.per_kb_vec = per_kb_vec or {}
+        self.per_kb_chunks = per_kb_chunks or {}
         self.sparse_configs: list[SparseConfig] = []
+        self.filters: list[tuple[list[str] | None, list[str] | None]] = []
         self.vec_top_k: list[int] = []
         self.bm25_top_k: list[int] = []
         self.fail_chunk_fetch = False
 
-    async def similarity_search(self, kb_id, query_embedding, top_k):
+    async def similarity_search(
+        self, kb_id, query_embedding, top_k, doc_ids=None, doc_types=None,
+    ):
         self.vec_top_k.append(top_k)
-        return self.vec[:top_k]
+        self.filters.append((doc_ids, doc_types))
+        vec = self.per_kb_vec.get(kb_id, self.vec)
+        return vec[:top_k]
 
     async def bm25_search(self, kb_id, query, top_k, sparse_config=None):
         self.bm25_top_k.append(top_k)
@@ -171,7 +180,8 @@ class FakeStore:
     async def get_chunks_by_ids(self, kb_id, chunk_ids, include_embeddings=False):
         if self.fail_chunk_fetch:
             raise RuntimeError("boom")
-        return [self.chunks[cid] for cid in chunk_ids if cid in self.chunks]
+        chunks = {**self.chunks, **self.per_kb_chunks.get(kb_id, {})}
+        return [chunks[cid] for cid in chunk_ids if cid in chunks]
 
 
 class FakeReranker:
@@ -873,3 +883,180 @@ class TestDedupInOrchestrator:
 
         assert response.total == 2
         assert response.deduped_count == 0
+
+
+# ─── 迭代 3：元数据过滤 ──────────────────────────────────────────────────────
+
+
+class TestMetadataFilter:
+    async def test_filter_is_passed_to_vector_channel(self):
+        orchestrator, store, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="vector", top_k=3,
+            doc_ids=["doc-1"], doc_types=["pdf"],
+        ))
+
+        assert store.filters[0] == (["doc-1"], ["pdf"])
+
+    async def test_filter_drops_out_of_scope_chunks(self):
+        """BM25 通道的过滤是事后应用的，超出范围的切片必须被剔除。"""
+        chunk_a = make_chunk("c0")
+        chunk_a["doc_id"] = "doc-a"
+        chunk_b = make_chunk("c1")
+        chunk_b["doc_id"] = "doc-b"
+        orchestrator, _, _ = make_orchestrator(
+            bm25=[("c0", 3.0), ("c1", 2.0)],
+            chunks={"c0": chunk_a, "c1": chunk_b},
+        )
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="bm25", top_k=5, doc_ids=["doc-a"],
+        ))
+
+        assert [r.id for r in response.results] == ["c0"]
+        assert response.filtered_count == 1
+
+    async def test_doc_type_filter_applies(self):
+        chunk_pdf = make_chunk("c0")
+        chunk_pdf["doc_type"] = "pdf"
+        chunk_md = make_chunk("c1")
+        chunk_md["doc_type"] = "md"
+        orchestrator, _, _ = make_orchestrator(
+            bm25=[("c0", 3.0), ("c1", 2.0)],
+            chunks={"c0": chunk_pdf, "c1": chunk_md},
+        )
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="bm25", top_k=5, doc_types=["md"],
+        ))
+
+        assert [r.id for r in response.results] == ["c1"]
+
+    async def test_no_filter_keeps_everything(self):
+        orchestrator, _, _ = make_orchestrator(
+            bm25=[("c0", 3.0)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="bm25", top_k=5,
+        ))
+
+        assert response.total == 1
+        assert response.filtered_count == 0
+
+
+# ─── 迭代 3：跨库联合检索 ────────────────────────────────────────────────────
+
+
+class TestFuseAcrossKbs:
+    def test_chunk_ranked_in_both_kbs_wins(self):
+        """同时出现在两个库前列的切片应优于单库靠前的切片。"""
+        kb1 = [("only_a", 0.9), ("shared", 0.5)]
+        kb2 = [("only_b", 3.0), ("shared", 1.0)]
+
+        result = _fuse_across_kbs([kb1, kb2], top_k=3)
+
+        assert result[0][0] == "shared"
+        assert dict(result)["only_a"] < result[0][1]
+
+    def test_scores_are_normalized_to_one(self):
+        result = _fuse_across_kbs([[("a", 5.0), ("b", 1.0)]], top_k=2)
+        assert result[0][1] == pytest.approx(1.0)
+        assert result[1][1] < 1.0
+
+    def test_empty_inputs(self):
+        assert _fuse_across_kbs([], top_k=5) == []
+        assert _fuse_across_kbs([[], []], top_k=5) == []
+
+    def test_uses_rank_not_score_scale(self):
+        """不同库的分数量纲不同，融合必须只看排名。
+
+        库 A 的分数整体很大、库 B 很小，但两库的**第一名**应当获得相同权重。
+        """
+        kb_large = [("a1", 100.0)]
+        kb_small = [("b1", 0.01)]
+
+        result = dict(_fuse_across_kbs([kb_large, kb_small], top_k=2))
+
+        assert result["a1"] == pytest.approx(result["b1"])
+
+
+class TestMultiKbSearch:
+    async def test_results_carry_source_kb(self, monkeypatch):
+        """跨库结果必须带来源库信息，否则用户无法判断内容出处。"""
+        chunk_a = make_chunk("c0")
+        chunk_a["kb_id"] = "kb-1"
+        chunk_b = make_chunk("c1")
+        chunk_b["kb_id"] = "kb-2"
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": chunk_a},
+            per_kb_vec={"kb-2": [("c1", 0.85)]},
+            per_kb_chunks={"kb-2": {"c1": chunk_b}},
+        )
+
+        async def fake_names(db, kb_ids):
+            return {"kb-1": "库一", "kb-2": "库二"}
+
+        orchestrator._load_kb_names = fake_names  # type: ignore[method-assign]
+
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="vector", top_k=5, kb_ids=["kb-2"],
+        ))
+
+        assert set(response.searched_kb_ids) == {"kb-1", "kb-2"}
+        assert {r.kb_name for r in response.results} == {"库一", "库二"}
+        assert response.score_kind == "rrf"
+
+    async def test_kb_without_relevant_content_is_excluded(self):
+        """某个库没有相关内容时不参与融合，而不是用低相关结果稀释其他库。"""
+        chunk_a = make_chunk("c0")
+        chunk_a["kb_id"] = "kb-1"
+        chunk_b = make_chunk("c1")
+        chunk_b["kb_id"] = "kb-2"
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": chunk_a},
+            # kb-2 的最高余弦低于默认门槛 0.53
+            per_kb_vec={"kb-2": [("c1", 0.2)]},
+            per_kb_chunks={"kb-2": {"c1": chunk_b}},
+        )
+
+        async def fake_names(db, kb_ids):
+            return {"kb-1": "库一", "kb-2": "库二"}
+
+        orchestrator._load_kb_names = fake_names  # type: ignore[method-assign]
+
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="vector", top_k=5, kb_ids=["kb-2"],
+        ))
+
+        assert response.searched_kb_ids == ["kb-1"]
+        assert [r.id for r in response.results] == ["c0"]
+
+    async def test_all_kbs_gated_out_reports_no_relevant_result(self):
+        chunk_b = make_chunk("c1")
+        chunk_b["kb_id"] = "kb-2"
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.2)], chunks={"c0": make_chunk("c0")},
+            per_kb_vec={"kb-2": [("c1", 0.1)]},
+            per_kb_chunks={"kb-2": {"c1": chunk_b}},
+        )
+
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="vector", top_k=5, kb_ids=["kb-2"],
+        ))
+
+        assert response.total == 0
+        assert response.no_relevant_result is True
+        assert response.searched_kb_ids == []
+
+    async def test_single_kb_request_keeps_original_path(self):
+        """只给一个 kb_id 时不应走多库路径（零行为变化）。"""
+        orchestrator, store, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="vector", top_k=5, kb_ids=["kb-1"],
+        ))
+
+        # 单库路径的分数语义是余弦（多库融合后是 RRF），据此区分两条路径
+        assert response.score_kind == "cosine"
+        assert store.filters

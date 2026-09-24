@@ -216,6 +216,19 @@ class SearchRequest(BaseModel):
         default=None, ge=0.0, le=1.0,
         description="近重复判定阈值（0 表示关闭去重）；None 表示用知识库配置（默认 0.92）",
     )
+    doc_ids: list[str] | None = Field(
+        default=None, max_length=50,
+        description="只在指定文档内检索（文档 ID 列表）；None 表示不限",
+    )
+    doc_types: list[str] | None = Field(
+        default=None, max_length=20,
+        description="只在指定文件类型内检索，如 ['pdf', 'md']；None 表示不限",
+    )
+    kb_ids: list[str] | None = Field(
+        default=None, max_length=5,
+        description="跨知识库联合检索：给定多个知识库 ID 时按排名融合各自结果；"
+                    "None 或单个 ID 表示只检索当前库",
+    )
 
 
 class ChunkMatch(BaseModel):
@@ -243,6 +256,9 @@ class ChunkMatch(BaseModel):
     #: 引用定位（来源页码与章节路径），来自切片元数据
     page: int | None = None
     section: str = ""
+    #: 来源知识库（跨库检索时用于标注结果出处）
+    kb_id: str = ""
+    kb_name: str = ""
 
 
 class SearchResponse(BaseModel):
@@ -265,6 +281,8 @@ class SearchResponse(BaseModel):
     filtered_count: int = 0
     #: 因近重复或单文档配额被丢弃的条数（结果已由后续候选补足）
     deduped_count: int = 0
+    #: 实际参与检索的知识库（跨库检索时可能有库因"无相关内容"被剔除）
+    searched_kb_ids: list[str] = []
 
 
 # ─── Chunk ───────────────────────────────────────────────────────────────────

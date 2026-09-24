@@ -28,7 +28,10 @@ function kb(): KB {
       minSimilarity: 0.53, scoreThreshold: 0,
       maxChunksPerDoc: 3, dedupSimilarity: 0.92,
     },
-    documents: [],
+    documents: [
+      { id: 'd1', name: '手册.md', type: 'md' } as KB['documents'][number],
+      { id: 'd2', name: '指南.pdf', type: 'pdf' } as KB['documents'][number],
+    ],
     entitiesData: [],
     relationsData: [],
     tags: [],
@@ -51,6 +54,8 @@ function result(overrides: Partial<SearchResult> = {}): SearchResult {
     bm25: null,
     page: 12,
     section: '第 3 章 · 部署',
+    kbId: 'kb-1',
+    kbName: '库',
     ...overrides,
   }
 }
@@ -64,6 +69,7 @@ function outcome(overrides: Partial<SearchOutcome> = {}): SearchOutcome {
     minSimilarity: 0.53,
     filteredCount: 0,
     dedupedCount: 0,
+    searchedKbIds: ['kb-1'],
     ...overrides,
   }
 }
@@ -209,6 +215,53 @@ describe('KbSearchTab · 高级参数', () => {
     expect(params.dedupSimilarity).toBe(0.92)
     expect(params.maxChunksPerDoc).toBe(0)
     expect(wrapper.html()).toContain('已去冗余 4 条')
+  })
+
+  it('限定文档与文件类型随请求下发', async () => {
+    const wrapper = await mountTab()
+    const vm = wrapper.vm as unknown as {
+      advanced: { docIds: string[]; docTypes: string[] }
+    }
+    vm.advanced.docIds = ['d1']
+    vm.advanced.docTypes = ['md']
+    await flushPromises()
+
+    await search(wrapper)
+
+    const params = api.searchKnowledgeBase.mock.calls[0][4]
+    expect(params.docIds).toEqual(['d1'])
+    expect(params.docTypes).toEqual(['md'])
+  })
+
+  it('限定范围为空时不下发过滤字段（避免后端收到空数组）', async () => {
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    const params = api.searchKnowledgeBase.mock.calls[0][4]
+    expect(params.docIds).toBeUndefined()
+    expect(params.docTypes).toBeUndefined()
+  })
+
+  it('跨库检索时标注结果来源库', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome({
+      results: [result({ kbName: '库二' })],
+      searchedKbIds: ['kb-1', 'kb-2'],
+    }))
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    expect(wrapper.html()).toContain('来自《库二》')
+  })
+
+  it('单库检索时不显示来源库（避免无意义噪声）', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome())
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    expect(wrapper.html()).not.toContain('来自《')
   })
 
   it('检索失败时页面上留下错误原因，而不是只有一闪而过的 toast', async () => {

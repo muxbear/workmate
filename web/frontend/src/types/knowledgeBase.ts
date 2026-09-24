@@ -318,6 +318,9 @@ export interface SearchResult {
   /** 引用定位：来源页码与章节 */
   page: number | null
   section: string
+  /** 来源知识库（跨库检索时用于标注结果出处） */
+  kbId: string
+  kbName: string
 }
 
 // 检索返回：结果 + 门槛与精排的实际状态
@@ -335,6 +338,8 @@ export interface SearchOutcome {
   filteredCount: number
   /** 因近重复或单文档配额被丢弃的条数（结果已由后续候选补足） */
   dedupedCount: number
+  /** 实际参与检索的知识库（跨库检索时可能有库因"无相关内容"被剔除） */
+  searchedKbIds: string[]
 }
 
 /** 高级检索参数（检索页可覆盖知识库配置） */
@@ -345,6 +350,10 @@ export interface SearchParams {
   enableRerank?: boolean
   maxChunksPerDoc?: number
   dedupSimilarity?: number
+  /** 只在指定文档内检索（文档 ID 列表） */
+  docIds?: string[]
+  /** 只在指定文件类型内检索，如 ['pdf', 'md'] */
+  docTypes?: string[]
 }
 
 // 视图模式
