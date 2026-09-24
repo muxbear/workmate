@@ -289,6 +289,15 @@ export interface SearchResult {
   bm25: number
 }
 
+// 检索返回：结果 + 精排实际状态
+export interface SearchOutcome {
+  results: SearchResult[]
+  /** 知识库配置是否要求精排 */
+  rerankRequested: boolean
+  /** 精排是否**实际生效**（模型不可用或调用失败时为 false） */
+  rerankApplied: boolean
+}
+
 // 视图模式
 export type ViewMode = 'grid' | 'list'
 

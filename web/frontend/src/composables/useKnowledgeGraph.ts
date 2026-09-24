@@ -146,13 +146,11 @@ export function useKnowledgeGraph() {
   }
 
   function selectEntity(id: string | null) {
-    selectedEntityId.value = id
-    if (id === selectedEntityId.value && id !== null) {
-      // 再次点击取消选中
-      selectedEntityId.value = null
-    } else {
-      selectedEntityId.value = id
-    }
+    // 必须先取"变更前"的值再判断是否重复点击：此前先把 selectedEntityId 赋成 id，
+    // 紧接着判断 `id === selectedEntityId.value && id !== null`——条件恒真，
+    // 选中态被立刻清空，点选实体永远不生效（详情/高亮/邻居联动全部不可用）。
+    const isSameEntity = id !== null && id === selectedEntityId.value
+    selectedEntityId.value = isSameEntity ? null : id
     applyNodeData()
   }
 

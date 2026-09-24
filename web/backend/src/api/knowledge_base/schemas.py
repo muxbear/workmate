@@ -133,15 +133,9 @@ class KBDocListResponse(BaseModel):
     page_size: int
 
 
-class KBDocUploadResponse(BaseModel):
-    """上传文档响应。"""
-    id: str
-    name: str
-    type: str
-    size_display: str
-    status: str
-    uploaded_at: datetime
-    config: IndexConfigSchema | None = None
+# 说明：上传接口直接返回 KBDocResponse（完整字段），此处不再单独定义
+# KBDocUploadResponse——它此前只声明 7 个字段，与文档列表的形状不一致，
+# 前端读取 progress/chunks_count/stages 会拿到 undefined。
 
 
 # ─── Graph ──────────────────────────────────────────────────────────────────
@@ -205,6 +199,10 @@ class SearchResponse(BaseModel):
     mode: str
     total: int
     results: list[ChunkMatch]
+    #: 知识库配置是否要求精排
+    rerank_requested: bool = False
+    #: 精排是否**实际生效**（模型不可用或调用失败时为 False）
+    rerank_applied: bool = False
 
 
 # ─── Chunk ───────────────────────────────────────────────────────────────────

@@ -59,15 +59,23 @@ def detect_payload_style(api_base: str) -> str:
 
 
 def resolve_dashscope_rerank_url(api_base: str) -> str:
-    """把各种 DashScope base 归一到原生 rerank 端点。
+    """把各种 DashScope base 归一到原生 rerank 端点（**幂等**）。
 
-    兼容三种配置写法::
+    兼容四种配置写法::
 
         https://dashscope.aliyuncs.com
         https://dashscope.aliyuncs.com/api/v1
         https://dashscope.aliyuncs.com/compatible-mode/v1   # 兼容模式入口不提供原生 rerank
+        https://<专属网关>/api/v1/services/rerank/text-rerank/text-rerank
+
+    最后一种最常见：阿里云控制台给专属网关的地址就是**完整端点**，用户会原样
+    填进「模型」页的 API_BASE。此前这里无条件追加路径，拼出
+    ``.../text-rerank/text-rerank/api/v1/services/rerank/text-rerank``，
+    每次调用都返回 400，而失败只记 warning 并静默回退原序——等于精排从未生效。
     """
     base = (api_base or "").rstrip("/")
+    if base.endswith(_DASHSCOPE_RERANK_PATH):
+        return base
     for suffix in _DASHSCOPE_COMPATIBLE_SUFFIXES:
         if base.endswith(suffix):
             base = base[: -len(suffix)]

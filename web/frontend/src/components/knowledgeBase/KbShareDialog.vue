@@ -31,8 +31,10 @@ async function runSearch(keyword: string) {
   searching.value = true
   try {
     candidates.value = await searchShareCandidates(keyword)
-  } catch {
+  } catch (err: unknown) {
+    // 此前静默置空：接口 404/500 时用户只看到"搜不到任何人"，没有任何线索
     candidates.value = []
+    ElMessage.error(err instanceof Error ? err.message : '加载可分享用户失败')
   } finally {
     searching.value = false
   }

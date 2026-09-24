@@ -80,14 +80,40 @@ async def get_chunk_detail(
     )
 
 
+async def _load_chunk_in_doc(
+    vector_store: BaseVectorStore,
+    kb_id: str,
+    doc_id: str,
+    chunk_id: str,
+) -> dict:
+    """取出切片并校验它确实属于 ``doc_id``。
+
+    路径里的 ``doc_id`` 与 ``chunk_id`` 此前互不校验，改一份文档的切片时可以传
+    另一份文档的 chunk_id（同库内跨文档改写/删除）。
+
+    Raises:
+        ValueError: 切片不存在或不属于给定文档。
+    """
+    raws = await vector_store.get_chunks_by_ids(kb_id, [chunk_id])
+    if not raws:
+        raise ValueError(f"Chunk not found: {chunk_id}")
+    chunk = raws[0]
+    owner_doc = chunk.get("doc_id", "")
+    if owner_doc and owner_doc != doc_id:
+        raise ValueError(f"Chunk not found: {chunk_id}")
+    return chunk
+
+
 async def update_chunk(
     vector_store: BaseVectorStore,
     embedding_model,
     kb_id: str,
+    doc_id: str,
     chunk_id: str,
     content: str,
 ) -> ChunkResponse:
     """更新切片内容 → 重新向量化 → 更新 Milvus。"""
+    await _load_chunk_in_doc(vector_store, kb_id, doc_id, chunk_id)
     new_embedding = (await embedding_model.aembed_documents([content]))[0]
     await vector_store.update_chunk(kb_id, chunk_id, content, new_embedding)
     return ChunkResponse(
@@ -102,9 +128,11 @@ async def update_chunk(
 async def delete_chunk(
     vector_store: BaseVectorStore,
     kb_id: str,
+    doc_id: str,
     chunk_id: str,
 ) -> None:
-    """删除单个切片。"""
+    """删除单个切片（校验切片归属后再删）。"""
+    await _load_chunk_in_doc(vector_store, kb_id, doc_id, chunk_id)
     await vector_store.delete_chunk_by_id(kb_id, chunk_id)
 
 
@@ -112,6 +140,7 @@ async def batch_operation(
     vector_store: BaseVectorStore,
     embedding_model,
     kb_id: str,
+    doc_id: str,
     req: BatchChunkRequest,
 ) -> dict:
     """批量操作：保存所有编辑 或 批量删除。"""
@@ -122,7 +151,7 @@ async def batch_operation(
             content = ch.get("content", "")
             if chunk_id and content:
                 await update_chunk(
-                    vector_store, embedding_model, kb_id, chunk_id, content,
+                    vector_store, embedding_model, kb_id, doc_id, chunk_id, content,
                 )
                 saved += 1
         return {"saved": saved, "deleted": 0}
@@ -131,7 +160,7 @@ async def batch_operation(
         deleted = 0
         for chunk_id in req.chunk_ids:
             if chunk_id:
-                await delete_chunk(vector_store, kb_id, chunk_id)
+                await delete_chunk(vector_store, kb_id, doc_id, chunk_id)
                 deleted += 1
         return {"saved": 0, "deleted": deleted}
 

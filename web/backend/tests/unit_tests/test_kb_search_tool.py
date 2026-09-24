@@ -203,6 +203,91 @@ class TestUserIsolation:
         assert patched_env.calls == []
 
 
+class TestArgumentGuards:
+    """参数由模型自由填写，非法值必须回可读提示而不是让工具抛异常。"""
+
+    async def test_invalid_mode_returns_available_modes(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        result = await call_search(kb_id="kb-a", mode="graph")
+
+        assert "不支持的检索模式" in result["error"]
+        assert set(result["available_modes"]) == {"hybrid", "vector", "bm25"}
+        assert patched_env.calls == [], "非法 mode 不得发起检索"
+
+    async def test_out_of_range_top_k_is_clamped(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        await call_search(kb_id="kb-a", top_k=500)
+        await call_search(kb_id="kb-a", top_k=-3)
+
+        assert [req.top_k for _, req in patched_env.calls] == [50, 1]
+
+    async def test_non_numeric_top_k_falls_back_to_default(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        await call_search(kb_id="kb-a", top_k="很多")
+
+        assert patched_env.calls[0][1].top_k == 5
+
+    async def test_unexpected_error_is_contained(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """工具边界必须兜住任何异常（此前只捕获 RuntimeError）。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        async def boom(*args, **kwargs):
+            raise KeyError("unexpected")
+
+        patched_env.search = boom  # type: ignore[method-assign]
+        result = await call_search(kb_id="kb-a")
+
+        assert "检索失败" in result["error"]
+        assert result["total"] == 0
+
+
+class TestKnowledgeBaseSelection:
+    async def test_multiple_kbs_require_explicit_id(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """未指定 kb_id 且有多个可用库时不猜测——此前 limit(1) 无排序，结果不可复现。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [
+            kb_row("kb-a", "我的甲", USER_A),
+            kb_row("kb-b", "我的乙", USER_A),
+        ])
+
+        result = await call_search()
+
+        assert "多个可用知识库" in result["error"]
+        assert {item["kb_id"] for item in result["candidates"]} == {"kb-a", "kb-b"}
+        assert patched_env.calls == [], "多候选时不得擅自选中某一个"
+
+    async def test_ambiguous_name_requires_explicit_id(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [
+            kb_row("kb-a", "产品手册 v1", USER_A),
+            kb_row("kb-b", "产品手册 v2", USER_A),
+        ])
+
+        result = await call_search(kb_name="产品手册")
+
+        assert "匹配到多个知识库" in result["error"]
+        assert patched_env.calls == []
+
+
 class TestSearchBehaviour:
     async def test_empty_query_short_circuits(self, monkeypatch, patched_env):
         monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)

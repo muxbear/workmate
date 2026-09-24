@@ -11,6 +11,7 @@ BM25 得分。上层（``search_service``）依赖该约定做融合与展示。
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -24,6 +25,32 @@ from core.rag.bm25 import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Milvus 表达式允许的 ID 形态——UUID 与类 UUID 标识符（字母数字、``-``、``_``）。
+#: Milvus 的 expr 没有参数化绑定，只能把值拼进表达式字符串，因此进入表达式之前
+#: 必须先做白名单校验：``chunk_id='x" or id != "'`` 这类输入会构造出
+#: ``id == "x" or id != ""``，从而读到/删掉整个 collection 的切片。
+#: 用 ``fullmatch``（而不是 ``re.match`` + ``$``）——``$`` 会匹配结尾换行符，
+#: 使 ``"x\\n"`` 这样的值通过校验。
+_SAFE_ID_PATTERN = re.compile(r"[0-9a-zA-Z_-]{1,64}")
+
+
+def safe_expr_id(value: str, field: str = "id") -> str:
+    """校验并返回可安全嵌入 Milvus 表达式的 ID。
+
+    Args:
+        value: 待校验的 ID（切片 / 文档 / 知识库主键）。
+        field: 出参报错信息里使用的字段名。
+
+    Returns:
+        原样返回的 ID（已确认只含字母数字与 ``-``/``_``）。
+
+    Raises:
+        ValueError: ID 为空、超长或包含引号 / 空格 / 换行 / 运算符等字符。
+    """
+    if not isinstance(value, str) or not _SAFE_ID_PATTERN.fullmatch(value):
+        raise ValueError(f"非法的 {field}: {value!r}")
+    return value
 
 
 class BaseVectorStore(ABC):
@@ -105,8 +132,10 @@ class BaseVectorStore(ABC):
 class MilvusVectorStore(BaseVectorStore):
     """基于 Milvus 的向量数据库实现。
 
-    Collection 命名规则: kb_{kb_id}
-    每个 Collection 包含 embedding (FLOAT_VECTOR) 字段和 BM25 稀疏向量。
+    Collection 命名规则: kb_{kb_id}。Schema 只含 dense ``embedding`` 字段——
+    **没有**稀疏向量，也没有 BM25 Function；稀疏检索由
+    :mod:`core.rag.bm25` 在客户端基于全量语料统计完成（见
+    :meth:`bm25_search`）。
     """
 
     @staticmethod
@@ -259,7 +288,7 @@ class MilvusVectorStore(BaseVectorStore):
             collection.load()
             self._collections[kb_id] = collection
 
-        collection.delete(f'doc_id == "{doc_id}"')
+        collection.delete(f'doc_id == "{safe_expr_id(doc_id, "doc_id")}"')
         collection.flush()
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus deleted chunks for doc=%s in kb=%s", doc_id, kb_id)
@@ -283,7 +312,7 @@ class MilvusVectorStore(BaseVectorStore):
     async def get_chunks_by_doc_id(self, kb_id: str, doc_id: str) -> list[dict]:
         collection = await self._get_collection(kb_id)
         results = collection.query(
-            expr=f'doc_id == "{doc_id}"',
+            expr=f'doc_id == "{safe_expr_id(doc_id, "doc_id")}"',
             output_fields=self._CHUNK_OUTPUT_FIELDS,
         )
         results.sort(key=lambda r: r.get("chunk_index", 0))
@@ -296,7 +325,7 @@ class MilvusVectorStore(BaseVectorStore):
             return []
 
         collection = await self._get_collection(kb_id)
-        ids_str = ", ".join(f'"{cid}"' for cid in chunk_ids)
+        ids_str = ", ".join(f'"{safe_expr_id(cid, "chunk_id")}"' for cid in chunk_ids)
         expr = f"id in [{ids_str}]"
         try:
             results = collection.query(
@@ -310,7 +339,7 @@ class MilvusVectorStore(BaseVectorStore):
 
     async def delete_chunk_by_id(self, kb_id: str, chunk_id: str) -> None:
         collection = await self._get_collection(kb_id)
-        collection.delete(f'id == "{chunk_id}"')
+        collection.delete(f'id == "{safe_expr_id(chunk_id, "chunk_id")}"')
         collection.flush()
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus deleted chunk=%s in kb=%s", chunk_id, kb_id)
@@ -429,9 +458,9 @@ class MilvusVectorStore(BaseVectorStore):
 class ChromaVectorStore(BaseVectorStore):
     """基于 Chroma 的向量数据库实现。
 
-    Collection 命名规则: kb_{kb_id}
-    文档文本存储为 Chroma documents 字段以支持全文检索。
-    BM25 通过 Chroma 内置 where_document 全文搜索 + TF 打分实现。
+    Collection 命名规则: kb_{kb_id}；文档文本存于 Chroma 的 ``documents`` 字段。
+    稀疏检索与 Milvus 侧共用 :mod:`core.rag.bm25` 的客户端实现，不再使用
+    ``where_document`` 预过滤（子串匹配会退化成"整句精确匹配"且破坏 IDF 统计）。
     """
 
     @staticmethod

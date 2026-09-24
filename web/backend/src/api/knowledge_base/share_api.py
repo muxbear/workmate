@@ -2,10 +2,12 @@
 
 写权限一律仅所有者；被邀请人只能接受或拒绝自己收到的邀请。
 
-路由声明顺序说明：``/shares/...`` 系列与 ``/{kb_id}/shares`` 系列的段数不同
-（前者 2~3 段且首段为字面量 ``shares``，后者第 2 段为字面量 ``shares``），
-FastAPI 按注册顺序匹配时不会互相吞掉，但仍把「不需要 kb_id 的邀请接口」
-放在前面，避免后续新增路由时踩坑。
+**路径命名约束**：本文件里所有「不需要 kb_id」的接口都必须带 ``shares/`` 前缀
+（如 ``/shares/candidates``）。此前候选用户接口写作 ``/share-candidates``——单段
+路径与 ``kb_api`` 的 ``GET /{kb_id}`` 段数相同，而 ``kb_router`` 先于本模块注册，
+于是该请求被 ``GET /{kb_id}`` 吃掉（kb_id="share-candidates"）并返回 404，
+分享弹窗的候选用户列表**永远为空**。新增接口时请保持 ``shares/`` 前缀，并跑
+``tests/unit_tests/test_kb_routes.py`` 的路由遮蔽检查。
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -35,7 +37,7 @@ router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库分享"])
 
 # ─── 被邀请人视角（不需要 kb_id）────────────────────────────────────────────
 
-@router.get("/share-candidates")
+@router.get("/shares/candidates")
 @handle_errors
 async def get_share_candidates(
     search: str = Query(default="", description="按用户名 / 昵称模糊匹配"),

@@ -24,6 +24,7 @@ from api.knowledge_base.service import (
     _load_owner_names,
 )
 from core.notification_bus import NotificationBus, NotificationEvent
+from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     SHARE_STATUS_PENDING,

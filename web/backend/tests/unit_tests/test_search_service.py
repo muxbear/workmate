@@ -409,7 +409,7 @@ class TestOrchestratorRerank:
         assert response.results[0].id == "c0"
 
     async def test_out_of_range_rerank_index_ignored(self):
-        """越界的精排下标被忽略，不抛异常。"""
+        """越界的精排下标被忽略，不抛异常，且结果按召回顺序补足。"""
         orchestrator, _, _ = make_orchestrator(
             reranker=FakeReranker(order=[(99, 0.9), (0, 0.5)]),
             vec=[("c0", 0.9), ("c1", 0.8)],
@@ -418,7 +418,68 @@ class TestOrchestratorRerank:
         response = await orchestrator.search(
             None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
         )
-        assert [r.id for r in response.results] == ["c0"]
+        # 有效的精排项排在前面，被丢弃的候选从召回顺序补回，条数满足 top_k
+        assert [r.id for r in response.results] == ["c0", "c1"]
+
+
+class TestRerankAppliedFlag:
+    """``rerank_requested`` / ``rerank_applied`` 必须如实反映精排是否生效。"""
+
+    async def test_applied_true_when_reranker_succeeds(self):
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_reranker": True},
+            reranker=FakeReranker(),
+            vec=[("c0", 0.9), ("c1", 0.8)],
+            chunks={"c0": make_chunk("c0"), "c1": make_chunk("c1")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
+        )
+
+        assert response.rerank_requested is True
+        assert response.rerank_applied is True
+
+    async def test_applied_false_when_reranker_fails(self):
+        """精排调用失败时结果回退原序，但必须标记为"未生效"。"""
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_reranker": True},
+            reranker=FakeReranker(fail=True),
+            vec=[("c0", 0.9), ("c1", 0.8)],
+            chunks={"c0": make_chunk("c0"), "c1": make_chunk("c1")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
+        )
+
+        assert response.rerank_requested is True
+        assert response.rerank_applied is False
+        assert response.total == 2
+
+    async def test_requested_false_when_not_configured(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
+        )
+
+        assert response.rerank_requested is False
+        assert response.rerank_applied is False
+
+    async def test_partial_rerank_result_is_topped_up(self):
+        """精排只返回部分候选时，用召回顺序补足，条数不应变少。"""
+        orchestrator, _, _ = make_orchestrator(
+            reranker=FakeReranker(order=[(1, 0.9)]),
+            vec=[("c0", 0.9), ("c1", 0.8), ("c2", 0.7)],
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(3)},
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=3),
+        )
+
+        assert response.rerank_applied is True
+        assert response.total == 3
+        assert response.results[0].id == "c1"
 
 
 class TestHybridStrategyCandidateExpansion:
@@ -428,3 +489,4 @@ class TestHybridStrategyCandidateExpansion:
         await HybridSearchStrategy().search(ctx, store)
         assert store.vec_top_k == [8]
         assert store.bm25_top_k == [8]
+

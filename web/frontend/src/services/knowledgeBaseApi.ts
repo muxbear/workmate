@@ -5,7 +5,7 @@ import type {
   KBDoc,
   DocChunk,
   CreateKBRequest,
-  SearchResult,
+  SearchOutcome,
   IndexConfig,
   KBVisibility,
   KBShare,
@@ -113,10 +113,12 @@ function mapDoc(raw: RawDoc): KBDoc {
     type: raw.type as KBDoc['type'],
     size: raw.size_display,
     status: raw.status as KBDoc['status'],
-    progress: raw.progress,
-    chunks: raw.chunks_count,
-    entities: raw.entities_count,
-    relations: raw.relations_count,
+    // 后端在上传响应里可能缺这些字段（旧版本只有 7 个字段），兜底为 0
+    // 以免进度条渲染出 NaN
+    progress: raw.progress ?? 0,
+    chunks: raw.chunks_count ?? 0,
+    entities: raw.entities_count ?? 0,
+    relations: raw.relations_count ?? 0,
     uploadedAt: raw.uploaded_at?.split('T')[0] || '',
     errorMessage: raw.error_message || null,
     stages: (raw.stages || []) as KBDoc['stages'],
@@ -283,7 +285,9 @@ export async function fetchSharesByMe(): Promise<KBShareListResponse> {
 
 /** 搜索可分享的用户（仅返回 ID/用户名/昵称/头像） */
 export async function searchShareCandidates(search: string): Promise<KBShare[]> {
-  const res = await instance.get('/knowledge-bases/share-candidates', {
+  // 路径必须是 /shares/candidates：单段的 /share-candidates 会被后端的
+  // GET /{kb_id} 吃掉（返回 404），导致候选用户列表永远为空。
+  const res = await instance.get('/knowledge-bases/shares/candidates', {
     params: { search },
   })
   return (res.data.data as RawShare[]).map(mapShare)
@@ -484,7 +488,7 @@ export async function searchKnowledgeBase(
   query: string,
   mode: string,
   topK: number = 5,
-): Promise<SearchResult[]> {
+): Promise<SearchOutcome> {
   const res = await instance.post(`/knowledge-bases/${kbId}/search`, {
     query,
     mode,
@@ -499,15 +503,21 @@ export async function searchKnowledgeBase(
       vec_score: number | null
       bm25_score: number | null
     }[]
+    rerank_requested?: boolean
+    rerank_applied?: boolean
   }
-  return (data.results || []).map((r) => ({
-    id: r.id,
-    doc: r.doc_name,
-    chunk: r.content,
-    score: r.score,
-    vec: r.vec_score ?? 0,
-    bm25: r.bm25_score ?? 0,
-  }))
+  return {
+    results: (data.results || []).map((r) => ({
+      id: r.id,
+      doc: r.doc_name,
+      chunk: r.content,
+      score: r.score,
+      vec: r.vec_score ?? 0,
+      bm25: r.bm25_score ?? 0,
+    })),
+    rerankRequested: data.rerank_requested ?? false,
+    rerankApplied: data.rerank_applied ?? false,
+  }
 }
 
 // ─── 切片管理 ─────────────────────────────────────────────────────────────

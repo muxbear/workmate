@@ -236,6 +236,30 @@ class TestResolveDashscopeUrl:
             "https://dashscope-intl.aliyuncs.com/"
         )
 
+    @pytest.mark.parametrize("trailing", ["", "/"])
+    def test_full_endpoint_is_not_duplicated(self, trailing: str):
+        """模型页填的是完整端点时不得再拼一次路径。
+
+        阿里云控制台给专属网关的地址就是完整 rerank URL，此前会被拼成
+        ``.../text-rerank/text-rerank/api/v1/services/rerank/text-rerank``，
+        每次调用都 400，而失败只记 warning —— 精排从未真正生效。
+        """
+        full = (
+            "https://llm-duxpo5ka08dtoh6y.cn-beijing.maas.aliyuncs.com"
+            "/api/v1/services/rerank/text-rerank/text-rerank"
+        )
+        assert resolve_dashscope_rerank_url(full + trailing) == full
+
+    def test_full_endpoint_client_targets_it_directly(self):
+        full = (
+            "https://llm-duxpo5ka08dtoh6y.cn-beijing.maas.aliyuncs.com"
+            "/api/v1/services/rerank/text-rerank/text-rerank"
+        )
+        client = RerankerClient(model="qwen3.7-text-rerank", api_base=full, api_key="k")
+
+        assert client.payload_style == PAYLOAD_STYLE_DASHSCOPE
+        assert client._url == full
+
 
 class TestDashscopePayload:
     def test_nested_input_and_parameters(self):

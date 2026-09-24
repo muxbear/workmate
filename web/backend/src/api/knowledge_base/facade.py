@@ -52,9 +52,20 @@ class KnowledgeBaseFacade:
 
         settings = self._settings
 
-        # 嵌入模型——从“模型”页面配置的提供商中加载
-        async with async_session() as session:
-            embedding_model = await load_embedding_model(session)
+        # 嵌入模型——从“模型”页面配置的提供商中加载。
+        # 加载失败**不再让整个服务起不来**：此前未捕获 RuntimeError，模型页没配
+        # embedding 模型时 lifespan 直接抛异常，等于登录、对话等无关功能一起挂掉。
+        # 现在降级为"知识库不可用"，相关接口会在被调用时返回明确的配置提示。
+        embedding_model = None
+        try:
+            async with async_session() as session:
+                embedding_model = await load_embedding_model(session)
+        except RuntimeError as exc:
+            logger.error(
+                "知识库降级启动：未找到可用的 embedding 模型（%s）。"
+                "请在“模型”页面配置 type=embedding 的模型后重启服务。",
+                exc,
+            )
 
         # 向量数据库 —— 工厂方法模式
         VectorStoreFactory.register("milvus", MilvusVectorStore)

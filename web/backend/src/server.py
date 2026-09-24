@@ -26,6 +26,7 @@ from agent.tools.mcp_loader import register_local_mcp_server
 from api import router
 from api.deps import set_cache
 from core.cache import create_cache
+from core.config import get_settings
 from db.engine import init_db
 from mcp_servers.image_gen_server import mcp as image_gen_mcp
 from mcp_servers.video_gen_server import mcp as video_gen_mcp
@@ -136,10 +137,15 @@ async def timing_middleware(request: Request, call_next):
     return response
 
 
+# CORS：来源白名单来自 CORS_ORIGINS（逗号分隔）。未配置时退化为通配 + 关闭凭据——
+# 浏览器规范不允许 `Access-Control-Allow-Origin: *` 与 credentials 同时生效，
+# 此前的 `["*"] + allow_credentials=True` 是个不会报错、但带凭据的跨域请求必然
+# 失败的组合；而 `CORS_ORIGINS` 配置项此前从未被读取。
+_cors_origins = get_settings().cors_origins_list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins or ["*"],
+    allow_credentials=bool(_cors_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )

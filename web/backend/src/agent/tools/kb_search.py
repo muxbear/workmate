@@ -39,18 +39,22 @@ def kb_search(
 
     只能检索当前用户可读的知识库（自己的、别人分享给自己且已接受的、公共库）。
     调用前请先用 list_knowledge_bases 获取可用的知识库列表，再传入正确的 kb_id。
-    如果不知道 kb_id，可以传入 kb_name 按名称匹配。
+    如果不知道 kb_id，可以传入 kb_name 按名称匹配；**名称匹配到多个知识库时不会
+    猜测**，而是返回 candidates 列表要求显式指定 kb_id。
 
     Args:
         query: 搜索查询，使用关键词而非完整句子。
         kb_id: 知识库 ID（优先使用）。不知道时传空字符串，通过 kb_name 匹配。
         kb_name: 知识库名称（模糊匹配）。仅 kb_id 为空时生效。
         mode: 检索模式，"hybrid"（RRF 混合，推荐）、"vector"（语义）、"bm25"（关键词）。
-        top_k: 返回结果数量，默认 5。
+        top_k: 返回结果数量，默认 5；越界值会被夹到 [1, 50]。
 
     Returns:
         {"total": int, "results": [{"doc": str, "content": str, "score": float, ...}]}
-        如果 kb_id 无效，返回 {"error": str, "available_kbs": [...]}
+        失败时返回 {"error": str, ...}，其中：
+        - kb_id 无效 → 附 available_kbs；
+        - 多个候选知识库 → 附 candidates；
+        - mode 非法 → 附 available_modes。
     """
     return asyncio.run(_kb_search_async(query, kb_id, kb_name, mode, top_k))
 
@@ -119,32 +123,57 @@ async def _resolve_kb_id(user_id: str, kb_id: str, kb_name: str) -> tuple[str, d
         }
 
     async with async_session() as db:
+        readable = [
+            _readable_condition(user_id),
+            KnowledgeBase.status == "ready",
+        ]
         if kb_name.strip():
             rows = list(
                 (
                     await db.execute(
-                        select(KnowledgeBase).where(
+                        select(KnowledgeBase)
+                        .where(
                             KnowledgeBase.name.contains(kb_name.strip()),
-                            _readable_condition(user_id),
-                            KnowledgeBase.status == "ready",
+                            *readable,
                         )
+                        .order_by(KnowledgeBase.updated_at.desc())
                     )
                 ).scalars().all()
             )
         else:
+            # 只取前两条：够判断"是否唯一"即可，避免为报错路径拉全表
             rows = list(
                 (
                     await db.execute(
-                        select(KnowledgeBase).where(
-                            _readable_condition(user_id),
-                            KnowledgeBase.status == "ready",
-                        ).limit(1)
+                        select(KnowledgeBase)
+                        .where(*readable)
+                        .order_by(KnowledgeBase.updated_at.desc())
+                        .limit(2)
                     )
                 ).scalars().all()
             )
 
-    if rows:
+    if len(rows) == 1:
         return rows[0].id, None
+
+    if len(rows) > 1:
+        # 不再"取第一个"——此前 limit(1) 没有 order_by，同一问题可能每次命中
+        # 不同知识库，行为不可复现。多个候选时要求模型显式选择。
+        available = await _load_readable_kbs(user_id)
+        if kb_name.strip():
+            error = f"'{kb_name.strip()}' 匹配到多个知识库，请指定其中的 kb_id。"
+            hint = "从 candidates 中选一个 kb_id 重新调用 kb_search。"
+        else:
+            error = "未指定知识库，且当前用户有多个可用知识库，请显式指定 kb_id。"
+            hint = "可调用 list_knowledge_bases 查看完整列表，再指定 kb_id 重新调用。"
+        return "", {
+            "error": error,
+            "candidates": _summarize_kbs(rows),
+            "available_kbs": _summarize_kbs(available),
+            "total": 0,
+            "results": [],
+            "hint": hint,
+        }
 
     available = await _load_readable_kbs(user_id)
     return "", {
@@ -164,7 +193,10 @@ async def _kb_search_async(
     query: str, kb_id: str, kb_name: str, mode: str, top_k: int
 ) -> dict[str, Any]:
     from api.knowledge_base.schemas import SearchRequest
-    from api.knowledge_base.search_service import get_search_orchestrator
+    from api.knowledge_base.search_service import (
+        create_search_registry,
+        get_search_orchestrator,
+    )
     from db.engine import async_session
 
     orch = get_search_orchestrator()
@@ -173,6 +205,23 @@ async def _kb_search_async(
 
     if not query.strip():
         return {"total": 0, "results": []}
+
+    # 参数由模型自由填写：非法 mode / 越界 top_k 必须回一条可读的提示，
+    # 而不是抛 ValueError / ValidationError 让整个工具调用崩掉。
+    valid_modes = create_search_registry().supported_modes
+    normalized_mode = str(mode or "hybrid").strip().lower()
+    if normalized_mode not in valid_modes:
+        return {
+            "error": f"不支持的检索模式 '{mode}'。",
+            "available_modes": valid_modes,
+            "total": 0,
+            "results": [],
+            "hint": "mode 只能是 " + " / ".join(valid_modes) + " 之一，默认用 hybrid。",
+        }
+    try:
+        clamped_top_k = max(1, min(int(top_k), 50))
+    except (TypeError, ValueError):
+        clamped_top_k = 5
 
     user_id = _current_user_id()
     if not user_id:
@@ -188,12 +237,12 @@ async def _kb_search_async(
     if not resolved_id:
         return error_payload or {"error": "未解析到知识库", "total": 0, "results": []}
 
-    req = SearchRequest(query=query.strip(), mode=mode, top_k=top_k)
+    req = SearchRequest(query=query.strip(), mode=normalized_mode, top_k=clamped_top_k)
 
     async with async_session() as db:
         try:
             resp = await orch.search(db, resolved_id, req)
-        except RuntimeError as e:
+        except (ValueError, RuntimeError) as e:
             available = await _load_readable_kbs(user_id)
             return {
                 "error": f"检索失败（kb_id={resolved_id}）：{e}",
@@ -201,6 +250,14 @@ async def _kb_search_async(
                 "total": 0,
                 "results": [],
                 "hint": "该知识库可能不存在或未完成索引，请使用 list_knowledge_bases 确认可用的知识库。",
+            }
+        except Exception as e:  # noqa: BLE001 - 工具边界必须兜住任何异常
+            logger.exception("kb_search 未预期异常 kb_id=%s", resolved_id)
+            return {
+                "error": f"检索失败（kb_id={resolved_id}）：{type(e).__name__}",
+                "total": 0,
+                "results": [],
+                "hint": "请稍后重试；若持续失败请检查知识库与向量库状态。",
             }
 
         return {

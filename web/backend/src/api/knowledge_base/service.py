@@ -71,6 +71,18 @@ def _readable_condition(user_id: str):
     )
 
 
+def _like_pattern(search: str) -> str:
+    """把用户输入转成安全的 LIKE 模式串（转义 ``%`` / ``_`` / ``\\``）。
+
+    配合 ``ilike(pattern, escape="\\\\")`` 使用：用户搜索 "a_b" 时应当只匹配字面
+    下划线，而不是把它当成单字符通配符。
+    """
+    escaped = (
+        search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped}%"
+
+
 def _format_bytes(size_bytes: int) -> str:
     """将字节数格式化为人类可读字符串。"""
     if size_bytes < 1024:
@@ -160,15 +172,20 @@ async def list_kbs(
 
     conditions: list = [scope_condition]
     if search:
-        pattern = f"%{search}%"
+        # 必须用 or_() 显式包裹：此前用 text("name ILIKE :q OR description ILIKE :q")
+        # 与 scope 条件平铺进 where()，SQL 的 AND 优先级高于 OR，实际语义变成
+        # (scope AND name LIKE) OR (description LIKE)——后半个分支没有任何权限
+        # 过滤，任何人只要带 search 参数就能搜出他人私有知识库。
+        pattern = _like_pattern(search)
         conditions.append(
-            text("knowledge_bases.name ILIKE :q OR knowledge_bases.description ILIKE :q")
+            or_(
+                KnowledgeBase.name.ilike(pattern, escape="\\"),
+                KnowledgeBase.description.ilike(pattern, escape="\\"),
+            )
         )
 
     # Total count
     total_stmt = select(func.count()).select_from(KnowledgeBase).where(*conditions)
-    if search:
-        total_stmt = total_stmt.params(q=pattern)
     total = (await db.execute(total_stmt)).scalar() or 0
 
     # Items
@@ -179,8 +196,6 @@ async def list_kbs(
         .offset(offset)
         .limit(page_size)
     )
-    if search:
-        stmt = stmt.params(q=pattern)
     rows = (await db.execute(stmt)).scalars().all()
 
     owner_names = await _load_owner_names(db, [r.user_id for r in rows])

@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, cast
 
 from fastapi import HTTPException, UploadFile
@@ -23,7 +24,6 @@ from api.knowledge_base.schemas import (
     DocStageInfo,
     IndexConfigSchema,
     KBDocResponse,
-    KBDocUploadResponse,
 )
 from core.rag.loaders import DocumentLoaderRegistry
 from core.rag.splitters import (
@@ -71,6 +71,42 @@ def _format_bytes(size_bytes: int) -> str:
 def _get_file_type(filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return ext if ext in ALLOWED_EXTENSIONS else "unknown"
+
+
+def _sanitize_filename(filename: str) -> str:
+    """把客户端提供的文件名净化为安全的存储名。
+
+    客户端可控的 multipart 文件名此前被直接 ``os.path.join`` 到存储路径上，
+    ``../../evil.md`` 这类名字可以写出上传目录，Windows 下传入绝对路径时
+    ``os.path.join`` 还会直接丢弃目录前缀。这里只保留基名（去掉任何目录成分），
+    并拒绝空名与 ``.`` / ``..``。
+
+    Raises:
+        HTTPException: 文件名为空或退化成分隔符时返回 400。
+    """
+    # 先归一 Windows 分隔符，再取基名——两种分隔符都能被 PurePosixPath 处理
+    normalized = (filename or "").replace("\\", "/")
+    name = PurePosixPath(normalized).name.strip()
+    # 去掉控制字符（含空字节），它们会影响落盘与后续解析
+    name = "".join(ch for ch in name if ch.isprintable())
+    if name in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="文件名不合法")
+    return name
+
+
+def _ensure_within(path: str, base_dir: str) -> str:
+    """断言写入路径落在基目录内，返回规范化后的绝对路径。
+
+    与 :func:`_sanitize_filename` 构成双保险：即便将来有人在净化逻辑上引入
+    疏漏，越界的落盘也会在这里被拦下。
+    """
+    real = os.path.realpath(path)
+    base = os.path.realpath(base_dir)
+    if os.path.normcase(real) != os.path.normcase(base) and not os.path.normcase(
+        real
+    ).startswith(os.path.normcase(base) + os.sep):
+        raise HTTPException(status_code=400, detail="文件名不合法")
+    return real
 
 
 def compute_stages(status: str, error_message: str | None = None) -> list[dict]:
@@ -511,7 +547,7 @@ async def upload_documents(
     files: list[UploadFile],
     scheduler: IndexingScheduler | None = None,
     custom_config: dict | None = None,
-) -> list[KBDocUploadResponse]:
+) -> list[KBDocResponse]:
     """上传文档并触发索引流水线。"""
     # 校验知识库
     kb = (
@@ -528,19 +564,30 @@ async def upload_documents(
     upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
     os.makedirs(upload_dir, exist_ok=True)
 
-    results: list[KBDocUploadResponse] = []
+    results: list[KBDocResponse] = []
     total_new_bytes = 0
 
+    # 先整体校验（文件名 + 已知大小），再落盘：避免第 N 个文件校验失败时
+    # 前面已写入的文件成为孤儿（调用方会回滚事务，磁盘上却已经留下文件）。
+    sanitized: list[tuple[UploadFile, str, str]] = []
+    max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
     for file in files:
-        # 校验文件名
-        filename = file.filename or "unknown"
+        filename = _sanitize_filename(file.filename or "")
         file_type = _get_file_type(filename)
         if file_type == "unknown":
             raise HTTPException(status_code=400, detail=f"不支持的文件类型: {filename}")
+        known_size = getattr(file, "size", None)
+        if isinstance(known_size, int) and known_size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"文件 {filename} 超过最大大小 {MAX_FILE_SIZE_MB}MB",
+            )
+        sanitized.append((file, filename, file_type))
 
-        # 读取并校验大小
+    for file, filename, file_type in sanitized:
+        # 读取并校验大小（部分客户端不上报 size，这里兜底）
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE_MB * 1024 * 1024:
+        if len(content) > max_bytes:
             raise HTTPException(
                 status_code=413,
                 detail=f"文件 {filename} 超过最大大小 {MAX_FILE_SIZE_MB}MB",
@@ -549,7 +596,7 @@ async def upload_documents(
         doc_id = str(uuid.uuid4())
         storage_dir = os.path.join(upload_dir, doc_id)
         os.makedirs(storage_dir, exist_ok=True)
-        storage_path = os.path.join(storage_dir, filename)
+        storage_path = _ensure_within(os.path.join(storage_dir, filename), upload_dir)
 
         with open(storage_path, "wb") as f:
             f.write(content)
@@ -569,10 +616,16 @@ async def upload_documents(
         db.add(doc)
         total_new_bytes += len(content)
 
-        results.append(KBDocUploadResponse(
+        # 返回体与文档列表（KBDocResponse）保持同一形状：此前只返回 7 个字段，
+        # 前端 mapDoc 读 progress/chunks_count/stages 等会拿到 undefined，
+        # 上传后立刻显示 NaN 进度。
+        results.append(KBDocResponse(
             id=doc_id, name=filename, type=file_type,
             size_display=_format_bytes(len(content)),
-            status="queued", uploaded_at=now,
+            status="queued", progress=STAGE_PROGRESS["queued"],
+            chunks_count=0, entities_count=0, relations_count=0,
+            uploaded_at=now, indexed_at=None, error_message=None,
+            stages=[DocStageInfo(**s) for s in compute_stages("queued")],
             config=IndexConfigSchema(**custom_config) if custom_config else None,
         ))
 

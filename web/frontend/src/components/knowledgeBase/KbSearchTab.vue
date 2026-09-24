@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Search, Zap, Sparkle, Hash, Wand2, FileSearch } from 'lucide-vue-next'
+import { ElMessage } from 'element-plus'
+import { Search, Zap, Sparkle, Hash, Wand2, FileSearch, AlertTriangle } from 'lucide-vue-next'
 import type { KB, SearchMode, SearchResult } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
 
@@ -13,6 +14,10 @@ const query = ref('')
 const results = ref<SearchResult[]>([])
 const searched = ref(false)
 const searching = ref(false)
+/** 知识库配置要求精排 */
+const rerankRequested = ref(false)
+/** 精排是否真的生效（模型不可用/接口报错时为 false，此时结果是召回原始顺序） */
+const rerankApplied = ref(false)
 
 const modeOptions: { key: SearchMode; label: string; desc: string; icon: typeof Sparkle }[] = [
   { key: 'hybrid', label: '混合检索', desc: '向量 + BM25 融合', icon: Wand2 },
@@ -34,17 +39,24 @@ async function runSearch() {
   if (!q) return
   searching.value = true
   try {
-    results.value = await kbApi.searchKnowledgeBase(
+    const outcome = await kbApi.searchKnowledgeBase(
       props.kb.id,
       q,
       mode.value,
       props.kb.config.topK || 5,
     )
+    results.value = outcome.results
+    rerankRequested.value = outcome.rerankRequested
+    rerankApplied.value = outcome.rerankApplied
     searched.value = true
   } catch (err: unknown) {
+    // 此前只 console.error：检索失败时用户看到的是"命中 0 条"，无从判断原因
     const msg = err instanceof Error ? err.message : '检索失败'
     results.value = []
+    rerankRequested.value = false
+    rerankApplied.value = false
     searched.value = true
+    ElMessage.error(msg)
     console.error('Search failed:', msg)
   } finally {
     searching.value = false
@@ -106,7 +118,20 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 
     <!-- 检索结果 -->
     <div v-if="searched" class="results-section">
-      <div class="results-count">命中 {{ results.length }} 条结果</div>
+      <div
+        v-if="rerankRequested && !rerankApplied && results.length > 1"
+        class="rerank-warn"
+      >
+        <AlertTriangle :size="14" />
+        <span>
+          知识库启用了精排，但本次<strong>未生效</strong>（重排模型不可用或调用失败），
+          下方为召回原始顺序。请检查「模型」页面中 rerank 模型的 API_BASE 配置。
+        </span>
+      </div>
+      <div class="results-count">
+        命中 {{ results.length }} 条结果
+        <span v-if="rerankApplied" class="rerank-ok">已精排</span>
+      </div>
       <div v-for="(r, i) in results" :key="r.id" class="card result-card">
         <div class="result-header">
           <el-tag size="small" type="info" class="result-rank">#{{ i + 1 }}</el-tag>
@@ -282,6 +307,27 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 .results-count {
   font-size: var(--font-size-sm);
   color: var(--foreground-secondary);
+}
+
+.rerank-ok {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-muted, rgba(255, 255, 255, 0.08));
+  font-size: var(--font-size-xs, 12px);
+}
+
+.rerank-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--warning-border, rgba(245, 158, 11, 0.4));
+  border-radius: var(--radius-card);
+  background: var(--warning-bg, rgba(245, 158, 11, 0.1));
+  color: var(--warning-text, #f59e0b);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
 }
 
 .result-card {

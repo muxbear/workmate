@@ -49,10 +49,34 @@ const selectedIdx = computed(() => chunks.value.findIndex((c) => c.id === select
 const prevChunk = computed(() => selectedIdx.value > 0 ? chunks.value[selectedIdx.value - 1] : null)
 const nextChunk = computed(() => selectedIdx.value < chunks.value.length - 1 ? chunks.value[selectedIdx.value + 1] : null)
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 高亮查询词，返回可直接交给 v-html 的字符串。
+ *
+ * 切片正文来自用户上传的文档（md/html/txt 原文），**必须先转义 HTML**：
+ * 此前只转义了正则元字符，上传含 `<img onerror=...>` 的文档再分享出去，
+ * 任何打开该文档详情页的人都会执行其中的脚本（存储型 XSS，可直接读走
+ * sessionStorage 里的 token）。
+ */
 function highlightText(text: string, query: string): string {
-  if (!query.trim()) return text
-  return text.replace(
-    new RegExp(`(${query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'),
+  const safe = escapeHtml(text)
+  const q = query.trim()
+  if (!q) return safe
+  // 查询词同样先做 HTML 转义，才能匹配到正文里已被转义的字符
+  return safe.replace(
+    new RegExp(`(${escapeRegExp(escapeHtml(q))})`, 'gi'),
     '<mark class="search-highlight">$1</mark>',
   )
 }
@@ -121,7 +145,7 @@ function copyChunkContent() {
             <div class="chunk-section-label">{{ chunk.section }}</div>
             <p
               class="chunk-content-preview"
-              v-html="search ? highlightText(chunk.content, search) : chunk.content"
+              v-html="highlightText(chunk.content, search)"
             />
             <div v-if="chunk.entities.length > 0" class="chunk-entity-tags">
               <span v-for="e in chunk.entities" :key="e" class="entity-tag">{{ e }}</span>
@@ -198,7 +222,7 @@ function copyChunkContent() {
                   </div>
                   <p
                     class="context-current-text"
-                    v-html="search ? highlightText(selectedChunk.content, search) : selectedChunk.content"
+                    v-html="highlightText(selectedChunk.content, search)"
                   />
                 </div>
 

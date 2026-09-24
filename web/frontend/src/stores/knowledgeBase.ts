@@ -4,7 +4,7 @@ import type {
   KB,
   KBDoc,
   IndexConfig,
-  SearchResult,
+  SearchOutcome,
   SearchMode,
   ViewMode,
   CreateKBRequest,
@@ -417,7 +417,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     kbId: string,
     query: string,
     mode: SearchMode,
-  ): Promise<SearchResult[]> {
+  ): Promise<SearchOutcome> {
     return kbApi.searchKnowledgeBase(kbId, query, mode)
   }
 
