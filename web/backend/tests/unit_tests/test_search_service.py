@@ -13,9 +13,11 @@ import pytest
 from api.knowledge_base.schemas import SearchRequest
 from api.knowledge_base.search_service import (
     HybridSearchStrategy,
+    ScoredChunk,
     SearchContext,
     SearchOrchestrator,
     _fuse_scores,
+    _prune_redundant,
     create_search_registry,
 )
 from core.rag.bm25 import SparseConfig
@@ -166,7 +168,7 @@ class FakeStore:
         self.sparse_configs.append(sparse_config)
         return self.bm25[:top_k]
 
-    async def get_chunks_by_ids(self, kb_id, chunk_ids):
+    async def get_chunks_by_ids(self, kb_id, chunk_ids, include_embeddings=False):
         if self.fail_chunk_fetch:
             raise RuntimeError("boom")
         return [self.chunks[cid] for cid in chunk_ids if cid in self.chunks]
@@ -346,13 +348,27 @@ class TestOrchestratorConfigWiring:
 
 
 class TestOrchestratorRerank:
-    async def test_disabled_by_default(self):
-        """未启用精排时只取 top_k 个候选。"""
+    async def test_no_rerank_fetches_only_dedup_multiple(self):
+        """未启用精排时不做 4 倍精排扩召，只为去冗余取 3 倍候选。
+
+        （去冗余会丢条，必须多取候选才能补回 top_k；两者都关闭时才是严格 top_k）
+        """
         orchestrator, store, _ = make_orchestrator(
             vec=[(f"c{i}", 1.0 - i * 0.01) for i in range(10)],
             chunks={f"c{i}": make_chunk(f"c{i}") for i in range(10)},
         )
         await orchestrator.search(None, "kb-1", SearchRequest(query="q", mode="vector", top_k=3))
+        assert store.vec_top_k == [9]
+
+    async def test_no_dedup_no_rerank_fetches_exactly_top_k(self):
+        orchestrator, store, _ = make_orchestrator(
+            vec=[(f"c{i}", 1.0 - i * 0.01) for i in range(10)],
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(10)},
+        )
+        await orchestrator.search(None, "kb-1", SearchRequest(
+            query="q", mode="vector", top_k=3,
+            dedup_similarity=0.0, max_chunks_per_doc=0,
+        ))
         assert store.vec_top_k == [3]
 
     async def test_enabled_retrieves_more_candidates(self):
@@ -736,3 +752,124 @@ class TestCitations:
 
         assert response.results[0].page is None
         assert response.results[0].section == ""
+
+
+# ─── 迭代 3：去冗余（近重复 + 单文档配额） ────────────────────────────────────
+
+
+def _chunk_with_vector(
+    cid: str, doc_id: str, vector: list[float], text: str = "",
+) -> dict:
+    chunk = make_chunk(cid, text)
+    chunk["doc_id"] = doc_id
+    chunk["embedding"] = vector
+    return chunk
+
+
+class TestPruneRedundant:
+    def test_near_duplicate_is_dropped_and_replaced(self):
+        """同一段样板文字出现在两处时只保留一条，空出的位置由后续候选补上。"""
+        ordered = [
+            (ScoredChunk("c0", 1.0), _chunk_with_vector("c0", "d1", [1.0, 0.0])),
+            (ScoredChunk("c1", 0.9), _chunk_with_vector("c1", "d2", [1.0, 0.0])),  # 与 c0 同向
+            (ScoredChunk("c2", 0.8), _chunk_with_vector("c2", "d3", [0.0, 1.0])),
+        ]
+
+        kept, dropped = _prune_redundant(ordered, top_k=2, max_per_doc=3, dedup_similarity=0.92)
+
+        assert [sc.chunk_id for sc, _ in kept] == ["c0", "c2"]
+        assert dropped == 1
+
+    def test_similar_but_distinct_chunks_are_kept(self):
+        """相邻切片的正常重叠（相似度低于阈值）不应被误删。"""
+        ordered = [
+            (ScoredChunk("c0", 1.0), _chunk_with_vector("c0", "d1", [1.0, 0.0])),
+            (ScoredChunk("c1", 0.9), _chunk_with_vector("c1", "d2", [0.8, 0.6])),
+        ]
+
+        kept, dropped = _prune_redundant(ordered, top_k=2, max_per_doc=3, dedup_similarity=0.92)
+
+        assert [sc.chunk_id for sc, _ in kept] == ["c0", "c1"]
+        assert dropped == 0
+
+    def test_single_document_cap(self):
+        """多文档候选集里，单篇文档最多占 max_per_doc 个位置。"""
+        ordered = [
+            (ScoredChunk(f"a{i}", 1.0 - i * 0.01), _chunk_with_vector(f"a{i}", "d1", [1.0, i / 100]))
+            for i in range(4)
+        ] + [
+            (ScoredChunk("b0", 0.5), _chunk_with_vector("b0", "d2", [0.0, 1.0])),
+        ]
+
+        kept, dropped = _prune_redundant(ordered, top_k=3, max_per_doc=2, dedup_similarity=0.0)
+
+        doc_ids = [c.get("doc_id") for _, c in kept]
+        assert doc_ids.count("d1") == 2
+        assert doc_ids.count("d2") == 1
+        assert dropped == 2
+
+    def test_cap_ignored_for_single_document_candidates(self):
+        """候选只来自一个文档时不做限流——否则单文档知识库会被截到 3 条。"""
+        ordered = [
+            (ScoredChunk(f"a{i}", 1.0 - i * 0.01), _chunk_with_vector(f"a{i}", "d1", [1.0, i / 100]))
+            for i in range(5)
+        ]
+
+        kept, _ = _prune_redundant(ordered, top_k=5, max_per_doc=3, dedup_similarity=0.0)
+
+        assert len(kept) == 5
+
+    def test_dedup_disabled_keeps_everything(self):
+        ordered = [
+            (ScoredChunk("c0", 1.0), _chunk_with_vector("c0", "d1", [1.0, 0.0])),
+            (ScoredChunk("c1", 0.9), _chunk_with_vector("c1", "d2", [1.0, 0.0])),
+        ]
+
+        kept, dropped = _prune_redundant(ordered, top_k=2, max_per_doc=9, dedup_similarity=0.0)
+
+        assert len(kept) == 2 and dropped == 0
+
+    def test_chunks_without_vectors_are_not_dropped(self):
+        """向量缺失（例如后端没返回）时按"无从判定"处理，保留候选。"""
+        ordered = [
+            (ScoredChunk("c0", 1.0), _chunk_with_vector("c0", "d1", [1.0, 0.0])),
+            (ScoredChunk("c1", 0.9), make_chunk("c1")),  # 无 embedding
+        ]
+
+        kept, _ = _prune_redundant(ordered, top_k=2, max_per_doc=3, dedup_similarity=0.92)
+
+        assert len(kept) == 2
+
+
+class TestDedupInOrchestrator:
+    async def test_duplicates_are_replaced_by_next_distinct_chunk(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9), ("c1", 0.85), ("c2", 0.8)],
+            chunks={
+                "c0": _chunk_with_vector("c0", "d1", [1.0, 0.0]),
+                "c1": _chunk_with_vector("c1", "d2", [1.0, 0.0]),
+                "c2": _chunk_with_vector("c2", "d3", [0.0, 1.0]),
+            },
+        )
+        response = await orchestrator.search(
+            None, "kb-1", SearchRequest(query="q", mode="vector", top_k=2),
+        )
+
+        assert [r.id for r in response.results] == ["c0", "c2"]
+        assert response.deduped_count == 1
+
+    async def test_dedup_can_be_disabled(self):
+        orchestrator, _, _ = make_orchestrator(
+            vec=[("c0", 0.9), ("c1", 0.85)],
+            chunks={
+                "c0": _chunk_with_vector("c0", "d1", [1.0, 0.0]),
+                "c1": _chunk_with_vector("c1", "d2", [1.0, 0.0]),
+            },
+        )
+        response = await orchestrator.search(
+            None, "kb-1",
+            SearchRequest(query="q", mode="vector", top_k=2, dedup_similarity=0.0),
+        )
+
+        assert response.total == 2
+        assert response.deduped_count == 0

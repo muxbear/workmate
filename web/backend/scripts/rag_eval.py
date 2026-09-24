@@ -146,6 +146,8 @@ async def run(
     rerank: bool | None,
     min_similarity: float | None,
     score_threshold: float | None,
+    dedup_similarity: float | None,
+    max_per_doc: int | None,
 ) -> dict[str, Any]:
     """跑完整评测，返回报告字典。"""
     from agent.config import settings
@@ -177,6 +179,8 @@ async def run(
                 "rerank": rerank,
                 "min_similarity": min_similarity,
                 "score_threshold": score_threshold,
+                "dedup_similarity": dedup_similarity,
+                "max_chunks_per_doc": max_per_doc,
             },
             "modes": {},
         }
@@ -192,6 +196,8 @@ async def run(
                     enable_rerank=rerank,
                     min_similarity=min_similarity,
                     score_threshold=score_threshold,
+                    dedup_similarity=dedup_similarity,
+                    max_chunks_per_doc=max_per_doc,
                 )
                 started = time.perf_counter()
                 try:
@@ -218,6 +224,7 @@ async def run(
                     "total": response.total,
                     "no_relevant_result": response.no_relevant_result,
                     "rerank_applied": response.rerank_applied,
+                    "deduped_count": response.deduped_count,
                     "top_docs": [r.doc_name for r in response.results[:3]],
                     "metrics": score_case(case, response.results, top_k),
                 })
@@ -242,6 +249,7 @@ async def run(
                 "negative_cases": len(negatives),
                 "latency_p50_ms": round(latencies[len(latencies) // 2], 1),
                 "latency_p95_ms": round(latencies[int(len(latencies) * 0.95) - 1], 1),
+                "deduped_total": sum(r.get("deduped_count") or 0 for r in rows),
                 "by_category": {
                     category: round(
                         mean("hit", [r for r in positives if r["category"] == category]), 4,
@@ -271,6 +279,8 @@ def print_report(report: dict[str, Any]) -> None:
         )
     for mode, metrics in report["modes"].items():
         print(f"\n[{mode}] 分类命中率: {metrics['by_category']}")
+        if metrics.get("deduped_total"):
+            print(f"[{mode}] 去冗余丢弃条数合计: {metrics['deduped_total']}")
         if metrics["misses"]:
             print(f"[{mode}] 未命中: {metrics['misses']}")
         if metrics["false_positives"]:
@@ -303,6 +313,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rerank", choices=("on", "off"), help="覆盖精排开关")
     parser.add_argument("--min-similarity", type=float, help="覆盖最低余弦门槛（0 表示关闭）")
     parser.add_argument("--score-threshold", type=float, help="覆盖相对截断比例")
+    parser.add_argument("--dedup", type=float, help="覆盖近重复阈值（0 表示关闭去重）")
+    parser.add_argument("--max-per-doc", type=int, help="覆盖单文档结果上限（0 表示不限制）")
     parser.add_argument("--json", type=Path, help="把完整报告写到该文件（可作为后续基线）")
     parser.add_argument("--compare", type=Path, help="与已有基线报告对比")
     return parser.parse_args()
@@ -322,6 +334,8 @@ def main() -> int:
         rerank=rerank,
         min_similarity=args.min_similarity,
         score_threshold=args.score_threshold,
+        dedup_similarity=args.dedup,
+        max_per_doc=args.max_per_doc,
     ))
     print_report(report)
 

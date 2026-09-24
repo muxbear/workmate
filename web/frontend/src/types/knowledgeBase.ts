@@ -52,6 +52,10 @@ export interface IndexConfig {
   minSimilarity: number
   /** 相对截断比例（0 表示关闭）：丢弃低于「最高分 × 该比例」的结果 */
   scoreThreshold: number
+  /** 同一文档最多占用的结果条数（0 表示不限制） */
+  maxChunksPerDoc: number
+  /** 近重复判定阈值（0 表示关闭）：与已选结果相似度 ≥ 该值的候选被丢弃 */
+  dedupSimilarity: number
 }
 
 // 索引阶段
@@ -329,6 +333,8 @@ export interface SearchOutcome {
   minSimilarity: number | null
   /** 被门槛过滤掉的条数 */
   filteredCount: number
+  /** 因近重复或单文档配额被丢弃的条数（结果已由后续候选补足） */
+  dedupedCount: number
 }
 
 /** 高级检索参数（检索页可覆盖知识库配置） */
@@ -337,6 +343,8 @@ export interface SearchParams {
   minSimilarity?: number
   scoreThreshold?: number
   enableRerank?: boolean
+  maxChunksPerDoc?: number
+  dedupSimilarity?: number
 }
 
 // 视图模式

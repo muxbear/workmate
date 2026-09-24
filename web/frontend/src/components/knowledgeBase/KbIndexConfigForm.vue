@@ -329,6 +329,36 @@ function onRerankModelChange(name: string) {
       <div class="field-row">
         <div class="field flex-1">
           <label class="field-label">
+            单文档结果上限: {{ draft.maxChunksPerDoc > 0 ? `${draft.maxChunksPerDoc} 条` : '不限制' }}
+          </label>
+          <el-slider
+            :model-value="draft.maxChunksPerDoc"
+            :min="0" :max="10" :step="1"
+            @update:model-value="(v: number) => set('maxChunksPerDoc', v)"
+          />
+          <div class="hint-text">
+            同一篇文档最多占用几个结果位；一篇文档霸榜会挤掉其他来源。
+            候选只来自单篇文档时该限制自动失效。
+          </div>
+        </div>
+        <div class="field flex-1">
+          <label class="field-label">
+            去冗余阈值: {{ draft.dedupSimilarity > 0 ? `相似度 ≥ ${draft.dedupSimilarity.toFixed(2)}` : '关闭' }}
+          </label>
+          <el-slider
+            :model-value="draft.dedupSimilarity"
+            :min="0" :max="1" :step="0.01"
+            @update:model-value="(v: number) => set('dedupSimilarity', v)"
+          />
+          <div class="hint-text">
+            与已选结果相似度超过该值的候选会被丢弃（同一段样板文字出现在多处时
+            接近 1.0，而相邻切片的正常重叠通常远低于它）。丢掉的条数由后续候选补回。
+          </div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field flex-1">
+          <label class="field-label">
             最低相似度: {{ draft.minSimilarity.toFixed(2) }}
           </label>
           <el-slider

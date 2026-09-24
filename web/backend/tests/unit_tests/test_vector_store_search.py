@@ -174,13 +174,28 @@ class TestMilvusBM25:
         assert await store.bm25_search("kb-1", "量子纠缠光谱仪", top_k=3) == []
 
     async def test_k1_and_b_from_config_affect_scores(self):
-        """k1/b 现在真的参与打分。"""
-        store, _ = make_milvus_store(rows=CORPUS_ROWS)
-        default = dict(await store.bm25_search("kb-1", "数据库", top_k=3))
-        tuned = dict(await store.bm25_search(
-            "kb-1", "数据库", top_k=3, sparse_config=SparseConfig(bm25_b=0.0),
+        """k1/b 真的参与打分。
+
+        用自备语料（一短一长、都恰好出现一次查询词）来断言，避免依赖共享夹具的
+        长度分布——此前用"同一文档在不同 b 下的得分不同"来断言，一旦该文档长度
+        正好等于语料平均长度就会失效（停用词过滤后确实出现过这种巧合）。
+        """
+        rows = [
+            chunk_row("short", "检索粒度"),
+            chunk_row("long", "检索粒度" + "文本切片过大或过小都会影响召回效果，" * 5),
+        ]
+        store, _ = make_milvus_store(rows=rows)
+
+        with_length_norm = dict(await store.bm25_search("kb-1", "检索粒度", top_k=5))
+        without_length_norm = dict(await store.bm25_search(
+            "kb-1", "检索粒度", top_k=5, sparse_config=SparseConfig(bm25_b=0.0),
         ))
-        assert default != tuned
+
+        assert set(with_length_norm) == {"short", "long"}
+        # b=0：不做长度归一化 → 词频相同则得分相同
+        assert without_length_norm["short"] == pytest.approx(without_length_norm["long"])
+        # b>0：短文档得分更高（长度惩罚生效）
+        assert with_length_norm["short"] > with_length_norm["long"]
 
     async def test_sparse_algo_none_disables_search(self):
         """sparse_algo=none 真正关闭稀疏检索。"""

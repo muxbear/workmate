@@ -2,7 +2,9 @@
 
 import json
 import logging
+import math
 from abc import ABC, abstractmethod
+from collections import Counter
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,10 @@ RRF_K = 60
 DEFAULT_HYBRID_ALPHA = 0.7
 #: 精排候选上限——多数 rerank 接口对单次文档数有上限，且候选越多延迟越高
 MAX_RERANK_CANDIDATES = 50
+
+#: 去冗余时的候选倍数。去冗余会丢条，必须多取候选才能"用后面的补上"——
+#: 否则结果条数会少于 top_k（这与"先截断再过滤"的旧行为是同一个坑）。
+DEDUP_CANDIDATE_MULTIPLIER = 3
 
 #: 分数含义常量——`ChunkMatch.score_kind` 与前端标注共用
 SCORE_KIND_COSINE = "cosine"
@@ -36,6 +42,77 @@ DEFAULT_MIN_SIMILARITY = 0.53
 #: 相对截断默认关闭：绝对门槛已经处理了"根本没有相关内容"，
 #: 再按比例截长尾会悄悄丢掉中等相关的结果，交给用户显式开启。
 DEFAULT_SCORE_THRESHOLD = 0.0
+
+#: 同一文档最多占用的结果条数——一篇文档的相邻切片霸榜会挤掉其他来源。
+#: 候选集只来自一个文档时该限制自动失效（没有可"让位"的其他来源）。
+DEFAULT_MAX_CHUNKS_PER_DOC = 3
+
+#: 近重复判定阈值：与已选结果余弦相似度 ≥ 该值的候选会被丢弃。
+#: 同一段样板文字出现在多个文档里时相似度接近 1.0，而相邻切片的正常重叠
+#: （chunk_overlap 20% 左右）通常远低于该值，因此不会误伤上下文连贯性。
+DEFAULT_DEDUP_SIMILARITY = 0.92
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """余弦相似度（向量已由同一模型产出，无需归一化即可比）。"""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _prune_redundant(
+    ordered: list[tuple["ScoredChunk", dict]],
+    top_k: int,
+    max_per_doc: int,
+    dedup_similarity: float,
+) -> tuple[list[tuple["ScoredChunk", dict]], int]:
+    """按排序依次筛选，丢掉近重复与超出单文档配额的候选。
+
+    与"先截断再过滤"不同，这里是**遍历整个候选集直到凑满 top_k**：被丢掉的位置
+    由后面排序稍低但内容不同的切片补上，因此去冗余不会让结果条数变少。
+
+    Returns:
+        ``(保留的候选, 被丢弃条数)``。
+    """
+    kept: list[tuple[ScoredChunk, dict]] = []
+    kept_vectors: list[list[float]] = []
+    per_doc: Counter[str] = Counter()
+    dropped = 0
+
+    # 候选只来自一个文档时不做单文档限流（否则单文档知识库会被截成 3 条）
+    distinct_docs = {c.get("doc_id", "") for _, c in ordered}
+    apply_doc_cap = len(distinct_docs) > 1 and max_per_doc > 0
+
+    for sc, chunk in ordered:
+        if len(kept) >= top_k:
+            break
+
+        doc_id = chunk.get("doc_id", "")
+        if apply_doc_cap and per_doc[doc_id] >= max_per_doc:
+            dropped += 1
+            continue
+
+        vector = chunk.get("embedding")
+        if (
+            dedup_similarity > 0
+            and isinstance(vector, list)
+            and vector
+            and any(_cosine(vector, kept_v) >= dedup_similarity for kept_v in kept_vectors)
+        ):
+            dropped += 1
+            continue
+
+        kept.append((sc, chunk))
+        per_doc[doc_id] += 1
+        if isinstance(vector, list) and vector:
+            kept_vectors.append(vector)
+
+    return kept, dropped
 
 
 def _coerce_float(value: object, default: float) -> float:
@@ -370,6 +447,20 @@ class SearchOrchestrator:
                 kb_config.get("score_threshold"), DEFAULT_SCORE_THRESHOLD,
             )
 
+        # 去冗余：请求 > 知识库配置 > 默认
+        max_per_doc = request.max_chunks_per_doc
+        if max_per_doc is None:
+            max_per_doc = int(
+                _coerce_float(
+                    kb_config.get("max_chunks_per_doc"), DEFAULT_MAX_CHUNKS_PER_DOC,
+                )
+            )
+        dedup_similarity = request.dedup_similarity
+        if dedup_similarity is None:
+            dedup_similarity = _coerce_float(
+                kb_config.get("dedup_similarity"), DEFAULT_DEDUP_SIMILARITY,
+            )
+
         # 精排：启用则多召回候选再重排
         # rerank_requested 反映"配置要求精排"，rerank_applied 反映"是否真的生效"——
         # 两者分开返回，避免模型不可用/接口报错时用户以为精排已经起作用。
@@ -384,11 +475,15 @@ class SearchOrchestrator:
             # 否则请求级开关会顺带把用户选的模型换成默认模型。
             rerank_config = {**kb_config, "enable_reranker": True}
             reranker = await self._resolve_reranker(db, rerank_config)
-        fetch_k = (
-            min(max(top_k * RERANK_CANDIDATE_MULTIPLIER, top_k), MAX_RERANK_CANDIDATES)
-            if reranker is not None
-            else top_k
-        )
+
+        # 候选倍数：精排要 4 倍候选；仅去冗余时取 3 倍，保证丢掉的条数能补回来
+        if reranker is not None:
+            candidate_multiplier = RERANK_CANDIDATE_MULTIPLIER
+        elif dedup_similarity > 0 or max_per_doc > 0:
+            candidate_multiplier = DEDUP_CANDIDATE_MULTIPLIER
+        else:
+            candidate_multiplier = 1
+        fetch_k = min(max(top_k * candidate_multiplier, top_k), MAX_RERANK_CANDIDATES)
 
         # 纯 BM25 不需要查询向量——embedding 服务不可用时仍可检索
         query_embedding: list[float] = []
@@ -452,7 +547,10 @@ class SearchOrchestrator:
         sc_map = {sc.chunk_id: sc for sc in scored_chunks}
 
         try:
-            chunk_dicts = await self._vector_store.get_chunks_by_ids(kb_id, chunk_ids)
+            # 去冗余要用候选向量算相似度，直接从向量库取比重新 embedding 便宜
+            chunk_dicts = await self._vector_store.get_chunks_by_ids(
+                kb_id, chunk_ids, include_embeddings=dedup_similarity > 0,
+            )
         except Exception:
             logger.exception("Failed to fetch chunk details for kb=%s", kb_id)
             raise RuntimeError("查询分片详情失败")
@@ -467,14 +565,17 @@ class SearchOrchestrator:
                 continue
             ordered.append((sc, chunk))
 
-        # 精排（启用时）：对候选重排并截断到 top_k
+        # 精排（启用时）：对候选重排（此时**不**截断，留给去冗余来挑）
         rerank_applied = False
         if reranker is not None and len(ordered) > 1:
             ordered, rerank_applied = await self._apply_rerank(
                 reranker, request.query, ordered, top_k,
             )
-        else:
-            ordered = ordered[:top_k]
+
+        # 去冗余：丢掉近重复切片与超出单文档配额的候选，用后面的候选补足 top_k
+        ordered, deduped_count = _prune_redundant(
+            ordered, top_k, max_per_doc, dedup_similarity,
+        )
 
         results: list[ChunkMatch] = []
         for sc, chunk in ordered:
@@ -513,6 +614,7 @@ class SearchOrchestrator:
             score_kind=results[0].score_kind if results else "",
             min_similarity=round(min_similarity, 4) if max_cosine is not None else None,
             filtered_count=filtered,
+            deduped_count=deduped_count,
         )
 
     async def _load_kb_config(self, db: AsyncSession, kb_id: str) -> dict:

@@ -21,6 +21,7 @@ from core.rag.bm25 import (
     BM25Index,
     SparseConfig,
     SparseIndexCache,
+    bm25_search_with_fallback,
     create_sparse_scorer,
 )
 
@@ -82,8 +83,15 @@ class BaseVectorStore(ABC):
         """按文档 ID 查询所有切片，按 chunk_index 排序。"""
 
     @abstractmethod
-    async def get_chunks_by_ids(self, kb_id: str, chunk_ids: list[str]) -> list[dict]:
-        """按切片 ID 列表批量查询切片详情。"""
+    async def get_chunks_by_ids(
+        self, kb_id: str, chunk_ids: list[str], include_embeddings: bool = False,
+    ) -> list[dict]:
+        """按切片 ID 列表批量查询切片详情。
+
+        Args:
+            include_embeddings: 返回结果里附带 ``embedding`` 字段。检索侧的去冗余
+                （相似度去重 / MMR）需要候选向量，直接从库里取比重新 embedding 便宜。
+        """
 
     @abstractmethod
     async def delete_chunk_by_id(self, kb_id: str, chunk_id: str) -> None:
@@ -112,6 +120,12 @@ class BaseVectorStore(ABC):
         Args:
             sparse_config: 稀疏算法与 k1/b 参数；缺省用 bm25 默认参数。
         """
+
+    def _sparse_search(
+        self, index: BM25Index, query: str, top_k: int, cfg: SparseConfig,
+    ) -> list[tuple[str, float]]:
+        """BM25 检索 + 同义词兜底（两个后端共用）。"""
+        return bm25_search_with_fallback(index, query, top_k, cfg)
 
     async def _build_sparse_index(self, kb_id: str) -> BM25Index:
         """构建（或复用缓存中的）BM25 语料索引。子类需实现 :meth:`_fetch_corpus`。"""
@@ -322,18 +336,23 @@ class MilvusVectorStore(BaseVectorStore):
         logger.info("Milvus queried %d chunks for doc=%s", len(results), doc_id)
         return results
 
-    async def get_chunks_by_ids(self, kb_id: str, chunk_ids: list[str]) -> list[dict]:
-        """按切片 ID 列表批量查询切片详情。"""
+    async def get_chunks_by_ids(
+        self, kb_id: str, chunk_ids: list[str], include_embeddings: bool = False,
+    ) -> list[dict]:
+        """按切片 ID 列表批量查询切片详情（可选返回向量）。"""
         if not chunk_ids:
             return []
 
         collection = await self._get_collection(kb_id)
         ids_str = ", ".join(f'"{safe_expr_id(cid, "chunk_id")}"' for cid in chunk_ids)
         expr = f"id in [{ids_str}]"
+        output_fields = list(self._CHUNK_OUTPUT_FIELDS)
+        if include_embeddings:
+            output_fields.append("embedding")
         try:
             results = collection.query(
                 expr=expr,
-                output_fields=self._CHUNK_OUTPUT_FIELDS,
+                output_fields=output_fields,
             )
             return results
         except Exception:
@@ -454,7 +473,7 @@ class MilvusVectorStore(BaseVectorStore):
             return []
 
         index = await self._build_sparse_index(kb_id)
-        hits = index.search(query, top_k, cfg)
+        hits = self._sparse_search(index, query, top_k, cfg)
         logger.info(
             "Milvus bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
             kb_id, top_k, cfg.sparse_algo, index.size, len(hits),
@@ -610,17 +629,22 @@ class ChromaVectorStore(BaseVectorStore):
         logger.info("Chroma queried %d chunks for doc=%s", len(chunks), doc_id)
         return chunks
 
-    async def get_chunks_by_ids(self, kb_id: str, chunk_ids: list[str]) -> list[dict]:
-        """按切片 ID 列表批量查询切片详情。"""
+    async def get_chunks_by_ids(
+        self, kb_id: str, chunk_ids: list[str], include_embeddings: bool = False,
+    ) -> list[dict]:
+        """按切片 ID 列表批量查询切片详情（可选返回向量）。"""
         import json
 
         if not chunk_ids:
             return []
 
         collection = self._get_collection(kb_id)
+        include = ["documents", "metadatas"]
+        if include_embeddings:
+            include.append("embeddings")
         result = collection.get(
             ids=chunk_ids,
-            include=["documents", "metadatas"],
+            include=include,
         )
 
         chunks: list[dict] = []
@@ -645,6 +669,12 @@ class ChromaVectorStore(BaseVectorStore):
                 "doc_type": meta.get("doc_type", ""),
                 "metadata_": metadata_obj,
             })
+            if include_embeddings:
+                embeddings = result.get("embeddings")
+                chunks[-1]["embedding"] = (
+                    list(embeddings[i]) if embeddings is not None and i < len(embeddings)
+                    else None
+                )
 
         return chunks
 
@@ -743,7 +773,7 @@ class ChromaVectorStore(BaseVectorStore):
             return []
 
         index = await self._build_sparse_index(kb_id)
-        hits = index.search(query, top_k, cfg)
+        hits = self._sparse_search(index, query, top_k, cfg)
         logger.info(
             "Chroma bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
             kb_id, top_k, cfg.sparse_algo, index.size, len(hits),

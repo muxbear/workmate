@@ -26,6 +26,7 @@ function kb(): KB {
       rerankerModel: 'qwen3.7-text-rerank', rerankerProviderId: '',
       enableReranker: true, topK: 10, hybridAlpha: 0.5,
       minSimilarity: 0.53, scoreThreshold: 0,
+      maxChunksPerDoc: 3, dedupSimilarity: 0.92,
     },
     documents: [],
     entitiesData: [],
@@ -62,6 +63,7 @@ function outcome(overrides: Partial<SearchOutcome> = {}): SearchOutcome {
     noRelevantResult: false,
     minSimilarity: 0.53,
     filteredCount: 0,
+    dedupedCount: 0,
     ...overrides,
   }
 }
@@ -195,6 +197,18 @@ describe('KbSearchTab · 高级参数', () => {
     await search(wrapper)
 
     expect(api.searchKnowledgeBase.mock.calls[0][4].enableRerank).toBe(false)
+  })
+
+  it('去冗余参数随请求下发，并在结果区显示丢弃条数', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome({ dedupedCount: 4 }))
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    const params = api.searchKnowledgeBase.mock.calls[0][4]
+    expect(params.dedupSimilarity).toBe(0.92)
+    expect(params.maxChunksPerDoc).toBe(0)
+    expect(wrapper.html()).toContain('已去冗余 4 条')
   })
 
   it('检索失败时页面上留下错误原因，而不是只有一闪而过的 toast', async () => {

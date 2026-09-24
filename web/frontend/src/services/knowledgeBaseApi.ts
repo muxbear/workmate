@@ -85,6 +85,8 @@ function mapConfig(raw: Record<string, unknown>): IndexConfig {
     // 门槛：0.53 是后端校准后的默认值，旧配置里没有这两个键时按它兜底
     minSimilarity: (raw.min_similarity as number) ?? 0.53,
     scoreThreshold: (raw.score_threshold as number) ?? 0,
+    maxChunksPerDoc: (raw.max_chunks_per_doc as number) ?? 3,
+    dedupSimilarity: (raw.dedup_similarity as number) ?? 0.92,
   }
 }
 
@@ -497,9 +499,11 @@ function configToSnake(config: IndexConfig): Record<string, unknown> {
     enable_reranker: config.enableReranker,
     top_k: config.topK,
     hybrid_alpha: config.hybridAlpha,
-    // 检索门槛（迭代 2 新增）——不带上就会在保存配置时被后端按默认值覆盖
+    // 检索门槛与去冗余（迭代 2/3 新增）——不带上会在保存配置时被后端按默认值覆盖
     min_similarity: config.minSimilarity,
     score_threshold: config.scoreThreshold,
+    max_chunks_per_doc: config.maxChunksPerDoc,
+    dedup_similarity: config.dedupSimilarity,
   }
 }
 
@@ -540,6 +544,8 @@ export async function searchKnowledgeBase(
     min_similarity: params.minSimilarity,
     score_threshold: params.scoreThreshold,
     enable_rerank: params.enableRerank,
+    max_chunks_per_doc: params.maxChunksPerDoc,
+    dedup_similarity: params.dedupSimilarity,
   })
   const data = res.data.data as {
     results: {
@@ -560,6 +566,7 @@ export async function searchKnowledgeBase(
     no_relevant_result?: boolean
     min_similarity?: number | null
     filtered_count?: number
+    deduped_count?: number
   }
   return {
     results: (data.results || []).map((r) => ({
@@ -581,6 +588,7 @@ export async function searchKnowledgeBase(
     noRelevantResult: data.no_relevant_result ?? false,
     minSimilarity: data.min_similarity ?? null,
     filteredCount: data.filtered_count ?? 0,
+    dedupedCount: data.deduped_count ?? 0,
   }
 }
 

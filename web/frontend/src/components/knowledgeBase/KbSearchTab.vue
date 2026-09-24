@@ -28,6 +28,8 @@ const searchError = ref('')
 /** 本次生效的最低余弦门槛与过滤条数 */
 const effectiveMinSimilarity = ref<number | null>(null)
 const filteredCount = ref(0)
+/** 本次因近重复/单文档配额被丢弃的条数 */
+const dedupedCount = ref(0)
 
 /** 高级参数是否展开 */
 const showAdvanced = ref(false)
@@ -43,12 +45,16 @@ const advanced = reactive<{
   minSimilarity: number | null
   scoreThreshold: number
   enableRerank: boolean
+  maxChunksPerDoc: number
+  dedupSimilarity: number
 }>({
   topK: null,
   alpha: null,
   minSimilarity: null,
   scoreThreshold: 0,
   enableRerank: true,
+  maxChunksPerDoc: 0,      // 0 表示不限制（沿用知识库配置时也传默认值）
+  dedupSimilarity: 0.92,
 })
 
 /** 当前生效的 Top-K（未覆盖时用知识库配置） */
@@ -124,6 +130,8 @@ async function runSearch() {
         minSimilarity: advanced.minSimilarity ?? undefined,
         scoreThreshold: advanced.scoreThreshold || undefined,
         enableRerank: advanced.enableRerank,
+        maxChunksPerDoc: advanced.maxChunksPerDoc,
+        dedupSimilarity: advanced.dedupSimilarity,
       },
     )
     results.value = outcome.results
@@ -132,6 +140,7 @@ async function runSearch() {
     noRelevantResult.value = outcome.noRelevantResult
     effectiveMinSimilarity.value = outcome.minSimilarity
     filteredCount.value = outcome.filteredCount
+    dedupedCount.value = outcome.dedupedCount
     searched.value = true
   } catch (err: unknown) {
     // 此前只 console.error：检索失败时用户看到的是"命中 0 条"，无从判断原因
@@ -256,6 +265,32 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
             {{ advanced.scoreThreshold > 0 ? `≥ ${advanced.scoreThreshold.toFixed(2)}×榜首` : '关闭' }}
           </span>
         </div>
+        <div class="adv-item">
+          <span class="adv-label">单文档上限</span>
+          <el-slider
+            v-model="advanced.maxChunksPerDoc"
+            :min="0"
+            :max="10"
+            :step="1"
+            :show-tooltip="false"
+          />
+          <span class="adv-value">
+            {{ advanced.maxChunksPerDoc > 0 ? `${advanced.maxChunksPerDoc} 条` : '不限制' }}
+          </span>
+        </div>
+        <div class="adv-item">
+          <span class="adv-label">去冗余阈值</span>
+          <el-slider
+            v-model="advanced.dedupSimilarity"
+            :min="0"
+            :max="1"
+            :step="0.01"
+            :show-tooltip="false"
+          />
+          <span class="adv-value">
+            {{ advanced.dedupSimilarity > 0 ? `≥ ${advanced.dedupSimilarity.toFixed(2)}` : '关闭' }}
+          </span>
+        </div>
         <div class="adv-item adv-switch">
           <span class="adv-label">启用精排</span>
           <el-switch v-model="advanced.enableRerank" size="small" />
@@ -302,6 +337,7 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
         命中 {{ results.length }} 条结果
         <span v-if="rerankApplied" class="rerank-ok">已精排</span>
         <span v-if="filteredCount > 0" class="filter-ok">已过滤 {{ filteredCount }} 条低相关</span>
+        <span v-if="dedupedCount > 0" class="filter-ok">已去冗余 {{ dedupedCount }} 条</span>
       </div>
       <div v-for="(r, i) in results" :key="r.id" class="card result-card">
         <div class="result-header">

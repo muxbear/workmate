@@ -30,6 +30,8 @@ const defaultConfig: IndexConfig = {
   topK: 10, hybridAlpha: 0.5,
   // 门槛与后端默认一致（0.53 由黄金集校准，见 search_service.DEFAULT_MIN_SIMILARITY）
   minSimilarity: 0.53, scoreThreshold: 0,
+  // 去冗余：单文档最多 3 条 + 相似度 ≥0.92 视为重复（与后端默认一致）
+  maxChunksPerDoc: 3, dedupSimilarity: 0.92,
 }
 
 const name = ref('')

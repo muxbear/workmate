@@ -37,6 +37,10 @@ class IndexConfigSchema(BaseModel):
     min_similarity: float = Field(default=0.53, ge=0.0, le=1.0)
     #: 相对截断：丢弃低于「最高分 × 该比例」的结果，0 表示不截断
     score_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: 同一文档最多占用的结果条数（0 表示不限制；候选只来自一个文档时自动失效）
+    max_chunks_per_doc: int = Field(default=3, ge=0, le=20)
+    #: 近重复判定阈值：与已选结果余弦相似度 ≥ 该值的候选被丢弃，0 表示关闭
+    dedup_similarity: float = Field(default=0.92, ge=0.0, le=1.0)
 
 
 # ─── KnowledgeBase ──────────────────────────────────────────────────────────
@@ -203,6 +207,15 @@ class SearchRequest(BaseModel):
         description="是否启用精排；None 表示用知识库配置（默认启用）。"
                     "评测与高级检索面板用它做单次覆盖。",
     )
+    max_chunks_per_doc: int | None = Field(
+        default=None, ge=0, le=20,
+        description="同一文档最多占用的结果条数（0 表示不限制）；"
+                    "None 表示用知识库配置（默认 3）",
+    )
+    dedup_similarity: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="近重复判定阈值（0 表示关闭去重）；None 表示用知识库配置（默认 0.92）",
+    )
 
 
 class ChunkMatch(BaseModel):
@@ -250,6 +263,8 @@ class SearchResponse(BaseModel):
     min_similarity: float | None = None
     #: 被门槛过滤掉的条数（绝对门槛或相对截断）
     filtered_count: int = 0
+    #: 因近重复或单文档配额被丢弃的条数（结果已由后续候选补足）
+    deduped_count: int = 0
 
 
 # ─── Chunk ───────────────────────────────────────────────────────────────────
