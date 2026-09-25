@@ -105,9 +105,19 @@ def _rss_mb() -> float:
 
         counters = PROCESS_MEMORY_COUNTERS()
         counters.cb = ctypes.sizeof(counters)
-        ctypes.windll.psapi.GetProcessMemoryInfo(  # type: ignore[attr-defined]
-            ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb,
-        )
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
+        # 必须显式声明参数类型：进程句柄在 64 位下是 8 字节指针，默认按 c_int 传会被
+        # 截断，调用静默失败、WorkingSetSize 保持 0（表现就是"内存读数从来不打印"）
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        psapi.GetProcessMemoryInfo.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
+        ]
+        psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+        handle = kernel32.GetCurrentProcess()
+        ok = psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+        if not ok:
+            return -1.0
         return counters.WorkingSetSize / (1024 * 1024)
     except Exception:  # noqa: BLE001 - 拿不到内存不是致命错误
         return -1.0
@@ -212,7 +222,9 @@ async def run_search_bench(
 # ─── 索引吞吐 ─────────────────────────────────────────────────────────────────
 
 
-async def run_index_bench(chunks: int, concurrency: int | None) -> int:
+async def run_index_bench(
+    chunks: int, concurrency: int | None, keep: bool = False, stream: bool = False,
+) -> int:
     from agent.config import settings
     from api.knowledge_base.model_provider import (
         load_embedding_model,
@@ -263,7 +275,16 @@ async def run_index_bench(chunks: int, concurrency: int | None) -> int:
     batches: list[tuple[int, list]] = []
     embeddings: list[list[float]] = []
 
+    #: 流式模式：写入放在回调里，与生产流水线（EmbeddingState）完全同构——
+    #: 向量边生成边落库，进程只持有**单批**。非流式模式把全部向量攒下来以便
+    #: 分别计量"向量化"与"写入"两段耗时，但代价是 10 万片会让进程多占约 4GB
+    #: （实测 3 万片 ≈1.2GB 并造成 197ms 事件循环停顿）——那是**压测脚本**的内存
+    #: 形态，不是产品的，读停顿数字时必须分清。
     async def on_batch(start: int, batch_texts: list[str], vectors: list) -> None:
+        if stream:
+            batch_docs = documents[start:start + len(batch_texts)]
+            await store.add_documents(kb_id, batch_docs, vectors)
+            return
         batches.append((start, batch_texts))
         embeddings.extend(vectors)
 
@@ -273,24 +294,42 @@ async def run_index_bench(chunks: int, concurrency: int | None) -> int:
     try:
         await embedding.aembed_documents(texts, on_batch=on_batch)
         embed_seconds = time.perf_counter() - started
-        # 写入按批进行，与流水线一致
-        write_started = time.perf_counter()
-        for start, batch_texts in batches:
-            batch_docs = documents[start:start + len(batch_texts)]
-            await store.add_documents(kb_id, batch_docs, embeddings[start:start + len(batch_texts)])
-        write_seconds = time.perf_counter() - write_started
+        write_seconds = 0.0
+        if not stream:
+            # 非流式：写完再落库（便于分段计时）
+            write_started = time.perf_counter()
+            for start, batch_texts in batches:
+                batch_docs = documents[start:start + len(batch_texts)]
+                await store.add_documents(
+                    kb_id, batch_docs, embeddings[start:start + len(batch_texts)],
+                )
+            write_seconds = time.perf_counter() - write_started
     finally:
         stall = await monitor.stop()
         total = time.perf_counter() - started
-        await store.delete_collection(kb_id)
+        # --keep 时不删：T4.2 的验收是"10 万片规模检索 P95 ≤ 300ms"，需要保留这个
+        # 集合才能接着用 --search 在同一规模上测检索（否则要重新花一遍 embedding）
+        if not keep:
+            await store.delete_collection(kb_id)
 
     rss_after = _rss_mb()
-    print(f"  向量化 {embed_seconds:6.1f}s（{chunks / embed_seconds:5.1f} 片/秒）")
-    print(f"  写入   {write_seconds:6.1f}s（{chunks / write_seconds:5.1f} 片/秒）")
+    if stream:
+        print(f"  向量化+写入（流式，与生产同构）{embed_seconds:6.1f}s")
+    else:
+        print(f"  向量化 {embed_seconds:6.1f}s（{chunks / embed_seconds:5.1f} 片/秒）")
+        print(f"  写入   {write_seconds:6.1f}s（{chunks / write_seconds:5.1f} 片/秒）")
     print(f"  合计   {total:6.1f}s（{chunks / total:5.1f} 片/秒，验收线 ≥20）")
     print(f"  事件循环最大停顿 {stall:.0f}ms")
     if rss_before > 0 and rss_after > 0:
         print(f"  进程内存 {rss_before:.0f}MB → {rss_after:.0f}MB")
+    if keep:
+        print(
+            "  已保留压测集合（kb_id=" + kb_id + "）——接着在同一规模上测检索：",
+        )
+        print(
+            f"    python scripts/kb_bench.py --kb {kb_id} --search "
+            "--modes bm25 --queries 60 --concurrency 8",
+        )
     return 0
 
 
@@ -304,6 +343,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=8, help="并发数")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--chunks", type=int, default=200, help="索引压测的切片数")
+    parser.add_argument(
+        "--keep", action="store_true",
+        help="保留压测集合（不再跑完即删），便于在同一规模上接着测检索延迟",
+    )
+    parser.add_argument(
+        "--stream", action="store_true",
+        help="流式写入（与生产流水线同构，进程只持有单批向量）——"
+             "测内存与事件循环停顿时应加这个；不加则全量攒向量，数字会失真",
+    )
     parser.add_argument("--modes", default="bm25,vector", help="检索模式，逗号分隔")
     return parser.parse_args()
 
@@ -339,7 +387,9 @@ async def main() -> int:
         )
 
     if args.index:
-        await run_index_bench(args.chunks, args.concurrency)
+        await run_index_bench(
+            args.chunks, args.concurrency, keep=args.keep, stream=args.stream,
+        )
     return 0
 
 
