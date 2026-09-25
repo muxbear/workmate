@@ -356,6 +356,16 @@ async def init_db():
                 await conn.execute(
                     text("ALTER TABLE knowledge_base_documents ADD COLUMN graph_error TEXT")
                 )
+        # 迁移：索引任务增加写入目标集合（迭代 4 T4.5 的原子重建——重建期间写临时集合，
+        # 崩溃恢复后恢复的任务必须继续写同一个集合）
+        if await _table_exists(conn, "knowledge_base_index_tasks"):
+            existing = await _get_existing_columns(conn, "knowledge_base_index_tasks")
+            if "target_collection" not in existing:
+                logger.info("Adding target_collection column to knowledge_base_index_tasks")
+                await conn.execute(text(
+                    "ALTER TABLE knowledge_base_index_tasks "
+                    "ADD COLUMN target_collection VARCHAR(255)"
+                ))
 
         if await _table_exists(conn, 'ai_models'):
             existing = await _get_existing_columns(conn, 'ai_models')

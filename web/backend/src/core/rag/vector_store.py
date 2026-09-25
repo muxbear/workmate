@@ -148,13 +148,39 @@ class BaseVectorStore(ABC):
 
     @abstractmethod
     async def add_documents(
-        self, kb_id: str, documents: list[Document], embeddings: list[list[float]]
+        self, kb_id: str, documents: list[Document], embeddings: list[list[float]],
+        target: str | None = None,
     ) -> list[str]:
-        """将文档向量写入向量数据库，返回 chunk ID 列表。"""
+        """将文档向量写入向量数据库，返回 chunk ID 列表。
+
+        Args:
+            target: 写入**指定的物理集合**（重建期间写临时集合用）。``None`` 表示
+                写知识库当前对外服务的集合（常规路径）。
+        """
 
     @abstractmethod
     async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
         """按文档 ID 删除所有相关向量。"""
+
+    @abstractmethod
+    async def flush_collection(
+        self, kb_id: str, target: str | None = None, timeout: float = 60.0,
+    ) -> bool:
+        """把写入的数据落盘（尽力而为：失败只记日志，绝不让文档失败）。
+
+        Returns:
+            是否刷成功。
+        """
+
+    @abstractmethod
+    async def prune_document_tail(
+        self, kb_id: str, doc_id: str, keep_count: int, target: str | None = None,
+    ) -> int:
+        """删除该文档切片号 >= ``keep_count`` 的残留切片（文档变短时的收口）。
+
+        Returns:
+            删除的切片数。
+        """
 
     @abstractmethod
     async def get_chunks_by_doc_id(self, kb_id: str, doc_id: str) -> list[dict]:
@@ -299,6 +325,8 @@ class MilvusVectorStore(BaseVectorStore):
         self._db_name = db_name
         self._connected = False
         self._collections: dict[str, Any] = {}
+        #: 按**物理名**缓存的句柄（重建期间写临时集合，避免每批都重建句柄）
+        self._named_collections: dict[str, Any] = {}
         self._sparse_cache = SparseIndexCache()
         #: 按知识库的建索引锁——并发查询时不重复拉全量语料（见 _build_sparse_index）
         self._sparse_locks: dict[str, asyncio.Lock] = {}
@@ -458,6 +486,92 @@ class MilvusVectorStore(BaseVectorStore):
         await self.run_sync(collection.load)
         return collection
 
+    @staticmethod
+    def staging_name_for(kb_id: str) -> str:
+        """重建期间的临时集合名——确定性推导，便于恢复时识别。"""
+        return f"{MilvusVectorStore._collection_name(kb_id)}{_STAGING_SUFFIX}"
+
+    async def has_staged_collection(self, kb_id: str) -> bool:
+        """是否存在"已建好、等待提交"的临时集合。"""
+        await self._ensure_connected()
+        from pymilvus import utility
+
+        return bool(await self.run_sync(
+            utility.has_collection, self.staging_name_for(kb_id),
+        ))
+
+    async def stage_collection(
+        self, kb_id: str, dim: int, enable_bm25: bool = True,
+        sparse_params: dict[str, float] | None = None,
+    ) -> str:
+        """**只建不换**：把重建用的新集合建到临时名字下，返回集合名。
+
+        与 :meth:`create_collection` 的区别是"什么时候换名"：重建要等所有文档都索引
+        完再换（期间读路径继续指向旧集合，旧数据全程可检索）；而建库/直接重建没有
+        旧数据要保护，可以建完立刻换。
+        """
+        await self._ensure_connected()
+        from pymilvus import utility
+
+        staging = self.staging_name_for(kb_id)
+        await self._recover_interrupted_swap(self._collection_name(kb_id))
+        if await self.run_sync(utility.has_collection, staging):
+            logger.warning("清理上次残留的临时集合: %s", staging)
+            await self.run_sync(utility.drop_collection, staging)
+            await self._await_collection_gone(staging)
+
+        await self._build_collection(staging, kb_id, dim, enable_bm25, sparse_params)
+        logger.info("已建好重建用临时集合: %s", staging)
+        return staging
+
+    async def commit_staged_collection(self, kb_id: str) -> bool:
+        """把临时集合换名为正式集合，并删除旧集合。
+
+        Returns:
+            是否真的发生了提交（没有待提交的临时集合时返回 ``False``）。
+        """
+        await self._ensure_connected()
+        from pymilvus import utility
+
+        collection_name = self._collection_name(kb_id)
+        staging = self.staging_name_for(kb_id)
+        if not await self.run_sync(utility.has_collection, staging):
+            return False
+
+        # 换名前刷一次：保证切换之后新集合立刻可检索（尽力而为，失败也继续）
+        await self.flush_collection(kb_id, target=staging, timeout=120.0)
+
+        trash = f"{collection_name}{_TRASH_SUFFIX}"
+        if await self.run_sync(utility.has_collection, trash):
+            await self.run_sync(utility.drop_collection, trash)
+            await self._await_collection_gone(trash)
+        if await self.run_sync(utility.has_collection, collection_name):
+            await self.run_sync(utility.rename_collection, collection_name, trash)
+        await self.run_sync(utility.rename_collection, staging, collection_name)
+        if await self.run_sync(utility.has_collection, trash):
+            await self.run_sync(utility.drop_collection, trash)
+
+        # 句柄与各类缓存都指向换名前的东西，全部作废
+        self._collections.pop(kb_id, None)
+        self._named_collections.pop(collection_name, None)
+        self._named_collections.pop(staging, None)
+        self._sparse_cache.invalidate(kb_id)
+        self._native_sparse.pop(kb_id, None)
+        logger.info("重建已提交：%s 已切换为正式集合", staging)
+        return True
+
+    async def _get_collection_by_name(self, name: str) -> Any:
+        """按**物理名**取集合（重建期间写临时集合用），带缓存避免每批都重建句柄。"""
+        await self._ensure_connected()
+        collection = self._named_collections.get(name)
+        if collection is None:
+            from pymilvus import Collection
+
+            collection = await self.run_sync(Collection, name=name)
+            await self.run_sync(collection.load)
+            self._named_collections[name] = collection
+        return collection
+
     async def _await_collection_gone(self, name: str) -> None:
         """等待集合真正消失——删除是异步传播的，紧接着用同名建/改名会报"已存在"。"""
         from pymilvus import utility
@@ -511,7 +625,8 @@ class MilvusVectorStore(BaseVectorStore):
             logger.error("Failed to delete Milvus collection %s: %s", collection_name, e)
 
     async def add_documents(
-        self, kb_id: str, documents: list[Document], embeddings: list[list[float]]
+        self, kb_id: str, documents: list[Document], embeddings: list[list[float]],
+        target: str | None = None,
     ) -> list[str]:
         """写入切片——**幂等**：ID 由 (doc_id, chunk_index) 推导，重复写入即覆盖。
 
@@ -519,11 +634,17 @@ class MilvusVectorStore(BaseVectorStore):
         相同、ID 不同），库内计数虚高且检索结果重复。现在改用确定性 ID + upsert，
         同一个 (文档, 切片号) 永远落成同一行——重试、重复入队、断点续传都不会
         产生重复数据。
+
+        ``target`` 指定时写进那个物理集合（重建期间写临时集合），此时读路径仍指向
+        正式集合——这正是"重建全程旧数据可检索"的实现方式。
         """
         await self._ensure_connected()
         import time
 
-        collection = await self._get_collection(kb_id)
+        collection = (
+            await self._get_collection_by_name(target) if target
+            else await self._get_collection(kb_id)
+        )
         now_ms = int(time.time() * 1000)
 
         chunk_ids: list[str] = []
@@ -550,36 +671,75 @@ class MilvusVectorStore(BaseVectorStore):
                 "created_at": now_ms,
             })
 
+        # **不在这里 flush**：Milvus 的 flush 是重操作且有速率限制（服务端
+        # grpc RateLimiter），分批写入时每批一 flush 会被限流，实测直接导致文档
+        # 失败：`[flush] Retry run out of 75 retry times ... rate limit exceeded`。
+        # 落库的可见性由"整篇文档写完后的那次 flush"（见 flush_collection）保证。
         await self.run_sync(collection.upsert, data)
-        await self._prune_stale_tail(collection, kb_id, documents)
-        await self.run_sync(collection.flush)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus upserted %d chunks for kb=%s", len(data), kb_id)
         return chunk_ids
 
-    async def _prune_stale_tail(
-        self, collection: Any, kb_id: str, documents: list[Document],
-    ) -> None:
-        """删掉超出本次写入范围的旧切片（文档变短时的残留）。
+    async def flush_collection(
+        self, kb_id: str, target: str | None = None, timeout: float = 60.0,
+    ) -> bool:
+        """把写入的数据落盘——**尽力而为**，失败只记日志、绝不抛错。
 
-        幂等键是 (doc_id, chunk_index)，因此写入只是"覆盖同号切片"——如果同一文档
-        这次切出的片数比上次少（换了切片策略、原文删减），**多出来的尾部切片不会被
-        覆盖**，会以旧内容留在库里继续被检索到。这里按本次各文档的最大切片号收口。
+        Milvus 的搜索默认一致性是 Bounded，新写入的数据要 flush 后才稳定可见。
+        但 flush 是**可选的可见性优化**，不是写入的正确性前提：数据早已在库里。
+        此前把它当必成功步骤，实测被两件事咬到——服务端速率限制会直接拒绝
+        （``rate limit exceeded``），高负载时 flush 还会等待封段而超过阶段超时，
+        两种都把**内容已经写完**的文档判成失败。
+
+        Args:
+            timeout: 单次 flush 的等待上限；超时即放弃（数据仍在，只是要等 Milvus
+                自己的周期刷盘才可见）。
+
+        Returns:
+            是否在这段时间内刷成功。
         """
-        max_index: dict[str, int] = {}
-        for i, doc in enumerate(documents):
-            doc_id = doc.metadata.get("doc_id", "")
-            if not doc_id:
-                continue
-            index = int(doc.metadata.get("chunk_index", i))
-            max_index[doc_id] = max(max_index.get(doc_id, -1), index)
-
-        for doc_id, highest in max_index.items():
-            expr = (
-                f'doc_id == "{safe_expr_id(doc_id, "doc_id")}" '
-                f"and chunk_index > {highest}"
+        collection = (
+            await self._get_collection_by_name(target) if target
+            else await self._get_collection(kb_id)
+        )
+        try:
+            await asyncio.wait_for(
+                self.run_sync(collection.flush), timeout=timeout,
             )
-            await self.run_sync(collection.delete, expr)
+            return True
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001 - flush 失败不该阻断
+            logger.warning(
+                "Milvus flush 未在 %.0f 秒内完成（数据已写入，稍后由服务端刷盘）: %s",
+                timeout, exc,
+            )
+            return False
+
+    async def prune_document_tail(
+        self, kb_id: str, doc_id: str, keep_count: int, target: str | None = None,
+    ) -> int:
+        """删掉该文档超出 ``keep_count`` 的旧切片（文档变短时的残留）。
+
+        幂等键是 (doc_id, chunk_index)，写入只覆盖"本次有的那些号"——如果同一文档
+        这次切出的片数比上次少（换了切片策略、原文删减），**多出来的尾部切片不会被
+        覆盖**，会以旧内容留在库里继续被检索到。
+
+        必须在**整篇文档写完之后**调用，且按文档最终的切片总数收口。不要按"当前这一批
+        的最大编号"裁剪：分批写入是并发的（embedding 并发 4），批次完成顺序不定，
+        低编号的批次先落盘时会把另一个批次**已经写好**的高编号切片删掉——实测一次
+        在线重建因此丢了 3 篇文档的大部分切片（50→30、42→12、35→20）。
+        """
+        if keep_count < 0:
+            return 0
+        collection = (
+            await self._get_collection_by_name(target) if target
+            else await self._get_collection(kb_id)
+        )
+        expr = (
+            f'doc_id == "{safe_expr_id(doc_id, "doc_id")}" '
+            f"and chunk_index >= {int(keep_count)}"
+        )
+        await self.run_sync(collection.delete, expr)
+        return 1
 
     async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
         collection = await self._get_collection(kb_id)
@@ -967,8 +1127,13 @@ class ChromaVectorStore(BaseVectorStore):
 
     async def add_documents(
         self, kb_id: str, documents: list[Document], embeddings: list[list[float]],
+        target: str | None = None,
     ) -> list[str]:
-        """写入切片——幂等，语义与 Milvus 侧一致（确定性 ID + upsert）。"""
+        """写入切片——幂等，语义与 Milvus 侧一致（确定性 ID + upsert）。
+
+        Chroma 侧忽略 ``target``：它没有"临时集合 + 换名"这套机制（重建走
+        delete→create，Chroma 版本不参与本任务的原子重建）。
+        """
         import json
 
         collection = await self._get_collection(kb_id)
@@ -1110,6 +1275,33 @@ class ChromaVectorStore(BaseVectorStore):
         await self.run_sync(collection.delete, ids=[chunk_id])
         self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma deleted chunk=%s in kb=%s", chunk_id, kb_id)
+
+    async def flush_collection(
+        self, kb_id: str, target: str | None = None, timeout: float = 60.0,
+    ) -> bool:
+        """Chroma 写入即持久化，无需显式 flush（接口对齐用）。"""
+        return True
+
+    async def prune_document_tail(
+        self, kb_id: str, doc_id: str, keep_count: int, target: str | None = None,
+    ) -> int:
+        """语义同 Milvus 侧：删掉该文档超出 ``keep_count`` 的旧切片。"""
+        if keep_count < 0:
+            return 0
+        collection = await self._get_collection(kb_id)
+        result = await self.run_sync(
+            collection.get, where={"doc_id": doc_id}, include=["metadatas"],
+        )
+        stale_ids: list[str] = []
+        for index, cid in enumerate(result.get("ids") or []):
+            metadatas = result.get("metadatas") or []
+            meta = metadatas[index] if index < len(metadatas) else {}
+            if int((meta or {}).get("chunk_index", 0)) >= keep_count:
+                stale_ids.append(cid)
+        if stale_ids:
+            await self.run_sync(collection.delete, ids=stale_ids)
+            self._sparse_cache.invalidate(kb_id)
+        return len(stale_ids)
 
     async def update_chunk(
         self, kb_id: str, chunk_id: str, new_text: str,

@@ -324,10 +324,25 @@ class RecordingVectorStore:
         self.added: list = []
         #: 每次 add_documents 的条数——用于断言"是否分批写入"
         self.batch_sizes: list[int] = []
+        #: 每次写入的目标集合（重建期间应为临时集合）
+        self.targets: list[str | None] = []
+        #: 尾部裁剪调用（doc_id, keep_count, target）
+        self.pruned: list[tuple[str, int, str | None]] = []
+        #: flush 调用（每篇文档一次）
+        self.flushed: list[tuple[str, str | None]] = []
 
-    async def add_documents(self, kb_id, documents, embeddings):
+    async def prune_document_tail(self, kb_id, doc_id, keep_count, target=None):
+        self.pruned.append((doc_id, keep_count, target))
+        return 0
+
+    async def flush_collection(self, kb_id, target=None, timeout=60.0):
+        self.flushed.append((kb_id, target))
+        return True
+
+    async def add_documents(self, kb_id, documents, embeddings, target=None):
         self.added.extend(documents)
         self.batch_sizes.append(len(documents))
+        self.targets.append(target)
         return [f"c{i}" for i in range(len(documents))]
 
 
@@ -534,6 +549,38 @@ class TestBatchWrite:
 
         assert len(store.added) == 25
         assert store.batch_sizes == [10, 10, 5], "应按批写入而不是一次性全量写入"
+
+    async def test_flush_happens_once_per_document(self):
+        """flush 只在整篇写完时调一次——按批 flush 会撞 Milvus 的速率限制。
+
+        实测：分批写入 + 每批 flush 时，服务端 grpc RateLimiter 直接拒绝
+        （``[flush] Retry run out of 75 retry times ... rate limit exceeded``），
+        文档被判失败，而它的切片其实已经写进库了。
+        """
+        docs = [_document(f"第{i}段内容" * 20) for i in range(25)]
+        store = RecordingVectorStore()
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs), vector_store=store,
+        )
+        pipeline.embedding_model = FakeEmbeddingModel(batch_size=10)
+
+        await _drive(pipeline)
+
+        assert store.batch_sizes == [10, 10, 5], "写入仍应分批"
+        assert len(store.flushed) == 1, "flush 必须整篇只调一次"
+
+    async def test_prune_uses_written_count_not_total(self):
+        """裁剪按**实际写入数**收口：写入中途失败时不该拿总数去裁。"""
+        docs = [_document(f"第{i}段内容" * 20) for i in range(25)]
+        store = RecordingVectorStore()
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs), vector_store=store,
+        )
+        pipeline.embedding_model = FakeEmbeddingModel(batch_size=10)
+
+        await _drive(pipeline)
+
+        assert store.pruned == [("doc-1", 25, None)]
 
     async def test_chunk_index_survives_out_of_order_batches(self):
         """并发回调乱序时切片号不能串。

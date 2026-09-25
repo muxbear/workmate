@@ -41,6 +41,12 @@ class FakeVectorStore(BaseVectorStore):
     async def bm25_search(self, kb_id, query, top_k, sparse_config=None):
         return []
 
+    async def prune_document_tail(self, kb_id, doc_id, keep_count, target=None):
+        return 0
+
+    async def flush_collection(self, kb_id, target=None, timeout=60.0):
+        return True
+
     async def _fetch_corpus(self, kb_id):
         return []
 

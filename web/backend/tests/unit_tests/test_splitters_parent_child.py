@@ -256,7 +256,7 @@ class TestParentMetadataPersistence:
         stored: list = []
 
         class RecordingStore:
-            async def add_documents(self, kb_id, documents, embeddings):
+            async def add_documents(self, kb_id, documents, embeddings, target=None):
                 stored.extend(documents)
                 return []
 

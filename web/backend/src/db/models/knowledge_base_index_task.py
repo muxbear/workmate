@@ -50,6 +50,10 @@ class KnowledgeBaseIndexTask(Base):
     file_path: Mapped[str] = mapped_column(String(512), nullable=False)
     file_type: Mapped[str] = mapped_column(String(16), nullable=False)
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: 写入目标物理集合——重建期间为临时集合名（读路径仍指向正式集合）。
+    #: 必须落库：进程重启后恢复的任务要继续写同一个临时集合，否则会被写进
+    #: 正式集合、与"重建完成前不切换"的语义相互矛盾。
+    target_collection: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     enqueued_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -59,6 +59,9 @@ STAGE_STATUS_ORDER = ["queued", "parsing", "chunking", "embedding", "bm25", "ext
 #: 中间态（非终态）状态集合——用于判断"是否还有文档在索引中"
 DOC_ACTIVE_STATUSES = frozenset(STAGE_STATUS_ORDER) - {"queued", "indexed"}
 
+#: 终态集合——判断"某库的文档是否都跑完了"（重建提交的前提）
+DOC_TERMINAL_STATUSES = ("indexed", "failed", "canceled")
+
 ALLOWED_EXTENSIONS = {
     "pdf", "docx", "xlsx", "pptx", "csv", "json", "md", "html", "txt",
     "png", "jpg", "jpeg",
@@ -355,7 +358,9 @@ class DatabaseProgressObserver(ProgressObserver):
             "kb_id": ctx.kb_id,
             "status": ctx.status,
             "progress": ctx.progress,
-            "chunks_count": len(ctx.chunks),
+            # 记**实际写入**的切片数：向量化中途失败时 len(ctx.chunks) 会高报，
+            # 而 KB 计数就是按这个字段求和，高报会让"切片数"与实际可检索内容对不上
+            "chunks_count": ctx.written_chunks,
             "entities_count": ctx.entities_count,
             "relations_count": ctx.relations_count,
             "error_message": ctx.error_message,
@@ -431,10 +436,12 @@ async def recalc_kb_counters(db: AsyncSession, kb_id: str) -> None:
             KnowledgeBaseDocument.kb_id == kb_id,
         )
     )
+    # 不按 status 过滤：文档行记的是"实际写入数"，失败/取消的文档要么写过一部分
+    # （那些切片确实可检索），要么是 0（取消会清零）。只统计 indexed 会让
+    # "统计卡切片数"小于库里实际能搜到的内容——正是 T1.6 要消灭的口径不一致。
     chunks_total = await db.scalar(
         select(func.coalesce(func.sum(KnowledgeBaseDocument.chunks_count), 0)).where(
             KnowledgeBaseDocument.kb_id == kb_id,
-            KnowledgeBaseDocument.status == "indexed",
         )
     )
     entity_total = await db.scalar(
@@ -692,6 +699,7 @@ class IndexingPipeline:
             file_path=task.file_path,
             file_type=task.file_type,
             config=config,
+            target_collection=task.target_collection,
             current_state=QueuedState(),
             status="queued",
             progress=0,
@@ -764,6 +772,9 @@ class IndexingTask:
     file_path: str
     file_type: str
     config: dict
+    #: 写入目标（物理集合名）——重建期间写临时集合，读路径仍指向正式集合，
+    #: 因此"重建全程旧数据可检索"。``None`` 表示写知识库当前对外服务的集合。
+    target_collection: str | None = None
 
 
 class IndexingScheduler:
@@ -856,6 +867,7 @@ class IndexingScheduler:
                         file_path=task.file_path,
                         file_type=task.file_type,
                         config=task.config,
+                        target_collection=task.target_collection,
                         enqueued_at=now,
                         heartbeat_at=now,
                     ))
@@ -865,6 +877,7 @@ class IndexingScheduler:
                     row.file_path = task.file_path
                     row.file_type = task.file_type
                     row.config = task.config
+                    row.target_collection = task.target_collection
                     row.attempt = (row.attempt or 0) + 1
                     row.enqueued_at = now
                     row.heartbeat_at = now
@@ -935,6 +948,8 @@ class IndexingScheduler:
                     file_path=row.file_path,
                     file_type=row.file_type,
                     config=row.config or doc.config or {},
+                    # 恢复重建期间的任务时要继续写同一个临时集合
+                    target_collection=getattr(row, "target_collection", None),
                 ))
             await db.commit()
 
@@ -948,14 +963,17 @@ class IndexingScheduler:
         """停止调度：取消运行中的任务并把它们退回 ``queued``，等待下次启动恢复。"""
         self._stopping = True
         running_doc_ids = list(self._running)
-        for task in list(self._running.values()):
-            task.cancel()
+        for coro, _task in list(self._running.values()):
+            coro.cancel()
         if self._running:
             # 等待协程收尾，但必须有上限：如果任务正卡在同步阻塞调用里
             # （例如 pymilvus 的网络等待），无上限的等待会让服务无法退出。
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*self._running.values(), return_exceptions=True),
+                    asyncio.gather(
+                        *(coro for coro, _task in self._running.values()),
+                        return_exceptions=True,
+                    ),
                     timeout=SHUTDOWN_GRACE_SECONDS,
                 )
             except TimeoutError:
@@ -1003,7 +1021,7 @@ class IndexingScheduler:
         """
         running = self._running.pop(doc_id, None)
         if running is not None:
-            running.cancel()
+            running[0].cancel()
             logger.info("已取消运行中的索引任务 doc=%s", doc_id)
             return True
 
@@ -1025,9 +1043,10 @@ class IndexingScheduler:
         if running is None:
             return await self.cancel(doc_id)
 
-        running.cancel()
+        coro = running[0]
+        coro.cancel()
         # asyncio.wait 不会因任务被取消而抛出 CancelledError（不同于直接 await）
-        done, _ = await asyncio.wait({running}, timeout=timeout)
+        done, _ = await asyncio.wait({coro}, timeout=timeout)
         if not done:
             logger.warning(
                 "取消后任务未在 %.1f 秒内停止 doc=%s（可能卡在同步调用里）", timeout, doc_id,
@@ -1052,7 +1071,8 @@ class IndexingScheduler:
         while self._queue and len(self._running) < self._max_concurrent:
             task = self._queue.popleft()
             async_task = asyncio.create_task(self._pipeline.execute(task))
-            self._running[task.doc_id] = async_task
+            # 同时存协程与任务对象：取消需要协程，完成回调要 kb_id 判断可否提交重建
+            self._running[task.doc_id] = (async_task, task)
             async_task.add_done_callback(
                 lambda finished, doc_id=task.doc_id: self._on_task_done(doc_id, finished)
             )
@@ -1064,11 +1084,12 @@ class IndexingScheduler:
             )
 
     def _on_task_done(self, doc_id: str, finished: asyncio.Task) -> None:
-        """任务结束回调：取回异常、释放槽位、启动下一个。
+        """任务结束回调：取回异常、释放槽位、启动下一个，并检查重建是否可提交。
 
         回调里不能 await，因此这里只做同步收尾，需要落库的部分交给后台任务。
         """
-        self._running.pop(doc_id, None)
+        entry = self._running.pop(doc_id, None)
+        kb_id = entry[1].kb_id if entry is not None else None
 
         if finished.cancelled():
             logger.info("索引任务被取消 doc=%s", doc_id)
@@ -1079,10 +1100,63 @@ class IndexingScheduler:
                 self._schedule_fixup(doc_id, str(exc))
 
         try:
-            asyncio.get_running_loop().create_task(self._try_start_next())
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._try_start_next())
+            if kb_id:
+                # 重建的最后一步：所有文档都跑完才把临时集合换名成正式集合
+                loop.create_task(self.maybe_commit_rebuild(kb_id))
         except RuntimeError:
             # 事件循环已在关停流程中关闭
             logger.debug("事件循环已关闭，跳过队列推进")
+
+    async def maybe_commit_rebuild(self, kb_id: str) -> bool:
+        """该库的文档都跑完且存在待提交的临时集合时，执行换名提交。
+
+        "重建全程旧数据可检索"的实现收口：重建期间写入走临时集合、读路径仍指向正式
+        集合；这里在所有文档到达终态后一次性切换，用户在任何时刻都能检索到**完整**
+        的旧数据（或重建后的新数据），不会经历"库空了"的窗口。
+
+        Returns:
+            是否真的提交了。
+        """
+        store = getattr(self._pipeline, "vector_store", None)
+        if store is None or not hasattr(store, "has_staged_collection"):
+            return False
+        try:
+            if not await store.has_staged_collection(kb_id):
+                return False
+        except Exception:  # noqa: BLE001 - 探测失败不该影响调度
+            logger.warning("探测待提交集合失败 kb=%s", kb_id, exc_info=True)
+            return False
+
+        # 还有这个库的任务在跑 / 在排队 → 再等等
+        if any(t.kb_id == kb_id for _coro, t in self._running.values()):
+            return False
+        if any(t.kb_id == kb_id for t in self._queue):
+            return False
+
+        from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+        try:
+            async with self._resolve_session_factory()() as db:
+                active = await db.scalar(
+                    select(func.count())
+                    .select_from(KnowledgeBaseDocument)
+                    .where(
+                        KnowledgeBaseDocument.kb_id == kb_id,
+                        KnowledgeBaseDocument.status.notin_(DOC_TERMINAL_STATUSES),
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("检查待提交重建的文档状态失败 kb=%s", kb_id, exc_info=True)
+            return False
+        if active:
+            return False
+
+        committed = await store.commit_staged_collection(kb_id)
+        if committed:
+            logger.info("知识库 %s 的重建已提交（临时集合已换名为正式集合）", kb_id)
+        return committed
 
     def _schedule_fixup(self, doc_id: str, message: str) -> None:
         """异常逃逸时把文档/任务落成 failed，避免永久卡在中间态。"""

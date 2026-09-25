@@ -128,35 +128,62 @@ class TestRepeatedWriteIsIdempotent:
 
 
 class TestStaleTailIsPruned:
-    async def test_shrinking_document_drops_tail_chunks(self):
-        """文档变短时，旧的尾部切片必须删掉。
+    """文档变短时，旧的尾部切片必须删掉——但**必须等整篇写完**再删。
 
-        幂等键是 (doc_id, chunk_index)，写入只覆盖"本次有的那些号"——上次有 5 片、
-        这次只剩 3 片时，第 4、5 片会以旧内容留在库里继续被检索到。
-        """
+    幂等键是 (doc_id, chunk_index)，写入只覆盖"本次有的那些号"：上次有 5 片、这次
+    只剩 3 片时，第 4、5 片会以旧内容留在库里继续被检索到。
+
+    为什么不在每次 add_documents 里按"本批最大编号"裁：分批写入是**并发**的
+    （embedding 并发 4），批次完成顺序不定——低编号的批次先落盘时会把另一个批次
+    已经写好的高编号切片删掉。实测一次在线重建因此丢了 3 篇文档的大部分切片
+    （50→30、42→12、35→20），所以裁剪改由调用方在整篇文档写完后显式调用。
+    """
+
+    async def test_tail_is_pruned_up_to_the_final_count(self):
         collection = RecordingCollection()
         store = make_store(collection)
-        docs = [make_doc(f"第{i}段", index=i) for i in range(3)]
 
-        await store.add_documents("kb-1", docs, [[0.1] * 4] * 3)
+        removed = await store.prune_document_tail("kb-1", "doc-1", keep_count=3)
 
         assert collection.deleted, "应收口删除超出范围的尾部切片"
         expr = collection.deleted[-1]
         assert 'doc_id == "doc-1"' in expr
-        assert "chunk_index > 2" in expr
+        assert "chunk_index >= 3" in expr
+        assert removed == 1
 
-    async def test_multiple_documents_are_pruned_separately(self):
+    async def test_prune_targets_the_given_collection(self):
+        """重建期间必须裁临时集合，不能裁正式集合。"""
         collection = RecordingCollection()
         store = make_store(collection)
-        docs = [
-            make_doc("甲", doc_id="doc-a", index=0),
-            make_doc("乙", doc_id="doc-b", index=4),
-        ]
+        targets: list[str] = []
 
-        await store.add_documents("kb-1", docs, [[0.1] * 4] * 2)
+        async def fake_get_by_name(name):
+            targets.append(name)
+            return collection
 
-        exprs = {e.split(" and ")[0] for e in collection.deleted}
-        assert exprs == {'doc_id == "doc-a"', 'doc_id == "doc-b"'}
+        store._get_collection_by_name = fake_get_by_name  # type: ignore[method-assign]
+
+        await store.prune_document_tail("kb-1", "doc-1", 3, target="kb_1__new")
+
+        assert targets == ["kb_1__new"]
+
+    async def test_add_documents_no_longer_prunes(self):
+        """写入本身**不**裁剪——否则并发分批会互删（这正是线上踩到的坑）。"""
+        collection = RecordingCollection()
+        store = make_store(collection)
+
+        await store.add_documents("kb-1", [make_doc("甲")], [[0.1] * 4])
+        await store.add_documents("kb-1", [make_doc("乙", index=1)], [[0.1] * 4])
+
+        assert collection.deleted == []
+
+    async def test_negative_keep_count_is_ignored(self):
+        """-1 表示"文档没有切片"，不该被当成"删除全部"的一部分误用。"""
+        collection = RecordingCollection()
+        store = make_store(collection)
+
+        assert await store.prune_document_tail("kb-1", "doc-1", -1) == 0
+        assert collection.deleted == []
 
 
 class TestUpdateChunkRefreshesHash:

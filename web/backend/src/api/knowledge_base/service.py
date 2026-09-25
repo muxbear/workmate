@@ -509,12 +509,12 @@ async def reindex_kb(
         kb.config = config.model_dump()
         kb.updated_at = datetime.utcnow()
 
-    # Recreate vector collection。
-    # 注意：``create_collection`` 内部会先删掉同名集合（Milvus 与 Chroma 实现皆然），
-    # 因此这一步失败就意味着旧向量已丢——这里不再像此前那样只记日志，而是把结果
-    # 如实上报（collection_ready），避免"库被清空但界面显示一切正常"。
-    # 真正的原子切换（建新集合 → 校验 → 别名切换）安排在迭代 4（T4.5）。
+    # 建**临时**集合（不换名）：重建期间写入走它，读路径继续指向正式集合——
+    # 因此整个重建过程中用户都能检索到**完整**的旧数据，不会经历"库空了"的窗口。
+    # 全部文档索引完成后由调度器换名提交（见 IndexingScheduler.maybe_commit_rebuild）。
+    # 建失败时旧集合原封不动，如实上报 collection_ready。
     collection_ready = True
+    staging_collection: str | None = None
     if vector_store:
         dim = int(
             (config.embedding_dim if config else kb.config.get("embedding_dim")) or 1024
@@ -522,7 +522,13 @@ async def reindex_kb(
         # 重建正是"改了 BM25 参数后生效"的唯一途径：稀疏索引上的 k1/b 跟着重建更新
         params = _sparse_index_params(config if config is not None else kb.config)
         try:
-            await vector_store.create_collection(kb_id, dim, sparse_params=params)
+            if hasattr(vector_store, "stage_collection"):
+                staging_collection = await vector_store.stage_collection(
+                    kb_id, dim, sparse_params=params,
+                )
+            else:
+                # Chroma 等没有"临时集合 + 换名"机制的实现：退回直接重建
+                await vector_store.create_collection(kb_id, dim, sparse_params=params)
         except Exception as e:
             collection_ready = False
             logger.error("重建向量集合失败 kb=%s: %s", kb_id, e)
@@ -571,10 +577,16 @@ async def reindex_kb(
                 file_path=doc.storage_path,
                 file_type=doc.type,
                 config=kb.config,
+                target_collection=staging_collection,
             ))
             enqueued += 1
     elif docs:
         logger.warning("reindex 未提供调度器，%d 个文档停留在 queued", len(docs))
+
+    # 空库重建：没有任务完成回调来触发提交，这里直接收口（否则临时集合永远挂着）
+    if staging_collection and not docs:
+        await vector_store.commit_staged_collection(kb_id)
+        collection_ready = True
 
     logger.info(
         "Reindex kb=%s: %d docs enqueued, collection_ready=%s",

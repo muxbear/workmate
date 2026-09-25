@@ -77,6 +77,8 @@ class IndexingContext:
     file_path: str
     file_type: str
     config: dict
+    #: 写入目标物理集合（重建期间为临时集合名）；None 表示写正式集合
+    target_collection: str | None = None
 
     current_state: DocState | None = None
     status: str = "queued"
@@ -236,6 +238,7 @@ class EmbeddingState(DocState):
                 _prepare_chunks_for_write(batch_chunks, ctx, start)
                 await pipeline.vector_store.add_documents(
                     ctx.kb_id, batch_chunks, vectors,
+                    target=ctx.target_collection,
                 )
                 ctx.written_chunks += len(batch_chunks)
 
@@ -246,11 +249,16 @@ class EmbeddingState(DocState):
 
 
 class BM25State(DocState):
-    """稀疏索引阶段——原生索引在写入时已由 Milvus 的 BM25 Function 生成，这里做核对。
+    """稀疏索引阶段——原生索引在写入时已由 Milvus 的 BM25 Function 生成，这里收口。
 
     分批写入把"向量化"与"落库"合并成了一步（见 :class:`EmbeddingState`），因此本阶段
-    只剩一件有意义的事：确认**该写的切片都写进去了**。写入中途失败会让文档只入库一部分，
-    这属于必须暴露的失败，而不是"记个日志继续走"。
+    只剩两件事：
+
+    1. 确认**该写的切片都写进去了**——写入中途失败会让文档只入库一部分，这属于必须
+       暴露的失败，而不是"记个日志继续走"；
+    2. **按最终切片数裁掉尾部残留**——幂等键是 (doc_id, chunk_index)，文档变短时上次
+       多出来的高编号切片不会被覆盖，会以旧内容继续被检索到。裁剪必须等全部分批写完
+       再做（分批并发、完成顺序不定，按单批编号裁会误删别的批次）。
     """
 
     name = "bm25"
@@ -263,6 +271,14 @@ class BM25State(DocState):
                 raise RuntimeError(
                     f"切片写入不完整：应写 {len(ctx.chunks)} 片，实际写入 {ctx.written_chunks} 片",
                 )
+            await pipeline.vector_store.prune_document_tail(
+                ctx.kb_id, ctx.doc_id, ctx.written_chunks, target=ctx.target_collection,
+            )
+            # 整篇文档写完 flush 一次，且**不因它失败**：flush 只是可见性优化
+            # （数据早已在库里），被限流或服务端繁忙时不该拖垮一篇文档。
+            await pipeline.vector_store.flush_collection(
+                ctx.kb_id, target=ctx.target_collection, timeout=30.0,
+            )
             await ctx.transition_to(ExtractingState(), "extracting", STAGE_PROGRESS["extracting"])
         except Exception as e:
             _logger.exception("BM25 add_documents failed for doc=%s kb=%s", ctx.doc_id, ctx.kb_id)
