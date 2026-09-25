@@ -13,20 +13,27 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db
 from api.knowledge_base.doc_service import (
+    batch_documents,
     cancel_document,
+    create_text_document,
     delete_document,
+    download_document,
     get_document,
     list_documents,
     retry_document,
     upload_documents,
 )
 from api.knowledge_base.indexing_events import IndexingEventBus
-from api.knowledge_base.schemas import IndexConfigSchema
+from api.knowledge_base.schemas import (
+    BatchDocRequest,
+    IndexConfigSchema,
+    TextDocRequest,
+)
 from api.knowledge_base.service import require_kb_readable
 from api.rbac.deps import RequirePermission
 from core.audit import audit_scope
@@ -77,12 +84,112 @@ async def upload_docs(
     async with audit_scope("knowledge.doc.upload", user_id, request, target=kb_id) as entry:
         result = await upload_documents(db, kb_id, user_id, files, scheduler, custom_config)
         await db.commit()
-        entry.detail["files"] = [r.name for r in result]
+        entry.detail["files"] = [r.name for r in result.created]
+        if result.skipped:
+            entry.detail["skipped"] = [s.name for s in result.skipped]
     return {
         "code": 0,
-        "data": [r.model_dump(mode="json") for r in result],
+        "data": result.as_data(),
         "message": "ok",
     }
+
+
+@router.post("/{kb_id}/documents/text", response_model=dict)
+# 与上传同属"往库里写内容"，共用同一个限流桶
+@rate_limit(max_calls=20, period_seconds=60, key_prefix="kb_upload")
+async def create_text_doc(
+    kb_id: str,
+    body: TextDocRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
+):
+    """把一段粘贴的文本建成文档（落成 `.md` 文件后走同一条索引流水线）。"""
+    scheduler = _get_scheduler(request)
+    async with audit_scope("knowledge.doc.text", user_id, request, target=kb_id) as entry:
+        result = await create_text_document(
+            db, kb_id, user_id,
+            name=body.name, content=body.content,
+            custom_config=body.config.model_dump() if body.config else None,
+            scheduler=scheduler,
+        )
+        await db.commit()
+        entry.detail["name"] = result.created[0].name if result.created else None
+        entry.detail["bytes"] = len(body.content.encode("utf-8"))
+    return {"code": 0, "data": result.as_data(), "message": "ok"}
+
+
+@router.post("/{kb_id}/documents/batch", response_model=dict)
+# 批量是逐项提交的重操作，与上传分开计数（一次批量最多 50 项）
+@rate_limit(max_calls=30, period_seconds=60, key_prefix="kb_batch")
+async def batch_docs(
+    kb_id: str,
+    body: BatchDocRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
+):
+    """批量删除或重试文档。
+
+    **部分成功是正常结果**：返回里逐项给出成功/失败与原因，HTTP 层仍是
+    ``code: 0``——否则前端会把"成功了 7 个"整批当成失败。
+    """
+    vector_store = _get_vector_store(request)
+    mediator = _get_mediator(request)
+    scheduler = _get_scheduler(request)
+    async with audit_scope(
+        f"knowledge.doc.batch_{body.action}", user_id, request, target=kb_id,
+    ) as entry:
+        items = await batch_documents(
+            db, kb_id, user_id,
+            action=body.action, doc_ids=body.doc_ids,
+            scheduler=scheduler, vector_store=vector_store, mediator=mediator,
+        )
+        entry.detail["requested"] = len(body.doc_ids)
+        entry.detail["succeeded"] = sum(1 for i in items if i.ok)
+        entry.detail["doc_ids"] = body.doc_ids[:20]
+    return {
+        "code": 0,
+        "data": {
+            "action": body.action,
+            "items": [
+                {
+                    "doc_id": item.doc_id,
+                    "ok": item.ok,
+                    "message": item.message,
+                    "doc": item.doc.model_dump(mode="json") if item.doc else None,
+                }
+                for item in items
+            ],
+            "succeeded": sum(1 for i in items if i.ok),
+            "failed": sum(1 for i in items if not i.ok),
+        },
+        "message": "ok",
+    }
+
+
+@router.post("/{kb_id}/documents/{doc_id}/download")
+async def download_doc(
+    kb_id: str,
+    doc_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """下载文档原文。
+
+    权限是**读权限**（服务层 `require_kb_readable`）：能看正文的人就能下载原文，
+    不需要 `knowledge:upload`。
+    """
+    path, filename, media_type = await download_document(db, kb_id, doc_id, user_id)
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type=media_type,
+        # 一律下载而非内联：html 在上传白名单里，内联渲染用户上传的内容
+        # 等于同源存储型 XSS
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/{kb_id}/documents", response_model=dict)

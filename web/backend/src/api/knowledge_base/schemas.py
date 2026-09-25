@@ -361,6 +361,22 @@ class BatchChunkRequest(BaseModel):
     chunk_ids: list[str] = []   # for delete action
 
 
+class BatchDocRequest(BaseModel):
+    """文档级批量操作请求（删除 / 重试）。
+
+    上限 50 与分享邀请保持一致：批量是**逐项提交**的，条数直接决定请求耗时。
+    """
+    action: Literal["delete", "retry"]
+    doc_ids: list[str] = Field(..., min_length=1, max_length=50)
+
+
+class TextDocRequest(BaseModel):
+    """粘贴文本建文档请求。"""
+    name: str | None = Field(default=None, max_length=200)
+    content: str = Field(..., min_length=1)
+    config: IndexConfigSchema | None = None
+
+
 # ─── Share ──────────────────────────────────────────────────────────────────
 
 

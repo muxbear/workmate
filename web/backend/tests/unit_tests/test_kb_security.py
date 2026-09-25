@@ -145,7 +145,7 @@ class TestUploadPathTraversal:
                 session, "kb-a", USER_A, [upload_file("C:\\Windows\\evil.json")],
             )
 
-        assert results[0].name == "evil.json"
+        assert results.created[0].name == "evil.json"
         written = list(tmp_path.rglob("evil.json"))
         assert len(written) == 1
         assert written[0].parent.parent.name == "kb-a"
@@ -161,7 +161,7 @@ class TestUploadPathTraversal:
                 session, "kb-a", USER_A, [upload_file("报告.md")],
             )
 
-        assert len(results) == 1
+        assert len(results.created) == 1
         written = list(tmp_path.rglob("报告.md"))
         assert len(written) == 1
         assert written[0].parent.parent.name == "kb-a"
@@ -177,7 +177,7 @@ class TestUploadPathTraversal:
             results = await upload_documents(
                 session, "kb-a", USER_A, [upload_file("a.md")],
             )
-        payload = results[0].model_dump()
+        payload = results.created[0].model_dump()
 
         for field in (
             "progress", "chunks_count", "entities_count", "relations_count", "stages",

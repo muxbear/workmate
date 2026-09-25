@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     KB_MAX_STORAGE_MB_PER_USER: int = 0
     #: 单个文件大小上限（MB）
     KB_MAX_FILE_MB: int = 100
+    #: 粘贴文本建文档的大小上限（KB）。与"文件大小"分开：粘贴是手输入，1MB 文本
+    #: 已约合 50 万汉字，远超任何真实场景
+    KB_MAX_PASTE_KB: int = 1024
 
     @field_validator("APP_ENV", mode="before")
     @classmethod

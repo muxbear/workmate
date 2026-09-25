@@ -69,6 +69,7 @@ async def ensure_kb_quota(db: AsyncSession, user_id: str) -> None:
 
 async def ensure_doc_quota(
     db: AsyncSession, kb_id: str, user_id: str, incoming_bytes: int,
+    incoming_count: int = 1,
 ) -> None:
     """校验"上传文档"是否超出单库文档数与总存储上限。
 
@@ -76,10 +77,13 @@ async def ensure_doc_quota(
         db: 会话。
         kb_id: 目标知识库。
         user_id: 上传者（存储上限按**库的归属人**统计，见下）。
-        incoming_bytes: 本次上传的字节数合计。
+        incoming_bytes: 本次要新增的字节数。
+        incoming_count: 本次要新增的**文档数**。此前这个维度被漏掉了——判据只有
+            ``count >= limit``，于是"一次传 20 个、上限 5"能整批通过。逐文件上传
+            之后每次只加 1，但参数仍然显式传，免得哪天改成批量调用又漏回去。
 
     Raises:
-        HTTPException: 400（超出配额）。
+        HTTPException: 400（超出配额，文案含当前值/上限/怎么改）。
     """
     docs_limit = _limit(settings.KB_MAX_DOCS_PER_KB)
     if docs_limit > 0:
@@ -88,12 +92,12 @@ async def ensure_doc_quota(
                 KnowledgeBaseDocument.kb_id == kb_id,
             )
         )
-        # incoming 是"本次要新增的文件数"在调用方已按文件个数传入
-        if (count or 0) >= docs_limit:
+        if (count or 0) + max(0, incoming_count) > docs_limit:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"该知识库文档数已达上限（{count}/{docs_limit}）。"
+                    f"该知识库文档数将超出上限（现有 {count or 0}，"
+                    f"本次新增 {incoming_count}，上限 {docs_limit}）。"
                     "请删除不再需要的文档，或联系管理员调整 KB_MAX_DOCS_PER_KB。"
                 ),
             )

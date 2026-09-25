@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
@@ -10,16 +11,15 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import get_settings
 from api.knowledge_base.doc_state import (
     STAGE_PROGRESS as _STAGE_PROGRESS,
 )
@@ -32,13 +32,14 @@ from api.knowledge_base.schemas import (
     IndexConfigSchema,
     KBDocResponse,
 )
+from core.config import get_settings
+from core.metrics import KB_INDEX_QUEUE_DEPTH, KB_INDEX_TASKS, KB_STAGE_SECONDS
 from core.rag.loaders import DocumentLoaderRegistry
 from core.rag.splitters import (
     INDEX_CONFIG_DEFAULTS,
     ChunkStrategyRegistry,
     create_chunk_registry,
 )
-from core.metrics import KB_INDEX_QUEUE_DEPTH, KB_INDEX_TASKS, KB_STAGE_SECONDS
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
@@ -1241,7 +1242,7 @@ class IndexingScheduler:
 DOC_LEVEL_FORBIDDEN_KEYS = ("embedding_model", "embedding_dim", "embedding_provider_id")
 
 
-def validate_doc_config(custom_config: dict | None, kb_config: dict) -> None:
+def validate_doc_config(custom_config: dict[str, Any] | None, kb_config: dict) -> None:
     """拒绝文档级覆盖 embedding 模型/维度（T4.4）。
 
     同一个 collection 里的向量必须来自同一个模型：文档级覆盖会让**同一个库混入
@@ -1268,16 +1269,99 @@ def validate_doc_config(custom_config: dict | None, kb_config: dict) -> None:
             )
 
 
-async def upload_documents(
-    db: AsyncSession,
-    kb_id: str,
-    user_id: str,
-    files: list[UploadFile],
-    scheduler: IndexingScheduler | None = None,
-    custom_config: dict | None = None,
-) -> list[KBDocResponse]:
-    """上传文档并触发索引流水线。"""
-    # 校验知识库
+#: 落盘名的长度上限。``name`` 列是 String(256)，而 Windows 下
+#: ``<upload_dir>/<kb_id>/<doc_id>/<filename>`` 已经占去约 90 个字符（MAX_PATH=260）；
+#: 目录上传的相对路径与网页标题都能轻易超长，不截断的话 Postgres 报截断错误（500）、
+#: Windows 上直接 OSError。
+MAX_FILENAME_LEN = 120
+
+
+@dataclass(frozen=True)
+class DocPayload:
+    """待落盘的一篇文档（已净化命名、已定类型）。"""
+
+    name: str
+    file_type: str
+    content: bytes
+    source_url: str | None = None
+
+
+@dataclass(frozen=True)
+class SkipInfo:
+    """逐文件结果里的"跳过"——目前只有内容重复一种，留 reason 备扩展。"""
+
+    name: str
+    reason: str
+    existing_doc_id: str | None = None
+    existing_doc_name: str | None = None
+    existing_doc_status: str | None = None
+
+
+@dataclass
+class UploadOutcome:
+    """创建类入口（上传 / 粘贴 / URL 导入）的统一结果。
+
+    "跳过"必须与"成功"分开报：用户传了 20 个文件、其中 18 个已存在，他要看到的
+    是"新增 2、跳过 18（各自重复于谁）"，而不是笼统的成功或失败。
+    """
+
+    created: list[KBDocResponse] = field(default_factory=list)
+    skipped: list[SkipInfo] = field(default_factory=list)
+
+    def as_data(self) -> dict[str, Any]:
+        """HTTP 响应体里的 ``data`` 形状——三个入口保持一致。"""
+        return {
+            "created": [r.model_dump(mode="json") for r in self.created],
+            "skipped": [asdict(s) for s in self.skipped],
+        }
+
+
+@dataclass
+class BatchItem:
+    """批量操作里的单条结果（部分成功是一等公民）。"""
+
+    doc_id: str
+    ok: bool
+    message: str | None = None
+    doc: KBDocResponse | None = None
+
+
+@dataclass(frozen=True)
+class _Persisted:
+    """已落盘、已建行（**尚未提交**）的一篇文档。"""
+
+    doc_id: str
+    storage_dir: str
+    storage_path: str
+    response: KBDocResponse
+
+
+def _content_hash(content: bytes) -> str:
+    """文档内容哈希——原始字节的 sha256（判重键，与文件名无关）。
+
+    与切片级的 ``chunk_content_hash``（截断到 32 位）刻意不同：文档级判重的
+    误判代价是"用户传不进去"，不值得省那 32 个字符。
+    """
+    return hashlib.sha256(content).hexdigest()
+
+
+def _truncate_filename(name: str, limit: int = MAX_FILENAME_LEN) -> str:
+    """截断过长的文件名，尽量保留扩展名（类型判定依赖它）。"""
+    if len(name) <= limit:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot or len(ext) > 16:
+        return name[:limit]
+    keep = max(1, limit - len(ext) - 1)
+    return f"{stem[:keep]}.{ext}"
+
+
+async def _get_owned_kb(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:
+    """取"本人所有"的知识库或 404（写路径共用）。
+
+    保持按 ``user_id`` 直接过滤的既有语义；软删除由 ``db.soft_delete`` 的全局
+    过滤器兜住（已删除的库在这里查不到）。
+    """
     kb = (
         await db.execute(
             select(KnowledgeBase).where(
@@ -1288,22 +1372,203 @@ async def upload_documents(
     ).scalar_one_or_none()
     if kb is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
+    return kb
 
-    validate_doc_config(custom_config, dict(kb.config or {}))
 
+async def _existing_by_hash(
+    db: AsyncSession, kb_id: str, hashes: set[str],
+) -> dict[str, tuple[str, str, str]]:
+    """一次查出这些哈希在本库内已对应的文档：``hash -> (id, name, status)``。
+
+    同一内容在库里有多条时取**最早**的一条作为报告对象——否则同一个文件两次上传
+    会报出不同的"重复于《X》"，用户会以为系统在乱说。
+
+    注意：会话开着 autoflush，本批已 ``add`` 但未提交的行也会出现在结果里，
+    因此"同一批里自己重复"同样会被拦住。
+    """
+    if not hashes:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                KnowledgeBaseDocument.content_hash,
+                KnowledgeBaseDocument.id,
+                KnowledgeBaseDocument.name,
+                KnowledgeBaseDocument.status,
+            )
+            .where(
+                KnowledgeBaseDocument.kb_id == kb_id,
+                KnowledgeBaseDocument.content_hash.in_(hashes),
+            )
+            .order_by(
+                KnowledgeBaseDocument.uploaded_at.asc(),
+                KnowledgeBaseDocument.id.asc(),
+            )
+        )
+    ).all()
+    found: dict[str, tuple[str, str, str]] = {}
+    for content_hash, doc_id, name, status in rows:
+        found.setdefault(content_hash, (doc_id, name, status))
+    return found
+
+
+async def _persist_payload(
+    db: AsyncSession,
+    kb_id: str,
+    payload: DocPayload,
+    *,
+    upload_dir: str,
+    custom_config: dict[str, Any] | None,
+) -> _Persisted:
+    """落盘 + 建行（**不提交、不重算计数**——由 :func:`_finalize_created` 统一收尾）。"""
+    doc_id = str(uuid.uuid4())
+    storage_dir = os.path.join(upload_dir, doc_id)
+    os.makedirs(storage_dir, exist_ok=True)
+    storage_path = _ensure_within(os.path.join(storage_dir, payload.name), upload_dir)
+
+    with open(storage_path, "wb") as fh:
+        fh.write(payload.content)
+
+    now = datetime.utcnow()
+    doc = KnowledgeBaseDocument(
+        id=doc_id,
+        kb_id=kb_id,
+        name=payload.name,
+        type=payload.file_type,
+        size_bytes=len(payload.content),
+        storage_path=storage_path,
+        status="queued",
+        uploaded_at=now,
+        config=custom_config,
+        content_hash=_content_hash(payload.content),
+        source_url=payload.source_url,
+    )
+    db.add(doc)
+
+    # 返回体与文档列表（KBDocResponse）保持同一形状：此前只返回 7 个字段，
+    # 前端 mapDoc 读 progress/chunks_count/stages 等会拿到 undefined，
+    # 上传后立刻显示 NaN 进度。
+    response = KBDocResponse(
+        id=doc_id, name=payload.name, type=payload.file_type,
+        size_display=_format_bytes(len(payload.content)),
+        status="queued", progress=STAGE_PROGRESS["queued"],
+        chunks_count=0, entities_count=0, relations_count=0,
+        uploaded_at=now, indexed_at=None, error_message=None,
+        stages=[DocStageInfo(**s) for s in compute_stages("queued")],
+        config=IndexConfigSchema(**custom_config) if custom_config else None,
+    )
+    return _Persisted(doc_id, storage_dir, storage_path, response)
+
+
+def _cleanup_written(persisted: list[_Persisted], upload_dir: str) -> None:
+    """删掉本次已落盘的 ``<doc_id>`` 目录（异常路径的补偿）。
+
+    此前靠"整批预校验"避免孤儿文件，但那只能覆盖预校验看得见的问题（例如客户端
+    没上报 size）；一旦进入逐文件阶段（去重、逐文件配额），第 N 个文件失败时前面
+    已经写了盘，必须自己收尾。
+    """
+    for item in persisted:
+        shutil.rmtree(_ensure_within(item.storage_dir, upload_dir), ignore_errors=True)
+
+
+async def _finalize_created(
+    db: AsyncSession, kb_id: str, tasks: list[IndexingTask],
+    scheduler: IndexingScheduler | None,
+) -> None:
+    """收尾：重算计数 → 提交 → 入队。**顺序不可调换**。"""
+    # 统计口径统一走 recalc（文档数/体积/分片/实体/状态一次算准）
+    await recalc_kb_counters(db, kb_id)
+    # **先提交再入队**：进度观察者用独立 session 更新文档行，文档行未提交时
+    # 它会更新到 0 行，随后还可能被本事务的 INSERT 覆盖回 queued（状态丢失）。
+    await db.commit()
+
+    if scheduler is not None:
+        for task in tasks:
+            await scheduler.enqueue(task)
+
+
+async def _create_documents(
+    db: AsyncSession,
+    kb: KnowledgeBase,
+    user_id: str,
+    payloads: list[DocPayload],
+    *,
+    custom_config: dict[str, Any] | None,
+    scheduler: IndexingScheduler | None,
+) -> UploadOutcome:
+    """三条入口（上传 / 粘贴 / URL 导入）共用的入库内核。
+
+    每篇文档：算哈希 → 查重（跳过并记录）→ 配额（逐篇增量）→ 落盘建行 → 入队。
+    去重**先于**配额：否则"传 20 个、18 个重复、配额只剩 1 位"会被整批拒掉，
+    而实际只会新增两篇。
+    """
+    from api.knowledge_base.quota import ensure_doc_quota
+
+    kb_id = kb.id
     upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
     os.makedirs(upload_dir, exist_ok=True)
 
-    results: list[KBDocResponse] = []
-    total_new_bytes = 0
-    pending_tasks: list[IndexingTask] = []
+    outcome = UploadOutcome()
+    persisted: list[_Persisted] = []
+    tasks: list[IndexingTask] = []
 
-    # 先整体校验（文件名 + 已知大小），再落盘：避免第 N 个文件校验失败时
-    # 前面已写入的文件成为孤儿（调用方会回滚事务，磁盘上却已经留下文件）。
-    sanitized: list[tuple[UploadFile, str, str]] = []
+    try:
+        for payload in payloads:
+            digest = _content_hash(payload.content)
+            existing = (await _existing_by_hash(db, kb_id, {digest})).get(digest)
+            if existing is not None:
+                outcome.skipped.append(SkipInfo(
+                    name=payload.name,
+                    reason="duplicate",
+                    existing_doc_id=existing[0],
+                    existing_doc_name=existing[1],
+                    existing_doc_status=existing[2],
+                ))
+                continue
+
+            await ensure_doc_quota(
+                db, kb_id, user_id, len(payload.content), incoming_count=1,
+            )
+
+            item = await _persist_payload(
+                db, kb_id, payload, upload_dir=upload_dir, custom_config=custom_config,
+            )
+            persisted.append(item)
+            outcome.created.append(item.response)
+
+            if scheduler is not None:
+                tasks.append(IndexingTask(
+                    kb_id=kb_id, doc_id=item.doc_id, file_path=item.storage_path,
+                    file_type=payload.file_type,
+                    config=custom_config if custom_config else kb.config,
+                ))
+    except Exception:
+        # 磁盘上的收尾自己做：事务由调用方回滚，但文件不会自己消失
+        _cleanup_written(persisted, upload_dir)
+        raise
+
+    await _finalize_created(db, kb_id, tasks, scheduler)
+    return outcome
+
+
+async def upload_documents(
+    db: AsyncSession,
+    kb_id: str,
+    user_id: str,
+    files: list[UploadFile],
+    scheduler: IndexingScheduler | None = None,
+    custom_config: dict[str, Any] | None = None,
+) -> UploadOutcome:
+    """上传文档并触发索引流水线；**内容重复的文件被跳过**（逐文件报告）。"""
+    kb = await _get_owned_kb(db, kb_id, user_id)
+    validate_doc_config(custom_config, dict(kb.config or {}))
+
+    # 第一段：整体预校验（文件名/类型/已知大小）——此时还没有任何落盘，
+    # 第 N 个文件不合格时不会留下孤儿
     max_bytes = _max_file_bytes()
+    checked: list[tuple[UploadFile, str, str]] = []
     for file in files:
-        filename = _sanitize_filename(file.filename or "")
+        filename = _truncate_filename(_sanitize_filename(file.filename or ""))
         file_type = _get_file_type(filename)
         if file_type == "unknown":
             raise HTTPException(status_code=400, detail=f"不支持的文件类型: {filename}")
@@ -1313,79 +1578,163 @@ async def upload_documents(
                 status_code=413,
                 detail=f"文件 {filename} 超过最大大小 {max_bytes // (1024 * 1024)}MB",
             )
-        sanitized.append((file, filename, file_type))
+        checked.append((file, filename, file_type))
 
-    # 配额（T5.3）：单库文档数与总存储上限，在落盘前拦住
-    from api.knowledge_base.quota import ensure_doc_quota
-
-    incoming_bytes = sum(
-        int(getattr(f, "size", 0) or 0) for f, _n, _t in sanitized
-    )
-    await ensure_doc_quota(db, kb_id, user_id, incoming_bytes)
-
-    for file, filename, file_type in sanitized:
-        # 读取并校验大小（部分客户端不上报 size，这里兜底）
+    # 第二段：逐文件读内容（内存峰值 = 单文件，不整批驻留）
+    payloads: list[DocPayload] = []
+    for file, filename, file_type in checked:
         content = await file.read()
-        if len(content) > max_bytes:
+        if len(content) > max_bytes:  # 部分客户端不上报 size，这里兜底
             raise HTTPException(
                 status_code=413,
                 detail=f"文件 {filename} 超过最大大小 {max_bytes // (1024 * 1024)}MB",
             )
+        payloads.append(DocPayload(name=filename, file_type=file_type, content=content))
 
-        doc_id = str(uuid.uuid4())
-        storage_dir = os.path.join(upload_dir, doc_id)
-        os.makedirs(storage_dir, exist_ok=True)
-        storage_path = _ensure_within(os.path.join(storage_dir, filename), upload_dir)
+    return await _create_documents(
+        db, kb, user_id, payloads,
+        custom_config=custom_config, scheduler=scheduler,
+    )
 
-        with open(storage_path, "wb") as f:
-            f.write(content)
 
-        now = datetime.utcnow()
-        doc = KnowledgeBaseDocument(
-            id=doc_id,
-            kb_id=kb_id,
-            name=filename,
-            type=file_type,
-            size_bytes=len(content),
-            storage_path=storage_path,
-            status="queued",
-            uploaded_at=now,
-            config=custom_config,
+def _paste_filename(name: str | None) -> str:
+    """粘贴文本的落盘名：缺省带时间戳，**强制 .md**。
+
+    强制后缀是因为内容就是 markdown/纯文本，交给 ``md`` loader 解析；用户把名字
+    写成 ``xxx.txt`` 也一并改写，免得"名字说 txt、内容却是 md"。
+    """
+    raw = (name or "").strip()
+    if not raw:
+        raw = f"粘贴文本-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    safe = _truncate_filename(_sanitize_filename(raw))
+    stem = safe.rsplit(".", 1)[0] if "." in safe else safe
+    return f"{stem}.md"
+
+
+async def create_text_document(
+    db: AsyncSession,
+    kb_id: str,
+    user_id: str,
+    *,
+    name: str | None = None,
+    content: str,
+    custom_config: dict[str, Any] | None = None,
+    scheduler: IndexingScheduler | None = None,
+) -> UploadOutcome:
+    """把一段粘贴的文本建成文档。
+
+    仍然**落成真实文件**（``<upload_dir>/<kb_id>/<doc_id>/<name>.md``）：解析
+    （``ParsingState``）、重试（``retry_document``）、图谱重建（``graph_service``）
+    三条链路都从 ``storage_path`` 读盘，走"内存 Document"的捷径会在第一次重试时崩。
+    """
+    kb = await _get_owned_kb(db, kb_id, user_id)
+    validate_doc_config(custom_config, dict(kb.config or {}))
+
+    if not (content or "").strip():
+        raise HTTPException(status_code=400, detail="粘贴内容为空")
+
+    data = content.encode("utf-8")
+    max_paste_bytes = int(getattr(settings, "KB_MAX_PASTE_KB", 0) or 0) * 1024
+    if max_paste_bytes and len(data) > max_paste_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"粘贴内容 {len(data) / 1024:.0f}KB 超过上限 "
+                f"{max_paste_bytes // 1024}KB（按 UTF-8 字节计）。"
+                "请拆成多篇，或改用文件上传、联系管理员调整 KB_MAX_PASTE_KB。"
+            ),
         )
-        db.add(doc)
-        total_new_bytes += len(content)
 
-        # 返回体与文档列表（KBDocResponse）保持同一形状：此前只返回 7 个字段，
-        # 前端 mapDoc 读 progress/chunks_count/stages 等会拿到 undefined，
-        # 上传后立刻显示 NaN 进度。
-        results.append(KBDocResponse(
-            id=doc_id, name=filename, type=file_type,
-            size_display=_format_bytes(len(content)),
-            status="queued", progress=STAGE_PROGRESS["queued"],
-            chunks_count=0, entities_count=0, relations_count=0,
-            uploaded_at=now, indexed_at=None, error_message=None,
-            stages=[DocStageInfo(**s) for s in compute_stages("queued")],
-            config=IndexConfigSchema(**custom_config) if custom_config else None,
-        ))
+    payload = DocPayload(
+        name=_paste_filename(name), file_type="md", content=data,
+    )
+    return await _create_documents(
+        db, kb, user_id, [payload],
+        custom_config=custom_config, scheduler=scheduler,
+    )
 
-        # 入队索引任务：自定义配置优先，否则回退到 KB 配置
-        if scheduler:
-            pending_tasks.append(IndexingTask(
-                kb_id=kb_id, doc_id=doc_id, file_path=storage_path,
-                file_type=file_type,
-                config=custom_config if custom_config else kb.config,
-            ))
 
-    # 统计口径统一走 recalc（文档数/体积/分片/实体/状态一次算准）
-    await recalc_kb_counters(db, kb_id)
-    # **先提交再入队**：进度观察者用独立 session 更新文档行，文档行未提交时
-    # 它会更新到 0 行，随后还可能被本事务的 INSERT 覆盖回 queued（状态丢失）。
-    await db.commit()
+async def download_document(
+    db: AsyncSession, kb_id: str, doc_id: str, user_id: str,
+) -> tuple[str, str, str]:
+    """解析"下载原文"的落盘路径：返回 ``(绝对路径, 下载文件名, media_type)``。
 
-    for task in pending_tasks:
-        await scheduler.enqueue(task)  # type: ignore[union-attr]
+    权限用**读权限**（``require_kb_readable``）：被分享者与公共库的读者在界面上
+    看得到正文，就应当也能下载原文——与"查看详情"一致。
+    """
+    from api.knowledge_base.service import require_kb_readable
 
-    return results
+    await require_kb_readable(db, kb_id, user_id)
+
+    doc = (
+        await db.execute(
+            select(KnowledgeBaseDocument).where(
+                KnowledgeBaseDocument.id == doc_id,
+                KnowledgeBaseDocument.kb_id == kb_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
+    # 再复核一次落盘路径：即便 DB 里的 storage_path 被人改过，也读不到目录外
+    real = _ensure_within(doc.storage_path, upload_dir)
+    if not os.path.isfile(real):
+        raise HTTPException(
+            status_code=404, detail="源文件已丢失，可删除该文档后重新上传",
+        )
+    # 一律 octet-stream + attachment（路由侧补 nosniff）：html 在上传白名单里，
+    # 用 text/html 内联渲染用户上传的内容等于同源存储型 XSS
+    return real, doc.name, "application/octet-stream"
+
+
+async def batch_documents(
+    db: AsyncSession,
+    kb_id: str,
+    user_id: str,
+    *,
+    action: str,
+    doc_ids: list[str],
+    scheduler: IndexingScheduler | None = None,
+    vector_store: BaseVectorStore | None = None,
+    mediator: KnowledgeBaseMediator | None = None,
+) -> list[BatchItem]:
+    """批量删除或重试文档——**逐项提交**，部分成功是一等公民。
+
+    为什么必须逐项提交：``delete_document`` 的副作用（mediator 清向量 + 删磁盘）
+    发生在提交**之前**。若整批只在最后提交一次，中途任一项失败而回滚，就会出现
+    "文档行还在、文件与向量已经没了"的鬼文档。逐项提交换来"部分成功"的诚实语义。
+    """
+    await _get_owned_kb(db, kb_id, user_id)   # 库级校验一次，避免 N 次同样的查询
+
+    items: list[BatchItem] = []
+    for doc_id in doc_ids:
+        try:
+            if action == "delete":
+                await delete_document(
+                    db, kb_id, doc_id, user_id,
+                    vector_store=vector_store, mediator=mediator, scheduler=scheduler,
+                )
+                await db.commit()
+                items.append(BatchItem(doc_id=doc_id, ok=True))
+            else:
+                # retry_document 内部自己提交，无法整体原子
+                response = await retry_document(
+                    db, kb_id, doc_id, user_id, scheduler, vector_store,
+                )
+                items.append(BatchItem(doc_id=doc_id, ok=True, doc=response))
+        except HTTPException as exc:
+            await db.rollback()
+            items.append(BatchItem(doc_id=doc_id, ok=False, message=str(exc.detail)))
+        except Exception:
+            # **必须先回滚**：异常会让 Postgres 事务进入 aborted 状态，不回滚的话
+            # 后续每一项都会以 "current transaction is aborted" 失败
+            await db.rollback()
+            logger.exception("批量 %s 处理文档失败 doc=%s", action, doc_id)
+            items.append(BatchItem(doc_id=doc_id, ok=False, message="内部错误，请稍后重试"))
+
+    return items
 
 
 async def list_documents(

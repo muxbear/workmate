@@ -111,8 +111,28 @@ class TestDocAndStorageQuota:
             await ensure_doc_quota(db, "kb1", "u1", incoming_bytes=10)
 
         assert exc.value.status_code == 400
-        assert "2/2" in exc.value.detail
+        assert "现有 2" in exc.value.detail and "上限 2" in exc.value.detail
         assert "KB_MAX_DOCS_PER_KB" in exc.value.detail
+
+    async def test_doc_count_counts_the_incoming_batch(self, db, limits):
+        """增量必须计入：一次传 3 篇、上限 2 且库是空的 → 直接拒。
+
+        此前判据只有 ``count >= limit``，把 incoming 完全丢掉，于是"一次传 20 个、
+        上限 5"能整批通过——配额形同虚设。
+        """
+        limits(KB_MAX_DOCS_PER_KB=2, KB_MAX_STORAGE_MB_PER_USER=0)
+
+        with pytest.raises(HTTPException) as exc:
+            await ensure_doc_quota(db, "kb1", "u1", incoming_bytes=10, incoming_count=3)
+
+        assert "本次新增 3" in exc.value.detail
+
+    async def test_doc_count_allows_exactly_up_to_the_limit(self, db, limits):
+        """正好填满不算超（1 + 1 == 2）。"""
+        limits(KB_MAX_DOCS_PER_KB=2, KB_MAX_STORAGE_MB_PER_USER=0)
+        await seed_kb(db, "kb1", "u1", docs=1)
+
+        await ensure_doc_quota(db, "kb1", "u1", incoming_bytes=10, incoming_count=1)
 
     async def test_storage_limit_counts_existing_files(self, db, limits):
         """总存储是**累计**口径：已用的算进去，不是只看这一次。"""

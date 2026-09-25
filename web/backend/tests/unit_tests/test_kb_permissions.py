@@ -10,9 +10,10 @@
    （新增接口时没人会记得补），所以遍历真实路由表断言——漏挂就会被测出来；
 2. **语义**：`check_user_permission` 的判定（超管放行、按活动角色取键、无角色即无权）。
 
-豁免项只有两条，且各自都有理由（见 ``PERMISSION_EXEMPT``）：被邀请人的
-「接受/拒绝邀请」（"我的收件箱"操作，按参与者身份鉴权，否则被分享人永远接受不了），
-以及 `search`（**用 POST 传请求体的只读操作**）。
+豁免项各自都有理由（见 ``PERMISSION_EXEMPT``）：被邀请人的「接受/拒绝邀请」
+（"我的收件箱"操作，按参与者身份鉴权，否则被分享人永远接受不了），以及 `search`
+与 `download`（**用 POST 传请求体的只读操作**——JWT 在 Authorization 头里，
+`<a href>` 带不上，只能 fetch；下载的权限在服务层的 ``require_kb_readable``）。
 
 写这条结构性断言的价值在本次实施中立刻兑现了：它一次就点出了两个我手工清点时
 漏掉的接口——`graph/re-extract`（真写操作，已补权限）与 `search`（读操作，已列豁免）。
@@ -42,6 +43,10 @@ PERMISSION_EXEMPT = {
     f"{KB_PREFIX}/shares/{{share_id}}/accept",
     f"{KB_PREFIX}/shares/{{share_id}}/reject",
     f"{KB_PREFIX}/{{kb_id}}/search",
+    # 下载原文同样是**用 POST 传请求体的只读操作**：JWT 在 Authorization 头里，
+    # `<a href>` 带不上，只能 fetch + blob，于是需要 POST。权限不在这里声明，
+    # 而是服务层的 require_kb_readable（读到正文的人就能下载原文）。
+    f"{KB_PREFIX}/{{kb_id}}/documents/{{doc_id}}/download",
 }
 
 #: 关键接口的权限键（防止"随手改成一个更宽松的键"）
