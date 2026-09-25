@@ -211,7 +211,9 @@ async def main() -> int:
         )
         return 2
 
-    from agent.config import settings
+    from core.config import get_settings
+
+    settings = get_settings()   # 向量库配置在 core（T5.7 从 agent 配置迁入）
 
     if args.verify_only:
         # 校验只连向量库：不需要 embedding 模型，也就不该被数据库迁移/锁卡住

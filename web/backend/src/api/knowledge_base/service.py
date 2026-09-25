@@ -544,7 +544,7 @@ async def purge_kb(
     这是此前 `delete_kb` 的行为，现在单独成一个显式动作：软删除之后需要一个
     "确实要释放空间"的出口，否则被删的库会永远占着向量与磁盘。
     """
-    from agent.config import settings
+    from core.config import get_settings
     from db.soft_delete import include_deleted
 
     with include_deleted():
@@ -569,7 +569,7 @@ async def purge_kb(
             logger.error("Failed to delete vector collection kb=%s: %s", kb_id, e)
 
     # 磁盘上的原始文件（整库目录）
-    kb_upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
+    kb_upload_dir = os.path.join(get_settings().doc_upload_dir, kb_id)
     if os.path.isdir(kb_upload_dir):
         shutil.rmtree(kb_upload_dir, ignore_errors=True)
 

@@ -13,6 +13,35 @@ from fastapi import FastAPI
 logger = logging.getLogger(__name__)
 
 
+def _vector_backend_kwargs(settings: Any) -> dict[str, Any]:
+    """按 ``VECTOR_DB_BACKEND`` 组装向量库客户端参数。
+
+    Milvus 的口令**强制配置**（迭代 5 T5.7）：出厂口令 ``root/Milvus`` 是公开的，
+    留作默认值等于让每一次"忘了配"的部署都用弱口令连上。缺失时在这里明确拒绝，
+    而不是拿着弱口令去连、再报一个看不懂的鉴权错。
+    """
+    if settings.VECTOR_DB_BACKEND == "milvus":
+        if not str(settings.MILVUS_PASSWORD).strip():
+            raise RuntimeError(
+                "未配置 MILVUS_PASSWORD：Milvus 不再提供默认口令（root/Milvus）。"
+                "请在 .env 中配置 MILVUS_PASSWORD 与 MILVUS_USER，"
+                "或改用 VECTOR_DB_BACKEND=chroma。",
+            )
+        return {
+            "uri": settings.MILVUS_URI,
+            "user": settings.MILVUS_USER,
+            "password": settings.MILVUS_PASSWORD,
+            "db_name": settings.MILVUS_DEFAULT_DB,
+        }
+    if settings.VECTOR_DB_BACKEND == "chroma":
+        return {
+            "host": settings.CHROMA_HOST,
+            "port": settings.CHROMA_PORT,
+            "persist_dir": settings.CHROMA_PERSIST_DIR,
+        }
+    return {}
+
+
 class KnowledgeBaseFacade:
     """知识库子系统外观——一站式初始化。
 
@@ -71,20 +100,7 @@ class KnowledgeBaseFacade:
         VectorStoreFactory.register("milvus", MilvusVectorStore)
         VectorStoreFactory.register("chroma", ChromaVectorStore)
 
-        backend_kwargs: dict = {}
-        if settings.VECTOR_DB_BACKEND == "milvus":
-            backend_kwargs = {
-                "uri": settings.MILVUS_URI,
-                "user": settings.MILVUS_USER,
-                "password": settings.MILVUS_PASSWORD,
-                "db_name": settings.MILVUS_DEFAULT_DB,
-            }
-        elif settings.VECTOR_DB_BACKEND == "chroma":
-            backend_kwargs = {
-                "host": settings.CHROMA_HOST,
-                "port": settings.CHROMA_PORT,
-                "persist_dir": settings.CHROMA_PERSIST_DIR,
-            }
+        backend_kwargs = _vector_backend_kwargs(settings)
 
         try:
             vector_store = VectorStoreFactory.create(settings.VECTOR_DB_BACKEND, **backend_kwargs)

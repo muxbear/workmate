@@ -160,10 +160,11 @@ def print_capacity(chunks: int = 100_000, dim: int = 1024) -> None:
 async def run_search_bench(
     kb_id: str, *, queries: int, concurrency: int, top_k: int, modes: tuple[str, ...],
 ) -> int:
-    from agent.config import settings
+    from core.config import get_settings
     from core.rag.bm25 import SparseConfig
     from core.rag.vector_store import MilvusVectorStore
 
+    settings = get_settings()   # 向量库配置在 core（T5.7 从 agent 配置迁入）
     store = MilvusVectorStore(
         uri=settings.MILVUS_URI, user=settings.MILVUS_USER,
         password=settings.MILVUS_PASSWORD, db_name=settings.MILVUS_DEFAULT_DB,
@@ -225,15 +226,17 @@ async def run_search_bench(
 async def run_index_bench(
     chunks: int, concurrency: int | None, keep: bool = False, stream: bool = False,
 ) -> int:
-    from agent.config import settings
+    from langchain_core.documents import Document
+
     from api.knowledge_base.model_provider import (
         load_embedding_model,
         resolve_embedding_dim,
     )
+    from core.config import get_settings
     from core.rag.vector_store import MilvusVectorStore
     from db.engine import async_session
-    from langchain_core.documents import Document
 
+    settings = get_settings()   # 向量库配置在 core（T5.7 从 agent 配置迁入）
     kb_id = f"bench-tmp-{int(time.time())}"
     store = MilvusVectorStore(
         uri=settings.MILVUS_URI, user=settings.MILVUS_USER,

@@ -40,8 +40,14 @@ async def db():
 
 @pytest.fixture
 def limits(monkeypatch):
-    """按用例设置限额（0 = 不限）。"""
-    from agent.config import settings
+    """按用例设置限额（0 = 不限）。
+
+    配额配置在 core（T5.7 从 agent 迁入）——打错的补丁对象不会报错，只会静默失效，
+    所以要打的是**读取方真正读的那个对象**。
+    """
+    from core.config import get_settings
+
+    settings = get_settings()
 
     def apply(**kwargs):
         for key, value in kwargs.items():
@@ -142,18 +148,16 @@ class TestDocAndStorageQuota:
 
 class TestFileSizeLimitIsConfigurable:
     def test_configured_value_wins(self, monkeypatch):
-        from agent.config import settings
         from api.knowledge_base import doc_service
 
-        monkeypatch.setattr(settings, "KB_MAX_FILE_MB", 5)
+        monkeypatch.setattr(doc_service.settings, "KB_MAX_FILE_MB", 5)
 
         assert doc_service._max_file_bytes() == 5 * MB
 
     def test_falls_back_to_module_default(self, monkeypatch):
-        from agent.config import settings
         from api.knowledge_base import doc_service
 
-        monkeypatch.setattr(settings, "KB_MAX_FILE_MB", 0)
+        monkeypatch.setattr(doc_service.settings, "KB_MAX_FILE_MB", 0)
 
         assert doc_service._max_file_bytes() == doc_service.MAX_FILE_SIZE_MB * MB
 

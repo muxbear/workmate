@@ -37,12 +37,14 @@ async def main() -> int:
 
     from sqlalchemy import select
 
-    from agent.config import settings
+    from core.config import get_settings
     from db.engine import async_session
     from db.models.knowledge_base import KnowledgeBase
     from db.models.knowledge_base_document import KnowledgeBaseDocument
-
     from scripts.rebuild_kb_native_bm25 import build_stack, wait_for_drain
+
+    # build_stack 读的是向量库配置，那套配置在 core（T5.7 从 agent 配置迁入）
+    settings = get_settings()
 
     async with async_session() as db:
         kbs = (await db.execute(select(KnowledgeBase))).scalars().all()

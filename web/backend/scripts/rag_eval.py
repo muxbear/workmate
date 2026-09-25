@@ -153,13 +153,14 @@ async def run(
     hyde: bool | None = None,
 ) -> dict[str, Any]:
     """跑完整评测，返回报告字典。"""
-    from agent.config import settings
     from api.knowledge_base.model_provider import load_embedding_model
     from api.knowledge_base.schemas import SearchRequest
     from api.knowledge_base.search_service import SearchOrchestrator
+    from core.config import get_settings
     from core.rag.vector_store import MilvusVectorStore
     from db.engine import async_session
 
+    settings = get_settings()   # 向量库配置在 core（T5.7 从 agent 配置迁入）
     cases = load_golden()
     kb_ids = await resolve_kb_ids()
     missing = {c["kb"] for c in cases} - set(kb_ids)

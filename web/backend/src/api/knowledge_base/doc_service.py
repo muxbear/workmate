@@ -19,7 +19,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.config import settings
+from core.config import get_settings
 from api.knowledge_base.doc_state import (
     STAGE_PROGRESS as _STAGE_PROGRESS,
 )
@@ -42,6 +42,9 @@ from core.metrics import KB_INDEX_QUEUE_DEPTH, KB_INDEX_TASKS, KB_STAGE_SECONDS
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+#: 知识库的配置统一来自 core（T5.7 从 agent 配置迁入）
+settings = get_settings()
 
 if TYPE_CHECKING:
     from api.knowledge_base.mediator import KnowledgeBaseMediator

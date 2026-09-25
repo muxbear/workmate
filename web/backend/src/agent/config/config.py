@@ -4,24 +4,11 @@ from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
+# 工作目录的解析规则统一在 core：知识库的上传目录兜底路径（{WORKSPACE}/docs_upload）
+# 也要用它，同一条规则各算一遍迟早会算出两个不同的路径。
+from core.config import get_default_workspace
+
 load_dotenv()
-
-
-def get_default_workspace() -> str:
-    """Return the agent filesystem workspace directory.
-
-    Uses ``WORKSPACE`` from the environment when set to a non-empty path;
-    otherwise resolves to ``backend/workspace`` under the backend package root.
-    """
-    env = os.getenv("WORKSPACE", "").strip()
-    if env:
-        return os.path.abspath(env)
-
-    # config.py lives at backend/src/agent/config/ — four levels up to backend/
-    backend_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    )
-    return os.path.join(backend_root, "workspace")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -250,49 +237,8 @@ class Settings(BaseSettings):
     SMS_SIGN_NAME: str = os.getenv("SMS_SIGN_NAME", "")
     SMS_TEMPLATE_CODE: str = os.getenv("SMS_TEMPLATE_CODE", "")
 
-    # ---- Milvus ----
-    MILVUS_URI: str = os.getenv("MILVUS_URI", "http://localhost:19530")
-    MILVUS_USER: str = os.getenv("MILVUS_USER", "root")
-    MILVUS_PASSWORD: str = os.getenv("MILVUS_PASSWORD", "Milvus")
-    MILVUS_DEFAULT_DB: str = os.getenv("MILVUS_DEFAULT_DB", "ke_hermes")
-
-    # ---- 向量数据库 ----
-    VECTOR_DB_BACKEND: str = os.getenv("VECTOR_DB_BACKEND", "milvus")
-    CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
-    CHROMA_PORT: int = int(os.getenv("CHROMA_PORT") or 8001)
-    CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
-
-    # ---- 文档存储 ----
-    DOC_STORE_BACKEND: str = os.getenv("DOC_STORE_BACKEND", "local")
-    DOC_UPLOAD_DIR: str = os.getenv("DOC_UPLOAD_DIR", "")
-
-    @property
-    def doc_upload_dir(self) -> str:
-        """Return the resolved document upload directory."""
-        raw = self.DOC_UPLOAD_DIR.strip()
-        if raw:
-            return os.path.abspath(raw)
-        return os.path.join(self.WORKSPACE, "docs_upload")
-
-    # ---- 图存储 ----
-    GRAPH_STORE_BACKEND: str = os.getenv("GRAPH_STORE_BACKEND", "langextract")
-
-    # ---- Embedding ----
-    DEFAULT_EMBEDDING_MODEL: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "text-embedding-v4")
-    DEFAULT_EMBEDDING_DIM: int = int(os.getenv("DEFAULT_EMBEDDING_DIM") or 1024)
-
-    # ---- 索引 ----
-    INDEXING_MAX_CONCURRENT: int = int(os.getenv("INDEXING_MAX_CONCURRENT") or 3)
-
-    # ---- 知识库配额（迭代 5 T5.3）----
-    # 每用户限额。0 表示不限（默认值放宽，避免升级后立刻挡住存量用户；
-    # 需要限额的部署按需在 .env 里收紧）。
-    KB_MAX_PER_USER: int = int(os.getenv("KB_MAX_PER_USER") or 0)
-    KB_MAX_DOCS_PER_KB: int = int(os.getenv("KB_MAX_DOCS_PER_KB") or 0)
-    #: 每用户知识库总占用上限（MB）
-    KB_MAX_STORAGE_MB_PER_USER: int = int(os.getenv("KB_MAX_STORAGE_MB_PER_USER") or 0)
-    #: 单个文件大小上限（MB）——此前写死在 doc_service 模块常量里，
-    #: 与 ARTIFACT_MAX_FILE_MB 这类同类配置不同源，运维改不了
-    KB_MAX_FILE_MB: int = int(os.getenv("KB_MAX_FILE_MB") or 100)
-    BM25_DEFAULT_K1: float = float(os.getenv("BM25_DEFAULT_K1") or 1.5)
-    BM25_DEFAULT_B: float = float(os.getenv("BM25_DEFAULT_B") or 0.75)
+    # ---- 知识库 / 向量库 ----
+    # 迭代 5 T5.7：Milvus / Chroma / 文档上传目录 / 索引并发 / 知识库配额这些项
+    # **已迁到 ``core.config.Settings``**（读取方全在 api/knowledge_base/，
+    # 且 core 那套支持 .env.{APP_ENV} 覆盖，agent 这套只读 .env）。
+    # 此处不再保留副本：同一个开关有两个出处，改一处不生效是迟早的事。

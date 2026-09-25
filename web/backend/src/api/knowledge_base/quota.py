@@ -1,6 +1,6 @@
 """知识库配额校验（迭代 5 T5.3）。
 
-三条限额，都可通过环境变量配置（见 ``agent/config/config.py`` 的 ``KB_MAX_*``）：
+三条限额，都可通过环境变量配置（见 ``core/config.py`` 的 ``KB_MAX_*``）：
 
 - ``KB_MAX_PER_USER``：每人能建多少个库；
 - ``KB_MAX_DOCS_PER_KB``：单个库能放多少文档；
@@ -23,9 +23,11 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.config import settings
+from core.config import get_settings
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+settings = get_settings()
 
 MB = 1024 * 1024
 

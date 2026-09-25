@@ -47,11 +47,15 @@ async def main() -> int:
     parser.add_argument("--timeout", type=float, default=2400.0)
     args = parser.parse_args()
 
-    from agent.config import settings
     from sqlalchemy import select, text
 
+    from core.config import get_settings
     from db.engine import async_session
     from db.models.knowledge_base import KnowledgeBase
+
+    # build_stack / build_vector_store 读的是向量库配置，那套配置在 core
+    # （T5.7 从 agent 配置迁入）
+    settings = get_settings()
 
     async with async_session() as db:
         kb = (await db.execute(

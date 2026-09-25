@@ -8,8 +8,11 @@ from dotenv import dotenv_values
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env 绝对路径：不依赖启动目录（config.py 位于 src/core/，.env 在 parents[2]）
-_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+# 后端包根目录（backend/）：默认路径以它为锚，不依赖启动目录
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+# .env 绝对路径：config.py 位于 src/core/，.env 在 parents[2]
+_ENV_FILE = _BACKEND_ROOT / ".env"
 
 # 先确定运行环境：系统环境变量优先，其次 .env 中的 APP_ENV，缺省为 dev
 # 用 dotenv_values 仅读取不注入 os.environ，避免环境专属文件无法覆盖 .env
@@ -21,6 +24,18 @@ _ENV_FILE_BY_ENV = _ENV_FILE.with_name(f".env.{_APP_ENV}")
 _ENV_FILES: tuple[Path, ...] = (
     (_ENV_FILE, _ENV_FILE_BY_ENV) if _ENV_FILE_BY_ENV.exists() else (_ENV_FILE,)
 )
+
+
+def get_default_workspace() -> str:
+    """返回工作目录（``WORKSPACE``）：环境变量非空时用它，否则落在 ``backend/workspace``。
+
+    放在 core 而不是 agent：知识库的上传目录兜底路径（``{WORKSPACE}/docs_upload``）
+    也要用它——同一条规则各算一遍，迟早会算出两个不同的路径。
+    """
+    env = os.getenv("WORKSPACE", "").strip()
+    if env:
+        return os.path.abspath(env)
+    return str(_BACKEND_ROOT / "workspace")
 
 
 class Settings(BaseSettings):
@@ -41,6 +56,36 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = ""
 
+    # ---- 知识库 / 向量库（迭代 5 T5.7）----
+    # 这些项此前定义在 ``agent/config/config.py``，但读取方全在 ``api/knowledge_base/``。
+    # 两套配置并存的实际后果是 ``.env.{APP_ENV}`` 的环境覆盖对知识库不生效（agent 那套
+    # 只读 .env），且同一个开关有两个出处。现统一到这里，agent 侧不再保留副本。
+    VECTOR_DB_BACKEND: str = "milvus"
+    MILVUS_URI: str = "http://localhost:19530"
+    MILVUS_USER: str = "root"
+    #: **故意没有默认值**：Milvus 的出厂口令（root/Milvus）是公开的，把它留作默认值
+    #: 等于让每一次"忘了配"的部署都用弱口令跑起来。缺失时初始化向量库会带明确指引
+    #: 地失败（见 ``facade``），而不是静默连上一个弱口令实例。
+    MILVUS_PASSWORD: str = ""
+    MILVUS_DEFAULT_DB: str = "ke_hermes"
+    CHROMA_HOST: str = "localhost"
+    #: Chroma 服务端默认端口就是 8000。这里曾写 8001，恰好与本应用自身端口
+    #: （``PORT``，默认 8001）重合——本地起一个 Chroma 会直接把应用端口抢走。
+    CHROMA_PORT: int = 8000
+    CHROMA_PERSIST_DIR: str = "./chroma_data"
+    #: 文档上传根目录；留空按 ``{WORKSPACE}/docs_upload`` 解析（见 doc_upload_dir）
+    DOC_UPLOAD_DIR: str = ""
+    INDEXING_MAX_CONCURRENT: int = 3
+    # ---- 知识库配额（T5.3）----
+    # 0 表示不限。默认放宽：限额是"按部署环境决定"的策略，升级时默认收紧会把存量
+    # 用户直接挡在门外；需要限额的部署在 .env 里显式配置。
+    KB_MAX_PER_USER: int = 0
+    KB_MAX_DOCS_PER_KB: int = 0
+    #: 每用户知识库总占用上限（MB）
+    KB_MAX_STORAGE_MB_PER_USER: int = 0
+    #: 单个文件大小上限（MB）
+    KB_MAX_FILE_MB: int = 100
+
     @field_validator("APP_ENV", mode="before")
     @classmethod
     def _normalize_app_env(cls, value: object) -> str:
@@ -51,6 +96,14 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         """将 CORS_ORIGINS 逗号分隔字符串解析为列表."""
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def doc_upload_dir(self) -> str:
+        """解析后的文档上传根目录（留空时落在 ``{WORKSPACE}/docs_upload``）."""
+        raw = self.DOC_UPLOAD_DIR.strip()
+        if raw:
+            return os.path.abspath(raw)
+        return os.path.join(get_default_workspace(), "docs_upload")
 
 
 @lru_cache

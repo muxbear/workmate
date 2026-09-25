@@ -50,10 +50,10 @@ video_gen_streamable_http_subapp = video_gen_mcp.streamable_http_app()
 
 async def _init_knowledge_base(app: FastAPI) -> None:
     """初始化知识库子系统——委托给 KnowledgeBaseFacade。"""
-    from agent.config import settings
     from api.knowledge_base.facade import KnowledgeBaseFacade
 
-    facade = KnowledgeBaseFacade(settings)
+    # 知识库的配置来自 core（T5.7 从 agent 配置迁入）
+    facade = KnowledgeBaseFacade(get_settings())
     await facade.initialize(app)
 
 
