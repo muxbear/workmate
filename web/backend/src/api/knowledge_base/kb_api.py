@@ -11,6 +11,7 @@ from api.knowledge_base.schemas import (
 )
 from api.knowledge_base.service import (
     SCOPE_PERSONAL,
+    _get_kb_or_404,
     create_kb,
     delete_kb,
     get_indexing_activity,
@@ -21,6 +22,7 @@ from api.knowledge_base.service import (
     update_kb,
 )
 from api.rbac.deps import RequirePermission
+from core.audit import audit_scope
 from core.decorators import handle_errors
 from core.response import ok
 
@@ -183,8 +185,12 @@ async def create_knowledge_base(
 ):
     """创建知识库。"""
     vector_store = _get_vector_store(request)
-    result = await create_kb(db, user_id, body, vector_store)
-    await db.commit()
+    async with audit_scope("knowledge.create", user_id, request) as entry:
+        result = await create_kb(db, user_id, body, vector_store)
+        await db.commit()
+        # 审计写在业务提交之后：失败时不会留下"记了成功但事务回滚"的假记录
+        entry.target = result.id
+        entry.detail["name"] = result.name
     return ok(result)
 
 
@@ -209,8 +215,9 @@ async def update_knowledge_base(
     user_id: str = Depends(RequirePermission("knowledge:edit")),
 ):
     """更新知识库。"""
-    result = await update_kb(db, kb_id, user_id, body)
-    await db.commit()
+    async with audit_scope("knowledge.update", user_id, None, target=kb_id):
+        result = await update_kb(db, kb_id, user_id, body)
+        await db.commit()
     return ok(result)
 
 
@@ -227,11 +234,15 @@ async def delete_knowledge_base(
 
     vector_store = _get_vector_store(request)
     mediator = _get_mediator(request)
-    await delete_kb(
-        db, kb_id, user_id, vector_store,
-        mediator=mediator, scheduler=IndexingScheduler.instance(),
-    )
-    await db.commit()
+    async with audit_scope("knowledge.delete", user_id, request, target=kb_id) as entry:
+        entry.detail["kb_name"] = (
+            await _get_kb_or_404(db, kb_id, user_id)
+        ).name
+        await delete_kb(
+            db, kb_id, user_id, vector_store,
+            mediator=mediator, scheduler=IndexingScheduler.instance(),
+        )
+        await db.commit()
     return ok(None)
 
 
@@ -267,10 +278,11 @@ async def reindex_knowledge_base(
     from api.knowledge_base.doc_service import IndexingScheduler
     scheduler = IndexingScheduler.instance()
 
-    result = await reindex_kb(
-        db, kb_id, user_id,
-        config=body,
-        vector_store=vector_store,
-        scheduler=scheduler,
-    )
+    async with audit_scope("knowledge.reindex", user_id, request, target=kb_id):
+        result = await reindex_kb(
+            db, kb_id, user_id,
+            config=body,
+            vector_store=vector_store,
+            scheduler=scheduler,
+        )
     return ok(result)

@@ -28,4 +28,16 @@ class SystemEvent(Base):
     category: Mapped[str] = mapped_column(String(32), nullable=False)  # agent/tool/cron/model/mcp/system
     message: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    #: 动作 / 操作者 / 来源 IP / 操作对象 / 结果——审计的检索维度。
+    #: 单独建列而不是塞进 metadata_：审计最常见的查询就是"某人做了哪些事"与
+    #: "某个库被谁动过"，JSON 里过滤既写不直观也索引不到。
+    action: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="动作键，如 knowledge.delete"
+    )
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    target: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    result: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, comment="success | failed | denied"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)

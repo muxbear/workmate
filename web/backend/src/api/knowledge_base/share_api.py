@@ -30,6 +30,7 @@ from api.knowledge_base.share_service import (
     set_visibility,
 )
 from api.rbac.deps import RequirePermission
+from core.audit import audit_scope
 from core.decorators import handle_errors
 from core.response import ok
 
@@ -116,7 +117,12 @@ async def create_shares(
     user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """邀请用户浏览知识库（仅所有者，只读授权）。"""
-    return ok(await invite_shares(db, kb_id, user_id, req.user_ids))
+    async with audit_scope(
+        "knowledge.share.invite", user_id, None, target=kb_id,
+        count=len(req.user_ids),
+    ):
+        result = await invite_shares(db, kb_id, user_id, req.user_ids)
+    return ok(result)
 
 
 @router.post("/{kb_id}/shares/cancel")
@@ -129,7 +135,9 @@ async def cancel_all_shares(
     user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """取消该知识库的全部分享（仅所有者）。"""
-    return ok({"revoked": await cancel_shares(db, kb_id, user_id)})
+    async with audit_scope("knowledge.share.cancel_all", user_id, None, target=kb_id):
+        result = {"revoked": await cancel_shares(db, kb_id, user_id)}
+    return ok(result)
 
 
 @router.delete("/{kb_id}/shares/{share_id}")
@@ -143,7 +151,8 @@ async def remove_share(
     user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """删除某个被分享用户（仅所有者）。"""
-    await delete_share(db, kb_id, share_id, user_id)
+    async with audit_scope("knowledge.share.revoke", user_id, None, target=kb_id):
+        await delete_share(db, kb_id, share_id, user_id)
     return ok({"deleted": True})
 
 
@@ -157,4 +166,9 @@ async def update_visibility(
     user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """发布 / 取消发布公共知识库（仅所有者）。"""
-    return ok(await set_visibility(db, kb_id, user_id, req.visibility))
+    async with audit_scope(
+        "knowledge.publish", user_id, None, target=kb_id,
+        visibility=req.visibility,
+    ):
+        result = await set_visibility(db, kb_id, user_id, req.visibility)
+    return ok(result)

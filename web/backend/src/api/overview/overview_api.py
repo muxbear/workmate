@@ -1,6 +1,6 @@
 """概览统计 API 路由."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db
@@ -123,9 +123,16 @@ async def events(
     limit: int = 20,
     category: str | None = None,
     type: str | None = None,
+    user_id: str | None = Query(default=None, description="按操作者过滤"),
+    action: str | None = Query(default=None, description="按动作过滤，如 knowledge.delete"),
+    target: str | None = Query(default=None, description="按操作对象过滤（知识库/文档 ID）"),
+    result: str | None = Query(default=None, description="success | failed | denied"),
     db: AsyncSession = Depends(get_db),
     _user_id: str = Depends(get_current_user_id),
 ):
-    """获取最新系统事件日志."""
-    data = await get_events(db, limit=limit, category=category, event_type=type)
+    """获取最新系统事件日志（含审计四要素：动作 / 操作者 / 对象 / 结果）。"""
+    data = await get_events(
+        db, limit=limit, category=category, event_type=type,
+        user_id=user_id, action=action, target=target, result=result,
+    )
     return ok(data)

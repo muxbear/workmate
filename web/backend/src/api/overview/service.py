@@ -567,21 +567,55 @@ async def get_events(
     limit: int = 20,
     category: str | None = None,
     event_type: str | None = None,
+    user_id: str | None = None,
+    action: str | None = None,
+    target: str | None = None,
+    result: str | None = None,
 ) -> list[dict[str, Any]]:
-    """查询最新系统事件."""
+    """查询系统事件（审计查询入口）。
+
+    此前 ``category`` / ``event_type`` 两个参数**收了但没用于过滤**——调用方按类型
+    筛出来的还是全部事件，属于静默失效。现在按传入的维度逐条过滤，并返回审计四要素
+    （动作 / 操作者 / 对象 / 结果）与来源 IP，使审计真正可查。
+    """
     from db.models.system_event import SystemEvent
 
-    query = select(SystemEvent).order_by(SystemEvent.created_at.desc()).limit(limit)
+    conditions = []
+    if category:
+        conditions.append(SystemEvent.category == category)
+    if event_type:
+        conditions.append(SystemEvent.type == event_type)
+    if user_id:
+        conditions.append(SystemEvent.user_id == user_id)
+    if action:
+        conditions.append(SystemEvent.action == action)
+    if target:
+        conditions.append(SystemEvent.target == target)
+    if result:
+        conditions.append(SystemEvent.result == result)
+
+    query = (
+        select(SystemEvent)
+        .where(*conditions)
+        .order_by(SystemEvent.created_at.desc())
+        .limit(limit)
+    )
 
     rows = await db.execute(query)
-    result = []
+    result_rows = []
     for row in rows.scalars():
-        result.append({
+        result_rows.append({
             "id": row.id,
             "type": row.type,
             "category": row.category,
             "message": row.message,
+            "action": row.action,
+            "user_id": row.user_id,
+            "ip": row.ip,
+            "target": row.target,
+            "result": row.result,
+            "metadata": row.metadata_,
             "created_at": row.created_at.isoformat() if row.created_at else "",
         })
 
-    return result
+    return result_rows

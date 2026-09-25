@@ -347,6 +347,29 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE providers ADD COLUMN sort_order INTEGER DEFAULT 0"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_providers_sort_order ON providers (sort_order)"))
 
+        # 迁移：系统事件表补审计维度（迭代 5 T5.4）——操作者 / IP / 对象 / 结果。
+        # 存量事件没有这些信息，留空即可（不算历史数据的缺陷）。
+        if await _table_exists(conn, "system_events"):
+            existing = await _get_existing_columns(conn, "system_events")
+            for column, ddl in (
+                ("action", "VARCHAR(64)"),
+                ("user_id", "VARCHAR(36)"),
+                ("ip", "VARCHAR(64)"),
+                ("target", "VARCHAR(64)"),
+                ("result", "VARCHAR(16)"),
+            ):
+                if column in existing:
+                    continue
+                logger.info("Adding %s column to system_events table", column)
+                await conn.execute(
+                    text(f"ALTER TABLE system_events ADD COLUMN {column} {ddl}")
+                )
+            for column in ("action", "user_id", "target"):
+                await conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_system_events_{column} "
+                    f"ON system_events ({column})"
+                ))
+
         # 迁移：知识库增加归属部门（迭代 5 T5.2 数据范围）。存量数据按**创建者的
         # 部门**回填；回填只填 NULL，可重复执行且不覆盖已有值。
         if await _table_exists(conn, "knowledge_bases"):

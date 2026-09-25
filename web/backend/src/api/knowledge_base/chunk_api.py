@@ -22,6 +22,7 @@ from api.knowledge_base.model_provider import load_embedding_model_for_kb
 from api.knowledge_base.schemas import BatchChunkRequest, ChunkUpdateRequest
 from api.knowledge_base.service import _get_kb_or_404, require_kb_readable
 from api.rbac.deps import RequirePermission
+from core.audit import audit_scope
 from core.rag.vector_store import safe_expr_id
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-切片"])
@@ -124,7 +125,13 @@ async def api_update_chunk(
             "message": "未找到可用的 Embedding 模型，请在“模型”页面配置 type=embedding 的模型",
         }
     try:
-        chunk = await update_chunk(vs, emb, kb_id, doc_id, chunk_id, body.content)
+        # 审计包住"改切片"这一步：异常会先被记成 failed 再原样抛出，
+        # 由下面的 except 转成接口返回码——两者互不干扰
+        async with audit_scope(
+            "knowledge.chunk.update", user_id, request, target=chunk_id,
+        ) as entry:
+            entry.detail["kb_id"] = kb_id
+            chunk = await update_chunk(vs, emb, kb_id, doc_id, chunk_id, body.content)
     except ValueError as e:
         return {"code": 404, "data": None, "message": str(e)}
     except Exception:
@@ -151,7 +158,11 @@ async def api_delete_chunk(
     if vs is None:
         return {"code": 500, "data": None, "message": "向量库未初始化"}
     try:
-        await delete_chunk(vs, kb_id, doc_id, chunk_id)
+        async with audit_scope(
+            "knowledge.chunk.delete", user_id, request, target=chunk_id,
+        ) as entry:
+            entry.detail["kb_id"] = kb_id
+            await delete_chunk(vs, kb_id, doc_id, chunk_id)
     except ValueError as e:
         return {"code": 404, "data": None, "message": str(e)}
     await refresh_counters_after_chunk_change(vs, db, kb_id, doc_id)
@@ -194,7 +205,11 @@ async def api_batch_chunk_operation(
             }
 
     try:
-        result = await batch_operation(vs, emb, kb_id, doc_id, body)
+        async with audit_scope(
+            f"knowledge.chunk.batch.{body.action}", user_id, request,
+            target=doc_id, kb_id=kb_id, count=len(requested_ids),
+        ):
+            result = await batch_operation(vs, emb, kb_id, doc_id, body)
     except ValueError as e:
         return {"code": 404, "data": None, "message": str(e)}
     await refresh_counters_after_chunk_change(vs, db, kb_id, doc_id)

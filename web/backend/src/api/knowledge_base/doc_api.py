@@ -29,6 +29,7 @@ from api.knowledge_base.indexing_events import IndexingEventBus
 from api.knowledge_base.schemas import IndexConfigSchema
 from api.knowledge_base.service import require_kb_readable
 from api.rbac.deps import RequirePermission
+from core.audit import audit_scope
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-文档"])
 
@@ -70,8 +71,10 @@ async def upload_docs(
             return {"code": 400, "data": None, "message": f"索引配置无效: {e}"}
 
     scheduler = _get_scheduler(request)
-    result = await upload_documents(db, kb_id, user_id, files, scheduler, custom_config)
-    await db.commit()
+    async with audit_scope("knowledge.doc.upload", user_id, request, target=kb_id) as entry:
+        result = await upload_documents(db, kb_id, user_id, files, scheduler, custom_config)
+        await db.commit()
+        entry.detail["files"] = [r.name for r in result]
     return {
         "code": 0,
         "data": [r.model_dump(mode="json") for r in result],
@@ -119,10 +122,14 @@ async def delete_doc(
     """删除文档（先取消在跑的索引任务，再清理向量/文件/图谱）。"""
     vector_store = _get_vector_store(request)
     mediator = _get_mediator(request)
-    await delete_document(
-        db, kb_id, doc_id, user_id, vector_store,
-        mediator=mediator, scheduler=_get_scheduler(request),
-    )
+    async with audit_scope(
+        "knowledge.doc.delete", user_id, request, target=doc_id,
+    ) as entry:
+        entry.detail["kb_id"] = kb_id
+        await delete_document(
+            db, kb_id, doc_id, user_id, vector_store,
+            mediator=mediator, scheduler=_get_scheduler(request),
+        )
     await db.commit()
     return {"code": 0, "data": None, "message": "ok"}
 
@@ -140,9 +147,10 @@ async def retry_doc(
     """重试索引（失败 / 已取消 / 卡在中间态的文档均可）。"""
     scheduler = _get_scheduler(request)
     vector_store = _get_vector_store(request)
-    result = await retry_document(
-        db, kb_id, doc_id, user_id, scheduler, vector_store=vector_store,
-    )
+    async with audit_scope("knowledge.doc.retry", user_id, request, target=doc_id):
+        result = await retry_document(
+            db, kb_id, doc_id, user_id, scheduler, vector_store=vector_store,
+        )
     return {"code": 0, "data": result.model_dump(mode="json"), "message": "ok"}
 
 
@@ -159,9 +167,10 @@ async def cancel_doc(
     """取消文档的索引任务（排队中或执行中均可）。"""
     scheduler = _get_scheduler(request)
     vector_store = _get_vector_store(request)
-    result = await cancel_document(
-        db, kb_id, doc_id, user_id, scheduler, vector_store=vector_store,
-    )
+    async with audit_scope("knowledge.doc.cancel", user_id, request, target=doc_id):
+        result = await cancel_document(
+            db, kb_id, doc_id, user_id, scheduler, vector_store=vector_store,
+        )
     return {"code": 0, "data": result.model_dump(mode="json"), "message": "ok"}
 
 
