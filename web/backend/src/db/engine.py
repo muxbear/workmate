@@ -232,6 +232,17 @@ async def _backfill_artifact_ids(conn: AsyncConnection) -> None:
         logger.info("Backfilled artifact_id for %d chat_artifacts rows", len(row_ids))
 
 
+def _install_soft_delete_filter() -> None:
+    """安装软删除的全局查询过滤器（幂等）。
+
+    放在 ``init_db`` 的调用路径上：任何入口（应用启动、脚本、测试）只要初始化过
+    数据库，过滤就生效——软删除若在某些入口不生效，等于"删了的库在那些入口又出现"。
+    """
+    from db.soft_delete import install_soft_delete_filter
+
+    install_soft_delete_filter()
+
+
 async def init_db():
     from db.base import Base
     from db.models.agent_version import (
@@ -271,6 +282,8 @@ async def init_db():
 
     logger.info("初始化数据库...")
     async with async_engine.begin() as conn:
+        # 软删除的全局过滤：在 ORM 建表之后安装，此后所有 ORM 查询自动排除已删除行
+        _install_soft_delete_filter()
         await conn.run_sync(Base.metadata.create_all)
 
         # 迁移：专家数据从 agents/expert_profiles 迁移到独立的 experts 表

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy import and_, false, func, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.knowledge_base.model_provider import check_embedding_dim
@@ -334,6 +335,28 @@ async def get_kb_stats(
     )
 
 
+async def _flush_or_name_conflict(db: AsyncSession, name: str) -> None:
+    """落库，并把"撞唯一索引"翻译成可读的 409（迭代 5 T5.6）。
+
+    应用层的"先查后插"在并发下会漏：两个请求同时查不到、同时插入。真正的把关是数据库的
+    部分唯一索引 ``uq_kb_user_name``（见 ``migrations/0001``）。约束生效后，并发重名以
+    ``IntegrityError`` 的形式爆出来——不翻译它就是一个 500，用户只看到"服务器错误"，
+    而正确的答复是"该名字已存在"。
+
+    撞约束后**必须先回滚**：事务此时已中止，不回滚的话依赖注入收尾时的 commit 会再炸一次，
+    把 409 变成 500。
+
+    这里的 IntegrityError 一律按重名处理：本函数只用于知识库行的写入，``user_id``/``name``
+    等非空列由应用侧保证，其余能撞的约束只有这一个。真实数据库报错记进日志备查。
+    """
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        logger.warning("知识库重名冲突（唯一索引拦截）name=%s: %s", name, exc)
+        raise HTTPException(status_code=409, detail=f"知识库 '{name}' 已存在") from exc
+
+
 async def create_kb(
     db: AsyncSession,
     user_id: str,
@@ -380,7 +403,7 @@ async def create_kb(
         dept_id=await resolve_user_dept(db, user_id),
     )
     db.add(kb)
-    await db.flush()
+    await _flush_or_name_conflict(db, req.name)
 
     # Create vector DB collection
     if vector_store:
@@ -418,7 +441,8 @@ async def update_kb(
             setattr(kb, key, value)
 
     kb.updated_at = datetime.utcnow()
-    await db.flush()
+    # 改名同样会撞唯一索引——重命名成已存在的库名，此前是一个 500
+    await _flush_or_name_conflict(db, kb.name)
     return _kb_to_response(kb)
 
 
@@ -430,17 +454,21 @@ async def delete_kb(
     mediator: KnowledgeBaseMediator | None = None,
     scheduler=None,
 ) -> None:
-    """删除知识库——级联删除文档、实体、关系、分享、任务与向量数据。
+    """删除知识库——**软删除**：标记 ``deleted_at``，内容暂留以便误删恢复。
 
-    删除前先取消该库所有在跑的索引任务，否则任务会继续向向量库写入（形成无法
-    回收的孤儿向量）；同时清理磁盘上的原始文件与分享记录——此前磁盘目录与
-    ``knowledge_base_shares`` 都留了下来，库删了分享还在。
+    为什么改成软删除：删库会清空向量集合与磁盘原始文件，误删**不可逆**——用户点错一次
+    就永久失去整个库。现在删除只是标记，内容（向量/文件/文档行/分享）都保留；
+    查询侧由 `db.soft_delete` 的全局过滤器统一排除，因此删掉的库对**所有**入口都不可见
+    （包括按 id 直接访问与智能体检索）。
+
+    真正释放空间/彻底删除是另一个动作：:func:`purge_kb`（管理动作，不可恢复）。
+
+    删除前仍会取消该库所有在跑的索引任务——否则任务会继续往向量库写入，
+    与"已删除"的状态自相矛盾（恢复后还会多出一批来源不明的切片）。
     """
-    from agent.config import settings
-
     kb = await _get_kb_or_404(db, kb_id, user_id)
 
-    # 取消所有在跑/排队中的索引任务
+    # 取消所有在跑/排队中的索引任务（内容保留，但不能再写入）
     if scheduler is not None:
         from db.models.knowledge_base_document import KnowledgeBaseDocument
 
@@ -456,6 +484,81 @@ async def delete_kb(
         for doc_id in doc_ids:
             await scheduler.cancel(doc_id)
 
+    kb.deleted_at = datetime.utcnow()
+    kb.updated_at = datetime.utcnow()
+
+
+async def restore_kb(db: AsyncSession, kb_id: str, user_id: str) -> None:
+    """恢复被软删除的知识库（只有库主可恢复）。
+
+    在 ``include_deleted()`` 作用域内查询：全局过滤器默认把已删除行藏起来，
+    恢复与彻底删除必须显式"看得见它们"。
+    """
+    from db.soft_delete import include_deleted
+
+    with include_deleted():
+        kb = (
+            await db.execute(
+                select(KnowledgeBase).where(
+                    KnowledgeBase.id == kb_id,
+                    KnowledgeBase.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+    if kb is None:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    if kb.deleted_at is None:
+        raise HTTPException(status_code=400, detail="该知识库未被删除，无需恢复")
+
+    # 同名库可能已在删除后被重建：恢复会撞唯一索引
+    conflict = (
+        await db.execute(
+            select(KnowledgeBase).where(
+                KnowledgeBase.user_id == user_id,
+                KnowledgeBase.name == kb.name,
+            )
+        )
+    ).scalar_one_or_none()
+    if conflict is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"无法恢复：已存在同名知识库「{kb.name}」。"
+                "请先重命名或删除那个库，再恢复。"
+            ),
+        )
+
+    kb.deleted_at = None
+    kb.updated_at = datetime.utcnow()
+
+
+async def purge_kb(
+    db: AsyncSession,
+    kb_id: str,
+    user_id: str,
+    vector_store: BaseVectorStore | None = None,
+    mediator: KnowledgeBaseMediator | None = None,
+) -> None:
+    """**彻底删除**（不可恢复）：清向量、清磁盘、删子表、删主行。
+
+    这是此前 `delete_kb` 的行为，现在单独成一个显式动作：软删除之后需要一个
+    "确实要释放空间"的出口，否则被删的库会永远占着向量与磁盘。
+    """
+    from agent.config import settings
+    from db.soft_delete import include_deleted
+
+    with include_deleted():
+        kb = (
+            await db.execute(
+                select(KnowledgeBase).where(
+                    KnowledgeBase.id == kb_id,
+                    KnowledgeBase.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+    if kb is None:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
     # 向量库清理（优先使用中介者）
     if mediator:
         await mediator.on_knowledge_base_deleted(kb_id)
@@ -470,7 +573,7 @@ async def delete_kb(
     if os.path.isdir(kb_upload_dir):
         shutil.rmtree(kb_upload_dir, ignore_errors=True)
 
-    # Delete related records（含分享与索引任务）
+    # 子表：软删除期间保留了这些行，彻底删除时一并清掉
     for table in (
         "knowledge_base_documents",
         "knowledge_base_entities",

@@ -18,7 +18,9 @@ from api.knowledge_base.service import (
     get_kb,
     get_kb_stats,
     list_kbs,
+    purge_kb,
     reindex_kb,
+    restore_kb,
     update_kb,
 )
 from api.rbac.deps import RequirePermission
@@ -242,6 +244,42 @@ async def delete_knowledge_base(
             db, kb_id, user_id, vector_store,
             mediator=mediator, scheduler=IndexingScheduler.instance(),
         )
+        await db.commit()
+    return ok(None)
+
+
+@router.post("/{kb_id}/restore")
+@handle_errors
+async def restore_knowledge_base(
+    kb_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:delete")),
+):
+    """恢复被删除的知识库（软删除后的反悔入口）。"""
+    async with audit_scope("knowledge.restore", user_id, request, target=kb_id):
+        await restore_kb(db, kb_id, user_id)
+        await db.commit()
+    return ok(None)
+
+
+@router.post("/{kb_id}/purge")
+@handle_errors
+async def purge_knowledge_base(
+    kb_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:delete")),
+):
+    """**彻底删除**知识库（清向量与磁盘，不可恢复）。
+
+    与 `DELETE`（软删除）分开：软删除让误删可恢复，但需要一个显式动作释放空间，
+    否则被删的库会永远占着向量集合与磁盘文件。
+    """
+    vector_store = _get_vector_store(request)
+    mediator = _get_mediator(request)
+    async with audit_scope("knowledge.purge", user_id, request, target=kb_id):
+        await purge_kb(db, kb_id, user_id, vector_store, mediator)
         await db.commit()
     return ok(None)
 

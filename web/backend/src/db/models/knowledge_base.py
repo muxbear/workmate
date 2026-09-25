@@ -33,6 +33,13 @@ class KnowledgeBase(Base):
     dept_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, index=True, comment="归属部门 ID（数据范围的判定依据）"
     )
+    #: 软删除时间戳（迭代 5 T5.6）：删除知识库会清空向量与磁盘文件，误删不可逆，
+    #: 因此先标记、再由人工或定期任务真正清理。为空表示未删除。
+    #: **查询侧不用逐个改**：见 `db.soft_delete` 的全局过滤器——漏掉一处的后果是
+    #: "删掉的库又冒出来"，那种错误很难被发现，所以做成漏不掉。
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True, comment="软删除时间；为空表示未删除"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
