@@ -359,6 +359,11 @@ async def init_db():
 
         if await _table_exists(conn, 'ai_models'):
             existing = await _get_existing_columns(conn, 'ai_models')
+            # 向量维度（迭代 4 T4.4）：此前知识库的维度靠用户手填、无任何校验，
+            # 填错要等到写入向量库才报错（且报错信息与真正原因无关）。
+            if "dim" not in existing:
+                logger.info("Adding dim column to ai_models table")
+                await conn.execute(text("ALTER TABLE ai_models ADD COLUMN dim INTEGER"))
             if "sort_order" not in existing:
                 logger.info("Adding sort_order column to ai_models table")
                 await conn.execute(text("ALTER TABLE ai_models ADD COLUMN sort_order INTEGER DEFAULT 0"))

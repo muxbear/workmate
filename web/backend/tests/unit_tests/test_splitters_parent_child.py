@@ -250,8 +250,8 @@ class TestMarkdownParentSplitting:
 class TestParentMetadataPersistence:
     """父块信息必须写进向量库元数据，否则检索侧拿不到父块正文。"""
 
-    async def test_bm25_state_persists_parent_keys(self):
-        from api.knowledge_base.doc_state import BM25State, IndexingContext
+    async def test_embedding_state_persists_parent_keys(self):
+        from api.knowledge_base.doc_state import EmbeddingState, IndexingContext
 
         stored: list = []
 
@@ -260,8 +260,16 @@ class TestParentMetadataPersistence:
                 stored.extend(documents)
                 return []
 
+        class FakeEmbeddings:
+            async def aembed_documents(self, texts, on_batch=None):
+                vectors = [[0.1, 0.2] for _ in texts]
+                if on_batch is not None:
+                    await on_batch(0, texts, vectors)
+                return vectors
+
         class FakePipeline:
             vector_store = RecordingStore()
+            embedding_model = FakeEmbeddings()
 
         ctx = IndexingContext(
             doc_id="doc-1", kb_id="kb-1", file_path="/tmp/a.md", file_type="md",
@@ -270,9 +278,9 @@ class TestParentMetadataPersistence:
         ctx.chunks = [
             _doc("子块正文", parent_id="p0", parent_index=0, parent_text="父块完整正文"),
         ]
-        ctx.embeddings = [[0.1, 0.2]]
 
-        await BM25State().handle(ctx, FakePipeline())  # type: ignore[arg-type]
+        # 向量化与写入是同一步（T4.3 的分批写入），因此这里驱动 EmbeddingState
+        await EmbeddingState().handle(ctx, FakePipeline())  # type: ignore[arg-type]
 
         meta = stored[0].metadata["metadata_"]
         assert meta["parent_text"] == "父块完整正文"

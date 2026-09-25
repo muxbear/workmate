@@ -42,6 +42,11 @@ class AIModel(Base):
         nullable=True,
         comment="模型级 API 地址覆盖；为空时继承提供商的 api_base",
     )
+    dim: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="向量维度（仅 embedding 模型有意义）；留空时首次调用自动探测并落库",
+    )
     call_count: Mapped[int] = mapped_column(Integer, default=0, comment="调用次数")
     description: Mapped[str] = mapped_column(Text, default="", comment="描述")
     release_date: Mapped[str | None] = mapped_column(String(16), nullable=True, comment="发布日期（如 2024-05）")

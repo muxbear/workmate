@@ -56,6 +56,8 @@ export interface AIModel {
   maxInputTokens?: number
   /** 最大输出长度（tokens，生成上限） */
   maxOutputTokens?: number
+  /** 向量维度（仅 embedding 模型有意义）；留空时后端首次调用会探测并落库 */
+  dim?: number
   /** 每分钟请求数上限 */
   rpm?: number
   /** 每分钟 token 上限 */

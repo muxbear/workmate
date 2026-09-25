@@ -25,7 +25,7 @@ import logging
 import math
 import time
 from abc import ABC, abstractmethod
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -318,21 +318,27 @@ class SparseIndexCache:
 
     语料统计（df / avgdl）不随 k1、b 变化，因此索引可以跨查询复用；打分参数在
     查询时应用。写入路径（add / delete / update / 重建 collection）会调用
-    :meth:`invalidate` 立即失效，保证同进程内读到最新语料；``ttl_seconds`` 仅作为
-    跨进程写入（多 worker 部署）的兜底过期时间。
+    :meth:`invalidate` 立即失效，保证同进程内读到最新语料。
+
+    **有界 LRU**：此前是无上限 dict + 60s TTL，缓存条目数随知识库数量增长，而每条
+    都常驻整库语料——内存与"库数 × 库规模"成正比。现改为容量上限 + 淘汰最久未使用，
+    内存只与"上限 × 库规模"相关。TTL 保留但放大（仅作为多 worker 部署下"别的进程
+    写了库、本进程看不到失效通知"的兜底），正确性靠写入路径的 invalidate，不靠 TTL。
     """
 
     def __init__(
         self,
-        ttl_seconds: float = 60.0,
+        max_entries: int = 8,
+        ttl_seconds: float = 300.0,
         clock: Callable[[], float] | None = None,
     ) -> None:
+        self._max_entries = max(1, max_entries)
         self._ttl_seconds = ttl_seconds
         self._clock = clock or time.monotonic
-        self._entries: dict[str, tuple[float, BM25Index]] = {}
+        self._entries: OrderedDict[str, tuple[float, BM25Index]] = OrderedDict()
 
     def get(self, kb_id: str) -> BM25Index | None:
-        """取出未过期的索引；不存在或已过期返回 ``None``。"""
+        """取出未过期的索引；不存在或已过期返回 ``None``。命中会刷新 LRU 次序。"""
         entry = self._entries.get(kb_id)
         if entry is None:
             return None
@@ -340,11 +346,16 @@ class SparseIndexCache:
         if self._clock() - stored_at > self._ttl_seconds:
             self._entries.pop(kb_id, None)
             return None
+        self._entries.move_to_end(kb_id)
         return index
 
     def put(self, kb_id: str, index: BM25Index) -> None:
-        """写入索引并记录时间戳。"""
+        """写入索引并记录时间戳；超出容量时淘汰最久未使用的一项。"""
         self._entries[kb_id] = (self._clock(), index)
+        self._entries.move_to_end(kb_id)
+        while len(self._entries) > self._max_entries:
+            evicted, _ = self._entries.popitem(last=False)
+            logger.debug("BM25 语料缓存已满，淘汰 kb=%s", evicted)
 
     def invalidate(self, kb_id: str) -> None:
         """使某知识库的缓存失效（写入路径必须调用）。"""

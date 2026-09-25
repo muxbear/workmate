@@ -166,8 +166,13 @@ async def run(
     if missing:
         raise SystemExit(f"黄金集引用了不存在的知识库: {sorted(missing)}")
 
-    async with async_session() as setup_db:
-        embedding = await load_embedding_model(setup_db)
+    # 只跑 bm25 时不碰 embedding 模型：纯 BM25 检索本来就不需要向量化，
+    # 强行加载会让"只想验一下关键词检索"也必须先配好 embedding 服务
+    needs_embedding = any(mode in ("vector", "hybrid") for mode in modes)
+    embedding = None
+    if needs_embedding:
+        async with async_session() as setup_db:
+            embedding = await load_embedding_model(setup_db)
     store = MilvusVectorStore(
         uri=settings.MILVUS_URI,
         user=settings.MILVUS_USER,

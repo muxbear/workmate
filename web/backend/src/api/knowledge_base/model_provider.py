@@ -53,6 +53,113 @@ async def load_embedding_model(
     )
 
 
+async def resolve_embedding_dim(
+    db: AsyncSession,
+    model_name: str | None = None,
+    provider_id: str | None = None,
+) -> int | None:
+    """解析 embedding 模型的**真实**向量维度。
+
+    模型页可以显式填 ``dim``；没填时**首次调用探测一次并落库**——与其让用户在配置
+    页手填一个从文档里翻出来的数字（填错要到写入向量库才炸，且报错与原因无关），
+    不如问一次 API。
+
+    Returns:
+        维度；模型不可用或探测失败时返回 ``None``（调用方决定是拒绝还是放行）。
+
+    Raises:
+        RuntimeError: 模型页没有可用的 embedding 模型。
+    """
+    row = await _load_model_row(
+        db, model_type="embedding", model_name=model_name, provider_id=provider_id
+    )
+    if row is None:
+        raise RuntimeError("知识库未找到可用的 embedding 模型，请在“模型”页面配置 type=embedding 的模型")
+    model, _provider, _api_key = row
+
+    declared = getattr(model, "dim", None)
+    if isinstance(declared, int) and declared > 0:
+        return declared
+
+    probed = await _probe_embedding_dim(db, model, model_name, provider_id)
+    if probed is not None:
+        try:
+            model.dim = probed
+            await db.commit()
+            logger.info("已探测并记录 embedding 模型 %s 的维度：%d", model.name, probed)
+        except Exception:  # noqa: BLE001 - 落库失败不影响本次使用
+            await db.rollback()
+            logger.warning("写入 embedding 模型维度失败（不影响本次调用）", exc_info=True)
+    return probed
+
+
+def config_value(config: object, *keys: str) -> Any:
+    """从知识库配置里取值——对象（IndexConfigSchema）与 dict 两种形态都要认。"""
+    for key in keys:
+        if isinstance(config, dict):
+            value = config.get(key)
+        elif config is not None:
+            value = getattr(config, key, None)
+        else:
+            value = None
+        if value is not None:
+            return value
+    return None
+
+
+async def check_embedding_dim(db: AsyncSession, config: object) -> str | None:
+    """校验配置里的 embedding 维度与模型**真实输出**维度是否一致。
+
+    此前维度完全靠用户手填且无处校验：填成 768 而模型输出 1024 时，建集合会按
+    768 建，直到第一片向量写进去才报错——错误信息是向量库的维度断言，与"配置页
+    填错了"这个真正的原因毫无关系。同一个 collection 里混入不同语义空间的向量
+    也可以悄无声息地发生（文档级 config 覆盖模型）。
+
+    Returns:
+        不一致时返回**可直接展示给用户**的说明；一致或无法确定时返回 ``None``
+        （模型不可用/探测失败时放行——不能因为探测不了就把功能锁死）。
+    """
+    configured = config_value(config, "embedding_dim", "embeddingDim")
+    if not isinstance(configured, (int, float)) or configured <= 0:
+        return None
+
+    model_name = config_value(config, "embedding_model", "embeddingModel")
+    provider_id = config_value(config, "embedding_provider_id", "embeddingProviderId")
+    try:
+        actual = await resolve_embedding_dim(
+            db, model_name=model_name, provider_id=provider_id,
+        )
+    except RuntimeError:
+        return None
+    if actual is None or int(configured) == actual:
+        return None
+
+    return (
+        f"embedding 维度不一致：知识库配置为 {int(configured)} 维，"
+        f"但模型「{model_name or '默认 embedding 模型'}」实际输出 {actual} 维。"
+        f"请把索引配置的维度改成 {actual} 后重建索引——"
+        "维度不一致会让写入失败，或让库内混入不同语义空间的向量导致检索失真。"
+    )
+
+
+async def _probe_embedding_dim(
+    db: AsyncSession,
+    model: Any,
+    model_name: str | None,
+    provider_id: str | None,
+) -> int | None:
+    """调用一次 embedding 接口，用返回向量的长度确定维度。"""
+    try:
+        instance = await load_embedding_model(
+            db, model_name=model_name, provider_id=provider_id,
+        )
+        vector = await instance.aembed_query("dimension probe")
+    except Exception:  # noqa: BLE001 - 探测失败不该让调用方直接崩
+        logger.warning("探测 embedding 维度失败：%s", model.name, exc_info=True)
+        return None
+    return len(vector) if vector else None
+
+
 async def load_llm_model(
     db: AsyncSession,
     model_name: str | None = None,

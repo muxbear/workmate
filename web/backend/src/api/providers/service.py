@@ -58,6 +58,7 @@ def _model_to_response(m: AIModel) -> ModelResponse:
         context_window=m.context_window,
         max_input_tokens=m.max_input_tokens,
         max_output_tokens=m.max_output_tokens,
+        dim=m.dim,
         rpm=m.rpm,
         tpm=m.tpm,
         api_base=m.api_base,
@@ -253,6 +254,7 @@ async def create_model(
         context_window=req.context_window,
         max_input_tokens=req.max_input_tokens,
         max_output_tokens=req.max_output_tokens,
+        dim=req.dim,
         rpm=req.rpm,
         tpm=req.tpm,
         api_base=(req.api_base or "").strip() or None,
@@ -281,6 +283,7 @@ async def update_model(
     model.context_window = req.context_window
     model.max_input_tokens = req.max_input_tokens
     model.max_output_tokens = req.max_output_tokens
+    model.dim = req.dim
     model.rpm = req.rpm
     model.tpm = req.tpm
     model.api_base = (req.api_base or "").strip() or None

@@ -32,6 +32,25 @@ STAGE_PROGRESS: dict[str, int] = {
 }
 
 
+#: 图谱抽取的默认预算（秒）——必须**明显小于**流水线的阶段超时，否则内层还没到点，
+#: 外层 wait_for 先把整个阶段取消掉，文档又会被判失败（正是要修的问题）。
+DEFAULT_GRAPH_TIMEOUT_SECONDS = 300.0
+
+#: 内层预算与外层阶段超时之间保留的余量（秒）
+_GRAPH_TIMEOUT_MARGIN = 30.0
+
+
+def _graph_extract_timeout(stage_timeout: float | None) -> float:
+    """图谱抽取的预算：取默认值与"阶段超时减余量"中较小者。
+
+    保证内层一定先于外层触发——超时要走 graph_error 分支，而不是让流水线把整篇
+    文档判失败。
+    """
+    if stage_timeout is None or stage_timeout <= 0:
+        return DEFAULT_GRAPH_TIMEOUT_SECONDS
+    return max(1.0, min(DEFAULT_GRAPH_TIMEOUT_SECONDS, stage_timeout - _GRAPH_TIMEOUT_MARGIN))
+
+
 def is_graph_enabled(config: dict | None) -> bool:
     """判断是否启用知识图谱抽取（默认启用）。
 
@@ -66,7 +85,8 @@ class IndexingContext:
 
     documents: list = field(default_factory=list)
     chunks: list = field(default_factory=list)
-    embeddings: list = field(default_factory=list)
+    #: 已写入向量库的切片数（分批写入时用于核对"写全了没有"）
+    written_chunks: int = 0
     entities_count: int = 0
     relations_count: int = 0
     #: 图谱抽取失败的原因——抽取失败不影响文档索引成功，但必须让用户看得见
@@ -150,60 +170,99 @@ class ChunkingState(DocState):
             await ctx.fail(f"文本切片失败: {e}")
 
 
+def _prepare_chunks_for_write(chunks: list, ctx: IndexingContext, start_index: int) -> None:
+    """写入向量库前，把文档级与定位类元数据补进每个切片。
+
+    抽成独立函数是为了"embed 一批、写一批"：写哪批就准备哪批，不必等全部切片都
+    准备完（元数据的注入是逐切片幂等的，分批调用结果与一次性调用一致）。
+
+    ``start_index`` 是本批在整篇文档里的起始切片号。分批是**并发**的，回调完成顺序
+    与批次顺序不一定一致，因此索引号必须由批次的**位置**推导，不能用"已写入计数"
+    递增——那样并发乱序时会把编号写串（切片顺序与 prev/next 都会错）。
+    """
+    doc_name = ctx.file_path.replace("\\", "/").rsplit("/", 1)[-1]
+    header_keys = {"h1", "h2", "h3", "h4", "h5", "h6"}
+    #: 位置类元数据——写入向量库的 metadata_，供引用定位（页码/章节）使用。
+    #: 此前只保留标题层级，loader 提供的 page 被丢弃，检索结果无法给出页码。
+    position_keys = ("page", "page_ref", "section", "source")
+    #: 父子块（Small-to-Big）的父块信息——必须一起落库，否则检索侧拿不到
+    #: 父块正文，"命中子块返回父块"就退化成返回子块。
+    parent_keys = ("parent_id", "parent_index", "parent_text")
+
+    for offset, chunk in enumerate(chunks):
+        if not chunk.metadata.get("doc_id"):
+            chunk.metadata["doc_id"] = ctx.doc_id
+        # 索引号一律以最终切片顺序为准（全局递增）：
+        # 此前用 `if not chunk.metadata.get("chunk_index")` 判断，既把 0 当成
+        # "缺失"，又保留了 splitter 按"单个 Document 内部"编号的结果——多页
+        # PDF / 多段 Markdown 会各自从 0 开始，编号互相碰撞，导致切片排序与
+        # 前后文（prev/next）取错。
+        chunk.metadata["chunk_index"] = start_index + offset
+        chunk.metadata["doc_name"] = doc_name
+        chunk.metadata["doc_type"] = ctx.file_type
+        extra_meta = chunk.metadata.get("metadata_", {})
+        for k in header_keys:
+            if k in chunk.metadata:
+                extra_meta[k] = chunk.metadata[k]
+        for k in position_keys:
+            if k in chunk.metadata:
+                extra_meta[k] = chunk.metadata[k]
+        for k in parent_keys:
+            if k in chunk.metadata:
+                extra_meta[k] = chunk.metadata[k]
+        chunk.metadata["metadata_"] = extra_meta
+
+
 class EmbeddingState(DocState):
+    """向量化**并写入**——embed 一批就写一批。
+
+    为什么合并成一步：全量向量（1024 维 float，约 8KB/片）一次性算完再写，峰值内存
+    与文档规模成正比（10 万片 ≈ 800MB，只这一项就够 OOM）。分批后峰值内存只与
+    **单批**（10 条）相关，与文档大小无关。
+
+    写完后才推进 "bm25" 阶段：原生稀疏索引由 Milvus 在写入时通过 BM25 Function
+    生成（见 T4.2），因此"稀疏索引"这一步的时机就是写入完成。
+    """
+
     name = "embedding"
 
     async def handle(self, ctx: IndexingContext, pipeline: IndexingPipeline) -> None:
         try:
-            texts = [chunk.page_content for chunk in ctx.chunks]
             emb_model = ctx.embedding_model or pipeline.embedding_model
-            ctx.embeddings = await emb_model.aembed_documents(texts)
+            texts = [chunk.page_content for chunk in ctx.chunks]
+
+            async def write_batch(start: int, batch_texts: list[str], vectors: list) -> None:
+                batch_chunks = ctx.chunks[start:start + len(batch_texts)]
+                _prepare_chunks_for_write(batch_chunks, ctx, start)
+                await pipeline.vector_store.add_documents(
+                    ctx.kb_id, batch_chunks, vectors,
+                )
+                ctx.written_chunks += len(batch_chunks)
+
+            await emb_model.aembed_documents(texts, on_batch=write_batch)
             await ctx.transition_to(BM25State(), "bm25", STAGE_PROGRESS["bm25"])
         except Exception as e:
             await ctx.fail(f"向量化失败: {e}")
 
 
 class BM25State(DocState):
+    """稀疏索引阶段——原生索引在写入时已由 Milvus 的 BM25 Function 生成，这里做核对。
+
+    分批写入把"向量化"与"落库"合并成了一步（见 :class:`EmbeddingState`），因此本阶段
+    只剩一件有意义的事：确认**该写的切片都写进去了**。写入中途失败会让文档只入库一部分，
+    这属于必须暴露的失败，而不是"记个日志继续走"。
+    """
+
     name = "bm25"
 
     async def handle(self, ctx: IndexingContext, pipeline: IndexingPipeline) -> None:
         import logging
         _logger = logging.getLogger(__name__)
         try:
-            # Inject doc-level metadata into every chunk before storing
-            doc_name = ctx.file_path.replace("\\", "/").rsplit("/", 1)[-1]
-            header_keys = {"h1", "h2", "h3", "h4", "h5", "h6"}
-            #: 位置类元数据——写入向量库的 metadata_，供引用定位（页码/章节）使用。
-            #: 此前只保留标题层级，loader 提供的 page 被丢弃，检索结果无法给出页码。
-            position_keys = ("page", "page_ref", "section", "source")
-            #: 父子块（Small-to-Big）的父块信息——必须一起落库，否则检索侧拿不到
-            #: 父块正文，"命中子块返回父块"就退化成返回子块。
-            parent_keys = ("parent_id", "parent_index", "parent_text")
-            for i, chunk in enumerate(ctx.chunks):
-                if not chunk.metadata.get("doc_id"):
-                    chunk.metadata["doc_id"] = ctx.doc_id
-                # 索引号一律以最终切片顺序为准（全局递增）：
-                # 此前用 `if not chunk.metadata.get("chunk_index")` 判断，既把 0 当成
-                # "缺失"，又保留了 splitter 按"单个 Document 内部"编号的结果——多页
-                # PDF / 多段 Markdown 会各自从 0 开始，编号互相碰撞，导致切片排序与
-                # 前后文（prev/next）取错。
-                chunk.metadata["chunk_index"] = i
-                chunk.metadata["doc_name"] = doc_name
-                chunk.metadata["doc_type"] = ctx.file_type
-                # Collect header/section info from splitter metadata
-                extra_meta = chunk.metadata.get("metadata_", {})
-                for k in header_keys:
-                    if k in chunk.metadata:
-                        extra_meta[k] = chunk.metadata[k]
-                for k in position_keys:
-                    if k in chunk.metadata:
-                        extra_meta[k] = chunk.metadata[k]
-                for k in parent_keys:
-                    if k in chunk.metadata:
-                        extra_meta[k] = chunk.metadata[k]
-                chunk.metadata["metadata_"] = extra_meta
-
-            await pipeline.vector_store.add_documents(ctx.kb_id, ctx.chunks, ctx.embeddings)
+            if ctx.written_chunks != len(ctx.chunks):
+                raise RuntimeError(
+                    f"切片写入不完整：应写 {len(ctx.chunks)} 片，实际写入 {ctx.written_chunks} 片",
+                )
             await ctx.transition_to(ExtractingState(), "extracting", STAGE_PROGRESS["extracting"])
         except Exception as e:
             _logger.exception("BM25 add_documents failed for doc=%s kb=%s", ctx.doc_id, ctx.kb_id)
@@ -211,6 +270,17 @@ class BM25State(DocState):
 
 
 class ExtractingState(DocState):
+    """实体关系抽取——**失败与超时都不影响文档索引成功**。
+
+    这一步跑在切片**已经写入向量库之后**，因此无论它怎么结束，文档都是可检索的。
+    此前只有"抛异常"被当作非致命，而"跑太久"会撞上流水线的阶段超时，把整篇文档
+    标记为 failed——实测一次重建里 7 篇文档有 3 篇因此失败（图谱抽取 600s 没跑完），
+    用户的库里凭空少了 3 篇文档的检索结果，且重试要从头再向量化一遍。
+
+    现在给抽取单独设预算：**超时与失败一律记入 `graph_error`**，文档照常 indexed。
+    图谱是增强项，索引才是产品；用丢失检索能力去换图谱完整性是明显不划算的。
+    """
+
     name = "extracting"
 
     async def handle(self, ctx: IndexingContext, pipeline: IndexingPipeline) -> None:
@@ -222,16 +292,28 @@ class ExtractingState(DocState):
                 entity_model = (
                     ctx.config.get("entity_model") or ctx.config.get("entityModel")
                 )
-                entities, relations = await pipeline.graph_service.extract_entities_and_relations(
-                    ctx.kb_id,
-                    ctx.doc_id,
-                    ctx.chunks,
-                    model_name=entity_model,
+                budget = _graph_extract_timeout(getattr(pipeline, "stage_timeout", None))
+                entities, relations = await asyncio.wait_for(
+                    pipeline.graph_service.extract_entities_and_relations(
+                        ctx.kb_id,
+                        ctx.doc_id,
+                        ctx.chunks,
+                        model_name=entity_model,
+                    ),
+                    timeout=budget,
                 )
                 ctx.entities_count = len(entities)
                 ctx.relations_count = len(relations)
             else:
                 _logger.info("Graph extraction disabled for doc=%s", ctx.doc_id)
+            await ctx.transition_to(IndexedState(), "indexed", STAGE_PROGRESS["indexed"])
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            budget = _graph_extract_timeout(getattr(pipeline, "stage_timeout", None))
+            _logger.warning("Graph extraction timed out for doc=%s", ctx.doc_id)
+            ctx.graph_error = (
+                f"图谱抽取超时（超过 {budget:g} 秒）——文档已完成索引与检索，"
+                "仅图谱未生成；可稍后重试该文档补抽"
+            )
             await ctx.transition_to(IndexedState(), "indexed", STAGE_PROGRESS["indexed"])
         except Exception as exc:
             _logger.exception("Entity extraction failed for doc=%s", ctx.doc_id)

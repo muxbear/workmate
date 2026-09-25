@@ -650,9 +650,32 @@ class IndexingPipeline:
             await ctx.fail(str(e))
             await self._notify(ctx)
 
+    async def _verify_embedding_dim(self, task: IndexingTask) -> None:
+        """校验本次索引用的维度与知识库配置一致。
+
+        不一致时抛错（由调用方转成文档级失败原因），而不是让向量库在插入时报一个
+        看不懂的断言错误。
+        """
+        from api.knowledge_base.model_provider import check_embedding_dim
+        from db.engine import async_session
+
+        try:
+            async with async_session() as session:
+                mismatch = await check_embedding_dim(session, task.config)
+        except Exception:  # noqa: BLE001 - 校验本身失败不该阻断索引
+            logger.warning("维度校验执行失败，跳过 doc=%s", task.doc_id, exc_info=True)
+            return
+        if mismatch:
+            raise RuntimeError(mismatch)
+
     async def _prepare(self, task: IndexingTask) -> IndexingContext:
         """构建索引上下文（解析模型与切片策略）。"""
         config = task.config
+
+        # 写入前的最后一道维度校验（T4.4）：同一个 collection 里混入不同维度的向量
+        # 会让写入失败、或混入不同语义空间的向量导致检索失真且无告警。配置层已拦一次，
+        # 这里拦住的是"库配置被改过但没重建"的历史数据。
+        await self._verify_embedding_dim(task)
 
         # 获取该文档使用的 embedding model、切片策略与（agentic 需要的）LLM
         emb_model_name = config.get("embedding_model")
@@ -1116,6 +1139,37 @@ class IndexingScheduler:
 # 文档业务逻辑
 # ══════════════════════════════════════════════════════════════
 
+#: 文档级配置里**不允许**覆盖的键——它们决定向量语义空间，必须与知识库一致
+DOC_LEVEL_FORBIDDEN_KEYS = ("embedding_model", "embedding_dim", "embedding_provider_id")
+
+
+def validate_doc_config(custom_config: dict | None, kb_config: dict) -> None:
+    """拒绝文档级覆盖 embedding 模型/维度（T4.4）。
+
+    同一个 collection 里的向量必须来自同一个模型：文档级覆盖会让**同一个库混入
+    不同语义空间的向量**，检索结果互不可比且没有任何告警——比"某个文档索引失败"
+    隐蔽得多。真要换模型，正确入口是给整库重建索引（reindex_kb）。
+
+    Raises:
+        HTTPException: 覆盖了不允许覆盖的字段，或与知识库配置不一致。
+    """
+    if not custom_config:
+        return
+    for key in DOC_LEVEL_FORBIDDEN_KEYS:
+        if key not in custom_config:
+            continue
+        if custom_config[key] != kb_config.get(key):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"不能在文档级覆盖 {key}（当前值 {custom_config[key]!r}，"
+                    f"知识库配置为 {kb_config.get(key)!r}）。"
+                    "embedding 模型与维度决定向量的语义空间，同一知识库内必须一致；"
+                    "如需更换，请修改知识库索引配置并重建索引。"
+                ),
+            )
+
+
 async def upload_documents(
     db: AsyncSession,
     kb_id: str,
@@ -1136,6 +1190,8 @@ async def upload_documents(
     ).scalar_one_or_none()
     if kb is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
+
+    validate_doc_config(custom_config, dict(kb.config or {}))
 
     upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
     os.makedirs(upload_dir, exist_ok=True)

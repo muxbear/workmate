@@ -296,9 +296,11 @@ class RecordingObserver:
 
     def __init__(self):
         self.events: list[tuple[str, str | None]] = []
+        self.graph_errors: list[str | None] = []
 
     async def on_progress(self, ctx: IndexingContext) -> None:
         self.events.append((ctx.status, ctx.error_message))
+        self.graph_errors.append(ctx.graph_error)
 
 
 class FakeLoaderRegistry:
@@ -320,9 +322,12 @@ class RecordingVectorStore:
 
     def __init__(self):
         self.added: list = []
+        #: 每次 add_documents 的条数——用于断言"是否分批写入"
+        self.batch_sizes: list[int] = []
 
     async def add_documents(self, kb_id, documents, embeddings):
         self.added.extend(documents)
+        self.batch_sizes.append(len(documents))
         return [f"c{i}" for i in range(len(documents))]
 
 
@@ -345,8 +350,20 @@ class PassthroughChunkRegistry:
 
 
 class FakeEmbeddingModel:
-    async def aembed_documents(self, texts):
-        return [[0.1, 0.2] for _ in texts]
+    def __init__(self, batch_size: int = 10, reverse: bool = False):
+        self.batch_size = batch_size
+        #: 倒序回调——模拟并发批次"后发的先回"，用于验证切片号不依赖回调顺序
+        self.reverse = reverse
+
+    async def aembed_documents(self, texts, on_batch=None):
+        """与真实实现同构：分批回调（流水线靠它"embed 一批、写一批"）。"""
+        vectors = [[0.1, 0.2] for _ in texts]
+        if on_batch is not None:
+            starts = list(range(0, len(texts), self.batch_size))
+            for start in reversed(starts) if self.reverse else starts:
+                batch = texts[start:start + self.batch_size]
+                await on_batch(start, batch, vectors[start:start + len(batch)])
+        return vectors
 
 
 class ExplodingEmbeddingResolver:
@@ -451,6 +468,91 @@ class TestPrepareFailure:
 
         assert observer.events[-1][0] == "failed"
         assert "索引初始化失败" in (observer.events[-1][1] or "")
+
+
+class TestGraphTimeoutIsNotFatal:
+    """图谱抽取超时**不得**把文档判失败（实测一次重建因此丢了 3 篇文档）。
+
+    抽取跑在切片已写入向量库之后：这时候把整篇文档标记 failed，等于"内容已经进库、
+    界面上却显示失败"，用户既看不到检索结果，重试还要从头向量化一遍。
+    """
+
+    async def test_slow_graph_extraction_keeps_document_indexed(self):
+        docs = [_document("第 1 章 正文内容。" * 20)]
+        store = RecordingVectorStore()
+
+        class SlowGraphService:
+            async def extract_entities_and_relations(
+                self, kb_id, doc_id, chunks, model_name=None,
+            ):
+                await asyncio.sleep(30)      # 远超内层预算
+                return [], []
+
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs),
+            vector_store=store,
+            graph_service=SlowGraphService(),  # type: ignore[arg-type]
+        )
+        observer = RecordingObserver()
+        pipeline.attach(observer)
+
+        # 内层预算取 min(300, stage_timeout-30)，这里把阶段超时压到 1.2s 以缩短用例
+        await asyncio.wait_for(
+            self._run_with_budget(pipeline), timeout=10,
+        )
+
+        assert observer.events[-1][0] == "indexed", "超时不该让文档失败"
+        assert store.added, "切片应已写入向量库"
+        # 也不能静默：用户要能看出"这篇没有图谱，且原因是超时"
+        assert observer.graph_errors[-1] and "超时" in observer.graph_errors[-1]
+
+    @staticmethod
+    async def _run_with_budget(pipeline):
+        """把内层图谱预算压到 0.2s（缩短用例，逻辑不变）。"""
+        import api.knowledge_base.doc_state as doc_state
+
+        original = doc_state.DEFAULT_GRAPH_TIMEOUT_SECONDS
+        doc_state.DEFAULT_GRAPH_TIMEOUT_SECONDS = 0.2
+        try:
+            await _drive(pipeline)
+        finally:
+            doc_state.DEFAULT_GRAPH_TIMEOUT_SECONDS = original
+
+
+class TestBatchWrite:
+    """分批写入（迭代 4 T4.3）：embed 一批就写一批，峰值内存与文档规模解耦。"""
+
+    async def test_document_is_written_in_batches(self):
+        docs = [_document(f"第{i}段内容" * 20) for i in range(25)]
+        store = RecordingVectorStore()
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs), vector_store=store,
+        )
+        pipeline.embedding_model = FakeEmbeddingModel(batch_size=10)
+
+        await _drive(pipeline)
+
+        assert len(store.added) == 25
+        assert store.batch_sizes == [10, 10, 5], "应按批写入而不是一次性全量写入"
+
+    async def test_chunk_index_survives_out_of_order_batches(self):
+        """并发回调乱序时切片号不能串。
+
+        切片号由**批次位置**推导（start_index + 批内偏移），不能用"已写入计数"递增
+        ——回调完成顺序与批次顺序不一定一致，递增编号会把编号写串，导致切片顺序与
+        prev/next 全错。
+        """
+        docs = [_document(f"第{i}段内容" * 20) for i in range(25)]
+        store = RecordingVectorStore()
+        pipeline = _make_pipeline(
+            loader_registry=FakeLoaderRegistry(docs), vector_store=store,
+        )
+        pipeline.embedding_model = FakeEmbeddingModel(batch_size=10, reverse=True)
+
+        await _drive(pipeline)
+
+        by_text = {d.page_content: d.metadata["chunk_index"] for d in store.added}
+        assert sorted(by_text.values()) == list(range(25))
 
 
 class TestChunkMetadata:

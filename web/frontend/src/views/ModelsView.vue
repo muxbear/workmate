@@ -120,6 +120,7 @@ const modelForm = ref({
   contextWindow: undefined as number | undefined,
   maxInputTokens: undefined as number | undefined,
   maxOutputTokens: undefined as number | undefined,
+  dim: undefined as number | undefined,
   rpm: undefined as number | undefined,
   tpm: undefined as number | undefined,
   apiBase: '',
@@ -166,6 +167,7 @@ function openNewModel() {
     contextWindow: undefined,
     maxInputTokens: undefined,
     maxOutputTokens: undefined,
+    dim: undefined,
     rpm: undefined,
     tpm: undefined,
     apiBase: '',
@@ -203,6 +205,7 @@ function openEditModel(m: AIModel) {
     contextWindow: m.contextWindow,
     maxInputTokens: m.maxInputTokens,
     maxOutputTokens: m.maxOutputTokens,
+    dim: m.dim,
     rpm: m.rpm,
     tpm: m.tpm,
     apiBase: m.apiBase ?? '',
@@ -225,6 +228,7 @@ async function handleSaveModel() {
       contextWindow: modelForm.value.contextWindow,
       maxInputTokens: modelForm.value.maxInputTokens,
       maxOutputTokens: modelForm.value.maxOutputTokens,
+      dim: modelForm.value.dim,
       rpm: modelForm.value.rpm,
       tpm: modelForm.value.tpm,
       apiBase: modelForm.value.apiBase.trim(),
@@ -1226,6 +1230,25 @@ onMounted(() => {
                   />
                 </div>
               </div>
+              <div v-if="modelForm.type === 'embedding'" class="form-group">
+                <label class="form-label">向量维度</label>
+                <input
+                  type="number"
+                  min="1"
+                  :value="modelForm.dim"
+                  @input="
+                    modelForm.dim = toOptionalNumber(
+                      ($event.target as HTMLInputElement).value,
+                    )
+                  "
+                  placeholder="如 1024；留空时后端首次调用会自动探测并记录"
+                  class="form-input"
+                />
+                <div class="form-hint">
+                  知识库建库与重建时用它校验维度是否一致。填错维度会导致写入失败，
+                  或让同一个库里混入不同语义空间的向量——留空让系统自己探测更省事。
+                </div>
+              </div>
               <div class="form-row-2">
                 <div class="form-group">
                   <label class="form-label">RPM</label>
@@ -1376,6 +1399,10 @@ onMounted(() => {
                 <span class="drawer-value"
                   >{{ formatContext(viewingModel.maxInputTokens) }} tokens</span
                 >
+              </div>
+              <div v-if="viewingModel.dim" class="drawer-info-row">
+                <span class="drawer-info-label">向量维度</span>
+                <span class="drawer-info-value">{{ viewingModel.dim }}</span>
               </div>
               <div v-if="viewingModel.maxOutputTokens" class="drawer-info-row">
                 <span class="drawer-label">最大输出长度</span>

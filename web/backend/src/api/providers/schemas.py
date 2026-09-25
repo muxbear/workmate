@@ -33,6 +33,8 @@ class ModelCreateRequest(BaseModel):
     context_window: int | None = None
     max_input_tokens: int | None = Field(default=None, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=0)
+    #: 向量维度——仅 embedding 模型有意义；留空时知识库首次调用会探测并落库（T4.4）
+    dim: int | None = Field(default=None, ge=1, le=65536)
     rpm: int | None = Field(default=None, ge=0)
     tpm: int | None = Field(default=None, ge=0)
     api_base: str | None = Field(default=None, max_length=512)
@@ -51,6 +53,8 @@ class ModelUpdateRequest(BaseModel):
     context_window: int | None = None
     max_input_tokens: int | None = Field(default=None, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=0)
+    #: 向量维度——仅 embedding 模型有意义；留空时知识库首次调用会探测并落库（T4.4）
+    dim: int | None = Field(default=None, ge=1, le=65536)
     rpm: int | None = Field(default=None, ge=0)
     tpm: int | None = Field(default=None, ge=0)
     api_base: str | None = Field(default=None, max_length=512)
@@ -73,6 +77,7 @@ class ModelResponse(BaseModel):
     context_window: int | None = None
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
+    dim: int | None = Field(default=None, ge=1, le=65536)
     rpm: int | None = None
     tpm: int | None = None
     api_base: str | None = None

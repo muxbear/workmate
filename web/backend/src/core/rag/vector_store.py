@@ -19,6 +19,7 @@ from typing import Any
 from langchain_core.documents import Document
 
 from core.rag.bm25 import (
+    SPARSE_ALGO_BM25,
     BM25Index,
     SparseConfig,
     SparseIndexCache,
@@ -38,6 +39,33 @@ _HNSW_MIN_EF = 64
 #: 用 ``fullmatch``（而不是 ``re.match`` + ``$``）——``$`` 会匹配结尾换行符，
 #: 使 ``"x\\n"`` 这样的值通过校验。
 _SAFE_ID_PATTERN = re.compile(r"[0-9a-zA-Z_-]{1,64}")
+
+#: 原生稀疏检索用到的字段名 / 函数名（Milvus 侧的 schema 约定）
+_SPARSE_FIELD = "sparse"
+_SPARSE_FUNCTION = "chunk_text_bm25"
+
+#: ``chunk_text`` 的分析器配置——**必须显式指定中文分析器**。
+#: Milvus 默认的 standard 分析器按空白与标点切词，中文整句会变成一个大 token，
+#: 结果是"BM25 对中文完全无效"（能建索引、能查询，但查什么都是低分）。
+#: ``type: chinese`` 使用 jieba 分词，与客户端 :mod:`core.rag.text_analyzer` 同源。
+_ANALYZED_TEXT_FIELD: dict[str, Any] = {
+    "enable_analyzer": True,
+    "analyzer_params": {"type": "chinese"},
+}
+
+
+def _sparse_index_params(sparse_params: dict[str, float] | None) -> dict[str, float]:
+    """把知识库的 BM25 参数整理成 Milvus 稀疏索引参数。"""
+    params: dict[str, float] = {}
+    if not sparse_params:
+        return params
+    k1 = sparse_params.get("bm25_k1")
+    b = sparse_params.get("bm25_b")
+    if isinstance(k1, (int, float)):
+        params["bm25_k1"] = float(k1)
+    if isinstance(b, (int, float)):
+        params["bm25_b"] = float(b)
+    return params
 
 
 def safe_expr_id(value: str, field: str = "id") -> str:
@@ -77,8 +105,20 @@ class BaseVectorStore(ABC):
         return await asyncio.to_thread(func, *args, **kwargs)
 
     @abstractmethod
-    async def create_collection(self, kb_id: str, dim: int, enable_bm25: bool = True) -> None:
-        """为知识库创建 Collection。"""
+    async def create_collection(
+        self, kb_id: str, dim: int, enable_bm25: bool = True,
+        sparse_params: dict[str, float] | None = None,
+    ) -> None:
+        """为知识库创建 Collection。
+
+        Args:
+            kb_id: 知识库 ID。
+            dim: 向量维度。
+            enable_bm25: 是否建立**原生稀疏检索**所需的字段与索引。
+            sparse_params: 稀疏索引参数（``bm25_k1`` / ``bm25_b``）。原生 BM25 的
+                k1/b 在建索引时固化在索引里，因此必须在建集合时传入——否则改了配置
+                只能靠重建集合才能生效。
+        """
 
     @abstractmethod
     async def delete_collection(self, kb_id: str) -> None:
@@ -175,15 +215,30 @@ class BaseVectorStore(ABC):
         )
 
     async def _build_sparse_index(self, kb_id: str) -> BM25Index:
-        """构建（或复用缓存中的）BM25 语料索引。子类需实现 :meth:`_fetch_corpus`。"""
+        """构建（或复用缓存中的）BM25 语料索引。子类需实现 :meth:`_fetch_corpus`。
+
+        **按知识库加锁 + 双重检查**：并发查询同一知识库时，"查缓存 → 拉全量语料 →
+        建索引"会被重复执行 N 次（每次都把整库语料拉一遍、分词一遍）。冷启动或刚
+        写完库时最容易踩到（此时缓存必然为空）。
+
+        本方法只服务于**回退路径**（老集合没有原生稀疏字段、或 bm25_plus / tf_idf
+        这类原生不支持的算法）；主路径由 Milvus 原生稀疏检索承担。
+        """
         cached = self._sparse_cache.get(kb_id)
         if cached is not None:
             return cached
-        corpus = await self._fetch_corpus(kb_id)
-        # 建索引同样是对全量语料的 CPU 计算（分词 + 倒排 + df 统计）
-        index = await self.run_sync(BM25Index.build, corpus)
-        self._sparse_cache.put(kb_id, index)
-        return index
+
+        lock = self._sparse_locks.setdefault(kb_id, asyncio.Lock())
+        async with lock:
+            # 等锁期间可能已有别的协程建好了，再查一次
+            cached = self._sparse_cache.get(kb_id)
+            if cached is not None:
+                return cached
+            corpus = await self._fetch_corpus(kb_id)
+            # 建索引同样是对全量语料的 CPU 计算（分词 + 倒排 + df 统计）
+            index = await self.run_sync(BM25Index.build, corpus)
+            self._sparse_cache.put(kb_id, index)
+            return index
 
     @abstractmethod
     async def _fetch_corpus(self, kb_id: str) -> list[tuple[str, str]]:
@@ -197,10 +252,17 @@ class BaseVectorStore(ABC):
 class MilvusVectorStore(BaseVectorStore):
     """基于 Milvus 的向量数据库实现。
 
-    Collection 命名规则: kb_{kb_id}。Schema 只含 dense ``embedding`` 字段——
-    **没有**稀疏向量，也没有 BM25 Function；稀疏检索由
-    :mod:`core.rag.bm25` 在客户端基于全量语料统计完成（见
-    :meth:`bm25_search`）。
+    Collection 命名规则: kb_{kb_id}。Schema 含 dense ``embedding`` 与稀疏 ``sparse``
+    两个向量字段：``sparse`` 由 **BM25 Function** 从 ``chunk_text`` 自动生成，
+    查询侧走 Milvus 原生稀疏检索（见 :meth:`bm25_search`）。
+
+    为什么必须用原生稀疏检索：此前的客户端实现要把**全量语料**拉进进程、建全库词频
+    统计、每查询做 O(N) Python 打分——万级切片就不可用，且内存随语料线性增长。
+    原生路径把这些都放在服务端（倒排索引），客户端只发一条查询。
+
+    兼容：老 collection 没有 ``sparse`` 字段（建立在本次改动之前），探测不到时自动
+    回退到客户端实现；``bm25_plus`` / ``tf_idf`` 两种算法 Milvus 原生不支持，同样
+    走客户端实现。回退路径保留但只作为兜底——重建一次索引即可切到原生路径。
     """
 
     @staticmethod
@@ -216,6 +278,10 @@ class MilvusVectorStore(BaseVectorStore):
         self._connected = False
         self._collections: dict[str, Any] = {}
         self._sparse_cache = SparseIndexCache()
+        #: 按知识库的建索引锁——并发查询时不重复拉全量语料（见 _build_sparse_index）
+        self._sparse_locks: dict[str, asyncio.Lock] = {}
+        #: 知识库 → (是否有原生稀疏字段, 稀疏索引参数)；None 表示尚未探测
+        self._native_sparse: dict[str, tuple[bool, dict[str, Any]] | None] = {}
 
     async def _ensure_connected(self):
         if self._connected:
@@ -236,7 +302,10 @@ class MilvusVectorStore(BaseVectorStore):
             logger.error("Milvus connection failed: %s", e)
             raise
 
-    async def create_collection(self, kb_id: str, dim: int, enable_bm25: bool = True) -> None:
+    async def create_collection(
+        self, kb_id: str, dim: int, enable_bm25: bool = True,
+        sparse_params: dict[str, float] | None = None,
+    ) -> None:
         await self._ensure_connected()
         collection_name = self._collection_name(kb_id)
 
@@ -246,6 +315,8 @@ class MilvusVectorStore(BaseVectorStore):
                 CollectionSchema,
                 DataType,
                 FieldSchema,
+                Function,
+                FunctionType,
                 utility,
             )
             # 删除旧集合（可能由旧版 Schema 创建，与新版本不兼容）
@@ -272,15 +343,30 @@ class MilvusVectorStore(BaseVectorStore):
                 FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=36),
                 FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=36),
                 FieldSchema(name="chunk_index", dtype=DataType.INT64),
-                FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535),
+                FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535,
+                            **(_ANALYZED_TEXT_FIELD if enable_bm25 else {})),
                 FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
                 FieldSchema(name="doc_name", dtype=DataType.VARCHAR, max_length=256),
                 FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=16),
                 FieldSchema(name="metadata_", dtype=DataType.JSON),
                 FieldSchema(name="created_at", dtype=DataType.INT64),
             ]
+            functions = []
+            if enable_bm25:
+                # 稀疏向量由 BM25 Function 从 chunk_text 自动生成——**不要**在写入时
+                # 显式提供该字段（Milvus 会直接报错 "unexpected function output field"）
+                fields.append(FieldSchema(name=_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR))
+                functions.append(Function(
+                    name=_SPARSE_FUNCTION,
+                    function_type=FunctionType.BM25,
+                    input_field_names=["chunk_text"],
+                    output_field_names=[_SPARSE_FIELD],
+                    params={},
+                ))
 
-            schema = CollectionSchema(fields=fields, description=f"Knowledge base: {kb_id}")
+            schema = CollectionSchema(
+                fields=fields, functions=functions, description=f"Knowledge base: {kb_id}",
+            )
             collection = await self.run_sync(
                 Collection, name=collection_name, schema=schema,
             )
@@ -296,6 +382,21 @@ class MilvusVectorStore(BaseVectorStore):
                 },
             )
 
+            if enable_bm25:
+                # k1/b 固化在索引里，因此建集合时必须带上知识库配置的参数
+                await self.run_sync(
+                    collection.create_index,
+                    field_name=_SPARSE_FIELD,
+                    index_params={
+                        "index_type": "SPARSE_INVERTED_INDEX",
+                        "metric_type": "BM25",
+                        "params": {
+                            "inverted_index_algo": "DAAT_MAXSCORE",
+                            **_sparse_index_params(sparse_params),
+                        },
+                    },
+                )
+
             # Scalar indices
             for field_name in ["doc_id", "kb_id"]:
                 await self.run_sync(
@@ -307,6 +408,7 @@ class MilvusVectorStore(BaseVectorStore):
             await self.run_sync(collection.load)
             self._collections[kb_id] = collection
             self._sparse_cache.invalidate(kb_id)
+            self._native_sparse.pop(kb_id, None)
             logger.info("Milvus collection created: %s (dim=%d)", collection_name, dim)
 
         except Exception as e:
@@ -321,6 +423,7 @@ class MilvusVectorStore(BaseVectorStore):
             await self.run_sync(utility.drop_collection, collection_name)
             self._collections.pop(kb_id, None)
             self._sparse_cache.invalidate(kb_id)
+            self._native_sparse.pop(kb_id, None)
             logger.info("Milvus collection deleted: %s", collection_name)
         except Exception as e:
             logger.error("Failed to delete Milvus collection %s: %s", collection_name, e)
@@ -533,23 +636,112 @@ class MilvusVectorStore(BaseVectorStore):
             return []
         return corpus
 
+    async def _probe_native_sparse(
+        self, kb_id: str, collection: Any,
+    ) -> tuple[bool, dict[str, Any]]:
+        """探测该集合是否具备原生稀疏检索能力（结果按知识库缓存）。
+
+        探测依据是 schema 里有没有 ``sparse`` 字段——建集合时的 ``enable_bm25``
+        决定的；老的（本次改动之前建的）集合没有这个字段，只能走客户端回退。
+        探测本身是一次远程调用（读 schema / 索引），因此结果缓存起来。
+        """
+        cached = self._native_sparse.get(kb_id)
+        if cached is not None:
+            return cached
+        try:
+            fields = await self.run_sync(lambda: [f.name for f in collection.schema.fields])
+            has_sparse = _SPARSE_FIELD in fields
+            params: dict[str, Any] = {}
+            if has_sparse:
+                params = await self.run_sync(self._read_sparse_index_params, collection)
+            cached = (has_sparse, params)
+        except Exception:
+            logger.warning("探测 Milvus 稀疏字段失败，本次走客户端 BM25 kb=%s", kb_id)
+            cached = (False, {})
+        self._native_sparse[kb_id] = cached
+        return cached
+
+    @staticmethod
+    def _read_sparse_index_params(collection: Any) -> dict[str, Any]:
+        """读取稀疏索引上固化的参数（bm25_k1 / bm25_b）。"""
+        for index in getattr(collection, "indexes", []) or []:
+            if getattr(index, "field_name", "") == _SPARSE_FIELD:
+                return dict((getattr(index, "params", {}) or {}).get("params", {}) or {})
+        return {}
+
     async def bm25_search(
         self, kb_id: str, query: str, top_k: int,
         sparse_config: SparseConfig | None = None,
     ) -> list[tuple[str, float]]:
-        """BM25 稀疏检索——真 IDF + 长度归一，算法由 sparse_algo 决定。"""
+        """BM25 稀疏检索——优先走 Milvus 原生稀疏检索，不可用时回退客户端实现。"""
         cfg = sparse_config or SparseConfig()
         if create_sparse_scorer(cfg.sparse_algo) is None:
             logger.info("Milvus sparse search disabled (sparse_algo=%s) kb=%s", cfg.sparse_algo, kb_id)
             return []
 
+        collection = await self._get_collection(kb_id)
+        native, index_params = await self._probe_native_sparse(kb_id, collection)
+        if native and cfg.sparse_algo == SPARSE_ALGO_BM25:
+            self._warn_on_param_drift(kb_id, cfg, index_params)
+            hits = await self._native_bm25_search(collection, kb_id, query, top_k)
+            logger.info(
+                "Milvus bm25(native) kb=%s top_k=%d returned=%d", kb_id, top_k, len(hits),
+            )
+            return hits
+
+        # 回退：老集合（无 sparse 字段）、bm25_plus / tf_idf（原生不支持）
         index = await self._build_sparse_index(kb_id)
         hits = await self._sparse_search(index, query, top_k, cfg)
         logger.info(
-            "Milvus bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
+            "Milvus bm25(client fallback) kb=%s top_k=%d algo=%s corpus=%d returned=%d",
             kb_id, top_k, cfg.sparse_algo, index.size, len(hits),
         )
         return hits
+
+    @staticmethod
+    def _warn_on_param_drift(
+        kb_id: str, cfg: SparseConfig, index_params: dict[str, Any],
+    ) -> None:
+        """k1/b 固化在索引里，配置改了只有重建索引才能生效——不能静默。
+
+        不做"配置与索引不一致就回退客户端实现"：那会让一次参数微调把检索从
+        服务端倒排打回全量语料扫描（性能差两个数量级），比排序略有偏差更糟。
+        """
+        for key, configured in (("bm25_k1", cfg.bm25_k1), ("bm25_b", cfg.bm25_b)):
+            built = index_params.get(key)
+            if built is None:
+                continue
+            try:
+                if abs(float(built) - float(configured)) > 1e-6:
+                    logger.warning(
+                        "知识库 %s 的 %s 配置为 %s，但稀疏索引是按 %s 建的——"
+                        "BM25 的 k1/b 固化在索引里，需重建索引才能生效",
+                        kb_id, key, configured, built,
+                    )
+            except (TypeError, ValueError):
+                continue
+
+    async def _native_bm25_search(
+        self, collection: Any, kb_id: str, query: str, top_k: int,
+    ) -> list[tuple[str, float]]:
+        """Milvus 原生 BM25 检索——服务端倒排，客户端只发一条查询。
+
+        ``data`` 传**原始查询文本**而不是向量：Milvus 会用与 ``chunk_text``
+        相同的分析器对它分词，再由 BM25 Function 转成稀疏向量。
+        """
+        results = await self.run_sync(
+            collection.search,
+            data=[query],
+            anns_field=_SPARSE_FIELD,
+            param={"metric_type": "BM25"},
+            limit=top_k,
+            output_fields=[],
+        )
+        pairs: list[tuple[str, float]] = []
+        if results and results[0]:
+            for hit in results[0]:
+                pairs.append((hit.id, round(float(hit.distance), 6)))
+        return pairs
 
 
 class ChromaVectorStore(BaseVectorStore):
@@ -575,6 +767,8 @@ class ChromaVectorStore(BaseVectorStore):
         self._persist_dir = persist_dir
         self._client: Any = None
         self._sparse_cache = SparseIndexCache()
+        #: 按知识库的建索引锁——并发查询时不重复拉全量语料（见 _build_sparse_index）
+        self._sparse_locks: dict[str, asyncio.Lock] = {}
 
     def _get_client(self) -> Any:
         """获取或初始化 Chroma 客户端（**同步**，构造开销只在首次）。"""
@@ -595,7 +789,11 @@ class ChromaVectorStore(BaseVectorStore):
         """线程池版 ``get_collection``——Chroma 的 get 也要做一次远程/RPC 往返。"""
         return await self.run_sync(self._get_collection_sync, kb_id)
 
-    async def create_collection(self, kb_id: str, dim: int, enable_bm25: bool = True) -> None:
+    async def create_collection(
+        self, kb_id: str, dim: int, enable_bm25: bool = True,
+        sparse_params: dict[str, float] | None = None,
+    ) -> None:
+        # Chroma 没有原生稀疏检索，接口参数仅为对齐（稀疏检索始终走客户端实现）
         collection_name = self._collection_name(kb_id)
 
         def _create() -> None:

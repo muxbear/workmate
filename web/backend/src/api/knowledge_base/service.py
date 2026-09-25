@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.knowledge_base.model_provider import check_embedding_dim
 from api.knowledge_base.schemas import (
     IndexConfigSchema,
     KBCreateRequest,
@@ -97,6 +98,36 @@ def _format_bytes(size_bytes: int) -> str:
         if s < 1024:
             return f"{s:.1f} {unit}"
     return f"{s:.1f} PB"
+
+
+def _sparse_index_params(config: object) -> dict[str, float]:
+    """从知识库配置里取出 BM25 索引参数（k1/b）。
+
+    这两个值要传给向量库**建集合**——Milvus 的原生 BM25 把 k1/b 固化在稀疏索引里，
+    建完再改配置只有重建索引才能生效。配置可能是 ``IndexConfigSchema``（对象）或
+    落库的 dict（历史配置键名还可能是 camelCase），两种都要认。
+    """
+    def pick(name: str, camel: str) -> float | None:
+        for key in (name, camel):
+            if isinstance(config, dict):
+                value = config.get(key)
+            elif config is not None:
+                value = getattr(config, key, None)
+            else:
+                value = None
+            # bool 是 int 的子类，但不是合法参数（配置里不该出现，出现也当没填）
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return None
+
+    params: dict[str, float] = {}
+    k1 = pick("bm25_k1", "bm25K1")
+    b = pick("bm25_b", "bm25B")
+    if k1 is not None:
+        params["bm25_k1"] = k1
+    if b is not None:
+        params["bm25_b"] = b
+    return params
 
 
 def _kb_to_response(
@@ -272,6 +303,12 @@ async def create_kb(
     if existing:
         raise HTTPException(status_code=409, detail=f"知识库 '{req.name}' 已存在")
 
+    # 维度校验（T4.4）：配置维度与模型真实维度不一致时**先拒绝**，不要等写向量才炸。
+    # 放在建行/建集合之前——校验失败时不留半成品（否则会出现"库建好了但永远写不进去"）。
+    mismatch = await check_embedding_dim(db, req.config)
+    if mismatch:
+        raise HTTPException(status_code=400, detail=mismatch)
+
     kb = KnowledgeBase(
         name=req.name,
         description=req.description,
@@ -288,7 +325,10 @@ async def create_kb(
     if vector_store:
         dim = req.config.embedding_dim
         try:
-            await vector_store.create_collection(kb.id, dim)
+            # BM25 的 k1/b 固化在稀疏索引里，必须在建集合时就带上知识库的配置
+            await vector_store.create_collection(
+                kb.id, dim, sparse_params=_sparse_index_params(req.config),
+            )
         except Exception as e:
             logger.error("Failed to create vector collection for kb=%s: %s", kb.id, e)
 
@@ -457,6 +497,13 @@ async def reindex_kb(
             ),
         )
 
+    # 维度校验（T4.4）：重建是**换 embedding 模型/维度的唯一正确入口**，
+    # 因此必须在这里拦住不一致的配置——否则会按错误的维度重建集合，
+    # 而清空之后才发现写不进去。
+    dim_mismatch = await check_embedding_dim(db, config if config is not None else kb.config)
+    if dim_mismatch:
+        raise HTTPException(status_code=400, detail=dim_mismatch)
+
     # Update config if provided
     if config is not None:
         kb.config = config.model_dump()
@@ -472,8 +519,10 @@ async def reindex_kb(
         dim = int(
             (config.embedding_dim if config else kb.config.get("embedding_dim")) or 1024
         )
+        # 重建正是"改了 BM25 参数后生效"的唯一途径：稀疏索引上的 k1/b 跟着重建更新
+        params = _sparse_index_params(config if config is not None else kb.config)
         try:
-            await vector_store.create_collection(kb_id, dim)
+            await vector_store.create_collection(kb_id, dim, sparse_params=params)
         except Exception as e:
             collection_ready = False
             logger.error("重建向量集合失败 kb=%s: %s", kb_id, e)
