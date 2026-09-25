@@ -16,6 +16,7 @@ import KbSearchTab from './KbSearchTab.vue'
 import KbConfigTab from './KbConfigTab.vue'
 import KbShareDialog from './KbShareDialog.vue'
 import KbShareManageDialog from './KbShareManageDialog.vue'
+import { useKbPermissions } from '@/composables/useKbPermissions'
 
 const props = defineProps<{
   kb: KB
@@ -40,6 +41,10 @@ const statusCfg = KB_STATUS_CONFIG[props.kb.status]
 
 /** 非所有者（公共库 / 被分享）进入只读态：隐藏全部写入口 */
 const readonly = computed(() => !props.kb.isOwner)
+
+// 角色权限是**第二条轴**：库是自己的不代表当前角色有权改（见 useKbPermissions）。
+// 各动作按后端接线的权限键分别判定，不再用一个布尔兜住所有写操作。
+const { canEdit, canUpload, canDelete } = useKbPermissions()
 const isPublic = computed(() => props.kb.visibility === 'public')
 
 /** 来源标识：公共库 / 他人分享 */
@@ -168,23 +173,25 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
             <p class="header-desc">{{ kb.description }}</p>
           </div>
         </div>
-        <!-- 只读态（公共库 / 他人分享）不显示任何写操作 -->
-        <div v-if="!readonly" class="header-actions">
-          <el-button :loading="publishing" @click="handleToggleVisibility">
-            <Globe v-if="!isPublic" :size="16" class="btn-icon" />
-            <Lock v-else :size="16" class="btn-icon" />
-            {{ isPublic ? '取消发布' : '发布到公共知识库' }}
-          </el-button>
-          <el-button @click="shareVisible = true">
-            <Share2 :size="16" class="btn-icon" />分享
-          </el-button>
-          <el-button @click="shareManageVisible = true">
-            已分享用户
-          </el-button>
-          <el-button :loading="reindexing" @click="handleReindex">
-            <RefreshCw :size="16" class="btn-icon" />重新索引
-          </el-button>
-          <el-button class="btn-delete" @click="$emit('delete')">
+        <!-- 只读态（公共库 / 他人分享）不显示任何写操作；角色无对应权限键时同样隐藏 -->
+        <div v-if="!readonly && (canEdit || canDelete)" class="header-actions">
+          <template v-if="canEdit">
+            <el-button :loading="publishing" @click="handleToggleVisibility">
+              <Globe v-if="!isPublic" :size="16" class="btn-icon" />
+              <Lock v-else :size="16" class="btn-icon" />
+              {{ isPublic ? '取消发布' : '发布到公共知识库' }}
+            </el-button>
+            <el-button @click="shareVisible = true">
+              <Share2 :size="16" class="btn-icon" />分享
+            </el-button>
+            <el-button @click="shareManageVisible = true">
+              已分享用户
+            </el-button>
+            <el-button :loading="reindexing" @click="handleReindex">
+              <RefreshCw :size="16" class="btn-icon" />重新索引
+            </el-button>
+          </template>
+          <el-button v-if="canDelete" class="btn-delete" @click="$emit('delete')">
             <Trash2 :size="16" class="btn-icon" />删除
           </el-button>
         </div>
@@ -198,21 +205,21 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
           <template #label>
             <Activity :size="14" class="tab-icon" />概览
           </template>
-          <KbOverviewTab :kb="kb" :readonly="readonly" />
+          <KbOverviewTab :kb="kb" :readonly="readonly || !canEdit" />
         </el-tab-pane>
 
         <el-tab-pane name="docs">
           <template #label>
             <FileText :size="14" class="tab-icon" />文档 ({{ kb.documents.length }})
           </template>
-          <KbDocsTab :kb="kb" :readonly="readonly" />
+          <KbDocsTab :kb="kb" :readonly="readonly || !canUpload" />
         </el-tab-pane>
 
         <el-tab-pane name="graph">
           <template #label>
             <Network :size="14" class="tab-icon" />知识图谱
           </template>
-          <KbGraphTab :kb="kb" :readonly="readonly" />
+          <KbGraphTab :kb="kb" :readonly="readonly || !canEdit" />
         </el-tab-pane>
 
         <el-tab-pane name="search">
@@ -228,7 +235,7 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
           </template>
           <KbConfigTab
             :config="kb.config"
-            :readonly="readonly"
+            :readonly="readonly || !canEdit"
             @save="handleConfigSave"
             @save-and-reindex="handleSaveAndReindex"
           />

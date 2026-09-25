@@ -51,6 +51,10 @@ def RequirePermission(perm_key: str):
             user_id: str,
             _: str = Depends(RequirePermission("admin:user:delete")),
         ): ...
+
+    返回的依赖函数带 ``__permission_key__`` 标记：路由是用装饰器声明依赖的，
+    运行期无法反查"这个接口要求什么权限"，测试只能靠导入源码文本去猜。有了标记，
+    就能写一条结构化断言——**所有写接口都必须挂权限依赖**，新增接口漏挂会被测出来。
     """
     async def checker(
         request: Request,
@@ -62,8 +66,9 @@ def RequirePermission(perm_key: str):
         if not await check_user_permission(db, user_id, perm_key, role_key):
             raise HTTPException(
                 status_code=403,
-                detail=f"Missing permission: {perm_key}",
+                detail=f"缺少权限：{perm_key}（请联系管理员在「权限管理」中为当前角色授予）",
             )
         return user_id
 
+    checker.__permission_key__ = perm_key  # type: ignore[attr-defined]
     return checker

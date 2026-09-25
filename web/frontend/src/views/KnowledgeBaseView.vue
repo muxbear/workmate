@@ -15,10 +15,14 @@ import KbDetail from '@/components/knowledgeBase/KbDetail.vue'
 import KbSidebar from '@/components/knowledgeBase/KbSidebar.vue'
 import KbGroupList from '@/components/knowledgeBase/KbGroupList.vue'
 import KbShareManageDialog from '@/components/knowledgeBase/KbShareManageDialog.vue'
+import { useKbPermissions } from '@/composables/useKbPermissions'
 
 const store = useKnowledgeBaseStore()
 
 const createVisible = ref(false)
+
+// 角色无 knowledge:create 时不显示任何建库入口（后端也会 403）
+const { canCreate } = useKbPermissions()
 const confirmDeleteId = ref<string | null>(null)
 const shareManageKbId = ref<string | null>(null)
 
@@ -156,7 +160,7 @@ async function handleCancelShare(kbId: string) {
                 </div>
               </div>
             </div>
-            <el-button type="primary" size="large" @click="createVisible = true" class="btn-create">
+            <el-button v-if="canCreate" type="primary" size="large" @click="createVisible = true" class="btn-create">
               <Plus :size="16" class="btn-icon" />新建知识库
             </el-button>
           </div>
@@ -223,7 +227,7 @@ async function handleCancelShare(kbId: string) {
                 :kb="kb"
                 @click="handleSelectKb(kb)"
               />
-              <div class="create-card" @click="createVisible = true">
+              <div v-if="canCreate" class="create-card" @click="createVisible = true">
                 <div class="create-icon-box"><Plus :size="24" /></div>
                 <div class="create-text">新建知识库</div>
                 <div class="create-sub">向量 + BM25 + 知识图谱</div>

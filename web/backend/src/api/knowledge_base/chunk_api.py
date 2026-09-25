@@ -21,6 +21,7 @@ from api.knowledge_base.chunk_service import (
 from api.knowledge_base.model_provider import load_embedding_model_for_kb
 from api.knowledge_base.schemas import BatchChunkRequest, ChunkUpdateRequest
 from api.knowledge_base.service import _get_kb_or_404, require_kb_readable
+from api.rbac.deps import RequirePermission
 from core.rag.vector_store import safe_expr_id
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-切片"])
@@ -59,7 +60,8 @@ async def api_list_chunks(
     request: Request,
     search: str | None = None,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 切片是文档正文的一部分，改切片等同改库内容
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """列出文档所有切片。可读即可浏览。"""
     await require_kb_readable(db, kb_id, user_id)
@@ -79,7 +81,8 @@ async def api_get_chunk_detail(
     chunk_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 切片是文档正文的一部分，改切片等同改库内容
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """获取切片详情（含上下文）。可读即可查看。"""
     await require_kb_readable(db, kb_id, user_id)
@@ -103,7 +106,8 @@ async def api_update_chunk(
     body: ChunkUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 切片是文档正文的一部分，改切片等同改库内容
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """更新切片内容（重新向量化）。"""
     await _get_kb_or_404(db, kb_id, user_id)
@@ -136,7 +140,8 @@ async def api_delete_chunk(
     chunk_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 切片是文档正文的一部分，改切片等同改库内容
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """删除单个切片。"""
     await _get_kb_or_404(db, kb_id, user_id)
@@ -160,7 +165,8 @@ async def api_batch_chunk_operation(
     body: BatchChunkRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 切片是文档正文的一部分，改切片等同改库内容
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """批量操作：保存或删除切片。"""
     await _get_kb_or_404(db, kb_id, user_id)

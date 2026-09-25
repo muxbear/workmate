@@ -20,6 +20,7 @@ from api.knowledge_base.service import (
     reindex_kb,
     update_kb,
 )
+from api.rbac.deps import RequirePermission
 from core.decorators import handle_errors
 from core.response import ok
 
@@ -178,7 +179,7 @@ async def create_knowledge_base(
     body: KBCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(RequirePermission("knowledge:create")),
 ):
     """创建知识库。"""
     vector_store = _get_vector_store(request)
@@ -205,7 +206,7 @@ async def update_knowledge_base(
     kb_id: str,
     body: KBUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ):
     """更新知识库。"""
     result = await update_kb(db, kb_id, user_id, body)
@@ -219,7 +220,7 @@ async def delete_knowledge_base(
     kb_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(RequirePermission("knowledge:delete")),
 ):
     """删除知识库（同时取消在跑的索引任务、清理磁盘文件与分享记录）。"""
     from api.knowledge_base.doc_service import IndexingScheduler
@@ -254,7 +255,8 @@ async def reindex_knowledge_base(
     request: Request,
     body: IndexConfigSchema,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 重建会按新配置重切全部切片：属于"改库"而不是"改某篇文档"
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ):
     """保存索引配置并重新索引知识库中的所有文档。
 

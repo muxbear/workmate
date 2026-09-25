@@ -29,6 +29,7 @@ from api.knowledge_base.share_service import (
     search_share_candidates,
     set_visibility,
 )
+from api.rbac.deps import RequirePermission
 from core.decorators import handle_errors
 from core.response import ok
 
@@ -110,7 +111,9 @@ async def create_shares(
     kb_id: str,
     req: KBShareCreateRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 分享范围是库级配置，属于"编辑知识库"（被邀请人的接受/拒绝不在此列——
+    # 那是"我的收件箱"操作，按参与者身份鉴权，与库的编辑权无关）
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """邀请用户浏览知识库（仅所有者，只读授权）。"""
     return ok(await invite_shares(db, kb_id, user_id, req.user_ids))
@@ -121,7 +124,9 @@ async def create_shares(
 async def cancel_all_shares(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 分享范围是库级配置，属于"编辑知识库"（被邀请人的接受/拒绝不在此列——
+    # 那是"我的收件箱"操作，按参与者身份鉴权，与库的编辑权无关）
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """取消该知识库的全部分享（仅所有者）。"""
     return ok({"revoked": await cancel_shares(db, kb_id, user_id)})
@@ -133,7 +138,9 @@ async def remove_share(
     kb_id: str,
     share_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 分享范围是库级配置，属于"编辑知识库"（被邀请人的接受/拒绝不在此列——
+    # 那是"我的收件箱"操作，按参与者身份鉴权，与库的编辑权无关）
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """删除某个被分享用户（仅所有者）。"""
     await delete_share(db, kb_id, share_id, user_id)
@@ -146,7 +153,8 @@ async def update_visibility(
     kb_id: str,
     req: KBVisibilityUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 分享范围与公开可见性是库级配置，属于"编辑知识库"
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ) -> object:
     """发布 / 取消发布公共知识库（仅所有者）。"""
     return ok(await set_visibility(db, kb_id, user_id, req.visibility))

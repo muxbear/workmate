@@ -13,6 +13,7 @@ from api.knowledge_base.service import (
     _get_kb_or_404,
     require_kb_readable,
 )
+from api.rbac.deps import RequirePermission
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-图谱"])
 
@@ -52,7 +53,8 @@ async def re_extract_graph(
     kb_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 重抽图谱会清掉该库现有实体与关系并用 LLM 重建：属于库级写操作
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
 ):
     """重新抽取知识图谱——遍历所有已索引文档，重建实体和关系。"""
     kb = await _get_kb_or_404(db, kb_id, user_id)

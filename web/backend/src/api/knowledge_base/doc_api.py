@@ -28,6 +28,7 @@ from api.knowledge_base.doc_service import (
 from api.knowledge_base.indexing_events import IndexingEventBus
 from api.knowledge_base.schemas import IndexConfigSchema
 from api.knowledge_base.service import require_kb_readable
+from api.rbac.deps import RequirePermission
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-文档"])
 
@@ -52,7 +53,9 @@ async def upload_docs(
     files: list[UploadFile] = File(..., max_count=20),
     config: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
+    # 权限树里没有单独的"删文档"键
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """向指定知识库批量上传文档（最多 20 个），落盘、写库，并异步触发索引流水线。"""
     if not files:
@@ -109,7 +112,9 @@ async def delete_doc(
     doc_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
+    # 权限树里没有单独的"删文档"键
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """删除文档（先取消在跑的索引任务，再清理向量/文件/图谱）。"""
     vector_store = _get_vector_store(request)
@@ -128,7 +133,9 @@ async def retry_doc(
     doc_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
+    # 权限树里没有单独的"删文档"键
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """重试索引（失败 / 已取消 / 卡在中间态的文档均可）。"""
     scheduler = _get_scheduler(request)
@@ -145,7 +152,9 @@ async def cancel_doc(
     doc_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
+    # 权限树里没有单独的"删文档"键
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """取消文档的索引任务（排队中或执行中均可）。"""
     scheduler = _get_scheduler(request)
