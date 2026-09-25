@@ -214,7 +214,10 @@ async def run_search_bench(
 
 async def run_index_bench(chunks: int, concurrency: int | None) -> int:
     from agent.config import settings
-    from api.knowledge_base.model_provider import load_embedding_model
+    from api.knowledge_base.model_provider import (
+        load_embedding_model,
+        resolve_embedding_dim,
+    )
     from core.rag.vector_store import MilvusVectorStore
     from db.engine import async_session
     from langchain_core.documents import Document
@@ -225,7 +228,20 @@ async def run_index_bench(chunks: int, concurrency: int | None) -> int:
         password=settings.MILVUS_PASSWORD, db_name=settings.MILVUS_DEFAULT_DB,
     )
     async with async_session() as db:
+        # 先解析"会用哪个模型、哪个维度"再打印：这个压测真花 embedding 配额，
+        # 操作者有权在花钱之前知道账单落在哪个模型上
+        dim = await resolve_embedding_dim(db)
         embedding = await load_embedding_model(db)
+        model_name = getattr(embedding, "model", None) or "(未知)"
+
+    if not dim:
+        print("无法确定 embedding 维度（模型不可用？），已中止", file=sys.stderr)
+        return 2
+    print(
+        f"\n索引吞吐压测（{chunks} 片，dim={dim}，embedding 并发={concurrency or '默认'}）\n"
+        f"  将真实调用 embedding 接口：模型={model_name}，"
+        f"约 {chunks * 350 / 1_000_000:.2f}M tokens 输入",
+    )
 
     # 生成与真实切片同量级的正文（512 字符上下，含中英文混合）
     texts = [
@@ -239,9 +255,10 @@ async def run_index_bench(chunks: int, concurrency: int | None) -> int:
         for i, t in enumerate(texts)
     ]
 
-    print(f"\n索引吞吐压测（{chunks} 片，embedding 并发={concurrency or '默认'}）")
     rss_before = _rss_mb()
-    await store.create_collection(kb_id, dim=1024)
+    # 维度取自模型真实输出，而不是写死 1024——写死会让"选到的模型不是 1024 维"
+    # 这种情况在写入阶段才以维度断言的形式炸出来
+    await store.create_collection(kb_id, dim=dim)
 
     batches: list[tuple[int, list]] = []
     embeddings: list[list[float]] = []
