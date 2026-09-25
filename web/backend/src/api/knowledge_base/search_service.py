@@ -1,5 +1,6 @@
 """知识库检索服务——策略模式 + 注册表 + 模板方法编排器."""
 
+import asyncio
 import json
 import logging
 import math
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.knowledge_base.schemas import ChunkMatch, SearchRequest, SearchResponse
 from core.rag.bm25 import SparseConfig
+from core.rag.query_rewrite import RewriteResult
 from core.rag.reranker import RERANK_CANDIDATE_MULTIPLIER
 
 logger = logging.getLogger(__name__)
@@ -351,6 +353,51 @@ def _fuse_across_kbs(
     return [(chunk_id, round(value / top, 4)) for chunk_id, value in ranked]
 
 
+def _fuse_variants(
+    per_variant: list[list[ScoredChunk]],
+    top_k: int,
+) -> list[ScoredChunk]:
+    """多路查询变体的 RRF 融合——每条变体的排名各算一路。
+
+    为什么按排名而不是分数：变体之间的分数不可比。一条是术语化改写、一条是口语化
+    原文、一条可能是 HyDE 假设文档，各自的余弦分布完全不同（假设文档的余弦天然更高，
+    因为它是"像答案"的文本）。若按分数取最大，HyDE 一路会垄断所有结果。
+
+    收益来自"同一段文字被多种表述同时命中"——它比只被一种表述命中的更可能是真答案，
+    RRF 正好让这种切片上浮；同时保留原始查询那一路，保证改写跑偏时不会比不改更差。
+
+    ``vec_score`` / ``bm25_score`` 取各路中的**最优值**：它们的语义是"这条切片与
+    查询最像到什么程度"，与单路检索的展示口径一致；用融合后的相对分会让前端显示的
+    相关度与纯模式模式不可比（迭代 2 修过一次同类问题）。
+    """
+    rrf: dict[str, float] = {}
+    best_vec: dict[str, float] = {}
+    best_bm25: dict[str, float] = {}
+    for channel in per_variant:
+        for rank, sc in enumerate(channel, start=1):
+            rrf[sc.chunk_id] = rrf.get(sc.chunk_id, 0.0) + 1.0 / (RRF_K + rank)
+            if sc.vec_score is not None and sc.vec_score > best_vec.get(sc.chunk_id, -1.0):
+                best_vec[sc.chunk_id] = sc.vec_score
+            if sc.bm25_score is not None and sc.bm25_score > best_bm25.get(sc.chunk_id, -1.0):
+                best_bm25[sc.chunk_id] = sc.bm25_score
+
+    if not rrf:
+        return []
+
+    ranked = sorted(rrf.items(), key=lambda item: (-item[1], item[0]))[:top_k]
+    top = ranked[0][1] or 1.0
+    return [
+        ScoredChunk(
+            chunk_id=chunk_id,
+            score=round(value / top, 4),
+            vec_score=best_vec.get(chunk_id),
+            bm25_score=best_bm25.get(chunk_id),
+            score_kind=SCORE_KIND_RRF,
+        )
+        for chunk_id, value in ranked
+    ]
+
+
 # ─── 检索策略（策略模式）───────────────────────────────────────────────────────
 
 
@@ -471,6 +518,7 @@ class SearchOrchestrator:
         self._embedding_model = embedding_model
         self._embedding_cache: dict[tuple[str, str | None], object] = {}
         self._reranker_cache: dict[tuple[str | None, str | None], object] = {}
+        self._rewriter_cache: dict[tuple[str | None, str | None], object] = {}
         self._registry = create_search_registry()
 
     async def search(
@@ -490,13 +538,18 @@ class SearchOrchestrator:
 
         # 跨库联合检索：给定多个知识库时走多库编排（单库时保持原路径，零行为变化）
         extra_kbs = [k for k in (request.kb_ids or []) if k and k != kb_id]
-        if extra_kbs:
-            return await self._search_multi(
-                db, kb_id, extra_kbs, request, strategy,
-            )
 
         top_k = request.top_k
         kb_config = await self._load_kb_config(db, kb_id)
+
+        # 查询改写（T3.4）：一次 LLM 调用产出多个检索变体。放在分派之前——
+        # 变体是"查询侧"的产物，与检索哪个库无关，单库与多库路径共用同一组变体。
+        rewrite = await self._maybe_rewrite(db, kb_config, request)
+
+        if extra_kbs:
+            return await self._search_multi(
+                db, kb_id, extra_kbs, request, strategy, rewrite, kb_config,
+            )
 
         # alpha：请求显式传入优先，否则用知识库配置的 hybrid_alpha
         alpha = request.alpha
@@ -566,37 +619,48 @@ class SearchOrchestrator:
         fetch_k = min(max(top_k * candidate_multiplier, top_k), MAX_RERANK_CANDIDATES)
 
         # 纯 BM25 不需要查询向量——embedding 服务不可用时仍可检索
-        query_embedding: list[float] = []
+        variants = rewrite.variants
+        query_embeddings: dict[str, list[float]] = {}
         if strategy.requires_embedding:
             embedding_model = await self._resolve_embedding_model(db, kb_config)
+            query_embeddings = await self._embed_variants(embedding_model, variants)
+
+        # 逐变体召回：改写开启时是多路，未开启时只有原始查询一路（零行为变化）
+        per_variant: list[list[ScoredChunk]] = []
+        for index, variant in enumerate(variants):
+            ctx = SearchContext(
+                kb_id=kb_id,
+                query_text=variant,
+                query_embedding=query_embeddings.get(variant, []),
+                top_k=fetch_k,
+                alpha=alpha,
+                sparse_config=sparse_config,
+                doc_ids=doc_ids,
+                doc_types=doc_types,
+            )
             try:
-                query_embedding = await embedding_model.aembed_query(request.query)
+                chunks = await strategy.search(ctx, self._vector_store)
             except Exception:
-                logger.exception("Query embedding failed")
-                raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")
+                if index == 0:
+                    logger.exception(
+                        "Search strategy '%s' failed for kb=%s", request.mode, kb_id,
+                    )
+                    raise RuntimeError(f"检索执行失败: {request.mode}")
+                logger.warning("改写变体检索失败，已跳过该路: %s", variant[:50])
+                continue
+            if chunks:
+                per_variant.append(chunks)
 
-        # 构建上下文并执行策略
-        ctx = SearchContext(
-            kb_id=kb_id,
-            query_text=request.query,
-            query_embedding=query_embedding,
-            top_k=fetch_k,
-            alpha=alpha,
-            sparse_config=sparse_config,
-            doc_ids=doc_ids,
-            doc_types=doc_types,
-        )
-
-        try:
-            scored_chunks = await strategy.search(ctx, self._vector_store)
-        except Exception:
-            logger.exception("Search strategy '%s' failed for kb=%s", request.mode, kb_id)
-            raise RuntimeError(f"检索执行失败: {request.mode}")
+        if len(per_variant) > 1:
+            scored_chunks = _fuse_variants(per_variant, fetch_k)
+        else:
+            scored_chunks = per_variant[0] if per_variant else []
 
         if not scored_chunks:
             return SearchResponse(
                 query=request.query, mode=request.mode, total=0, results=[],
                 rerank_requested=rerank_requested, rerank_applied=False,
+                **self._rewrite_fields(rewrite),
             )
 
         # 绝对门槛：最高余弦相似度低于门槛 → 判定「该库没有相关内容」并返回空。
@@ -622,6 +686,7 @@ class SearchOrchestrator:
                 no_relevant_result=True,
                 min_similarity=round(min_similarity, 4),
                 filtered_count=len(scored_chunks),
+                **self._rewrite_fields(rewrite),
             )
 
         # 查询 chunk 详情
@@ -647,11 +712,13 @@ class SearchOrchestrator:
                 continue
             ordered.append((sc, chunk))
 
-        # 精排（启用时）：对候选重排（此时**不**截断，留给去冗余来挑）
+        # 精排（启用时）：对候选重排（此时**不**截断，留给去冗余来挑）。
+        # 用**消解后**的查询做精排——多轮追问里的"它/这个"会干扰相关性判定，
+        # 改写的主要价值就在这里，精排不该退回那个有歧义的原文。
         rerank_applied = False
         if reranker is not None and len(ordered) > 1:
             ordered, rerank_applied = await self._apply_rerank(
-                reranker, request.query, ordered, top_k,
+                reranker, rewrite.resolved or request.query, ordered, top_k,
             )
 
         # 元数据过滤兜底：向量通道已在检索时过滤，这里覆盖 BM25 通道并防止
@@ -709,6 +776,7 @@ class SearchOrchestrator:
             filtered_count=filtered + filter_dropped,
             deduped_count=deduped_count,
             searched_kb_ids=[kb_id],
+            **self._rewrite_fields(rewrite),
         )
 
     async def _search_multi(
@@ -718,17 +786,24 @@ class SearchOrchestrator:
         extra_kb_ids: list[str],
         request: SearchRequest,
         strategy,
+        rewrite: RewriteResult,
+        primary_config: dict,
     ) -> SearchResponse:
         """跨库联合检索——逐库召回，再按排名融合。
 
         为什么按排名而不是分数融合：各库可能用不同 embedding 模型与稀疏参数，
         余弦/BM25 的量纲不可比（同一个 0.7 在不同模型下含义不同）。
 
-        流程：逐库按自身配置召回 → **逐库做绝对门槛**（某个库没有相关内容时它不
-        参与融合，而不是用低相关结果稀释其他库）→ 跨库 RRF → 统一精排 → 过滤 →
-        去冗余。
+        流程：逐库按自身配置召回（每个库内部先做多路变体融合）→ **逐库做绝对门槛**
+        （某个库没有相关内容时它不参与融合，而不是用低相关结果稀释其他库）→ 跨库 RRF
+        → 统一精排 → 过滤 → 去冗余。
+
+        改写变体在**逐库召回内部**先融合成该库的一路：变体的分数同样不可比
+        （不同表述、可能还有 HyDE），只能按排名合。若把"库 × 变体"直接铺平成跨库
+        融合的输入，某个库多一路变体就等于多一票，库间权重会失衡。
         """
         kb_ids = [primary_kb_id, *extra_kb_ids]
+        variants = rewrite.variants
         top_k = request.top_k
         candidate_k = top_k * DEDUP_CANDIDATE_MULTIPLIER
 
@@ -748,32 +823,46 @@ class SearchOrchestrator:
                     kb_config.get("min_similarity"), DEFAULT_MIN_SIMILARITY,
                 )
 
-            query_embedding: list[float] = []
+            query_embeddings: dict[str, list[float]] = {}
             if strategy.requires_embedding:
                 embedding_model = await self._resolve_embedding_model(db, kb_config)
                 try:
-                    query_embedding = await embedding_model.aembed_query(request.query)
-                except Exception:
-                    logger.exception("Query embedding failed for kb=%s", kb_id)
-                    raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")
+                    query_embeddings = await self._embed_variants(embedding_model, variants)
+                except RuntimeError:
+                    logger.exception("多库检索：kb=%s 查询向量化失败", kb_id)
+                    raise
 
-            ctx = SearchContext(
-                kb_id=kb_id,
-                query_text=request.query,
-                query_embedding=query_embedding,
-                top_k=candidate_k,
-                alpha=alpha,
-                sparse_config=SparseConfig.from_config(kb_config),
-                doc_ids=list(request.doc_ids) if request.doc_ids else None,
-                doc_types=list(request.doc_types) if request.doc_types else None,
+            per_variant: list[list[ScoredChunk]] = []
+            for index, variant in enumerate(variants):
+                ctx = SearchContext(
+                    kb_id=kb_id,
+                    query_text=variant,
+                    query_embedding=query_embeddings.get(variant, []),
+                    top_k=candidate_k,
+                    alpha=alpha,
+                    sparse_config=SparseConfig.from_config(kb_config),
+                    doc_ids=list(request.doc_ids) if request.doc_ids else None,
+                    doc_types=list(request.doc_types) if request.doc_types else None,
+                )
+                try:
+                    variant_chunks = await strategy.search(ctx, self._vector_store)
+                except Exception:
+                    if index == 0:
+                        logger.exception("多库检索：kb=%s 召回失败，跳过该库", kb_id)
+                        break
+                    logger.warning(
+                        "多库检索：kb=%s 的改写变体检索失败，跳过该路", kb_id,
+                    )
+                    continue
+                if variant_chunks:
+                    per_variant.append(variant_chunks)
+
+            if not per_variant:
+                continue
+            chunks = (
+                per_variant[0] if len(per_variant) == 1
+                else _fuse_variants(per_variant, candidate_k)
             )
-            try:
-                chunks = await strategy.search(ctx, self._vector_store)
-            except Exception:
-                logger.exception("多库检索：kb=%s 召回失败，跳过该库", kb_id)
-                continue
-            if not chunks:
-                continue
 
             # 逐库绝对门槛：该库没有相关内容时不参与融合
             max_cosine = max(
@@ -799,6 +888,7 @@ class SearchOrchestrator:
             return SearchResponse(
                 query=request.query, mode=request.mode, total=0, results=[],
                 no_relevant_result=True, searched_kb_ids=[],
+                **self._rewrite_fields(rewrite),
             )
 
         # ── 跨库融合 ──
@@ -833,10 +923,11 @@ class SearchOrchestrator:
             return SearchResponse(
                 query=request.query, mode=request.mode, total=0, results=[],
                 no_relevant_result=True, searched_kb_ids=searched_kb_ids,
+                **self._rewrite_fields(rewrite),
             )
 
         # ── 统一精排（以主库配置的 reranker 为准）──
-        kb_config = await self._load_kb_config(db, primary_kb_id)
+        kb_config = primary_config
         rerank_requested = (
             request.enable_rerank
             if request.enable_rerank is not None
@@ -851,7 +942,7 @@ class SearchOrchestrator:
         rerank_applied = False
         if reranker is not None and len(ordered) > 1:
             ordered, rerank_applied = await self._apply_rerank(
-                reranker, request.query, ordered, top_k,
+                reranker, rewrite.resolved or request.query, ordered, top_k,
             )
 
         # ── 过滤与去冗余：与单库路径同一套规则 ──
@@ -908,6 +999,7 @@ class SearchOrchestrator:
             filtered_count=filter_dropped,
             deduped_count=deduped_count,
             searched_kb_ids=searched_kb_ids,
+            **self._rewrite_fields(rewrite),
         )
 
     async def _load_kb_names(
@@ -1001,6 +1093,116 @@ class SearchOrchestrator:
             return None
         self._reranker_cache[cache_key] = reranker
         return reranker
+
+    async def _embed_variants(
+        self, embedding_model, variants: list[str],
+    ) -> dict[str, list[float]]:
+        """并发向量化多个查询变体，返回"变体 → 向量"。
+
+        只并发 **embedding**（纯远程调用、无共享状态），向量库检索保持串行：
+        ``_build_sparse_index`` 是"查缓存 → 拉全量语料 → 建索引"，中间没有锁，
+        并发首次命中同一知识库会把全量语料扫描做多遍——那正是 T4.2 要修的问题，
+        在这里引入只会放大它。
+
+        首条变体（原始查询）失败视为整次检索失败；扩展变体失败只丢那一路。
+        """
+        async def embed(variant: str) -> list[float]:
+            return await embedding_model.aembed_query(variant)
+
+        outcomes = await asyncio.gather(
+            *(embed(variant) for variant in variants), return_exceptions=True,
+        )
+
+        embeddings: dict[str, list[float]] = {}
+        for index, (variant, outcome) in enumerate(zip(variants, outcomes)):
+            if isinstance(outcome, BaseException):
+                if index == 0:
+                    logger.error(
+                        "Query embedding failed", exc_info=outcome,
+                    )
+                    raise RuntimeError("查询向量化失败，请检查 Embedding 模型配置")
+                # 改写变体向量化失败只丢这一路：原始查询仍然可用
+                logger.warning("改写变体向量化失败，已跳过该路: %s", variant[:50])
+                continue
+            embeddings[variant] = outcome
+        return embeddings
+
+    async def _resolve_rewriter(self, db: AsyncSession, kb_config: dict):
+        """解析查询改写器；知识库没有可用 LLM 时返回 ``None``。
+
+        复用知识库配置的 LLM（``entity_model``——与图谱抽取、agentic 切片同一个
+        模型选择），不新增模型字段：改写是"同一份模型干更多的活"，让用户再选一次
+        模型只会增加配置负担。
+
+        失败**不缓存**（与 reranker 一致）：用户补配模型后，下一次检索就该生效，
+        不该等到重启。
+        """
+        model_name = kb_config.get("entity_model") or kb_config.get("entityModel")
+        provider_id = kb_config.get("entity_provider_id") or kb_config.get("entityProviderId")
+        cache_key = (model_name, provider_id)
+        cached = self._rewriter_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        from api.knowledge_base.model_provider import load_llm_model
+        from core.rag.llm import ChatClient
+        from core.rag.query_rewrite import QueryRewriter
+
+        try:
+            name, api_base, api_key = await load_llm_model(
+                db, model_name=model_name, provider_id=provider_id,
+            )
+        except RuntimeError as exc:
+            logger.warning("查询改写未找到可用 LLM，本次不做改写: %s", exc)
+            return None
+
+        rewriter = QueryRewriter(ChatClient(model=name, api_base=api_base, api_key=api_key))
+        self._rewriter_cache[cache_key] = rewriter
+        return rewriter
+
+    async def _maybe_rewrite(
+        self,
+        db: AsyncSession,
+        kb_config: dict,
+        request: SearchRequest,
+    ) -> RewriteResult:
+        """按开关决定是否改写；未开启时零开销地返回"单查询"。
+
+        开关优先级：请求级 > 知识库配置 > 默认关闭（方案 §12.1：新检索能力默认关闭，
+        按库/按次灰度开启——改写每次检索都要多发一次 LLM 调用）。
+        """
+        enabled = request.use_rewrite
+        if enabled is None:
+            enabled = bool(kb_config.get("enable_query_rewrite", False))
+        if not enabled:
+            return RewriteResult(
+                queries=[request.query], resolved=request.query, reason="未开启改写",
+            )
+
+        rewriter = await self._resolve_rewriter(db, kb_config)
+        if rewriter is None:
+            return RewriteResult(
+                queries=[request.query], resolved=request.query,
+                requested=True, reason="未配置可用的 LLM",
+            )
+
+        hyde = request.use_hyde
+        if hyde is None:
+            hyde = bool(kb_config.get("enable_hyde", False))
+        return await rewriter.rewrite(request.query, request.history, hyde=bool(hyde))
+
+    @staticmethod
+    def _rewrite_fields(rewrite: RewriteResult) -> dict:
+        """把改写状态摊平成 ``SearchResponse`` 字段（响应里始终带，便于前端展示）。"""
+        return {
+            "rewrite_requested": rewrite.requested,
+            "rewrite_applied": rewrite.applied,
+            # 只回查询式本身：HyDE 假设文档是整段文字，混进列表会把界面撑爆，
+            # 它是否参与召回由 rewrite_hyde 单独标注
+            "rewrite_queries": list(rewrite.queries),
+            "rewrite_hyde": bool(rewrite.hyde_query),
+            "rewrite_reason": rewrite.reason if rewrite.requested else "",
+        }
 
     async def _apply_rerank(
         self,

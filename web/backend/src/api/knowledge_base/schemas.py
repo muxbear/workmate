@@ -49,6 +49,13 @@ class IndexConfigSchema(BaseModel):
     max_chunks_per_doc: int = Field(default=3, ge=0, le=20)
     #: 近重复判定阈值：与已选结果余弦相似度 ≥ 该值的候选被丢弃，0 表示关闭
     dedup_similarity: float = Field(default=0.92, ge=0.0, le=1.0)
+    #: 查询改写默认**关闭**：每次检索要多发一次 LLM 调用（延迟 + 成本），
+    #: 按方案 §12.1 的灰度策略"默认关闭、按库开启"。改写失败的降级路径已覆盖，
+    #: 开启后最坏情况是回到改写前的行为（原始查询始终参与召回）。
+    enable_query_rewrite: bool = Field(default=False)
+    #: HyDE（假设文档嵌入）默认关闭：它会在多路召回里增加一路"最不像查询、
+    #: 最像答案"的变体，对语义类问题收益明显，但会让延迟再涨一截。
+    enable_hyde: bool = Field(default=False)
 
 
 # ─── KnowledgeBase ──────────────────────────────────────────────────────────
@@ -237,6 +244,21 @@ class SearchRequest(BaseModel):
         description="跨知识库联合检索：给定多个知识库 ID 时按排名融合各自结果；"
                     "None 或单个 ID 表示只检索当前库",
     )
+    use_rewrite: bool | None = Field(
+        default=None,
+        description="是否做查询改写（指代消解 + 多查询扩展）；"
+                    "None 表示用知识库配置（默认关闭）。开启会额外调用一次 LLM。",
+    )
+    use_hyde: bool | None = Field(
+        default=None,
+        description="是否额外生成 HyDE 假设文档作为一路检索变体；"
+                    "None 表示用知识库配置（默认关闭）。仅在启用改写时生效。",
+    )
+    history: list[str] | None = Field(
+        default=None, max_length=10,
+        description="最近几轮的用户提问（从旧到新），供指代消解使用——"
+                    "多轮追问里的「它/这个」需要靠它还原成完整问题",
+    )
 
 
 class ChunkMatch(BaseModel):
@@ -293,6 +315,16 @@ class SearchResponse(BaseModel):
     deduped_count: int = 0
     #: 实际参与检索的知识库（跨库检索时可能有库因"无相关内容"被剔除）
     searched_kb_ids: list[str] = []
+    #: 本次检索是否要求做改写（请求开关或知识库配置）
+    rewrite_requested: bool = False
+    #: 改写是否**实际生效**（未开启、LLM 不可用、超时或解析失败均为 False）
+    rewrite_applied: bool = False
+    #: 实际参与召回的查询式（首条恒为原始查询）；未改写时只有一条
+    rewrite_queries: list[str] = []
+    #: 本次是否额外用了一路 HyDE 假设文档（**不在** rewrite_queries 里，它是整段文字）
+    rewrite_hyde: bool = False
+    #: 改写未生效的原因（如"改写超时"）——此前 rerank 静默失败过一次，不再重蹈
+    rewrite_reason: str = ""
 
 
 # ─── Chunk ───────────────────────────────────────────────────────────────────

@@ -428,6 +428,33 @@ function onRerankModelChange(name: string) {
       <div v-if="rerankProviders.length === 0" class="hint-text">
         尚未配置重排序模型：请到「模型」页面添加 type=rerank 的模型后再启用。
       </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">查询改写</div>
+          <div class="toggle-desc">
+            把口语化提问与多轮追问改写成多条互补的检索式（指代消解 + 多查询扩展），
+            按排名融合召回。多轮追问（"它怎么配"）几乎必须开启才能召回正确内容；
+            代价是每次检索多一次 LLM 调用——使用本库配置的图谱抽取模型。
+          </div>
+        </div>
+        <el-switch
+          :model-value="draft.enableQueryRewrite"
+          @update:model-value="(v: boolean) => set('enableQueryRewrite', v)"
+        />
+      </div>
+      <div v-if="draft.enableQueryRewrite" class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">HyDE 假设文档</div>
+          <div class="toggle-desc">
+            额外用一段"假设的答案原文"召回一路。语义类提问（"怎么保证一致性"）收益明显，
+            会让延迟再涨一截。
+          </div>
+        </div>
+        <el-switch
+          :model-value="draft.enableHyde"
+          @update:model-value="(v: boolean) => set('enableHyde', v)"
+        />
+      </div>
       <div v-if="draft.enableReranker && rerankProviders.length > 0" class="field-row">
         <div class="field flex-1">
           <label class="field-label">Reranker 提供商</label>

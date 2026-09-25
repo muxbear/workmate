@@ -32,6 +32,16 @@ const filteredCount = ref(0)
 const dedupedCount = ref(0)
 /** 本次实际检索的知识库（>1 时说明是跨库检索，结果需标注来源） */
 const searchedKbCount = ref(0)
+/** 知识库配置要求做查询改写 */
+const rewriteRequested = ref(false)
+/** 改写是否真的生效（未配 LLM / 超时 / 解析失败时为 false） */
+const rewriteApplied = ref(false)
+/** 本次实际参与召回的查询变体（首条恒为原始查询） */
+const rewriteQueries = ref<string[]>([])
+/** 本次是否额外用了一路 HyDE 假设文档 */
+const rewriteHyde = ref(false)
+/** 改写未生效的原因 */
+const rewriteReason = ref('')
 
 /** 高级参数是否展开 */
 const showAdvanced = ref(false)
@@ -51,6 +61,8 @@ const advanced = reactive<{
   dedupSimilarity: number
   docIds: string[]
   docTypes: string[]
+  useRewrite: boolean
+  useHyde: boolean
 }>({
   topK: null,
   alpha: null,
@@ -61,6 +73,9 @@ const advanced = reactive<{
   dedupSimilarity: 0.92,
   docIds: [],
   docTypes: [],
+  // 查询改写每次都要多调一次 LLM，默认跟随知识库配置（未配置时后端默认关闭）
+  useRewrite: false,
+  useHyde: false,
 })
 
 /** 可选的文件类型（取自该知识库已上传的文档，去重后排序） */
@@ -145,6 +160,8 @@ async function runSearch() {
         dedupSimilarity: advanced.dedupSimilarity,
         docIds: advanced.docIds.length ? advanced.docIds : undefined,
         docTypes: advanced.docTypes.length ? advanced.docTypes : undefined,
+        useRewrite: advanced.useRewrite || undefined,
+        useHyde: advanced.useRewrite && advanced.useHyde ? true : undefined,
       },
     )
     results.value = outcome.results
@@ -155,6 +172,11 @@ async function runSearch() {
     filteredCount.value = outcome.filteredCount
     dedupedCount.value = outcome.dedupedCount
     searchedKbCount.value = outcome.searchedKbIds.length
+    rewriteRequested.value = outcome.rewriteRequested
+    rewriteApplied.value = outcome.rewriteApplied
+    rewriteQueries.value = outcome.rewriteQueries
+    rewriteHyde.value = outcome.rewriteHyde
+    rewriteReason.value = outcome.rewriteReason
     searched.value = true
   } catch (err: unknown) {
     // 此前只 console.error：检索失败时用户看到的是"命中 0 条"，无从判断原因
@@ -164,6 +186,11 @@ async function runSearch() {
     rerankApplied.value = false
     noRelevantResult.value = false
     filteredCount.value = 0
+    rewriteRequested.value = false
+    rewriteApplied.value = false
+    rewriteQueries.value = []
+    rewriteHyde.value = false
+    rewriteReason.value = ''
     searchError.value = msg
     searched.value = true
     ElMessage.error(msg)
@@ -172,6 +199,13 @@ async function runSearch() {
     searching.value = false
   }
 }
+
+/** 改写生效时展示的变体（不含原始查询——它就是用户输入的那个） */
+const rewriteExtras = computed(() => rewriteQueries.value.slice(1))
+/** 本次召回用了几路（HyDE 假设文档也是一路，但它不出现在查询列表里） */
+const rewriteVariantCount = computed(
+  () => rewriteQueries.value.length + (rewriteHyde.value ? 1 : 0),
+)
 
 function highlightText(text: string): { text: string; hl: boolean }[] {
   const q = query.value.trim()
@@ -305,6 +339,20 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
             {{ advanced.dedupSimilarity > 0 ? `≥ ${advanced.dedupSimilarity.toFixed(2)}` : '关闭' }}
           </span>
         </div>
+        <div class="adv-item adv-switch">
+          <span class="adv-label">
+            查询改写
+            <span class="adv-hint">代词消解 + 多查询扩展，多轮追问时建议开启（多一次 LLM 调用）</span>
+          </span>
+          <el-switch v-model="advanced.useRewrite" size="small" />
+        </div>
+        <div v-if="advanced.useRewrite" class="adv-item adv-switch">
+          <span class="adv-label">
+            HyDE 假设文档
+            <span class="adv-hint">额外用"假设的答案原文"召回一路，语义类问题收益明显</span>
+          </span>
+          <el-switch v-model="advanced.useHyde" size="small" />
+        </div>
         <div v-if="props.kb.documents.length > 1" class="adv-item adv-select">
           <span class="adv-label">限定文档</span>
           <el-select
@@ -364,6 +412,21 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
         <span>
           知识库启用了精排，但本次<strong>未生效</strong>（重排模型不可用或调用失败），
           下方为召回原始顺序。请检查「模型」页面中 rerank 模型的 API_BASE 配置。
+        </span>
+      </div>
+      <div v-if="rewriteRequested && !rewriteApplied" class="rewrite-warn">
+        <AlertTriangle :size="14" />
+        <span>
+          本次<strong>未改写</strong>（{{ rewriteReason || '原因未知' }}），
+          下方为原始查询的召回结果。改写需要知识库配置可用的 LLM（与图谱抽取同一个模型）。
+        </span>
+      </div>
+      <div v-else-if="rewriteApplied" class="rewrite-ok">
+        <Wand2 :size="14" />
+        <span>
+          已改写，本次用 {{ rewriteVariantCount }} 路共同召回（按排名融合）：
+          <em v-for="(q, i) in rewriteExtras" :key="i">「{{ q }}」</em>
+          <em v-if="rewriteHyde">「HyDE 假设文档」</em>
         </span>
       </div>
       <div v-if="noRelevantResult" class="no-relevant">
@@ -636,6 +699,14 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
   justify-content: space-between;
 }
 
+.adv-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--foreground-muted, rgba(148, 163, 184, 0.9));
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .adv-select {
   align-items: flex-start;
 }
@@ -762,6 +833,37 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
   color: var(--warning-text, #f59e0b);
   font-size: var(--font-size-sm);
   line-height: 1.5;
+}
+
+.rewrite-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--warning-border, rgba(245, 158, 11, 0.4));
+  border-radius: var(--radius-card);
+  background: var(--warning-bg, rgba(245, 158, 11, 0.08));
+  color: var(--warning-text, #f59e0b);
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.5;
+}
+
+.rewrite-ok {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: var(--radius-card);
+  background: rgba(139, 92, 246, 0.08);
+  color: #8b5cf6;
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.5;
+}
+
+.rewrite-ok em {
+  font-style: normal;
+  color: var(--foreground-secondary);
 }
 
 .result-card {

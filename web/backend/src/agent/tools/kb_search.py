@@ -35,6 +35,8 @@ def kb_search(
     mode: str = "hybrid",
     top_k: int | None = None,
     kb_ids: list[str] | None = None,
+    use_rewrite: bool | None = None,
+    history: list[str] | None = None,
 ) -> dict[str, Any]:
     """搜索知识库中的内容，支持混合检索、向量检索和 BM25 关键词检索。
 
@@ -52,6 +54,12 @@ def kb_search(
         kb_ids: 跨知识库联合检索——在这些知识库里一起找（最多 5 个），
             结果按排名融合并标注来源库。**每个库都会做权限校验**，
             不可读的库会被拒绝。不知道有哪些库时先调用 list_knowledge_bases。
+        use_rewrite: 是否做查询改写（指代消解 + 多查询扩展，会多一次 LLM 调用）。
+            不传则用知识库配置。**多轮追问时建议开启**：像"它的从库怎么配"这类
+            带代词的问题，改写会把"它"还原成上一轮讨论的对象，否则几乎必然召回失败。
+        history: 最近几轮的用户提问（从旧到新，最多 3 轮），配合 use_rewrite 做指代消解。
+            例如用户先问"MySQL 主从怎么配置"、再问"那从库要改哪些参数"，则传
+            ["MySQL 主从怎么配置"]。
 
     Returns:
         {"total": int, "results": [{"doc": str, "content": str, "score": float,
@@ -64,7 +72,9 @@ def kb_search(
         - 多个候选知识库 → 附 candidates；
         - mode 非法 → 附 available_modes。
     """
-    return asyncio.run(_kb_search_async(query, kb_id, kb_name, mode, top_k, kb_ids))
+    return asyncio.run(_kb_search_async(
+        query, kb_id, kb_name, mode, top_k, kb_ids, use_rewrite, history,
+    ))
 
 
 async def _load_readable_kbs(user_id: str) -> list[Any]:
@@ -220,6 +230,8 @@ async def _load_kb_config(kb_id: str) -> dict:
 async def _kb_search_async(
     query: str, kb_id: str, kb_name: str, mode: str, top_k: int,
     kb_ids: list[str] | None = None,
+    use_rewrite: bool | None = None,
+    history: list[str] | None = None,
 ) -> dict[str, Any]:
     from api.knowledge_base.schemas import SearchRequest
     from api.knowledge_base.search_service import (
@@ -293,11 +305,15 @@ async def _kb_search_async(
     effective_top_k = clamped_top_k if clamped_top_k is not None else int(
         kb_config.get("top_k") or 5
     )
+    # 历史只保留最近几条：指代消解用不了那么远，多传只会让提示词变长
+    recent_history = [h for h in (history or []) if isinstance(h, str) and h.strip()][-3:]
     req = SearchRequest(
         query=query.strip(),
         mode=normalized_mode,
         top_k=max(1, min(effective_top_k, 50)),
         kb_ids=[resolved_id, *extra_ids] if extra_ids else None,
+        use_rewrite=use_rewrite,
+        history=recent_history or None,
     )
 
     async with async_session() as db:
@@ -332,6 +348,8 @@ async def _kb_search_async(
                     "该知识库中未找到与问题相关的内容（最高相似度低于门槛）。"
                     "请直接告诉用户知识库里没有这方面资料，或建议更换关键词/知识库。"
                 ),
+                # 改写生效却仍然无结果时，"换关键词/开改写"这类建议就没意义了
+                "rewrite_applied": resp.rewrite_applied,
             }
 
         return {
@@ -354,6 +372,9 @@ async def _kb_search_async(
                 for r in resp.results
             ],
             "rerank_applied": resp.rerank_applied,
+            # 改写状态如实返回：模型据此知道"多轮追问已被还原"或"改写没生效"
+            "rewrite_applied": resp.rewrite_applied,
+            "rewrite_queries": resp.rewrite_queries[1:] if resp.rewrite_applied else [],
         }
 
 

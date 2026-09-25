@@ -70,6 +70,8 @@ function mapConfig(raw: Record<string, unknown>): IndexConfig {
     chunkOverlap: (raw.chunk_overlap as number) || 64,
     parentChunkSize: (raw.parent_chunk_size as number) || 1536,
     minChunkSize: (raw.min_chunk_size as number) ?? 32,
+    enableQueryRewrite: (raw.enable_query_rewrite as boolean) ?? false,
+    enableHyde: (raw.enable_hyde as boolean) ?? false,
     embeddingModel: (raw.embedding_model as string) || 'text-embedding-v4',
     embeddingProviderId: (raw.embedding_provider_id as string) || '',
     embeddingDim: (raw.embedding_dim as number) || 1024,
@@ -489,6 +491,8 @@ function configToSnake(config: IndexConfig): Record<string, unknown> {
     chunk_overlap: config.chunkOverlap,
     parent_chunk_size: config.parentChunkSize,
     min_chunk_size: config.minChunkSize,
+    enable_query_rewrite: config.enableQueryRewrite,
+    enable_hyde: config.enableHyde,
     embedding_model: config.embeddingModel,
     embedding_provider_id: config.embeddingProviderId || null,
     embedding_dim: config.embeddingDim,
@@ -552,6 +556,8 @@ export async function searchKnowledgeBase(
     dedup_similarity: params.dedupSimilarity,
     doc_ids: params.docIds,
     doc_types: params.docTypes,
+    use_rewrite: params.useRewrite,
+    use_hyde: params.useHyde,
   })
   const data = res.data.data as {
     results: {
@@ -577,6 +583,11 @@ export async function searchKnowledgeBase(
     filtered_count?: number
     deduped_count?: number
     searched_kb_ids?: string[]
+    rewrite_requested?: boolean
+    rewrite_applied?: boolean
+    rewrite_queries?: string[]
+    rewrite_hyde?: boolean
+    rewrite_reason?: string
   }
   return {
     results: (data.results || []).map((r) => ({
@@ -603,6 +614,11 @@ export async function searchKnowledgeBase(
     filteredCount: data.filtered_count ?? 0,
     dedupedCount: data.deduped_count ?? 0,
     searchedKbIds: data.searched_kb_ids ?? [],
+    rewriteRequested: data.rewrite_requested ?? false,
+    rewriteApplied: data.rewrite_applied ?? false,
+    rewriteQueries: data.rewrite_queries ?? [],
+    rewriteHyde: data.rewrite_hyde ?? false,
+    rewriteReason: data.rewrite_reason || '',
   }
 }
 

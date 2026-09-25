@@ -137,27 +137,37 @@ class TestSearchContext:
 
 
 class FakeEmbedding:
-    def __init__(self, fail: bool = False):
+    def __init__(self, fail: bool = False, vectors: dict[str, list[float]] | None = None):
         self.fail = fail
         self.calls: list[str] = []
+        #: 查询改写用例用：按查询文本给出可区分的向量（默认全部相同）
+        self.vectors = vectors or {}
+        #: 只让指定文本失败（用于"某个改写变体向量化失败"的用例）
+        self.fail_texts: set[str] = set()
 
     async def aembed_query(self, text: str) -> list[float]:
         self.calls.append(text)
-        if self.fail:
+        if self.fail or text in self.fail_texts:
             raise RuntimeError("embedding service down")
-        return [0.1] * 8
+        return list(self.vectors.get(text, [0.1] * 8))
 
 
 class FakeStore:
     """只实现编排器用到的接口。"""
 
-    def __init__(self, vec=None, bm25=None, chunks=None, per_kb_vec=None, per_kb_chunks=None):
+    def __init__(
+        self, vec=None, bm25=None, chunks=None, per_kb_vec=None, per_kb_chunks=None,
+        vec_by_vector=None, bm25_by_query=None,
+    ):
         self.vec = vec or []
         self.bm25 = bm25 or []
         self.chunks = chunks or {}
         #: 跨库检索用例用：按 kb_id 提供不同的召回结果与切片
         self.per_kb_vec = per_kb_vec or {}
         self.per_kb_chunks = per_kb_chunks or {}
+        #: 查询改写用例用：按"查询向量/查询文本"给出不同召回结果
+        self.vec_by_vector = vec_by_vector or {}
+        self.bm25_by_query = bm25_by_query or {}
         self.sparse_configs: list[SparseConfig] = []
         self.filters: list[tuple[list[str] | None, list[str] | None]] = []
         self.vec_top_k: list[int] = []
@@ -169,13 +179,14 @@ class FakeStore:
     ):
         self.vec_top_k.append(top_k)
         self.filters.append((doc_ids, doc_types))
-        vec = self.per_kb_vec.get(kb_id, self.vec)
+        key = tuple(round(float(v), 4) for v in (query_embedding or []))
+        vec = self.vec_by_vector.get(key, self.per_kb_vec.get(kb_id, self.vec))
         return vec[:top_k]
 
     async def bm25_search(self, kb_id, query, top_k, sparse_config=None):
         self.bm25_top_k.append(top_k)
         self.sparse_configs.append(sparse_config)
-        return self.bm25[:top_k]
+        return self.bm25_by_query.get(query, self.bm25)[:top_k]
 
     async def get_chunks_by_ids(self, kb_id, chunk_ids, include_embeddings=False):
         if self.fail_chunk_fetch:
@@ -211,7 +222,7 @@ def make_chunk(cid: str, text: str = "") -> dict:
     }
 
 
-def make_orchestrator(kb_config=None, reranker=None, **store_kwargs):
+def make_orchestrator(kb_config=None, reranker=None, rewriter=None, **store_kwargs):
     store = FakeStore(**store_kwargs)
     embedding = FakeEmbedding()
     orchestrator = SearchOrchestrator(vector_store=store, embedding_model=embedding)
@@ -222,9 +233,42 @@ def make_orchestrator(kb_config=None, reranker=None, **store_kwargs):
     async def fake_resolve_reranker(db, config):
         return reranker
 
+    async def fake_resolve_rewriter(db, config):
+        return rewriter
+
     orchestrator._load_kb_config = fake_load_config  # type: ignore[method-assign]
     orchestrator._resolve_reranker = fake_resolve_reranker  # type: ignore[method-assign]
+    orchestrator._resolve_rewriter = fake_resolve_rewriter  # type: ignore[method-assign]
     return orchestrator, store, embedding
+
+
+class FakeRewriter:
+    """可编程的查询改写器替身。"""
+
+    def __init__(self, queries=None, resolved="", fail=False):
+        self.queries = queries or []
+        self.resolved = resolved
+        self.fail = fail
+        self.calls: list[tuple[str, list[str] | None, bool]] = []
+
+    async def rewrite(self, query, history=None, *, hyde=False):
+        from core.rag.query_rewrite import RewriteResult
+
+        self.calls.append((query, history, hyde))
+        if self.fail:
+            return RewriteResult(
+                queries=[query], resolved=query, requested=True, reason="改写调用失败",
+            )
+        # 与真实改写器一致：queries 里已包含原始查询与消解后的问题（后者排第二位）
+        queries = [query]
+        if self.resolved and self.resolved != query:
+            queries.append(self.resolved)
+        queries.extend(q for q in self.queries if q not in queries)
+        return RewriteResult(
+            queries=queries,
+            resolved=self.resolved or query,
+            applied=True, requested=True,
+        )
 
 
 class TestOrchestratorModes:
@@ -1060,3 +1104,215 @@ class TestMultiKbSearch:
         # 单库路径的分数语义是余弦（多库融合后是 RRF），据此区分两条路径
         assert response.score_kind == "cosine"
         assert store.filters
+
+
+class TestQueryRewriteIntegration:
+    """查询改写接入编排器（迭代 3 T3.4）。
+
+    三条底线：开关默认关闭（不开启时零开销）、失败退回原始查询、原始查询始终参与召回。
+    """
+
+    def _multi_variant_orchestrator(self, **kwargs):
+        """构造"原始查询"与"扩展查询"召回结果不同的编排器。"""
+        return make_orchestrator(
+            rewriter=FakeRewriter(
+                queries=["扩展查询"], resolved="消解后的完整问题",
+            ),
+            vec_by_vector={
+                (1.0, 0.0): [("c0", 0.90), ("c1", 0.85)],
+                (0.0, 1.0): [("c2", 0.88), ("c1", 0.80)],
+            },
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(3)},
+            **kwargs,
+        )
+
+    def _set_variant_vectors(self, embedding):
+        """原始查询向量为 [1,0]，改写变体为 [0,1]（与 vec_by_vector 的键对应）。"""
+        embedding.vectors = {
+            "原始问题": [1.0, 0.0],
+            "扩展查询": [0.0, 1.0],
+            "消解后的完整问题": [0.0, 1.0],
+        }
+
+    async def _search_with_variants(self, orchestrator, **request_kwargs):
+        # 默认关掉绝对门槛（用例关心的是改写，不是门槛）；需要验门槛时显式覆盖
+        request_kwargs.setdefault("min_similarity", 0.0)
+        self._set_variant_vectors(orchestrator._embedding_model)
+        return await orchestrator.search(None, "kb-1", SearchRequest(
+            query="原始问题", mode="vector", top_k=5, **request_kwargs,
+        ))
+
+    async def test_disabled_by_default_costs_nothing(self):
+        orchestrator, _, embedding = self._multi_variant_orchestrator()
+        response = await self._search_with_variants(orchestrator)
+
+        assert response.rewrite_requested is False
+        assert response.rewrite_applied is False
+        assert response.rewrite_queries == ["原始问题"]
+        # 只向量化了一次——没开改写就不该有任何额外开销
+        assert embedding.calls == ["原始问题"]
+        assert response.total == 2
+
+    async def test_kb_config_enables_rewrite(self):
+        orchestrator, _, embedding = self._multi_variant_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+        )
+        response = await self._search_with_variants(orchestrator)
+
+        assert response.rewrite_applied is True
+        assert response.rewrite_requested is True
+        assert response.rewrite_queries[0] == "原始问题"
+        assert "扩展查询" in response.rewrite_queries
+        assert set(embedding.calls) == {"原始问题", "扩展查询", "消解后的完整问题"}
+
+    async def test_request_flag_overrides_kb_config(self):
+        orchestrator, _, _ = self._multi_variant_orchestrator(
+            kb_config={"enable_query_rewrite": False},
+        )
+        response = await self._search_with_variants(orchestrator, use_rewrite=True)
+        assert response.rewrite_applied is True
+
+    async def test_request_flag_can_switch_off(self):
+        orchestrator, _, _ = self._multi_variant_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+        )
+        response = await self._search_with_variants(orchestrator, use_rewrite=False)
+        assert response.rewrite_requested is False
+
+    async def test_variants_are_fused_by_rank(self):
+        """两个变体都命中的切片应上浮——这就是多查询扩展的收益来源。"""
+        orchestrator, _, _ = self._multi_variant_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+        )
+        response = await self._search_with_variants(orchestrator)
+
+        assert response.results[0].id == "c1"
+        assert response.score_kind == "rrf"
+        assert {r.id for r in response.results} == {"c0", "c1", "c2"}
+
+    async def test_raw_scores_are_preserved_for_threshold(self):
+        """变体融合后必须保留原始余弦——绝对门槛靠它判定，否则门槛会失效。"""
+        orchestrator, _, _ = self._multi_variant_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+        )
+        response = await self._search_with_variants(orchestrator)
+
+        by_id = {r.id: r for r in response.results}
+        assert by_id["c0"].vec_score == pytest.approx(0.90)
+        assert by_id["c2"].vec_score == pytest.approx(0.88)
+
+    async def test_gate_still_applies_after_fusion(self):
+        """改写不该绕过绝对门槛：所有变体都很低时仍判定"无相关内容"。"""
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_query_rewrite": True, "min_similarity": 0.9},
+            rewriter=FakeRewriter(queries=["扩展查询"]),
+            vec_by_vector={
+                (1.0, 0.0): [("c0", 0.40)],
+                (0.0, 1.0): [("c1", 0.45)],
+            },
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(2)},
+        )
+        # 门槛取知识库配置的 0.9（两条变体的最高余弦只有 0.45）
+        response = await self._search_with_variants(orchestrator, min_similarity=None)
+
+        assert response.total == 0
+        assert response.no_relevant_result is True
+        assert response.rewrite_applied is True
+
+    async def test_rewrite_failure_falls_back_and_reports_reason(self):
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+            rewriter=FakeRewriter(fail=True),
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await self._search_with_variants(orchestrator)
+
+        assert response.total == 1
+        assert response.rewrite_requested is True
+        assert response.rewrite_applied is False
+        assert response.rewrite_reason
+
+    async def test_no_llm_configured_is_reported_not_silent(self):
+        """开了改写但库没有可用 LLM：如实标注，而不是假装没开。"""
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+            rewriter=None,
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        response = await self._search_with_variants(orchestrator)
+
+        assert response.total == 1
+        assert response.rewrite_requested is True
+        assert response.rewrite_applied is False
+        assert "LLM" in response.rewrite_reason
+
+    async def test_history_is_forwarded(self):
+        rewriter = FakeRewriter(queries=["扩展查询"])
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+            rewriter=rewriter,
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        await self._search_with_variants(
+            orchestrator, history=["上一轮问题"], use_rewrite=True,
+        )
+
+        assert rewriter.calls[0][1] == ["上一轮问题"]
+
+    async def test_hyde_flag_is_forwarded(self):
+        rewriter = FakeRewriter(queries=["扩展查询"])
+        orchestrator, _, _ = make_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+            rewriter=rewriter,
+            vec=[("c0", 0.9)], chunks={"c0": make_chunk("c0")},
+        )
+        await self._search_with_variants(orchestrator, use_hyde=True)
+
+        assert rewriter.calls[0][2] is True
+
+    async def test_variant_embedding_failure_keeps_original_variant(self):
+        """某个变体向量化失败只丢那一路，原始查询的召回不受影响。"""
+        orchestrator, _, embedding = make_orchestrator(
+            kb_config={"enable_query_rewrite": True},
+            rewriter=FakeRewriter(queries=["扩展查询"]),
+            vec_by_vector={
+                (1.0, 0.0): [("c0", 0.90), ("c1", 0.85)],
+                (0.0, 1.0): [("c2", 0.88)],
+            },
+            chunks={f"c{i}": make_chunk(f"c{i}") for i in range(3)},
+        )
+        embedding.vectors = {"原始问题": [1.0, 0.0], "扩展查询": [0.0, 1.0]}
+        embedding.fail_texts = {"扩展查询"}
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="原始问题", mode="vector", top_k=5, min_similarity=0.0,
+        ))
+
+        # 改写本身成功了（只是有一路没跑起来），所以仍标注 applied；
+        # 但 c2 完全没被召回——失败的那路没有贡献任何结果
+        assert response.rewrite_applied is True
+        assert {r.id for r in response.results} == {"c0", "c1"}
+
+    async def test_multi_kb_path_also_uses_variants(self):
+        """跨库检索同样吃改写：变体在**每个库内部**先融合成该库的一路。"""
+        chunk_b = make_chunk("c9")
+        chunk_b["kb_id"] = "kb-2"
+        orchestrator, _, embedding = make_orchestrator(
+            kb_config={"enable_query_rewrite": True, "min_similarity": 0.0},
+            rewriter=FakeRewriter(queries=["扩展查询"]),
+            vec_by_vector={
+                (1.0, 0.0): [("c0", 0.70)],
+                (0.0, 1.0): [("c0", 0.90), ("c9", 0.86)],
+            },
+            chunks={
+                **{f"c{i}": make_chunk(f"c{i}") for i in range(3)},
+                "c9": chunk_b,
+            },
+        )
+        self._set_variant_vectors(embedding)
+        response = await orchestrator.search(None, "kb-1", SearchRequest(
+            query="原始问题", mode="vector", top_k=5, min_similarity=0.0,
+            kb_ids=["kb-2"],
+        ))
+
+        assert response.rewrite_applied is True
+        assert {r.id for r in response.results} == {"c0", "c9"}

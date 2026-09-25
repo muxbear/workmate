@@ -42,6 +42,10 @@ export interface IndexConfig {
   parentChunkSize: number
   /** 最小块长：低于该长度的切片并入相邻块（避免"只有标题"的碎片进索引） */
   minChunkSize: number
+  /** 是否为该库默认开启查询改写（指代消解 + 多查询扩展，每次检索多一次 LLM 调用） */
+  enableQueryRewrite: boolean
+  /** 是否默认额外用 HyDE 假设文档召回一路（仅在启用改写时生效） */
+  enableHyde: boolean
   embeddingModel: string
   /** embedding 模型所属提供商（用于消解同名模型；可为空表示按名称全局解析） */
   embeddingProviderId: string
@@ -353,6 +357,16 @@ export interface SearchOutcome {
   dedupedCount: number
   /** 实际参与检索的知识库（跨库检索时可能有库因"无相关内容"被剔除） */
   searchedKbIds: string[]
+  /** 本次是否要求做查询改写 */
+  rewriteRequested: boolean
+  /** 改写是否**实际生效**（未配 LLM、超时或解析失败时为 false） */
+  rewriteApplied: boolean
+  /** 实际参与召回的查询式（首条恒为原始查询；未改写时只有一条） */
+  rewriteQueries: string[]
+  /** 本次是否额外用了一路 HyDE 假设文档 */
+  rewriteHyde: boolean
+  /** 改写未生效的原因 */
+  rewriteReason: string
 }
 
 /** 高级检索参数（检索页可覆盖知识库配置） */
@@ -367,6 +381,10 @@ export interface SearchParams {
   docIds?: string[]
   /** 只在指定文件类型内检索，如 ['pdf', 'md'] */
   docTypes?: string[]
+  /** 是否做查询改写（指代消解 + 多查询扩展）；不传表示用知识库配置 */
+  useRewrite?: boolean
+  /** 是否额外用 HyDE 假设文档召回一路（仅在启用改写时生效） */
+  useHyde?: boolean
 }
 
 // 视图模式

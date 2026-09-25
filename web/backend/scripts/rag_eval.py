@@ -6,6 +6,7 @@
     uv run python scripts/rag_eval.py --mode hybrid
     uv run python scripts/rag_eval.py --rerank off        # 对比关掉精排
     uv run python scripts/rag_eval.py --min-similarity 0  # 关掉绝对门槛
+    uv run python scripts/rag_eval.py --rewrite on        # 对比开启查询改写
     uv run python scripts/rag_eval.py --compare baseline.json
 
 指标（K = top_k）：
@@ -148,6 +149,8 @@ async def run(
     score_threshold: float | None,
     dedup_similarity: float | None,
     max_per_doc: int | None,
+    rewrite: bool | None = None,
+    hyde: bool | None = None,
 ) -> dict[str, Any]:
     """跑完整评测，返回报告字典。"""
     from agent.config import settings
@@ -163,103 +166,127 @@ async def run(
     if missing:
         raise SystemExit(f"黄金集引用了不存在的知识库: {sorted(missing)}")
 
-    async with async_session() as db:
-        embedding = await load_embedding_model(db)
-        store = MilvusVectorStore(
-            uri=settings.MILVUS_URI,
-            user=settings.MILVUS_USER,
-            password=settings.MILVUS_PASSWORD,
-            db_name=settings.MILVUS_DEFAULT_DB,
-        )
-        orchestrator = SearchOrchestrator(vector_store=store, embedding_model=embedding)
+    async with async_session() as setup_db:
+        embedding = await load_embedding_model(setup_db)
+    store = MilvusVectorStore(
+        uri=settings.MILVUS_URI,
+        user=settings.MILVUS_USER,
+        password=settings.MILVUS_PASSWORD,
+        db_name=settings.MILVUS_DEFAULT_DB,
+    )
+    orchestrator = SearchOrchestrator(vector_store=store, embedding_model=embedding)
 
-        report: dict[str, Any] = {
-            "top_k": top_k,
-            "overrides": {
-                "rerank": rerank,
-                "min_similarity": min_similarity,
-                "score_threshold": score_threshold,
-                "dedup_similarity": dedup_similarity,
-                "max_chunks_per_doc": max_per_doc,
-            },
-            "modes": {},
-        }
+    #: 每个用例一个会话，而不是全程共用一个：
+    #: 一次检索在两次 SQL 之间要对 embedding / 向量库 / 精排服务发多次远程调用
+    #: （开精排时单条 ~1s），共用会话等于让同一条连接在整个跑分期间一直挂着——实测
+    #: 跑几十条后连接被服务端关闭，之后**所有**用例都报
+    #: "PendingRollbackError: Can't reconnect until invalid transaction is rolled back"，
+    #: 分数被静默算成 0。评测是质量门禁，静默作废比报错更危险。
+    report: dict[str, Any] = {
+        "top_k": top_k,
+        # 黄金集规模——基线只在本字段相同时可比：用例集合一变（新增/删除），
+        # 指标的分母就变了，跨集合比大小会把"题目变难"误读成"质量下降"
+        "golden_cases": len(cases),
+        "overrides": {
+            "rerank": rerank,
+            "min_similarity": min_similarity,
+            "score_threshold": score_threshold,
+            "dedup_similarity": dedup_similarity,
+            "max_chunks_per_doc": max_per_doc,
+            "rewrite": rewrite,
+            "hyde": hyde,
+        },
+        "modes": {},
+    }
 
-        for mode in modes:
-            rows: list[dict[str, Any]] = []
-            latencies: list[float] = []
-            for case in cases:
-                request = SearchRequest(
-                    query=case["query"],
-                    mode=mode,
-                    top_k=top_k,
-                    enable_rerank=rerank,
-                    min_similarity=min_similarity,
-                    score_threshold=score_threshold,
-                    dedup_similarity=dedup_similarity,
-                    max_chunks_per_doc=max_per_doc,
-                )
-                started = time.perf_counter()
-                try:
+    for mode in modes:
+        rows: list[dict[str, Any]] = []
+        latencies: list[float] = []
+        for case in cases:
+            request = SearchRequest(
+                query=case["query"],
+                mode=mode,
+                top_k=top_k,
+                enable_rerank=rerank,
+                min_similarity=min_similarity,
+                score_threshold=score_threshold,
+                dedup_similarity=dedup_similarity,
+                max_chunks_per_doc=max_per_doc,
+                use_rewrite=rewrite,
+                use_hyde=hyde,
+                # 多轮用例带 history：指代消解的输入，缺了它就无法还原"它/这个"
+                history=case.get("history"),
+            )
+            started = time.perf_counter()
+            try:
+                async with async_session() as db:
                     response = await orchestrator.search(db, kb_ids[case["kb"]], request)
-                    error = None
-                except Exception as exc:  # noqa: BLE001 - 评测要跑完全部用例
-                    response, error = None, f"{type(exc).__name__}: {exc}"
-                latencies.append((time.perf_counter() - started) * 1000)
+                error = None
+            except Exception as exc:  # noqa: BLE001 - 评测要跑完全部用例
+                response, error = None, f"{type(exc).__name__}: {exc}"
+            latencies.append((time.perf_counter() - started) * 1000)
 
-                if response is None:
-                    rows.append({
-                        "id": case["id"], "category": case["category"],
-                        "error": error, "metrics": {
-                            "hit": 0.0, "recall": 0.0, "mrr": 0.0,
-                            "ndcg": 0.0, "false_hit": 0.0,
-                        },
-                    })
-                    continue
-
+            if response is None:
                 rows.append({
-                    "id": case["id"],
-                    "category": case["category"],
-                    "query": case["query"],
-                    "total": response.total,
-                    "no_relevant_result": response.no_relevant_result,
-                    "rerank_applied": response.rerank_applied,
-                    "deduped_count": response.deduped_count,
-                    "top_docs": [r.doc_name for r in response.results[:3]],
-                    "metrics": score_case(case, response.results, top_k),
+                    "id": case["id"], "category": case["category"],
+                    "error": error, "metrics": {
+                        "hit": 0.0, "recall": 0.0, "mrr": 0.0,
+                        "ndcg": 0.0, "false_hit": 0.0,
+                    },
                 })
+                continue
 
-            positives = [r for r in rows if r["category"] != "negative"]
-            negatives = [r for r in rows if r["category"] == "negative"]
+            rows.append({
+                "id": case["id"],
+                "category": case["category"],
+                "query": case["query"],
+                "total": response.total,
+                "no_relevant_result": response.no_relevant_result,
+                "rerank_applied": response.rerank_applied,
+                "rewrite_applied": response.rewrite_applied,
+                "rewrite_queries": response.rewrite_queries,
+                "deduped_count": response.deduped_count,
+                "top_docs": [r.doc_name for r in response.results[:3]],
+                "metrics": score_case(case, response.results, top_k),
+            })
 
-            def mean(key: str, items: list[dict[str, Any]]) -> float:
-                return (
-                    statistics.fmean(item["metrics"][key] for item in items)
-                    if items else 0.0
+        positives = [r for r in rows if r["category"] != "negative"]
+        negatives = [r for r in rows if r["category"] == "negative"]
+
+        def mean(key: str, items: list[dict[str, Any]]) -> float:
+            return (
+                statistics.fmean(item["metrics"][key] for item in items)
+                if items else 0.0
+            )
+
+        latencies.sort()
+        report["modes"][mode] = {
+            "hit@k": round(mean("hit", positives), 4),
+            "recall@k": round(mean("recall", positives), 4),
+            "mrr": round(mean("mrr", positives), 4),
+            "ndcg@k": round(mean("ndcg", positives), 4),
+            "false_positive_rate": round(mean("false_hit", negatives), 4),
+            "positive_cases": len(positives),
+            "negative_cases": len(negatives),
+            "latency_p50_ms": round(latencies[len(latencies) // 2], 1),
+            "latency_p95_ms": round(latencies[int(len(latencies) * 0.95) - 1], 1),
+            "deduped_total": sum(r.get("deduped_count") or 0 for r in rows),
+            # 改写生效的用例数——"改写没生效"会让指标改善无从谈起，
+            # 因此与延迟一样属于必须如实暴露的运行状态
+            "rewrite_applied_cases": sum(
+                1 for r in rows if r.get("rewrite_applied")
+            ),
+            "by_category": {
+                category: round(
+                    mean("hit", [r for r in positives if r["category"] == category]), 4,
                 )
-
-            latencies.sort()
-            report["modes"][mode] = {
-                "hit@k": round(mean("hit", positives), 4),
-                "recall@k": round(mean("recall", positives), 4),
-                "mrr": round(mean("mrr", positives), 4),
-                "ndcg@k": round(mean("ndcg", positives), 4),
-                "false_positive_rate": round(mean("false_hit", negatives), 4),
-                "positive_cases": len(positives),
-                "negative_cases": len(negatives),
-                "latency_p50_ms": round(latencies[len(latencies) // 2], 1),
-                "latency_p95_ms": round(latencies[int(len(latencies) * 0.95) - 1], 1),
-                "deduped_total": sum(r.get("deduped_count") or 0 for r in rows),
-                "by_category": {
-                    category: round(
-                        mean("hit", [r for r in positives if r["category"] == category]), 4,
-                    )
-                    for category in sorted({r["category"] for r in positives})
-                },
-                "misses": [r["id"] for r in positives if r["metrics"]["hit"] == 0.0],
-                "false_positives": [r["id"] for r in negatives if r["metrics"]["false_hit"] > 0],
-                "details": rows,
-            }
+                for category in sorted({r["category"] for r in positives})
+            },
+            "misses": [r["id"] for r in positives if r["metrics"]["hit"] == 0.0],
+            "false_positives": [r["id"] for r in negatives if r["metrics"]["false_hit"] > 0],
+            "errors": [r["id"] for r in rows if r.get("error")],
+            "details": rows,
+        }
 
     return report
 
@@ -281,6 +308,12 @@ def print_report(report: dict[str, Any]) -> None:
         print(f"\n[{mode}] 分类命中率: {metrics['by_category']}")
         if metrics.get("deduped_total"):
             print(f"[{mode}] 去冗余丢弃条数合计: {metrics['deduped_total']}")
+        if metrics.get("rewrite_applied_cases"):
+            print(f"[{mode}] 改写生效用例数: {metrics['rewrite_applied_cases']}")
+        if metrics.get("errors"):
+            # 报错的用例会被算成"没命中"，必须明确区分：否则一次连接抖动看起来
+            # 就像检索质量崩了
+            print(f"[{mode}] 执行报错（分数不可信）: {metrics['errors']}")
         if metrics["misses"]:
             print(f"[{mode}] 未命中: {metrics['misses']}")
         if metrics["false_positives"]:
@@ -291,6 +324,15 @@ def compare(current: dict[str, Any], baseline_path: Path) -> None:
     """与基线报告对比，打印每个指标的增减。"""
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     print(f"\n与基线 {baseline_path.name} 对比（正数=变好）")
+
+    # 用例集合不同则不可比：分母变了，涨跌都可能是"题目变难/变易"造成的假象
+    base_cases = baseline.get("golden_cases")
+    if base_cases is not None and base_cases != current.get("golden_cases"):
+        print(
+            f"\n⚠ 基线是 {base_cases} 条用例、本次是 {current.get('golden_cases')} 条——"
+            "用例集合不同，指标不可直接比较。请先确认是否该重跑基线"
+            "（make rag_baseline）。"
+        )
     for mode, metrics in current["modes"].items():
         base = baseline.get("modes", {}).get(mode)
         if not base:
@@ -304,6 +346,18 @@ def compare(current: dict[str, Any], baseline_path: Path) -> None:
             f"  {'误召回率':10} {base['false_positive_rate']:.3f} → "
             f"{metrics['false_positive_rate']:.3f}  ({delta_fp:+.3f}，越低越好)"
         )
+        # 分类子集单独对比：整体指标会被大子集主导，掩盖"多轮/口语化"这类
+        # 小样本子集的变化——而它们恰恰是改写等能力的主战场
+        base_cats = base.get("by_category", {})
+        current_cats = metrics.get("by_category", {})
+        for category in sorted(current_cats):
+            if category not in base_cats:
+                continue
+            delta = current_cats[category] - base_cats[category]
+            print(
+                f"  [{category}] {base_cats[category]:.3f} → "
+                f"{current_cats[category]:.3f}  ({delta:+.3f})"
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -315,6 +369,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-threshold", type=float, help="覆盖相对截断比例")
     parser.add_argument("--dedup", type=float, help="覆盖近重复阈值（0 表示关闭去重）")
     parser.add_argument("--max-per-doc", type=int, help="覆盖单文档结果上限（0 表示不限制）")
+    parser.add_argument("--rewrite", choices=("on", "off"), help="覆盖查询改写开关")
+    parser.add_argument("--hyde", choices=("on", "off"), help="覆盖 HyDE 开关")
     parser.add_argument("--json", type=Path, help="把完整报告写到该文件（可作为后续基线）")
     parser.add_argument("--compare", type=Path, help="与已有基线报告对比")
     return parser.parse_args()
@@ -336,6 +392,8 @@ def main() -> int:
         score_threshold=args.score_threshold,
         dedup_similarity=args.dedup,
         max_per_doc=args.max_per_doc,
+        rewrite=None if args.rewrite is None else args.rewrite == "on",
+        hyde=None if args.hyde is None else args.hyde == "on",
     ))
     print_report(report)
 

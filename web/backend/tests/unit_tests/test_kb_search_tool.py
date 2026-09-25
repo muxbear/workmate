@@ -407,6 +407,68 @@ class TestMultiKbSearch:
         assert result["total"] == 1
 
 
+class TestQueryRewriteParams:
+    """查询改写开关与多轮历史由模型传入工具（迭代 3 T3.4）。"""
+
+    async def test_rewrite_flag_is_forwarded(self, monkeypatch, patched_env, sessionmaker):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        await call_search(kb_id="kb-a", use_rewrite=True)
+
+        assert patched_env.calls[0][1].use_rewrite is True
+
+    async def test_unset_flag_stays_none_so_kb_config_applies(
+        self, monkeypatch, patched_env, sessionmaker,
+    ):
+        """未显式传入时必须保持 None——传 False 会覆盖知识库配置。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        await call_search(kb_id="kb-a")
+
+        assert patched_env.calls[0][1].use_rewrite is None
+
+    async def test_history_is_capped_and_cleaned(self, monkeypatch, patched_env, sessionmaker):
+        """历史只留最近几条，且剔掉空白项——模型可能把整段对话塞进来。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        await call_search(
+            kb_id="kb-a", use_rewrite=True,
+            history=["第一轮", "  ", "第二轮", "第三轮", "第四轮"],
+        )
+
+        assert patched_env.calls[0][1].history == ["第二轮", "第三轮", "第四轮"]
+
+    async def test_empty_history_is_none(self, monkeypatch, patched_env, sessionmaker):
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        await call_search(kb_id="kb-a", history=[])
+
+        assert patched_env.calls[0][1].history is None
+
+    async def test_result_reports_rewrite_state(self, monkeypatch, patched_env, sessionmaker):
+        """工具结果里要如实带出改写状态：模型据此决定是否再试一次。"""
+        monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)
+        await seed(sessionmaker, [kb_row("kb-a", "我的", USER_A)])
+
+        async def searched(db, kb_id, request):
+            return SearchResponse(
+                query=request.query, mode=request.mode, total=0, results=[],
+                no_relevant_result=True, rewrite_applied=True,
+                rewrite_queries=["原问题", "消解后的问题"],
+            )
+
+        monkeypatch.setattr(patched_env, "search", searched)
+
+        result = await call_search(kb_id="kb-a", use_rewrite=True)
+
+        assert result["no_relevant_result"] is True
+        assert result["rewrite_applied"] is True
+
+
 class TestListKnowledgeBases:
     async def test_scoped_to_current_user(self, monkeypatch, patched_env, sessionmaker):
         monkeypatch.setattr(kb_search_module, "_current_user_id", lambda: USER_A)

@@ -39,6 +39,17 @@ class TestDefaultsConsistency:
         assert config.min_similarity == pytest.approx(0.53)
         assert config.score_threshold == pytest.approx(0.0)
 
+    def test_query_rewrite_disabled_by_default(self):
+        """查询改写默认关闭（迭代 3 T3.4）。
+
+        它每次都多一次 LLM 调用（延迟 + 成本），按方案 §12.1 的灰度策略
+        "默认关闭、按库/按次开启"。开启后最坏情况也只是退回改写前的行为——
+        原始查询始终参与召回。
+        """
+        config = IndexConfigSchema()
+        assert config.enable_query_rewrite is False
+        assert config.enable_hyde is False
+
 
 class TestFrontendPayloadContract:
     """前端 configToSnake() 产出的字段必须能被 schema 接收（否则被静默丢弃）。"""
@@ -47,6 +58,8 @@ class TestFrontendPayloadContract:
         "chunk_strategy": "recursive",
         "chunk_size": 512,
         "chunk_overlap": 64,
+        "parent_chunk_size": 2048,
+        "min_chunk_size": 48,
         "embedding_model": "text-embedding-v4",
         "embedding_provider_id": "provider-1",
         "embedding_dim": 1024,
@@ -61,6 +74,8 @@ class TestFrontendPayloadContract:
         "enable_reranker": True,
         "top_k": 8,
         "hybrid_alpha": 0.4,
+        "enable_query_rewrite": True,
+        "enable_hyde": True,
     }
 
     def test_all_fields_are_accepted(self):

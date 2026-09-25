@@ -44,3 +44,10 @@
 {"id": "lc-neg-03", "kb": "langchain", "category": "negative", "query": "上海地铁几点停运", "expect_docs": [], "expect_keywords": []}
 {"id": "lc-msg-01", "kb": "langchain", "category": "keyword", "query": "怎么构造结构化输出", "expect_docs": [], "expect_keywords": ["结构化", "输出"]}
 {"id": "lc-graph-01", "kb": "langchain", "category": "keyword", "query": "LangGraph 用来做什么", "expect_docs": [], "expect_keywords": ["LangGraph"]}
+{"id": "k8s-multi-01", "kb": "kubernetes", "category": "multi_turn", "history": ["MySQL 主从复制怎么配置"], "query": "它具体怎么操作", "expect_docs": ["第3章 云原生应用实战-Kubernetes部署MySql主从.md"], "expect_keywords": []}
+{"id": "k8s-multi-02", "kb": "kubernetes", "category": "multi_turn", "history": ["Redis 集群怎么部署"], "query": "它大概要几步", "expect_docs": ["第6章 云原生应用实战-Kubernetes部署Redis集群.md"], "expect_keywords": []}
+{"id": "k8s-multi-03", "kb": "kubernetes", "category": "multi_turn", "history": ["Jenkins 流水线 Jenkinsfile"], "query": "这个文件放在哪个目录", "expect_docs": ["第7章 云原生应用实战-Kubernetes部署Jenkins.md"], "expect_keywords": []}
+{"id": "k8s-multi-04", "kb": "kubernetes", "category": "multi_turn", "history": ["Nacos 集群部署"], "query": "它最少要几个节点", "expect_docs": ["第4章 云原生应用实战-Kubernetes部署Nacos集群.md"], "expect_keywords": []}
+{"id": "k8s-multi-05", "kb": "kubernetes", "category": "multi_turn", "history": ["Seata 分布式事务部署"], "query": "这个组件怎么用起来", "expect_docs": ["第5章 云原生应用实战-Kubernetes部署Seata.md"], "expect_keywords": []}
+{"id": "lc-multi-01", "kb": "langchain", "category": "multi_turn", "history": ["对话记忆怎么持久化"], "query": "它支持哪些方案", "expect_docs": [], "expect_keywords": ["记忆", "memory"]}
+{"id": "lc-multi-02", "kb": "langchain", "category": "multi_turn", "history": ["LangChain 里怎么定义工具"], "query": "它有什么注意事项", "expect_docs": [], "expect_keywords": ["tool", "工具"]}

@@ -28,6 +28,7 @@ function kb(): KB {
       minSimilarity: 0.53, scoreThreshold: 0,
       maxChunksPerDoc: 3, dedupSimilarity: 0.92,
       parentChunkSize: 1536, minChunkSize: 32,
+      enableQueryRewrite: false, enableHyde: false,
     },
     documents: [
       { id: 'd1', name: '手册.md', type: 'md' } as KB['documents'][number],
@@ -72,6 +73,11 @@ function outcome(overrides: Partial<SearchOutcome> = {}): SearchOutcome {
     filteredCount: 0,
     dedupedCount: 0,
     searchedKbIds: ['kb-1'],
+    rewriteRequested: false,
+    rewriteApplied: false,
+    rewriteQueries: ['怎么部署'],
+    rewriteHyde: false,
+    rewriteReason: '',
     ...overrides,
   }
 }
@@ -275,6 +281,62 @@ describe('KbSearchTab · 高级参数', () => {
     await search(wrapper)
 
     expect(wrapper.html()).toContain('已扩展上下文')
+  })
+
+  it('改写生效时展示实际用的查询变体', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome({
+      rewriteRequested: true,
+      rewriteApplied: true,
+      rewriteQueries: ['主从库同步那一段在哪里', 'MySQL 主从复制配置'],
+    }))
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    expect(wrapper.html()).toContain('已改写')
+    expect(wrapper.html()).toContain('MySQL 主从复制配置')
+    // 原始查询就是用户输入的那个，不必再回显一遍
+    expect(wrapper.html()).not.toContain('「主从库同步那一段在哪里」')
+  })
+
+  it('改写未生效时给出原因，而不是静默', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome({
+      rewriteRequested: true,
+      rewriteApplied: false,
+      rewriteReason: '改写超时（>12s）',
+    }))
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    expect(wrapper.html()).toContain('未改写')
+    expect(wrapper.html()).toContain('改写超时')
+  })
+
+  it('未开启改写时两段提示都不出现', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome())
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    expect(wrapper.html()).not.toContain('已改写')
+    expect(wrapper.html()).not.toContain('未改写')
+  })
+
+  it('高级参数里可开启查询改写并下发 use_rewrite', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome())
+    const wrapper = await mountTab()
+
+    await wrapper.find('button.link-btn').trigger('click')
+    // 高级面板里有多个开关（查询改写 / HyDE / 精排），按标签定位，别按位置
+    const row = wrapper.findAll('.adv-switch').find((el) => el.text().includes('查询改写'))
+    await row!.find('.el-switch').trigger('click')
+    await search(wrapper)
+
+    expect(api.searchKnowledgeBase).toHaveBeenCalledWith(
+      'kb-1', '怎么部署', 'hybrid', 10,
+      expect.objectContaining({ useRewrite: true }),
+    )
   })
 
   it('检索失败时页面上留下错误原因，而不是只有一闪而过的 toast', async () => {
