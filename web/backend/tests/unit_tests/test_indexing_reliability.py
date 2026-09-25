@@ -418,7 +418,7 @@ class FakeVectorStore:
     def __init__(self):
         self.deleted_docs: list[str] = []
 
-    async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
+    async def delete_by_doc_id(self, kb_id: str, doc_id: str, target=None) -> None:
         self.deleted_docs.append(doc_id)
 
 

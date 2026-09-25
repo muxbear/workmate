@@ -1526,6 +1526,22 @@ async def delete_document(
     await recalc_kb_counters(db, kb_id)
 
 
+async def _active_rebuild_target(vector_store, kb_id: str) -> str | None:
+    """重建进行中时返回临时集合名，否则 ``None``。
+
+    判定依据是"临时集合是否存在"——它由 ``reindex_kb`` 建好、由提交动作删除，
+    因此它的存在本身就等价于"这个库正在重建"。
+    """
+    if vector_store is None or not hasattr(vector_store, "has_staged_collection"):
+        return None
+    try:
+        if await vector_store.has_staged_collection(kb_id):
+            return vector_store.staging_name_for(kb_id)
+    except Exception:  # noqa: BLE001 - 探测失败按"没有重建"处理（保守：写正式集合）
+        logger.warning("探测重建中的临时集合失败 kb=%s", kb_id, exc_info=True)
+    return None
+
+
 async def retry_document(
     db: AsyncSession, kb_id: str, doc_id: str, user_id: str,
     scheduler: IndexingScheduler | None = None,
@@ -1560,9 +1576,14 @@ async def retry_document(
     if scheduler is not None:
         await scheduler.cancel(doc_id)
 
+    # 重建进行中时，这个文档的切片在**临时集合**里：清理与重写都必须指向它。
+    # 否则重试会把切片写进正式集合，而提交时切换进来的是不含它的临时集合——
+    # 索引一提交这篇文档就"消失"了（内容其实还在被丢弃的那个集合里）。
+    target = await _active_rebuild_target(vector_store, kb_id)
+
     if vector_store is not None:
         try:
-            await vector_store.delete_by_doc_id(kb_id, doc_id)
+            await vector_store.delete_by_doc_id(kb_id, doc_id, target=target)
         except Exception as e:  # noqa: BLE001 - 清理失败不应阻断重试
             logger.warning("重试前清理向量失败 doc=%s: %s", doc_id, e)
 
@@ -1600,6 +1621,7 @@ async def retry_document(
         await scheduler.enqueue(IndexingTask(
             kb_id=kb_id, doc_id=doc_id, file_path=doc.storage_path,
             file_type=doc.type, config=doc_config,
+            target_collection=target,
         ))
 
     return KBDocResponse(

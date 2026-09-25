@@ -159,8 +159,13 @@ class BaseVectorStore(ABC):
         """
 
     @abstractmethod
-    async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
-        """按文档 ID 删除所有相关向量。"""
+    async def delete_by_doc_id(
+        self, kb_id: str, doc_id: str, target: str | None = None,
+    ) -> None:
+        """按文档 ID 删除所有相关向量。
+
+        ``target`` 指定物理集合（重建期间清理临时集合里的残留）。
+        """
 
     @abstractmethod
     async def flush_collection(
@@ -741,8 +746,13 @@ class MilvusVectorStore(BaseVectorStore):
         await self.run_sync(collection.delete, expr)
         return 1
 
-    async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
-        collection = await self._get_collection(kb_id)
+    async def delete_by_doc_id(
+        self, kb_id: str, doc_id: str, target: str | None = None,
+    ) -> None:
+        collection = (
+            await self._get_collection_by_name(target) if target
+            else await self._get_collection(kb_id)
+        )
         await self.run_sync(
             collection.delete, f'doc_id == "{safe_expr_id(doc_id, "doc_id")}"',
         )
@@ -1170,7 +1180,10 @@ class ChromaVectorStore(BaseVectorStore):
         logger.info("Chroma upserted %d chunks for kb=%s", len(chunk_ids), kb_id)
         return chunk_ids
 
-    async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
+    async def delete_by_doc_id(
+        self, kb_id: str, doc_id: str, target: str | None = None,
+    ) -> None:
+        # Chroma 无临时集合机制，target 仅为接口对齐
         collection = await self._get_collection(kb_id)
         # Find all chunk IDs for this doc
         result = await self.run_sync(

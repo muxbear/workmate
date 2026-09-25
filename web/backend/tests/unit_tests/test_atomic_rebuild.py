@@ -291,3 +291,54 @@ class TestFlushIsBestEffort:
 
         assert ctx.status == "extracting", "flush 失败不该让文档停在 bm25 阶段"
         assert ctx.error_message is None
+
+
+class TestRetryDuringRebuild:
+    """重建期间重试文档：必须写进**同一个临时集合**。
+
+    否则切片的去向是：清理正式集合（那里本来就没有它）+ 写进正式集合 → 提交时切换
+    进来的是不含它的临时集合，这篇文档在索引一提交后就"消失"了（内容其实留在被丢弃
+    的那个集合里）。判定"是否正在重建"的依据是临时集合是否存在——它的存在本身就
+    等价于"这个库正在重建"。
+    """
+
+    class _Store:
+        def __init__(self, staged: bool):
+            self._staged = staged
+
+        async def has_staged_collection(self, kb_id):
+            return self._staged
+
+        def staging_name_for(self, kb_id):
+            return f"{MilvusVectorStore.staging_name_for(kb_id)}"
+
+    async def test_target_is_staging_when_rebuild_in_progress(self):
+        from api.knowledge_base.doc_service import _active_rebuild_target
+
+        target = await _active_rebuild_target(self._Store(staged=True), "kb-1")
+
+        assert target == MilvusVectorStore.staging_name_for("kb-1")
+
+    async def test_target_is_none_without_rebuild(self):
+        from api.knowledge_base.doc_service import _active_rebuild_target
+
+        assert await _active_rebuild_target(self._Store(staged=False), "kb-1") is None
+
+    async def test_target_is_none_for_stores_without_staging(self):
+        from api.knowledge_base.doc_service import _active_rebuild_target
+
+        class PlainStore:
+            async def add_documents(self, *a, **kw):
+                return []
+
+        assert await _active_rebuild_target(PlainStore(), "kb-1") is None
+
+    async def test_probe_failure_is_treated_as_no_rebuild(self):
+        """探测失败按"没有重建"处理——保守地写正式集合，而不是报错。"""
+        from api.knowledge_base.doc_service import _active_rebuild_target
+
+        class BrokenStore:
+            async def has_staged_collection(self, kb_id):
+                raise RuntimeError("milvus down")
+
+        assert await _active_rebuild_target(BrokenStore(), "kb-1") is None
