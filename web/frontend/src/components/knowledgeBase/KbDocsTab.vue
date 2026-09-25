@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Upload, Trash2, RefreshCw, FolderOpen, Ban, CircleAlert,
   FileType2, FileCode2, FileText, FileSpreadsheet, FileImage, Globe,
-  Eye, Scissors,
+  Eye, Scissors, Download, ClipboardPaste,
 } from 'lucide-vue-next'
 import type { KB, KBDoc, DocType, IndexConfig } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
+import { downloadDocument, readApiError } from '@/services/knowledgeBaseApi'
 import KbDocStatusBadge from './KbDocStatusBadge.vue'
 import KbUploadDialog from './KbUploadDialog.vue'
+import KbPasteTextDialog from './KbPasteTextDialog.vue'
 import KbIndexingPipeline from './KbIndexingPipeline.vue'
 import KbDocDetailDrawer from './KbDocDetailDrawer.vue'
 import KbFragmentEditor from './KbFragmentEditor.vue'
@@ -47,26 +49,170 @@ const filteredDocs = computed(() => {
 })
 
 const uploading = ref(false)
+const pasteVisible = ref(false)
+const batchRunning = ref(false)
+
+/** 被跳过文件的提示文案：必须说清"重复于哪一篇"，否则用户会以为文件丢了 */
+function skipSummary(skipped: { name: string; existingDocName?: string | null }[]): string {
+  const first = skipped[0]
+  const detail = first.existingDocName ? `（与《${first.existingDocName}》内容相同）` : ''
+  return skipped.length === 1
+    ? `已跳过 ${first.name}${detail}`
+    : `已跳过 ${skipped.length} 个重复文件，如 ${first.name}${detail}`
+}
 
 async function handleUpload(files: File[], config?: IndexConfig) {
   uploadVisible.value = false
   try {
     uploading.value = true
-    await store.uploadDocs(props.kb.id, files, config)
+    const result = await store.uploadDocs(props.kb.id, files, config)
+    if (result.skipped.length) {
+      ElMessage.warning(skipSummary(result.skipped))
+    }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '上传失败'
-    ElMessage.error(msg)
+    ElMessage.error(readApiError(err))
   } finally {
     uploading.value = false
   }
 }
 
+async function handlePaste(name: string, content: string, config?: IndexConfig) {
+  try {
+    const result = await store.createTextDoc(props.kb.id, { name, content, config })
+    pasteVisible.value = false
+    if (result.skipped.length) {
+      ElMessage.warning(skipSummary(result.skipped))
+    } else {
+      ElMessage.success('已创建文档，正在建立索引')
+    }
+  } catch (err: unknown) {
+    ElMessage.error(readApiError(err))
+  }
+}
+
 async function handleDelete(docId: string) {
+  const doc = props.kb.documents.find((d) => d.id === docId)
+  try {
+    // 文档是硬删除（向量与磁盘一并清掉、不可恢复），此前单条删除没有二次确认
+    await ElMessageBox.confirm(
+      `删除《${doc?.name ?? docId}》？该文档的切片与向量会一并清除，不可恢复。`,
+      '删除文档',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return   // 用户取消
+  }
   try {
     await store.deleteDoc(props.kb.id, docId)
+    ElMessage.success('已删除')
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '删除失败'
-    ElMessage.error(msg)
+    ElMessage.error(readApiError(err))
+  }
+}
+
+// ─── 选择集与批量操作 ─────────────────────────────────────────────────────
+
+// 只存 id：SSE 与 5s 轮询会把 documents 整体替换，存对象引用会拿到过期快照
+const selected = ref<Set<string>>(new Set())
+
+/**
+ * 与当前列表求交后的选择集。
+ *
+ * 列表被刷新后，选择集里可能残留已经消失的 id——直接拿它去批量请求会得到一串
+ * "文档不存在"。计数与按钮显隐也都用这个（而不是 selected 本身）。
+ */
+const effectiveSelection = computed(() => {
+  const alive = new Set(props.kb.documents.map((d) => d.id))
+  return [...selected.value].filter((id) => alive.has(id))
+})
+
+const allSelected = computed(
+  () => filteredDocs.value.length > 0
+    && filteredDocs.value.every((d) => selected.value.has(d.id)),
+)
+
+function toggleSelect(id: string) {
+  const next = new Set(selected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selected.value = next
+}
+
+function toggleSelectAll() {
+  const next = new Set(selected.value)
+  if (allSelected.value) {
+    filteredDocs.value.forEach((d) => next.delete(d.id))
+  } else {
+    filteredDocs.value.forEach((d) => next.add(d.id))
+  }
+  selected.value = next
+}
+
+function clearSelection() {
+  selected.value = new Set()
+}
+
+async function handleBatchDelete() {
+  const ids = effectiveSelection.value
+  if (!ids.length) return
+  try {
+    await ElMessageBox.confirm(
+      `删除所选的 ${ids.length} 篇文档？切片与向量会一并清除，不可恢复。`,
+      '批量删除',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  await runBatch('delete', ids)
+}
+
+async function handleBatchRetry() {
+  const ids = effectiveSelection.value
+  if (!ids.length) return
+  // 已索引完成的文档重试会被后端拒绝（400）——先在前端过滤并说清，免得用户
+  // 收到一串"已索引完成"的失败项
+  const retryable = props.kb.documents
+    .filter((d) => ids.includes(d.id) && d.status !== 'indexed')
+    .map((d) => d.id)
+  const skippedDone = ids.length - retryable.length
+  if (!retryable.length) {
+    ElMessage.info('所选文档都已索引完成，无需重试')
+    return
+  }
+  if (skippedDone) {
+    ElMessage.info(`已跳过 ${skippedDone} 篇索引完成的文档`)
+  }
+  await runBatch('retry', retryable)
+}
+
+async function runBatch(action: 'delete' | 'retry', ids: string[]) {
+  try {
+    batchRunning.value = true
+    const result = await store.batchDocs(props.kb.id, action, ids)
+    clearSelection()
+    const label = action === 'delete' ? '删除' : '重试'
+    if (result.failed === 0) {
+      ElMessage.success(`已${label} ${result.succeeded} 篇`)
+    } else {
+      // 部分成功是正常结果：把失败原因说清楚，而不是笼统报错
+      const reason = result.items.find((i) => !i.ok)?.message
+      ElMessage.warning(
+        `${label}完成：成功 ${result.succeeded} 篇，失败 ${result.failed} 篇${reason ? `（${reason}）` : ''}`,
+      )
+    }
+  } catch (err: unknown) {
+    ElMessage.error(readApiError(err))
+  } finally {
+    batchRunning.value = false
+  }
+}
+
+async function handleDownload(doc: KBDoc) {
+  try {
+    await downloadDocument(props.kb.id, doc.id, doc.name)
+  } catch (err: unknown) {
+    ElMessage.error(readApiError(err))
   }
 }
 
@@ -161,6 +307,30 @@ function handleEditFragment(doc: KBDoc) {
             >
               <Upload :size="16" class="btn-icon" />{{ uploading ? '上传中…' : '上传文档' }}
             </button>
+            <button
+              v-if="!readonly"
+              class="btn-upload btn-secondary"
+              @click="pasteVisible = true"
+            >
+              <ClipboardPaste :size="16" class="btn-icon" />粘贴文本
+            </button>
+            <!-- 批量入口：仅在有选中项时出现（selected 与当前列表求交后的计数） -->
+            <button
+              v-if="!readonly && effectiveSelection.length > 0"
+              class="btn-upload btn-secondary"
+              :disabled="batchRunning"
+              @click="handleBatchRetry"
+            >
+              <RefreshCw :size="16" class="btn-icon" />重试所选 ({{ effectiveSelection.length }})
+            </button>
+            <button
+              v-if="!readonly && effectiveSelection.length > 0"
+              class="btn-upload btn-danger"
+              :disabled="batchRunning"
+              @click="handleBatchDelete"
+            >
+              <Trash2 :size="16" class="btn-icon" />删除所选 ({{ effectiveSelection.length }})
+            </button>
           </div>
 
           <!-- 文档表格 -->
@@ -168,6 +338,14 @@ function handleEditFragment(doc: KBDoc) {
             <table class="docs-table">
               <thead>
                 <tr>
+                  <th v-if="!readonly" class="col-check">
+                    <input
+                      type="checkbox"
+                      class="row-check"
+                      :checked="allSelected"
+                      @change="toggleSelectAll"
+                    />
+                  </th>
                   <th class="col-doc">文档</th>
                   <th class="col-size">大小</th>
                   <th class="col-chunks">分片</th>
@@ -182,6 +360,15 @@ function handleEditFragment(doc: KBDoc) {
                   :key="doc.id"
                   :class="['doc-row', { 'doc-row--sel': selectedDoc?.id === doc.id }]"
                 >
+                  <td v-if="!readonly" class="col-check">
+                    <input
+                      type="checkbox"
+                      class="row-check"
+                      :checked="selected.has(doc.id)"
+                      @click.stop
+                      @change="toggleSelect(doc.id)"
+                    />
+                  </td>
                   <td>
                     <div class="doc-cell">
                       <component :is="docTypeIcons[doc.type]" :size="16" class="doc-type-icon" />
@@ -227,6 +414,12 @@ function handleEditFragment(doc: KBDoc) {
                       <el-tooltip content="查看详情" placement="top" :show-after="300">
                         <button class="action-btn action-view" @click.stop="handleViewDetail(doc)" title="查看详情">
                           <Eye :size="14" />
+                        </button>
+                      </el-tooltip>
+                      <!-- 下载原文是读操作：能看正文的人就能下载，不受 readonly 限制 -->
+                      <el-tooltip content="下载原文" placement="top" :show-after="300">
+                        <button class="action-btn" @click.stop="handleDownload(doc)" title="下载原文">
+                          <Download :size="14" />
                         </button>
                       </el-tooltip>
                       <el-tooltip v-if="!readonly" content="编辑分片" placement="top" :show-after="300">
@@ -297,6 +490,13 @@ function handleEditFragment(doc: KBDoc) {
         :default-config="kb.config"
         @close="uploadVisible = false"
         @upload="handleUpload"
+      />
+
+      <KbPasteTextDialog
+        :visible="pasteVisible"
+        :default-config="kb.config"
+        @close="pasteVisible = false"
+        @submit="handlePaste"
       />
     </template>
   </div>
@@ -390,6 +590,37 @@ function handleEditFragment(doc: KBDoc) {
 
 .btn-upload:hover {
   opacity: 0.9;
+}
+
+.btn-upload:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 次要按钮（粘贴文本 / 批量重试）：与主按钮同尺寸但弱化，避免一排实心按钮 */
+.btn-secondary {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--foreground-primary);
+}
+
+/* 危险操作（批量删除）：红字描边，不抢主按钮的视觉位 */
+.btn-danger {
+  background: var(--surface-card);
+  border: 1px solid var(--el-color-danger, #f56c6c);
+  color: var(--el-color-danger, #f56c6c);
+}
+
+.col-check {
+  width: 36px;
+  text-align: center;
+}
+
+.row-check {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--el-color-primary, #409eff);
 }
 
 .card {

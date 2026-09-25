@@ -11,6 +11,7 @@ import type {
   KbScope,
   KBShare,
   KBVisibility,
+  PasteTextRequest,
 } from '@/types/knowledgeBase'
 import { KB_GROUP_PREVIEW_LIMIT } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
@@ -370,15 +371,56 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   // ─── 文档 ──────────────────────────────────────────────────────────────
 
   async function uploadDocs(kbId: string, files: File[], config?: IndexConfig) {
-    if (!files.length) return
-    const newDocs = await kbApi.uploadDocuments(kbId, files, config)
+    if (!files.length) return { created: [], skipped: [] }
+    const result = await kbApi.uploadDocuments(kbId, files, config)
     if (selectedKb.value && selectedKb.value.id === kbId) {
       selectedKb.value = {
         ...selectedKb.value,
-        documents: [...newDocs, ...selectedKb.value.documents],
-        docs: selectedKb.value.docs + newDocs.length,
+        documents: [...result.created, ...selectedKb.value.documents],
+        docs: selectedKb.value.docs + result.created.length,
       }
     }
+    return result
+  }
+
+  /** 粘贴文本建文档（后端落成 `.md` 后走同一条流水线） */
+  async function createTextDoc(kbId: string, payload: PasteTextRequest) {
+    const result = await kbApi.createTextDocument(kbId, payload)
+    if (selectedKb.value && selectedKb.value.id === kbId) {
+      selectedKb.value = {
+        ...selectedKb.value,
+        documents: [...result.created, ...selectedKb.value.documents],
+        docs: selectedKb.value.docs + result.created.length,
+      }
+    }
+    return result
+  }
+
+  /** 批量删除/重试：逐项结果由调用方提示，这里只负责把本地状态对齐 */
+  async function batchDocs(kbId: string, action: 'delete' | 'retry', docIds: string[]) {
+    const result = await kbApi.batchDocumentOp(kbId, action, docIds)
+    const okIds = new Set(result.items.filter((i) => i.ok).map((i) => i.docId))
+
+    if (selectedKb.value && selectedKb.value.id === kbId && okIds.size) {
+      const documents = action === 'delete'
+        ? selectedKb.value.documents.filter((d) => !okIds.has(d.id))
+        : selectedKb.value.documents.map((d) => {
+            const item = result.items.find((i) => i.ok && i.docId === d.id)
+            return item?.doc ?? d
+          })
+      selectedKb.value = {
+        ...selectedKb.value,
+        documents,
+        // 删除会在后端重算计数，这里先按删除条数就地扣减，随后由刷新对齐
+        docs: action === 'delete'
+          ? Math.max(0, selectedKb.value.docs - okIds.size)
+          : selectedKb.value.docs,
+      }
+    }
+    if (action === 'delete' && selectedDoc.value && okIds.has(selectedDoc.value.id)) {
+      selectedDoc.value = null
+    }
+    return result
   }
 
   async function deleteDoc(kbId: string, docId: string) {
@@ -593,6 +635,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     cancelShares,
     respondInvitation,
     uploadDocs,
+    createTextDoc,
+    batchDocs,
     deleteDoc,
     retryDoc,
     cancelDoc,

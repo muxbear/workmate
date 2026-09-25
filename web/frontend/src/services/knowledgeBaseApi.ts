@@ -1,5 +1,5 @@
 // 知识库 API 服务
-import instance, { getStreamToken } from './request'
+import instance, { getAccessToken, getStreamToken } from './request'
 import type {
   KB,
   KBDoc,
@@ -12,6 +12,10 @@ import type {
   KBVisibility,
   KBShare,
   KBShareListResponse,
+  BatchDocResult,
+  CreateDocsResult,
+  DocSkip,
+  PasteTextRequest,
 } from '@/types/knowledgeBase'
 
 // ─── 后端原始类型 ──────────────────────────────────────────────────────────
@@ -326,11 +330,34 @@ export async function updateKbVisibility(kbId: string, visibility: KBVisibility)
 
 // ─── 文档管理 ─────────────────────────────────────────────────────────────
 
+/** 后端返回的跳过项（snake）→ 前端形状（camel） */
+function mapSkip(raw: Record<string, unknown>): DocSkip {
+  return {
+    name: String(raw.name ?? ''),
+    reason: String(raw.reason ?? ''),
+    existingDocId: (raw.existing_doc_id as string) ?? null,
+    existingDocName: (raw.existing_doc_name as string) ?? null,
+    existingDocStatus: (raw.existing_doc_status as string) ?? null,
+  }
+}
+
+/** 创建类入口的响应形状（上传 / 粘贴 / URL 导入三者一致） */
+function mapCreateResult(raw: unknown): CreateDocsResult {
+  const data = (raw ?? {}) as {
+    created?: RawDoc[]
+    skipped?: Record<string, unknown>[]
+  }
+  return {
+    created: (data.created ?? []).map(mapDoc),
+    skipped: (data.skipped ?? []).map(mapSkip),
+  }
+}
+
 export async function uploadDocuments(
   kbId: string,
   files: File[],
   config?: IndexConfig,
-): Promise<KBDoc[]> {
+): Promise<CreateDocsResult> {
   const formData = new FormData()
   files.forEach((f) => formData.append('files', f))
   if (config) {
@@ -341,7 +368,111 @@ export async function uploadDocuments(
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } },
   )
-  return (res.data.data as RawDoc[]).map(mapDoc)
+  return mapCreateResult(res.data.data)
+}
+
+/** 粘贴文本建文档——后端会落成 `.md` 后走同一条索引流水线 */
+export async function createTextDocument(
+  kbId: string,
+  payload: PasteTextRequest,
+): Promise<CreateDocsResult> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/documents/text`, {
+    name: payload.name,
+    content: payload.content,
+    config: payload.config ? configToSnake(payload.config) : undefined,
+  })
+  return mapCreateResult(res.data.data)
+}
+
+/** 批量删除或重试文档——**部分成功是正常结果**，逐项报告 */
+export async function batchDocumentOp(
+  kbId: string,
+  action: 'delete' | 'retry',
+  docIds: string[],
+): Promise<BatchDocResult> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/documents/batch`, {
+    action,
+    doc_ids: docIds,
+  })
+  const data = res.data.data as {
+    action: string
+    items: { doc_id: string; ok: boolean; message?: string | null; doc?: RawDoc | null }[]
+    succeeded: number
+    failed: number
+  }
+  return {
+    action: data.action,
+    succeeded: data.succeeded ?? 0,
+    failed: data.failed ?? 0,
+    items: (data.items ?? []).map((item) => ({
+      docId: item.doc_id,
+      ok: item.ok,
+      message: item.message ?? null,
+      doc: item.doc ? mapDoc(item.doc) : null,
+    })),
+  }
+}
+
+/** 从错误响应里抠可读文案：优先 FastAPI 的 `detail`，其次统一信封的 `message` */
+async function readErrorDetail(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: unknown; message?: unknown }
+    const text = body?.detail ?? body?.message
+    if (typeof text === 'string' && text) return text
+  } catch {
+    // 响应不是 JSON（网关错误页等），落到下面的兜底文案
+  }
+  return `请求失败（HTTP ${response.status}）`
+}
+
+/**
+ * 从 axios 错误里抠可读文案。
+ *
+ * 响应拦截器只把 `code`/`message` 抛出来，而 `HTTPException` 的中文 detail 在
+ * `error.response.data.detail` 上——不读它就只会看到 "Request failed with status
+ * code 413" 这类提示。新接口的调用方用它，不动全局拦截器的既有行为。
+ */
+export function readApiError(err: unknown): string {
+  const shape = err as {
+    response?: { data?: { detail?: unknown; message?: unknown } }
+  }
+  const detail = shape?.response?.data?.detail ?? shape?.response?.data?.message
+  if (typeof detail === 'string' && detail) return detail
+  if (err instanceof Error && err.message) return err.message
+  return '操作失败'
+}
+
+/**
+ * 下载文档原文。
+ *
+ * 用原生 `fetch` 而不是 axios 实例：响应拦截器会判响应体的 `code`，而 Blob 没有
+ * 这个字段、会被一律 reject；也不能用 `<a href>` 直链——JWT 在 Authorization
+ * 头里，`<a>` 天然带不上。
+ */
+export async function downloadDocument(
+  kbId: string,
+  docId: string,
+  name: string,
+): Promise<void> {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  const response = await fetch(
+    `${baseURL}/knowledge-bases/${kbId}/documents/${docId}/download`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response))
+  }
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name || docId
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 /**

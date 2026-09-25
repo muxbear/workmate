@@ -420,3 +420,44 @@ export interface UploadDocRequest {
   type: DocType
   size: string
 }
+
+// ─── 文档入库结果（迭代 6 T6.1）─────────────────────────────────────────────
+
+/** 被跳过的文件——目前只有"内容重复"一种原因 */
+export interface DocSkip {
+  name: string
+  reason: string
+  /** 重复于哪一篇：报告里必须说清，否则用户会以为文件丢了 */
+  existingDocId?: string | null
+  existingDocName?: string | null
+  existingDocStatus?: string | null
+}
+
+/** 创建类入口（上传 / 粘贴 / URL 导入）的统一结果 */
+export interface CreateDocsResult {
+  created: KBDoc[]
+  skipped: DocSkip[]
+}
+
+/** 批量操作里的单条结果 */
+export interface BatchDocItem {
+  docId: string
+  ok: boolean
+  message?: string | null
+  doc?: KBDoc | null
+}
+
+/** 批量删除/重试的结果——部分成功是正常结果 */
+export interface BatchDocResult {
+  action: string
+  items: BatchDocItem[]
+  succeeded: number
+  failed: number
+}
+
+/** 粘贴文本建文档 */
+export interface PasteTextRequest {
+  name?: string
+  content: string
+  config?: IndexConfig
+}
