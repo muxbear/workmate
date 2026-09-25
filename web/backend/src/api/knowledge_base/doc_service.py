@@ -68,6 +68,11 @@ ALLOWED_EXTENSIONS = {
 }
 MAX_FILE_SIZE_MB = 100
 
+#: 生效的单文件上限：优先取可配置项（§T5.3），未配置时回退模块常量
+def _max_file_bytes() -> int:
+    configured = int(getattr(settings, "KB_MAX_FILE_MB", 0) or 0)
+    return (configured or MAX_FILE_SIZE_MB) * 1024 * 1024
+
 #: 单个索引阶段的执行上限（秒）。实测大文档的图谱抽取最慢，10 分钟足够覆盖
 #: 万级切片的向量化 + 抽取；真正的挂死（网络无响应等）会在这一档被切断。
 DEFAULT_STAGE_TIMEOUT_SECONDS = 600.0
@@ -1277,7 +1282,7 @@ async def upload_documents(
     # 先整体校验（文件名 + 已知大小），再落盘：避免第 N 个文件校验失败时
     # 前面已写入的文件成为孤儿（调用方会回滚事务，磁盘上却已经留下文件）。
     sanitized: list[tuple[UploadFile, str, str]] = []
-    max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+    max_bytes = _max_file_bytes()
     for file in files:
         filename = _sanitize_filename(file.filename or "")
         file_type = _get_file_type(filename)
@@ -1287,9 +1292,17 @@ async def upload_documents(
         if isinstance(known_size, int) and known_size > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"文件 {filename} 超过最大大小 {MAX_FILE_SIZE_MB}MB",
+                detail=f"文件 {filename} 超过最大大小 {max_bytes // (1024 * 1024)}MB",
             )
         sanitized.append((file, filename, file_type))
+
+    # 配额（T5.3）：单库文档数与总存储上限，在落盘前拦住
+    from api.knowledge_base.quota import ensure_doc_quota
+
+    incoming_bytes = sum(
+        int(getattr(f, "size", 0) or 0) for f, _n, _t in sanitized
+    )
+    await ensure_doc_quota(db, kb_id, user_id, incoming_bytes)
 
     for file, filename, file_type in sanitized:
         # 读取并校验大小（部分客户端不上报 size，这里兜底）
@@ -1297,7 +1310,7 @@ async def upload_documents(
         if len(content) > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"文件 {filename} 超过最大大小 {MAX_FILE_SIZE_MB}MB",
+                detail=f"文件 {filename} 超过最大大小 {max_bytes // (1024 * 1024)}MB",
             )
 
         doc_id = str(uuid.uuid4())

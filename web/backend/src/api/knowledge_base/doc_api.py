@@ -30,6 +30,7 @@ from api.knowledge_base.schemas import IndexConfigSchema
 from api.knowledge_base.service import require_kb_readable
 from api.rbac.deps import RequirePermission
 from core.audit import audit_scope
+from core.decorators import rate_limit
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-文档"])
 
@@ -48,6 +49,8 @@ def _get_mediator(request: Request):
 
 
 @router.post("/{kb_id}/documents/upload", response_model=dict)
+# 上传是重操作（落盘 + 触发 embedding 计费），按 IP 限流兜住滥用与误写的循环调用
+@rate_limit(max_calls=20, period_seconds=60, key_prefix="kb_upload")
 async def upload_docs(
     kb_id: str,
     request: Request,

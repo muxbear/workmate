@@ -186,6 +186,8 @@ def rate_limit(max_calls: int = 5, period_seconds: int = 60, key_prefix: str = "
 
             return await fn(*args, **kwargs)
 
+        # 打标记：functools.wraps 之后 wrapper 是黑盒，测试无法反查"这个接口限了多少"
+        wrapper.__rate_limit__ = (max_calls, period_seconds)  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
     return decorator
 

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user_id, get_db
 from api.knowledge_base.schemas import SearchRequest, SearchResponse
 from api.knowledge_base.service import require_kb_readable
+from core.decorators import rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,8 @@ router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库-检索"])
 
 
 @router.post("/{kb_id}/search", response_model=dict)
+# 检索要打向量库 + 可能的精排/改写（都会花钱），按 IP 限流
+@rate_limit(max_calls=60, period_seconds=60, key_prefix="kb_search")
 async def search_knowledge_base(
     kb_id: str,
     req_body: SearchRequest,

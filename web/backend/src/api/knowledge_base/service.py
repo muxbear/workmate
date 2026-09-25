@@ -353,6 +353,11 @@ async def create_kb(
     if existing:
         raise HTTPException(status_code=409, detail=f"知识库 '{req.name}' 已存在")
 
+    # 配额（T5.3）：先查库数上限，再谈建库——超限时不该留下半成品
+    from api.knowledge_base.quota import ensure_kb_quota
+
+    await ensure_kb_quota(db, user_id)
+
     # 维度校验（T4.4）：配置维度与模型真实维度不一致时**先拒绝**，不要等写向量才炸。
     # 放在建行/建集合之前——校验失败时不留半成品（否则会出现"库建好了但永远写不进去"）。
     mismatch = await check_embedding_dim(db, req.config)

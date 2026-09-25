@@ -283,5 +283,16 @@ class Settings(BaseSettings):
 
     # ---- 索引 ----
     INDEXING_MAX_CONCURRENT: int = int(os.getenv("INDEXING_MAX_CONCURRENT") or 3)
+
+    # ---- 知识库配额（迭代 5 T5.3）----
+    # 每用户限额。0 表示不限（默认值放宽，避免升级后立刻挡住存量用户；
+    # 需要限额的部署按需在 .env 里收紧）。
+    KB_MAX_PER_USER: int = int(os.getenv("KB_MAX_PER_USER") or 0)
+    KB_MAX_DOCS_PER_KB: int = int(os.getenv("KB_MAX_DOCS_PER_KB") or 0)
+    #: 每用户知识库总占用上限（MB）
+    KB_MAX_STORAGE_MB_PER_USER: int = int(os.getenv("KB_MAX_STORAGE_MB_PER_USER") or 0)
+    #: 单个文件大小上限（MB）——此前写死在 doc_service 模块常量里，
+    #: 与 ARTIFACT_MAX_FILE_MB 这类同类配置不同源，运维改不了
+    KB_MAX_FILE_MB: int = int(os.getenv("KB_MAX_FILE_MB") or 100)
     BM25_DEFAULT_K1: float = float(os.getenv("BM25_DEFAULT_K1") or 1.5)
     BM25_DEFAULT_B: float = float(os.getenv("BM25_DEFAULT_B") or 0.75)
