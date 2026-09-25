@@ -16,7 +16,13 @@ export type DocStatus =
   | 'canceled'
 
 // 切片策略
-export type ChunkStrategy = 'fixed' | 'recursive' | 'semantic' | 'markdown' | 'agentic'
+export type ChunkStrategy =
+  | 'fixed'
+  | 'recursive'
+  | 'semantic'
+  | 'markdown'
+  | 'agentic'
+  | 'parent_child'
 
 // 稀疏检索算法
 export type SparseAlgo = 'bm25' | 'bm25_plus' | 'tf_idf' | 'none'
@@ -32,6 +38,10 @@ export interface IndexConfig {
   chunkStrategy: ChunkStrategy
   chunkSize: number
   chunkOverlap: number
+  /** 父子块策略的父块大小（承载返回给用户/模型的上下文） */
+  parentChunkSize: number
+  /** 最小块长：低于该长度的切片并入相邻块（避免"只有标题"的碎片进索引） */
+  minChunkSize: number
   embeddingModel: string
   /** embedding 模型所属提供商（用于消解同名模型；可为空表示按名称全局解析） */
   embeddingProviderId: string
@@ -227,6 +237,7 @@ export const CHUNK_STRATEGY_OPTIONS: ChunkStrategyOption[] = [
   { value: 'semantic', label: '语义分块', desc: '基于句子向量相似度自动切' },
   { value: 'markdown', label: 'Markdown 结构', desc: '按标题层级切分，保留结构' },
   { value: 'agentic', label: 'Agentic 智能', desc: 'LLM 判断主题边界' },
+  { value: 'parent_child', label: '父子块（Small-to-Big）', desc: '子块匹配、父块返回上下文' },
 ]
 
 // Embedding 模型选项
@@ -321,6 +332,8 @@ export interface SearchResult {
   /** 来源知识库（跨库检索时用于标注结果出处） */
   kbId: string
   kbName: string
+  /** 正文是否是父块扩展的结果（父子块策略下命中子块、返回父块正文） */
+  parentExpanded: boolean
 }
 
 // 检索返回：结果 + 门槛与精排的实际状态

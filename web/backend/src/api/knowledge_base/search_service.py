@@ -169,12 +169,11 @@ class ScoredChunk:
 # ─── 分数融合工具函数 ──────────────────────────────────────────────────────────
 
 
-def _citation_fields(chunk: dict) -> tuple[int | None, str]:
-    """从切片元数据里取出引用定位信息（页码 / 章节）。
+def _parse_metadata(chunk: dict) -> dict:
+    """解析切片元数据。
 
-    元数据由索引阶段写入 ``metadata_``：``page`` 来自 loader，``section`` 用标题层级
-    兜底（markdown 切片保留 h1/h2）。向量库两种后端对 JSON 字段的处理不同
-    （Milvus 存对象、Chroma 存字符串），这里统一解析。
+    向量库两种后端对 JSON 字段的处理不同（Milvus 存对象、Chroma 存字符串），
+    这里统一成 dict；解析失败一律按空元数据处理。
     """
     meta = chunk.get("metadata_") or {}
     if isinstance(meta, str):
@@ -182,8 +181,28 @@ def _citation_fields(chunk: dict) -> tuple[int | None, str]:
             meta = json.loads(meta)
         except (json.JSONDecodeError, TypeError):
             meta = {}
-    if not isinstance(meta, dict):
-        meta = {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _content_for_result(chunk: dict) -> tuple[str, bool]:
+    """返回对外正文与"是否做了父块扩展"。
+
+    ``parent_child`` 策略下子块带 ``parent_text``：命中子块时返回**父块正文**，
+    让用户/模型拿到完整上下文（Small-to-Big 的核心）；没有父块信息时返回子块原文。
+    """
+    parent_text = _parse_metadata(chunk).get("parent_text")
+    if isinstance(parent_text, str) and parent_text.strip():
+        return parent_text, True
+    return chunk.get("chunk_text", ""), False
+
+
+def _citation_fields(chunk: dict) -> tuple[int | None, str]:
+    """从切片元数据里取出引用定位信息（页码 / 章节）。
+
+    元数据由索引阶段写入 ``metadata_``：``page`` 来自 loader，``section`` 用标题层级
+    兜底（markdown 切片保留 h1/h2）。
+    """
+    meta = _parse_metadata(chunk)
 
     raw_page = meta.get("page", meta.get("page_ref"))
     page: int | None = None
@@ -651,12 +670,14 @@ class SearchOrchestrator:
         results: list[ChunkMatch] = []
         for sc, chunk in ordered:
             page, section = _citation_fields(chunk)
+            content, parent_expanded = _content_for_result(chunk)
             results.append(ChunkMatch(
                 id=sc.chunk_id,
                 doc_id=chunk.get("doc_id", ""),
                 doc_name=chunk.get("doc_name", ""),
                 chunk_index=chunk.get("chunk_index", 0),
-                content=chunk.get("chunk_text", ""),
+                content=content,
+                parent_expanded=parent_expanded,
                 score=sc.score,
                 score_kind=sc.score_kind,
                 vec_score=sc.vec_score,
@@ -864,7 +885,8 @@ class SearchOrchestrator:
                 doc_id=chunk.get("doc_id", ""),
                 doc_name=chunk.get("doc_name", ""),
                 chunk_index=chunk.get("chunk_index", 0),
-                content=chunk.get("chunk_text", ""),
+                content=_content_for_result(chunk)[0],
+                parent_expanded=_content_for_result(chunk)[1],
                 score=sc.score,
                 score_kind=sc.score_kind,
                 page=_citation_fields(chunk)[0],

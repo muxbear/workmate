@@ -27,6 +27,7 @@ function kb(): KB {
       enableReranker: true, topK: 10, hybridAlpha: 0.5,
       minSimilarity: 0.53, scoreThreshold: 0,
       maxChunksPerDoc: 3, dedupSimilarity: 0.92,
+      parentChunkSize: 1536, minChunkSize: 32,
     },
     documents: [
       { id: 'd1', name: '手册.md', type: 'md' } as KB['documents'][number],
@@ -56,6 +57,7 @@ function result(overrides: Partial<SearchResult> = {}): SearchResult {
     section: '第 3 章 · 部署',
     kbId: 'kb-1',
     kbName: '库',
+    parentExpanded: false,
     ...overrides,
   }
 }
@@ -262,6 +264,17 @@ describe('KbSearchTab · 高级参数', () => {
     await search(wrapper)
 
     expect(wrapper.html()).not.toContain('来自《')
+  })
+
+  it('父子块策略下标记"已扩展上下文"', async () => {
+    api.searchKnowledgeBase.mockResolvedValue(outcome({
+      results: [result({ parentExpanded: true })],
+    }))
+    const wrapper = await mountTab()
+
+    await search(wrapper)
+
+    expect(wrapper.html()).toContain('已扩展上下文')
   })
 
   it('检索失败时页面上留下错误原因，而不是只有一闪而过的 toast', async () => {

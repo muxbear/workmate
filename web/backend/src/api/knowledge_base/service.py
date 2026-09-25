@@ -431,6 +431,32 @@ async def reindex_kb(
     """
     kb = await _get_kb_or_404(db, kb_id, user_id)
 
+    # 预检：重建会**先清空向量与图谱**，因此必须确认所有源文件都还在。
+    # 此前不做校验：源文件缺失时（例如换了机器 / 清了上传目录）会先把旧向量
+    # 删掉、再在解析阶段逐个失败——数据没了且不可恢复。
+    from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+    docs = list(
+        (
+            await db.execute(
+                select(KnowledgeBaseDocument).where(
+                    KnowledgeBaseDocument.kb_id == kb_id
+                )
+            )
+        ).scalars().all()
+    )
+    missing = [d.name for d in docs if not d.storage_path or not os.path.exists(d.storage_path)]
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"重建已中止：{len(missing)} 个源文件在当前服务器上不存在"
+                f"（{', '.join(missing[:3])}{'…' if len(missing) > 3 else ''}）。"
+                "请先重新上传这些文档，或确认服务器上的上传目录未被清理。"
+                "重建会先清空现有索引，因此在校验通过前不会执行。"
+            ),
+        )
+
     # Update config if provided
     if config is not None:
         kb.config = config.model_dump()
@@ -473,12 +499,7 @@ async def reindex_kb(
         text("DELETE FROM knowledge_base_relations WHERE kb_id = :kb_id"), {"kb_id": kb_id}
     )
 
-    docs = (
-        await db.execute(
-            select(KnowledgeBaseDocument)
-            .where(KnowledgeBaseDocument.kb_id == kb_id)
-        )
-    ).scalars().all()
+    # docs 已在预检阶段取出（同一事务内，状态未被并发修改）
 
     kb.status = "indexing"
     kb.chunks_count = 0

@@ -1,6 +1,6 @@
 """文本切片器——策略模式。
 
-支持 5 种切片策略：fixed / recursive / semantic / markdown / agentic。
+支持 6 种切片策略：fixed / recursive / semantic / markdown / agentic / parent_child。
 
 ``agentic`` 需要 LLM 判定主题边界，因此除同步的 :meth:`ChunkStrategy.split`
 外还提供 :meth:`ChunkStrategy.async_split`；索引流水线走异步路径，同步路径保留
@@ -17,6 +17,9 @@ from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 
+#: 判定文本是否带 Markdown 标题（决定父块按标题小节切还是按递归切）
+_MARKDOWN_HEADING = re.compile(r"^#{1,4}\s+\S", re.MULTILINE)
+
 #: 切片相关默认值——单一事实来源。
 #: 此前三处默认值互不相同（IndexConfigSchema=512、IndexingPipeline=1024、
 #: 本模块=1000），配置缺字段时会切出长度迥异的分片。IndexConfigSchema 的同名列
@@ -24,6 +27,10 @@ logger = logging.getLogger(__name__)
 INDEX_CONFIG_DEFAULTS = {
     "chunk_size": 512,
     "chunk_overlap": 64,
+    #: 父块大小（仅 parent_child 策略使用）
+    "parent_chunk_size": 1536,
+    #: 最小块长：低于该长度的切片会并入相邻块，避免"只有标题"的碎片进入索引
+    "min_chunk_size": 32,
 }
 
 
@@ -74,6 +81,101 @@ class RecursiveChunkStrategy(ChunkStrategy):
             separators=["\n\n", "\n", "。", ".", " ", ""],
         )
         return splitter.split_documents(documents)
+
+
+class ParentChildChunkStrategy(ChunkStrategy):
+    """父子块切片（Small-to-Big）——**用子块匹配，返回父块作为上下文**。
+
+    动机：chunk 太小则语义被切断（实测出现过"只有标题"的切片并排到首位），
+    太大则检索精度下降。父子块把两者分开：
+
+    - **子块**（``chunk_size``，默认 512 字符）参与向量化与匹配，精度高；
+    - **父块**（``parent_chunk_size``，默认 1536 字符）承载完整上下文，命中子块后
+      由检索层返回父块正文。
+
+    子块把父块正文写进 ``metadata_.parent_text``，父块 ID 写在 ``parent_id``——
+    检索侧据此替换返回内容，不需要额外的父块集合或二次查询。
+
+    父子边界：Markdown 文档**按标题小节切父块**（小节过长时再按递归切），其他文档
+    用递归分隔符切父块；然后在父块内部切子块。这样既拿到子块的高匹配精度，又保留
+    标题层级元数据（h1~h4）——引用里的"章节"才不会丢。
+    父块之间**不设重叠**（重叠只用于子块，父块重复会在存储里成倍放大文本）。
+    """
+
+    def __init__(
+        self,
+        chunk_size: int = 512,
+        chunk_overlap: int = 64,
+        parent_chunk_size: int = 1536,
+    ):
+        self._child_size = chunk_size
+        self._child_overlap = chunk_overlap
+        # 父块至少比子块大，否则"父块"没有意义
+        self._parent_size = max(parent_chunk_size, chunk_size * 2)
+
+    def _recursive(self, chunk_size: int, chunk_overlap: int):
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        return RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+            separators=["\n\n", "\n", "。", ".", " ", ""],
+        )
+
+    def _split_parents(self, doc: Document) -> list[Document]:
+        """切父块：Markdown 按标题小节，其他按递归分隔符。"""
+        text = doc.page_content or ""
+        if not _MARKDOWN_HEADING.search(text):
+            pieces = self._recursive(self._parent_size, 0).split_text(text)
+            return [
+                Document(page_content=piece, metadata=dict(doc.metadata))
+                for piece in pieces
+            ]
+
+        from langchain_text_splitters import MarkdownHeaderTextSplitter
+
+        # strip_headers=False：标题行留在父块正文里，父块自解释
+        sections = MarkdownHeaderTextSplitter(
+            headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3"), ("####", "h4")],
+            strip_headers=False,
+        ).split_text(text)
+
+        parents: list[Document] = []
+        for section in sections:
+            metadata = {**doc.metadata, **section.metadata}
+            body = section.page_content or ""
+            if len(body) <= self._parent_size:
+                parents.append(Document(page_content=body, metadata=metadata))
+                continue
+            # 小节过长：再按递归切，避免父块无上界
+            for piece in self._recursive(self._parent_size, 0).split_text(body):
+                parents.append(Document(page_content=piece, metadata=dict(metadata)))
+        return parents
+
+    def split(self, documents: list[Document]) -> list[Document]:
+        child_splitter = self._recursive(self._child_size, self._child_overlap)
+
+        results: list[Document] = []
+        parent_index = 0
+        for doc in documents:
+            for parent in self._split_parents(doc):
+                parent_text = parent.page_content or ""
+                if not parent_text.strip():
+                    continue
+                parent_id = f"p{parent_index}"
+                parent_index += 1
+                for child in child_splitter.split_text(parent_text):
+                    if not child.strip():
+                        continue
+                    results.append(Document(
+                        page_content=child,
+                        metadata={
+                            **parent.metadata,
+                            "parent_id": parent_id,
+                            "parent_index": parent_index - 1,
+                            "parent_text": parent_text,
+                        },
+                    ))
+        return results
 
 
 class SemanticChunkStrategy(ChunkStrategy):
@@ -321,11 +423,52 @@ def parse_boundaries(answer: str, paragraph_count: int) -> list[int]:
     return sorted(set(boundaries))
 
 
+def merge_short_chunks(chunks: list[Document], min_size: int) -> list[Document]:
+    """把长度低于 ``min_size`` 的分片并入相邻分片。
+
+    动机：实测有"只有标题"的碎片切片（如「一、部署MySql主从」）排到检索首位——
+    它几乎不含内容却被当成一条结果。合并策略：优先并入**前**一片（顺序阅读体验
+    更自然），首片则并入后一片；并入时保留前片的元数据。
+
+    Args:
+        chunks: 切片列表（顺序敏感）。
+        min_size: 最小字符数；<=0 表示不合并。
+
+    Returns:
+        合并后的切片列表（可能为空）。
+    """
+    if min_size <= 0 or not chunks:
+        return chunks
+
+    merged: list[Document] = []
+    for chunk in chunks:
+        text = chunk.page_content or ""
+        if len(text) < min_size and merged:
+            # 并入前一片：正文拼接，元数据保持前一片（定位仍指向该分片起点）
+            previous = merged[-1]
+            previous.page_content = f"{previous.page_content}{text}"
+            continue
+        merged.append(chunk)
+
+    # 首片过短时并入后一片
+    if len(merged) > 1 and len(merged[0].page_content or "") < min_size:
+        head = merged.pop(0)
+        merged[0].page_content = f"{head.page_content}{merged[0].page_content}"
+        # 后一片的元数据来自它自己；但若它有 parent_text，需把首片正文并进父块
+        parent_text = merged[0].metadata.get("parent_text")
+        if parent_text is not None:
+            merged[0].metadata["parent_text"] = f"{head.page_content}{parent_text}"
+
+    return merged
+
+
 class ChunkStrategyRegistry:
     """切片策略注册表。"""
 
-    def __init__(self):
+    def __init__(self, min_chunk_size: int = 0):
         self._strategies: dict[str, ChunkStrategy] = {}
+        #: 低于该长度的分片会被合并（见 merge_short_chunks）
+        self._min_chunk_size = min_chunk_size
 
     def register(self, name: str, strategy: ChunkStrategy) -> None:
         self._strategies[name] = strategy
@@ -344,11 +487,13 @@ class ChunkStrategyRegistry:
         return name in self._strategies
 
     def split(self, name: str, documents: list[Document]) -> list[Document]:
-        return self.get(name).split(documents)
+        chunks = self.get(name).split(documents)
+        return merge_short_chunks(chunks, self._min_chunk_size)
 
     async def async_split(self, name: str, documents: list[Document]) -> list[Document]:
         """异步切片——索引流水线使用（agentic 策略需要 wait LLM）。"""
-        return await self.get(name).async_split(documents)
+        chunks = await self.get(name).async_split(documents)
+        return merge_short_chunks(chunks, self._min_chunk_size)
 
 
 def create_chunk_registry(config: dict, embedding_model=None, llm=None) -> ChunkStrategyRegistry:
@@ -361,10 +506,24 @@ def create_chunk_registry(config: dict, embedding_model=None, llm=None) -> Chunk
     chunk_size = int(config.get("chunk_size") or INDEX_CONFIG_DEFAULTS["chunk_size"])
     chunk_overlap = int(config.get("chunk_overlap") or INDEX_CONFIG_DEFAULTS["chunk_overlap"])
 
-    registry = ChunkStrategyRegistry()
+    parent_size = int(
+        config.get("parent_chunk_size") or INDEX_CONFIG_DEFAULTS["parent_chunk_size"]
+    )
+    min_size = int(
+        config.get("min_chunk_size")
+        if config.get("min_chunk_size") is not None
+        else INDEX_CONFIG_DEFAULTS["min_chunk_size"]
+    )
+
+    registry = ChunkStrategyRegistry(min_chunk_size=min_size)
     registry.register("fixed", FixedChunkStrategy(chunk_size, chunk_overlap))
     registry.register("recursive", RecursiveChunkStrategy(chunk_size, chunk_overlap))
     registry.register("markdown", MarkdownChunkStrategy())
+    # 父子块不依赖外部服务，始终可用
+    registry.register(
+        "parent_child",
+        ParentChildChunkStrategy(chunk_size, chunk_overlap, parent_size),
+    )
 
     if embedding_model is not None:
         registry.register("semantic", SemanticChunkStrategy(chunk_size, chunk_overlap, embedding_model))

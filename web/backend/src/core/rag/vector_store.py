@@ -10,6 +10,7 @@ BM25 得分。上层（``search_service``）依赖该约定做融合与展示。
 实现，本层不再提供 ``hybrid_search``，避免两套融合公式产生分歧。
 """
 
+import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -226,7 +227,21 @@ class MilvusVectorStore(BaseVectorStore):
             # 删除旧集合（可能由旧版 Schema 创建，与新版本不兼容）
             if utility.has_collection(collection_name):
                 logger.info("Dropping existing collection: %s", collection_name)
-                await utility.drop_collection(collection_name)
+                # 注意：pymilvus 的 utility.drop_collection 是**同步**函数，返回 None。
+                # 此前写成 `await utility.drop_collection(...)`，一旦集合已存在
+                # （即每次重建）就会抛 "object NoneType can't be used in 'await'
+                # expression"，被上层记为"集合重建失败"，而集合其实已经被删掉了。
+                utility.drop_collection(collection_name)
+                # 删除是异步传播的：紧接着用同名建集合可能报"已存在"，
+                # 表现为"重建索引时集合创建失败"（实测踩过）。这里等到真的消失。
+                for _ in range(20):
+                    if not utility.has_collection(collection_name):
+                        break
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.warning(
+                        "集合 %s 删除后仍未消失，继续尝试创建", collection_name,
+                    )
 
             fields = [
                 FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=36),
@@ -275,7 +290,7 @@ class MilvusVectorStore(BaseVectorStore):
         collection_name = self._collection_name(kb_id)
         try:
             from pymilvus import utility
-            await utility.drop_collection(collection_name)
+            utility.drop_collection(collection_name)  # 同步 API，不能 await
             self._collections.pop(kb_id, None)
             self._sparse_cache.invalidate(kb_id)
             logger.info("Milvus collection deleted: %s", collection_name)

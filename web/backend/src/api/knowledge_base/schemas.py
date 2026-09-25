@@ -13,9 +13,17 @@ class IndexConfigSchema(BaseModel):
     provider 字段可空：为空时按模型名在全部提供商中解析（``select_usable_models``
     的兜底顺序），指定后则把解析范围收窄到该提供商，避免同名模型歧义。
     """
-    chunk_strategy: str = Field(default="recursive", description="fixed|recursive|semantic|markdown|agentic")
+    chunk_strategy: str = Field(
+        default="recursive",
+        description="fixed|recursive|semantic|markdown|agentic|parent_child；"
+                    "parent_child 下 chunk_size 表示**子块**大小",
+    )
     chunk_size: int = Field(default=512, ge=128, le=2048)
     chunk_overlap: int = Field(default=64, ge=0, le=512)
+    #: 父子块策略的父块大小（承载返回给用户/模型的上下文）
+    parent_chunk_size: int = Field(default=1536, ge=256, le=8192)
+    #: 最小块长：低于该长度的切片并入相邻块，避免"只有标题"的碎片进入索引
+    min_chunk_size: int = Field(default=32, ge=0, le=512)
     embedding_model: str = Field(default="text-embedding-v4")
     embedding_provider_id: str | None = Field(default=None, description="embedding 模型所属提供商")
     embedding_dim: int = Field(default=1024)
@@ -259,6 +267,8 @@ class ChunkMatch(BaseModel):
     #: 来源知识库（跨库检索时用于标注结果出处）
     kb_id: str = ""
     kb_name: str = ""
+    #: 正文是否是「父块扩展」的结果（parent_child 策略下命中子块、返回父块正文）
+    parent_expanded: bool = False
 
 
 class SearchResponse(BaseModel):

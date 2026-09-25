@@ -21,6 +21,7 @@ const emit = defineEmits<{
 
 const defaultConfig: IndexConfig = {
   chunkStrategy: 'recursive', chunkSize: 512, chunkOverlap: 64,
+  parentChunkSize: 1536, minChunkSize: 32,
   embeddingModel: '', embeddingProviderId: '', embeddingDim: 1024,
   sparseAlgo: 'bm25', bm25K1: 1.5, bm25B: 0.75,
   entityModel: '', relationModel: '', enableGraph: true,

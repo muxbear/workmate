@@ -334,12 +334,17 @@ class DatabaseProgressObserver(ProgressObserver):
                 )
             await db.execute(task_stmt.values(**task_values))
 
-            # 文档到达终态时，同步更新 KB 级别计数和状态
-            if ctx.status in ("indexed", "failed", "canceled"):
+            await db.commit()
+
+        # KB 级计数与通知放在**独立事务**里：若与上面的文档行更新同事务，本事务会
+        # 在持有文档行锁的同时去更新 knowledge_bases 行；而 reindex 会先锁全库文档
+        # 行、再更新 KB 行——两边加锁顺序相反，Postgres 下会死锁（SQLite 测不出来）。
+        # 拆开后没有任何事务会"持着文档行等 KB 行"，环被打破。
+        if ctx.status in ("indexed", "failed", "canceled"):
+            async with self._db_factory() as db:
                 await recalc_kb_counters(db, ctx.kb_id)
                 await self._publish_notification(db, ctx)
-
-            await db.commit()
+                await db.commit()
 
     async def _publish_event(self, ctx: IndexingContext) -> None:
         """向订阅了该知识库的页面推送进度事件（不涉及数据库）。"""
@@ -586,7 +591,15 @@ class IndexingPipeline:
         chunk_overlap = config.get("chunk_overlap")
         if chunk_overlap is None:
             chunk_overlap = INDEX_CONFIG_DEFAULTS["chunk_overlap"]
-        cache_key = (chunk_size, chunk_overlap, llm is not None)
+        # 缓存键必须包含所有影响切片的配置——漏掉任何一项都会让"改了配置但
+        # 切出来还是老样子"
+        cache_key = (
+            chunk_size,
+            chunk_overlap,
+            config.get("parent_chunk_size"),
+            config.get("min_chunk_size"),
+            llm is not None,
+        )
         if cache_key not in self._chunk_registry_cache:
             self._chunk_registry_cache[cache_key] = create_chunk_registry(
                 config,

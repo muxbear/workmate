@@ -326,6 +326,32 @@ function onRerankModelChange(name: string) {
           />
         </div>
       </div>
+      <div v-if="draft.chunkStrategy === 'parent_child'" class="field-row">
+        <div class="field flex-1">
+          <label class="field-label">父块大小: {{ draft.parentChunkSize }} 字符</label>
+          <el-slider
+            :model-value="draft.parentChunkSize"
+            :min="256" :max="4096" :step="128"
+            @update:model-value="(v: number) => set('parentChunkSize', v)"
+          />
+          <div class="hint-text">
+            父子块策略下，子块（分片大小）用于匹配、父块正文作为检索结果返回，
+            让模型/用户拿到完整上下文。父块越大召回后看到的内容越多，但单条结果也越长。
+          </div>
+        </div>
+        <div class="field flex-1">
+          <label class="field-label">最小块长: {{ draft.minChunkSize }} 字符</label>
+          <el-slider
+            :model-value="draft.minChunkSize"
+            :min="0" :max="256" :step="8"
+            @update:model-value="(v: number) => set('minChunkSize', v)"
+          />
+          <div class="hint-text">
+            短于该长度的切片会并入相邻切片——避免"只有标题"的碎片被当成一条检索结果
+            （实测这类碎片曾排到首位）。0 表示不合并。
+          </div>
+        </div>
+      </div>
       <div class="field-row">
         <div class="field flex-1">
           <label class="field-label">

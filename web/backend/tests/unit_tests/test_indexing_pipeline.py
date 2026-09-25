@@ -405,11 +405,18 @@ def _make_pipeline(
 
 class TestStageTimeout:
     async def test_hanging_stage_fails_with_timeout_message(self):
-        """回归：没有超时保护时，一次挂死会永久占住并发槽。"""
-        pipeline = _make_pipeline(
-            chunk_registry=PassthroughChunkRegistry(delay=5.0),
-            stage_timeout=0.05,
-        )
+        """回归：没有超时保护时，一次挂死会永久占住并发槽。
+
+        直接把挂起的切片注册表注入流水线：仅靠"真实切片很慢"来触发超时是不可靠的
+        ——首次 asyncio.to_thread 的冷启动（约 1.4s）会让断言偶然成立，线程池一热
+        就失效。
+        """
+        pipeline = _make_pipeline(stage_timeout=0.05)
+
+        def hanging_registry(config, emb_model, llm=None):
+            return PassthroughChunkRegistry(delay=5.0)
+
+        pipeline._get_or_create_chunk_registry = hanging_registry  # type: ignore[method-assign]
         observer = RecordingObserver()
         pipeline.attach(observer)
 
@@ -448,11 +455,15 @@ class TestPrepareFailure:
 
 class TestChunkMetadata:
     async def test_chunk_index_is_global_across_documents(self):
-        """回归：多 Document（多页/多段）各自从 0 编号，导致切片顺序与前后文错乱。"""
+        """回归：多 Document（多页/多段）各自从 0 编号，导致切片顺序与前后文错乱。
+
+        正文要够长：默认最小块长 32 字符，过短的切片会被合并（见
+        test_splitters_parent_child.py）。
+        """
         docs = [
-            _document("第一段", chunk_index=0, h1="章一"),
-            _document("第二段", chunk_index=0, h1="章一"),
-            _document("第三段", chunk_index=0, page=7),
+            _document("第一段" * 20, chunk_index=0, h1="章一"),
+            _document("第二段" * 20, chunk_index=0, h1="章一"),
+            _document("第三段" * 20, chunk_index=0, page=7),
         ]
         store = RecordingVectorStore()
         pipeline = _make_pipeline(
@@ -465,7 +476,7 @@ class TestChunkMetadata:
 
     async def test_page_and_section_are_preserved(self):
         """页码/章节此前被丢弃，检索结果无法给出定位。"""
-        docs = [_document("正文", page=12, h1="第一章", h2="1.1 概述")]
+        docs = [_document("正文内容" * 10, page=12, h1="第一章", h2="1.1 概述")]
         store = RecordingVectorStore()
         pipeline = _make_pipeline(
             loader_registry=FakeLoaderRegistry(docs), vector_store=store,

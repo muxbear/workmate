@@ -68,6 +68,8 @@ function mapConfig(raw: Record<string, unknown>): IndexConfig {
     chunkStrategy: ((raw.chunk_strategy as string) || 'recursive') as IndexConfig['chunkStrategy'],
     chunkSize: (raw.chunk_size as number) || 512,
     chunkOverlap: (raw.chunk_overlap as number) || 64,
+    parentChunkSize: (raw.parent_chunk_size as number) || 1536,
+    minChunkSize: (raw.min_chunk_size as number) ?? 32,
     embeddingModel: (raw.embedding_model as string) || 'text-embedding-v4',
     embeddingProviderId: (raw.embedding_provider_id as string) || '',
     embeddingDim: (raw.embedding_dim as number) || 1024,
@@ -485,6 +487,8 @@ function configToSnake(config: IndexConfig): Record<string, unknown> {
     chunk_strategy: config.chunkStrategy,
     chunk_size: config.chunkSize,
     chunk_overlap: config.chunkOverlap,
+    parent_chunk_size: config.parentChunkSize,
+    min_chunk_size: config.minChunkSize,
     embedding_model: config.embeddingModel,
     embedding_provider_id: config.embeddingProviderId || null,
     embedding_dim: config.embeddingDim,
@@ -564,6 +568,7 @@ export async function searchKnowledgeBase(
       section?: string
       kb_id?: string
       kb_name?: string
+      parent_expanded?: boolean
     }[]
     rerank_requested?: boolean
     rerank_applied?: boolean
@@ -589,6 +594,7 @@ export async function searchKnowledgeBase(
       section: r.section || '',
       kbId: r.kb_id || '',
       kbName: r.kb_name || '',
+      parentExpanded: r.parent_expanded ?? false,
     })),
     rerankRequested: data.rerank_requested ?? false,
     rerankApplied: data.rerank_applied ?? false,

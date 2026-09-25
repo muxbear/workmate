@@ -170,6 +170,9 @@ class BM25State(DocState):
             #: 位置类元数据——写入向量库的 metadata_，供引用定位（页码/章节）使用。
             #: 此前只保留标题层级，loader 提供的 page 被丢弃，检索结果无法给出页码。
             position_keys = ("page", "page_ref", "section", "source")
+            #: 父子块（Small-to-Big）的父块信息——必须一起落库，否则检索侧拿不到
+            #: 父块正文，"命中子块返回父块"就退化成返回子块。
+            parent_keys = ("parent_id", "parent_index", "parent_text")
             for i, chunk in enumerate(ctx.chunks):
                 if not chunk.metadata.get("doc_id"):
                     chunk.metadata["doc_id"] = ctx.doc_id
@@ -187,6 +190,9 @@ class BM25State(DocState):
                     if k in chunk.metadata:
                         extra_meta[k] = chunk.metadata[k]
                 for k in position_keys:
+                    if k in chunk.metadata:
+                        extra_meta[k] = chunk.metadata[k]
+                for k in parent_keys:
                     if k in chunk.metadata:
                         extra_meta[k] = chunk.metadata[k]
                 chunk.metadata["metadata_"] = extra_meta

@@ -394,6 +394,9 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
           </span>
           <span v-if="r.section" class="result-cite">· {{ r.section }}</span>
           <span v-if="r.page" class="result-cite">· 第 {{ r.page }} 页</span>
+          <span v-if="r.parentExpanded" class="result-expanded" title="命中子块后返回的是它所属父块的完整上下文">
+            已扩展上下文
+          </span>
           <span :class="['rel-badge', relevanceLabel(r.scoreKind, r.score, i).cls]">
             {{ relevanceLabel(r.scoreKind, r.score, i).text }}
           </span>
@@ -673,6 +676,15 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
 .no-relevant-desc {
   font-size: var(--font-size-sm);
   line-height: 1.6;
+}
+
+.result-expanded {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+  font-size: var(--font-size-xs, 12px);
+  white-space: nowrap;
 }
 
 .result-kb {
