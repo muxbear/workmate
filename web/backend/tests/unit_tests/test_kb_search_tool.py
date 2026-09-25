@@ -15,7 +15,12 @@ from sqlalchemy.pool import StaticPool
 
 from api.knowledge_base.schemas import SearchResponse
 from api.knowledge_base.search_service import set_search_orchestrator
+from db.models.data_scope import DataScope
+from db.models.department import Department
 from db.models.knowledge_base import KnowledgeBase
+from db.models.personnel import Personnel
+from db.models.role import Role
+from db.models.user_role import UserRole
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     SHARE_STATUS_PENDING,
@@ -61,6 +66,12 @@ async def sessionmaker():
     async with engine.begin() as conn:
         await conn.run_sync(KnowledgeBase.__table__.create)
         await conn.run_sync(KnowledgeBaseShare.__table__.create)
+        # 公开库的可读性由「角色 × knowledge 数据范围」决定（T5.2）
+        await conn.run_sync(Role.__table__.create)
+        await conn.run_sync(UserRole.__table__.create)
+        await conn.run_sync(DataScope.__table__.create)
+        await conn.run_sync(Personnel.__table__.create)
+        await conn.run_sync(Department.__table__.create)
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
     yield maker
@@ -99,6 +110,16 @@ async def seed_shares(sessionmaker, rows: list[dict]) -> None:
     async with sessionmaker() as session:
         for row in rows:
             session.add(KnowledgeBaseShare(**row))
+        await session.commit()
+
+
+async def seed_role_scope(sessionmaker, user_id: str, scope: str = "all") -> None:
+    """给用户配角色与该角色的 knowledge 数据范围（公开库可读性的前提）。"""
+    async with sessionmaker() as session:
+        role = Role(id=f"role-{user_id}", key="member", name="member", is_active=True)
+        session.add(role)
+        session.add(UserRole(user_id=user_id, role_id=role.id))
+        session.add(DataScope(role_id=role.id, resource_key="knowledge", scope=scope))
         await session.commit()
 
 
@@ -498,6 +519,7 @@ class TestWidenedVisibility:
         await seed(sessionmaker, [
             kb_row("kb-pub", "公共库", USER_B, visibility="public"),
         ])
+        await seed_role_scope(sessionmaker, USER_A, "all")
 
         result = await call_search(kb_id="kb-pub")
 
@@ -559,6 +581,7 @@ class TestWidenedVisibility:
         await seed_shares(sessionmaker, [
             share_row("s1", "kb-b", USER_B, USER_A, SHARE_STATUS_ACCEPTED),
         ])
+        await seed_role_scope(sessionmaker, USER_A, "all")
 
         result = await kb_search_module._list_kb_async()
 

@@ -26,7 +26,12 @@ from db.models.knowledge_base_share import (
     SHARE_STATUS_REVOKED,
     KnowledgeBaseShare,
 )
+from db.models.data_scope import DataScope
+from db.models.department import Department
+from db.models.personnel import Personnel
+from db.models.role import Role
 from db.models.user import Account
+from db.models.user_role import UserRole
 
 pytestmark = pytest.mark.anyio
 
@@ -48,6 +53,13 @@ async def sessionmaker():
         await conn.run_sync(KnowledgeBase.__table__.create)
         await conn.run_sync(KnowledgeBaseShare.__table__.create)
         await conn.run_sync(Account.__table__.create)
+        # 数据范围（T5.2）：公开库的可见性由「角色 × knowledge 数据范围」决定，
+        # 因此这些表是公开库判定的必要上下文，缺表会被当成"无可见部门"
+        await conn.run_sync(Role.__table__.create)
+        await conn.run_sync(UserRole.__table__.create)
+        await conn.run_sync(DataScope.__table__.create)
+        await conn.run_sync(Personnel.__table__.create)
+        await conn.run_sync(Department.__table__.create)
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
     yield maker
@@ -92,6 +104,25 @@ async def seed_kb(
         await session.commit()
 
 
+async def seed_role_scope(
+    sessionmaker, *, user_id: str, scope: str = "all",
+    dept_ids: list[str] | None = None, role_key: str = "member",
+) -> None:
+    """给用户配一个角色与该角色的 knowledge 数据范围（公开库可见性的前提）。"""
+    import json
+    import uuid
+
+    async with sessionmaker() as session:
+        role = Role(id=f"role-{user_id}", key=role_key, name=role_key, is_active=True)
+        session.add(role)
+        session.add(UserRole(user_id=user_id, role_id=role.id))
+        session.add(DataScope(
+            role_id=role.id, resource_key="knowledge", scope=scope,
+            custom_dept_ids=json.dumps(dept_ids or []),
+        ))
+        await session.commit()
+
+
 # ─── 访问级别判定 ────────────────────────────────────────────────────────────
 
 
@@ -126,10 +157,23 @@ class TestResolveAccess:
         _, access = await resolve_kb_access(db, "kb1", ALICE)
         assert access is KBAccess.NONE
 
-    async def test_public_kb_is_readable_by_anyone(self, sessionmaker, db):
+    async def test_public_kb_is_readable_within_scope(self, sessionmaker, db):
+        """公开库对**数据范围内**的人可读（T5.2 起不再等于"全站可见"）。
+
+        这里给访问者配 `all` 范围，等价于接入数据范围之前的"全站可见"行为。
+        """
         await seed_kb(sessionmaker, "kb1", "公共库", OWNER, visibility="public")
+        await seed_role_scope(sessionmaker, user_id=OTHER, scope="all")
+
         _, access = await resolve_kb_access(db, "kb1", OTHER)
         assert access is KBAccess.PUBLIC
+
+    async def test_public_kb_without_scope_is_denied(self, sessionmaker, db):
+        """没有数据范围（未配角色/未配 knowledge 范围）时，公开不构成可见性。"""
+        await seed_kb(sessionmaker, "kb1", "公共库", OWNER, visibility="public")
+
+        _, access = await resolve_kb_access(db, "kb1", OTHER)
+        assert access is KBAccess.NONE
 
     async def test_private_kb_denied(self, sessionmaker, db):
         await seed_kb(sessionmaker, "kb1", "私有库", OWNER)
@@ -163,6 +207,7 @@ class TestResolveAccess:
 
     async def test_write_guard_rejects_public_viewer(self, sessionmaker, db):
         await seed_kb(sessionmaker, "kb1", "公共库", OWNER, visibility="public")
+        await seed_role_scope(sessionmaker, user_id=OTHER, scope="all")
         with pytest.raises(HTTPException) as exc:
             await _get_kb_or_404(db, "kb1", OTHER)
         assert exc.value.status_code == 404
@@ -183,6 +228,7 @@ class TestListScope:
     async def test_public_scope_shows_only_public(self, sessionmaker, db):
         await seed_kb(sessionmaker, "kb-mine", "我的", OTHER)
         await seed_kb(sessionmaker, "kb-pub", "公共", OWNER, visibility="public")
+        await seed_role_scope(sessionmaker, user_id=OTHER, scope="all")
 
         result = await list_kbs(db, OTHER, scope="public")
 
@@ -195,6 +241,7 @@ class TestListScope:
         await seed_kb(sessionmaker, "kb-pub", "公共", OWNER, visibility="public")
         await seed_kb(sessionmaker, "kb-shared", "分享给我", BOB)
         await seed_kb(sessionmaker, "kb-foreign", "别人的私有库", BOB)
+        await seed_role_scope(sessionmaker, user_id=ALICE, scope="all")
         async with sessionmaker() as s:
             s.add(KnowledgeBaseShare(
                 kb_id="kb-shared", owner_id=BOB, grantee_id=ALICE,
@@ -406,6 +453,7 @@ class TestVisibility:
         result = await share_service.set_visibility(db, "kb1", OWNER, "public")
         assert result.visibility == "public"
 
+        await seed_role_scope(sessionmaker, user_id=OTHER, scope="all")
         visible = await list_kbs(db, OTHER, scope="public")
         assert [k.id for k in visible.items] == ["kb1"]
         assert visible.items[0].owner_name == "所有者"

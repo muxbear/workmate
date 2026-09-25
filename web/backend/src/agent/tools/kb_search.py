@@ -90,7 +90,7 @@ async def _load_readable_kbs(user_id: str) -> list[Any]:
             (
                 await db.execute(
                     select(KnowledgeBase).where(
-                        _readable_condition(user_id),
+                        await _readable_condition(db, user_id),
                         KnowledgeBase.status == "ready",
                     )
                 )
@@ -124,7 +124,7 @@ async def _resolve_kb_id(user_id: str, kb_id: str, kb_name: str) -> tuple[str, d
                 await db.execute(
                     select(KnowledgeBase).where(
                         KnowledgeBase.id == resolved,
-                        _readable_condition(user_id),
+                        await _readable_condition(db, user_id),
                     )
                 )
             ).scalar_one_or_none()
@@ -142,7 +142,7 @@ async def _resolve_kb_id(user_id: str, kb_id: str, kb_name: str) -> tuple[str, d
 
     async with async_session() as db:
         readable = [
-            _readable_condition(user_id),
+            await _readable_condition(db, user_id),
             KnowledgeBase.status == "ready",
         ]
         if kb_name.strip():
@@ -403,7 +403,7 @@ async def _list_kb_async() -> dict[str, Any]:
         rows = (
             await db.execute(
                 select(KnowledgeBase).where(
-                    _readable_condition(user_id),
+                    await _readable_condition(db, user_id),
                     KnowledgeBase.status == "ready",
                 )
             )

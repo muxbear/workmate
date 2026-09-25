@@ -70,7 +70,9 @@ async function handleToggleVisibility() {
       props.kb.id,
       isPublic.value ? 'private' : 'public',
     )
-    ElMessage.success(isPublic.value ? '已取消发布' : '已发布到公共知识库')
+    ElMessage.success(
+      isPublic.value ? '已取消发布' : '已发布：本部门范围内只读可见（按角色的数据范围）',
+    )
     emit('changed')
   } catch (err: unknown) {
     ElMessage.error(err instanceof Error ? err.message : '操作失败')
@@ -176,7 +178,13 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
         <!-- 只读态（公共库 / 他人分享）不显示任何写操作；角色无对应权限键时同样隐藏 -->
         <div v-if="!readonly && (canEdit || canDelete)" class="header-actions">
           <template v-if="canEdit">
-            <el-button :loading="publishing" @click="handleToggleVisibility">
+            <el-button
+              :loading="publishing"
+              :title="isPublic
+                ? '取消发布后仅自己与被分享人可见'
+                : '发布后本库对本部门（按角色的数据范围）成员只读可见；范围外的部门看不到'"
+              @click="handleToggleVisibility"
+            >
               <Globe v-if="!isPublic" :size="16" class="btn-icon" />
               <Lock v-else :size="16" class="btn-icon" />
               {{ isPublic ? '取消发布' : '发布到公共知识库' }}

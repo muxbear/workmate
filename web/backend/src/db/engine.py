@@ -347,6 +347,35 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE providers ADD COLUMN sort_order INTEGER DEFAULT 0"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_providers_sort_order ON providers (sort_order)"))
 
+        # 迁移：知识库增加归属部门（迭代 5 T5.2 数据范围）。存量数据按**创建者的
+        # 部门**回填；回填只填 NULL，可重复执行且不覆盖已有值。
+        if await _table_exists(conn, "knowledge_bases"):
+            existing = await _get_existing_columns(conn, "knowledge_bases")
+            if "dept_id" not in existing:
+                logger.info("Adding dept_id column to knowledge_bases table")
+                await conn.execute(
+                    text("ALTER TABLE knowledge_bases ADD COLUMN dept_id VARCHAR(36)")
+                )
+                await conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_knowledge_bases_dept_id "
+                         "ON knowledge_bases (dept_id)")
+                )
+            # 回填：创建者的人员档案里取部门（没有档案／已离职则留空）
+            if await _table_exists(conn, "personnel"):
+                filled = await conn.execute(
+                    text(
+                        "UPDATE knowledge_bases SET dept_id = ("
+                        "  SELECT p.dept_id FROM personnel p"
+                        "  WHERE p.account_id = knowledge_bases.user_id"
+                        "  LIMIT 1"
+                        ") WHERE dept_id IS NULL"
+                    )
+                )
+                if filled.rowcount:
+                    logger.info(
+                        "已为 %d 个知识库回填归属部门", filled.rowcount,
+                    )
+
         # 迁移：知识库文档增加 graph_error 列（图谱抽取失败原因，列已存在时跳过）。
         # 知识库索引任务表（knowledge_base_index_tasks）由 create_all 自动创建。
         if await _table_exists(conn, "knowledge_base_documents"):

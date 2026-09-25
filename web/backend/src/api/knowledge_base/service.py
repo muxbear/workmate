@@ -10,7 +10,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import and_, false, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.knowledge_base.model_provider import check_embedding_dim
@@ -59,14 +59,56 @@ class KBAccess(StrEnum):
     NONE = "none"          # 无权限
 
 
-def _readable_condition(user_id: str):
-    """构造「当前用户可读」的 SQL 条件（自己 ∪ 已接受分享 ∪ 公共库）。
+async def _public_scope_condition(
+    db: AsyncSession, user_id: str, role_key: str | None = None,
+):
+    """构造「公开库可见」的条件（按数据范围收敛到本部门/子树/custom）。
 
-    所有放宽可见性的查询都必须复用本函数，避免各处自行拼条件导致越权。
+    抽出来是因为**两条读路径**都要用它：列表页的"可见性并集"与"公共库"页签。
+    此前公共库页签只按 ``visibility == public`` 过滤，与列表页是两套判定——
+    只收紧一处会留下另一条漏出范围外公开库的通道。
+
+    Returns:
+        条件表达式；范围为空时返回恒假条件（公开不构成额外可见性）。
+    """
+    from api.rbac.data_scope import resolve_dept_scope
+
+    visible_depts = await resolve_dept_scope(db, user_id, "knowledge", role_key)
+    if visible_depts is None:
+        return KnowledgeBase.visibility == VISIBILITY_PUBLIC  # 范围 = all
+    if not visible_depts:
+        return false()
+    return and_(
+        KnowledgeBase.visibility == VISIBILITY_PUBLIC,
+        KnowledgeBase.dept_id.in_(visible_depts),
+    )
+
+
+async def _readable_condition(
+    db: AsyncSession, user_id: str, role_key: str | None = None,
+):
+    """构造「当前用户可读」的 SQL 条件。
+
+    三个来源：**自己创建的 ∪ 已接受分享的 ∪ 部门范围内公开的**。
+
+    公开库此前等于"全站可见"，与部门无关；接入 RBAC 的数据范围后收敛为
+    "**数据范围内**公开"（迭代 5 T5.2）。这里只**收紧**、不放宽：
+    - 别人的**私有库**仍然只对本人与被分享人可见——数据范围不构成读私有库的理由；
+    - 范围未配置 / 用户没有部门归属 / 库没有归属部门（创建者无人员档案）时，
+      该库**不因"公开"而额外可见**，只对本人与被分享人可见。
+
+    Args:
+        db: 会话（用于解析部门归属与数据范围）。
+        user_id: 当前用户。
+        role_key: 活动角色键；有请求上下文时传入，与接口鉴权的活动角色同源。
+
+    Returns:
+        SQLAlchemy 条件表达式。所有放宽可见性的查询都必须复用它——
+        各处自行拼条件正是越权的来源。
     """
     return or_(
         KnowledgeBase.user_id == user_id,
-        KnowledgeBase.visibility == VISIBILITY_PUBLIC,
+        await _public_scope_condition(db, user_id, role_key),
         KnowledgeBase.id.in_(
             select(KnowledgeBaseShare.kb_id).where(
                 KnowledgeBaseShare.grantee_id == user_id,
@@ -181,6 +223,7 @@ async def list_kbs(
     page_size: int = 12,
     search: str | None = None,
     scope: str = SCOPE_PERSONAL,
+    role_key: str | None = None,
 ) -> KBListResponse:
     """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。
 
@@ -191,8 +234,14 @@ async def list_kbs(
     offset = (page - 1) * page_size
 
     if scope == SCOPE_PUBLIC:
-        # 公共库：只展示别人的（自己的公共库已归入「个人知识库」）
-        scope_condition = KnowledgeBase.visibility == VISIBILITY_PUBLIC
+        # 公共库：只展示别人的（自己的公共库已归入「个人知识库」）。
+        # **必须叠加数据范围**：只按 visibility 过滤会让范围外的公开库从"公共库"
+        # 页签漏出去（与列表页走了两条不同的可见性判定）
+        scope_condition = and_(
+            KnowledgeBase.visibility == VISIBILITY_PUBLIC,
+            KnowledgeBase.user_id != user_id,
+            await _public_scope_condition(db, user_id, role_key),
+        )
     elif scope == SCOPE_SHARED_WITH_ME:
         scope_condition = KnowledgeBase.id.in_(
             select(KnowledgeBaseShare.kb_id).where(
@@ -201,7 +250,7 @@ async def list_kbs(
             )
         )
     elif scope == SCOPE_ALL:
-        scope_condition = _readable_condition(user_id)
+        scope_condition = await _readable_condition(db, user_id, role_key)
     else:
         scope_condition = KnowledgeBase.user_id == user_id
 
@@ -248,10 +297,11 @@ async def list_kbs(
 
 async def get_kb_stats(
     db: AsyncSession, user_id: str, scope: str = SCOPE_PERSONAL,
+    role_key: str | None = None,
 ) -> KBStatsResponse:
     """获取知识库统计信息（默认只统计本人创建，scope=all 时统计全部可见库）。"""
     scope_condition = (
-        _readable_condition(user_id)
+        await _readable_condition(db, user_id, role_key)
         if scope == SCOPE_ALL
         else KnowledgeBase.user_id == user_id
     )
@@ -309,6 +359,11 @@ async def create_kb(
     if mismatch:
         raise HTTPException(status_code=400, detail=mismatch)
 
+    # 归属部门取自创建者的人员档案：它是"公开库可见范围"的判定依据（T5.2）。
+    # 没有档案（如平台管理员账号没建人员）时留空——留空只会**收紧**公开范围，
+    # 不会放行（见 _public_scope_condition）。
+    from api.rbac.data_scope import resolve_user_dept
+
     kb = KnowledgeBase(
         name=req.name,
         description=req.description,
@@ -317,6 +372,7 @@ async def create_kb(
         user_id=user_id,
         status="draft",
         visibility=req.visibility or VISIBILITY_PRIVATE,
+        dept_id=await resolve_user_dept(db, user_id),
     )
     db.add(kb)
     await db.flush()
@@ -598,12 +654,15 @@ async def reindex_kb(
 
 
 async def resolve_kb_access(
-    db: AsyncSession, kb_id: str, user_id: str
+    db: AsyncSession, kb_id: str, user_id: str, role_key: str | None = None,
 ) -> tuple[KnowledgeBase | None, KBAccess]:
     """解析当前用户对指定知识库的访问级别。
 
-    判定顺序：所有者 → 已接受的分享接收人 → 公共库 → 无权限。
+    判定顺序：所有者 → 已接受的分享接收人 → **数据范围内的**公共库 → 无权限。
     知识库不存在时返回 ``(None, KBAccess.NONE)``。
+
+    这里必须与列表用**同一条**公开库判定：列表藏起来、按 id 仍能直接打开的话，
+    收敛就只是"看不见"而不是"访问不到"——那不算隔离。
     """
     kb = (
         await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
@@ -624,7 +683,15 @@ async def resolve_kb_access(
     if share is not None:
         return kb, KBAccess.GRANTEE
     if kb.visibility == VISIBILITY_PUBLIC:
-        return kb, KBAccess.PUBLIC
+        # 公开库还要落在数据范围内才算可读（复用同一条条件，避免两套口径）
+        in_scope = await db.scalar(
+            select(KnowledgeBase.id).where(
+                KnowledgeBase.id == kb_id,
+                await _public_scope_condition(db, user_id, role_key),
+            )
+        )
+        if in_scope:
+            return kb, KBAccess.PUBLIC
     return kb, KBAccess.NONE
 
 

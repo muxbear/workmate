@@ -25,6 +25,7 @@ from api.knowledge_base.service import (
 )
 from core.notification_bus import NotificationBus, NotificationEvent
 from db.models.knowledge_base import KnowledgeBase
+from db.models.personnel import Personnel
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     SHARE_STATUS_PENDING,
@@ -324,6 +325,24 @@ async def search_share_candidates(
     结果中排除发起人自己。
     """
     conditions = [Account.id != user_id]
+
+    # 只允许邀请**同部门（含子部门）**的人：跨部门分享等于绕过数据范围把库给出去
+    # （公开库的可见范围已按部门收敛，分享是另一条通道，必须同样收口）。
+    # 用户没有部门归属时不额外限制——此时没有"同部门"可言，保持可分享。
+    from api.rbac.data_scope import dept_subtree, resolve_user_dept
+
+    own_dept = await resolve_user_dept(db, user_id)
+    if own_dept:
+        dept_ids = await dept_subtree(db, own_dept)
+        conditions.append(
+            Account.id.in_(
+                select(Personnel.account_id).where(
+                    Personnel.dept_id.in_(dept_ids),
+                    Personnel.account_id.is_not(None),
+                )
+            )
+        )
+
     keyword = search.strip()
     if keyword:
         like = f"%{keyword}%"

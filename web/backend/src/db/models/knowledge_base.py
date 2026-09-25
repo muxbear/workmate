@@ -25,7 +25,13 @@ class KnowledgeBase(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False)
     visibility: Mapped[str] = mapped_column(
-        String(16), default="private", comment="private 私有 | public 公共（所有人可只读浏览）"
+        String(16), default="private", comment="private 私有 | public 公共（部门范围内可只读浏览）"
+    )
+    #: 归属部门（创建时取创建者的部门，见 T5.2）。
+    #: 用于把"公开库"的可见范围收敛到**部门范围内**，而不是全站可见；
+    #: 为空表示无法判定归属（创建者没有人员档案），此时只对本人与被分享人可见。
+    dept_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True, comment="归属部门 ID（数据范围的判定依据）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
