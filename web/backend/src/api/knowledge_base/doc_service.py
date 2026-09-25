@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import deque
@@ -37,6 +38,7 @@ from core.rag.splitters import (
     ChunkStrategyRegistry,
     create_chunk_registry,
 )
+from core.metrics import KB_INDEX_QUEUE_DEPTH, KB_INDEX_TASKS, KB_STAGE_SECONDS
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
@@ -349,6 +351,11 @@ class DatabaseProgressObserver(ProgressObserver):
         # 行、再更新 KB 行——两边加锁顺序相反，Postgres 下会死锁（SQLite 测不出来）。
         # 拆开后没有任何事务会"持着文档行等 KB 行"，环被打破。
         if ctx.status in ("indexed", "failed", "canceled"):
+            # 任务成功率 = success / 总数：分开记而不是只记失败，便于 Prometheus 直接算比率
+            result = {"indexed": "success", "failed": "failed", "canceled": "canceled"}[
+                ctx.status
+            ]
+            KB_INDEX_TASKS.labels(result=result).inc()
             async with self._db_factory() as db:
                 await recalc_kb_counters(db, ctx.kb_id)
                 await self._publish_notification(db, ctx)
@@ -742,9 +749,15 @@ class IndexingPipeline:
         """
         while ctx.current_state is not None:
             state = ctx.current_state
+            stage_started = time.perf_counter()
             try:
                 await asyncio.wait_for(
                     state.handle(ctx, self), timeout=self.stage_timeout,
+                )
+                # 阶段耗时进直方图：索引慢到底是慢在哪一段（解析/切片/向量化/抽取）
+                # 是索引性能问题的第一问
+                KB_STAGE_SECONDS.labels(stage=state.name).observe(
+                    time.perf_counter() - stage_started,
                 )
             except TimeoutError:
                 # 文案用中文阶段名：错误信息会直接展示给用户，英文状态名（embedding）
@@ -843,6 +856,7 @@ class IndexingScheduler:
         """
         await self._record_queued(task)
         self._queue.append(task)
+        KB_INDEX_QUEUE_DEPTH.set(len(self._queue) + len(self._running))
         logger.info("任务已入队: 文档=%s, 队列长度=%d", task.doc_id, len(self._queue))
         await self._try_start_next()
 
@@ -1095,6 +1109,8 @@ class IndexingScheduler:
         """
         entry = self._running.pop(doc_id, None)
         kb_id = entry[1].kb_id if entry is not None else None
+        # 队列深度是可观测的第一指标：积压增长要先于"用户抱怨慢"被发现
+        KB_INDEX_QUEUE_DEPTH.set(len(self._queue) + len(self._running))
 
         if finished.cancelled():
             logger.info("索引任务被取消 doc=%s", doc_id)

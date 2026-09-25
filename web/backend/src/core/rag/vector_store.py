@@ -147,6 +147,14 @@ class BaseVectorStore(ABC):
         """删除知识库对应的 Collection。"""
 
     @abstractmethod
+    async def health_check(self) -> bool:
+        """**只读**连通性探测（健康检查用）。
+
+        必须是只读且廉价的操作：健康检查会被探针每隔几十秒调用一次，任何写操作
+        （哪怕是"删一个不存在的临时集合"）都可能在真实环境里造成副作用。
+        """
+
+    @abstractmethod
     async def add_documents(
         self, kb_id: str, documents: list[Document], embeddings: list[list[float]],
         target: str | None = None,
@@ -410,6 +418,18 @@ class MilvusVectorStore(BaseVectorStore):
         except Exception as e:
             logger.error("Failed to create Milvus collection kb=%s: %s", kb_id, e)
             raise
+
+    async def health_check(self) -> bool:
+        """Milvus 连通性：能列出集合名即视为可用（只读、幂等）。"""
+        await self._ensure_connected()
+        from pymilvus import utility
+
+        try:
+            await self.run_sync(utility.list_collections)
+            return True
+        except Exception:  # noqa: BLE001 - 健康检查只报告，不抛
+            logger.warning("Milvus 健康探测失败", exc_info=True)
+            return False
 
     async def _build_collection(
         self, name: str, kb_id: str, dim: int, enable_bm25: bool,
@@ -1123,6 +1143,15 @@ class ChromaVectorStore(BaseVectorStore):
         await self.run_sync(_create)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma collection created: %s (dim=%d)", collection_name, dim)
+
+    async def health_check(self) -> bool:
+        """Chroma 连通性：能列出集合即视为可用（只读、幂等）。"""
+        try:
+            await self.run_sync(self._get_client().list_collections)
+            return True
+        except Exception:  # noqa: BLE001
+            logger.warning("Chroma 健康探测失败", exc_info=True)
+            return False
 
     async def delete_collection(self, kb_id: str) -> None:
         collection_name = self._collection_name(kb_id)

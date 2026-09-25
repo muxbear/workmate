@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from core.metrics import KB_EMBEDDING_CALLS
+
 logger = logging.getLogger(__name__)
 
 #: 单批向量化完成后的回调：(起始下标, 本批文本, 本批向量)。
@@ -104,7 +106,7 @@ class _DashScopeEmbeddings:
     async def _embed_batch_with_retry(
         self, texts: list[str], client: httpx.AsyncClient,
     ) -> list[list[float]]:
-        """带退避重试的单批向量化。"""
+        """带退避重试的单批向量化（失败计入指标：embedding 是索取的付费上游）。"""
         last_error: Exception | None = None
         for attempt in range(self._max_retries + 1):
             response: httpx.Response | None = None
@@ -127,6 +129,7 @@ class _DashScopeEmbeddings:
             )
             await asyncio.sleep(delay)
 
+        KB_EMBEDDING_CALLS.labels(result="failed").inc()
         raise RuntimeError(
             f"Embedding 调用重试 {self._max_retries} 次后仍失败：{last_error}"
         )
@@ -163,6 +166,7 @@ class _DashScopeEmbeddings:
                 # 否则"待写入的向量"会重新堆满内存，白做分批
                 async with semaphore:
                     vectors = await self._embed_batch_with_retry(batch, client)
+                    KB_EMBEDDING_CALLS.labels(result="success").inc()
                     results[index] = vectors
                     if on_batch is not None:
                         await on_batch(index * self._BATCH_SIZE, batch, vectors)

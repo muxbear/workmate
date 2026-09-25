@@ -1,6 +1,7 @@
 """知识库检索 API 路由——向量 / BM25 / 混合检索."""
 
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from api.deps import get_current_user_id, get_db
 from api.knowledge_base.schemas import SearchRequest, SearchResponse
 from api.knowledge_base.service import require_kb_readable
 from core.decorators import rate_limit
+from core.metrics import KB_SEARCH_REQUESTS, KB_SEARCH_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +45,22 @@ async def search_knowledge_base(
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="检索服务未就绪")
 
+    started = time.perf_counter()
     try:
         result: SearchResponse = await orchestrator.search(db, kb_id, req_body)
     except ValueError as e:
+        KB_SEARCH_REQUESTS.labels(mode=req_body.mode, result="invalid").inc()
         raise HTTPException(status_code=422, detail=str(e)) from e
     except RuntimeError as e:
+        KB_SEARCH_REQUESTS.labels(mode=req_body.mode, result="error").inc()
         raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception:
+        KB_SEARCH_REQUESTS.labels(mode=req_body.mode, result="error").inc()
         logger.exception("Unhandled search error for kb=%s", kb_id)
         raise HTTPException(status_code=500, detail="检索服务内部错误") from None
 
+    # 按模式分开记：混合/向量/关键词三路的延迟与错误率不可混为一谈
+    # （纯 BM25 不打向量库，天然快得多）
+    KB_SEARCH_REQUESTS.labels(mode=req_body.mode, result="success").inc()
+    KB_SEARCH_SECONDS.labels(mode=req_body.mode).observe(time.perf_counter() - started)
     return {"code": 0, "data": result.model_dump(), "message": "ok"}

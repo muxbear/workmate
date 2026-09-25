@@ -47,6 +47,9 @@ class FakeVectorStore(BaseVectorStore):
     async def flush_collection(self, kb_id, target=None, timeout=60.0):
         return True
 
+    async def health_check(self):
+        return True
+
     async def _fetch_corpus(self, kb_id):
         return []
 

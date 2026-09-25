@@ -16,8 +16,14 @@ if sys.platform == "win32":
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+from core.logging_context import install_request_id_logging
+
+# 日志带上 request_id：一次请求涉及的十几条日志可以串起来看（排查线上问题最常用的
+# 手段）。格式保持"人类可读"，不像结构化 JSON——本项目日志主要给人看。
+# 注意：本函数内部负责 basicConfig，不要再单独配置日志格式（会互相覆盖）。
+install_request_id_logging()
 
 load_dotenv()
 
@@ -147,15 +153,47 @@ app.state.response_times = deque(maxlen=100)
 
 
 @app.middleware("http")
-async def timing_middleware(request: Request, call_next):
-    """记录 /api/ 请求的响应时间到滑动窗口."""
+async def request_context_middleware(request: Request, call_next):
+    """给每个请求分配 request_id，记录耗时，并在响应头回带 id。
+
+    request_id 进 ContextVar 后，本次请求打出的所有日志都会带上它——出问题时
+    ``grep <id>`` 就能捞出完整链路。客户端已带 ``X-Request-Id`` 时沿用它，
+    便于与网关/前端串联。
+    """
     import time as _time
+
+    from core.logging_context import (
+        REQUEST_ID_HEADER,
+        new_request_id,
+        request_id_var,
+    )
+
+    incoming = request.headers.get(REQUEST_ID_HEADER, "").strip()
+    request_id = incoming[:64] or new_request_id()
+    token = request_id_var.set(request_id)
     start = _time.time()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    finally:
+        # 必须在 finally 里复位：异常请求也要把上下文还原，否则 id 会"泄漏"到
+        # 复用该协程的后续请求上，日志就串了
+        request_id_var.reset(token)
+
+    response.headers[REQUEST_ID_HEADER] = request_id
     if request.url.path.startswith("/api/"):
-        duration_ms = (_time.time() - start) * 1000
-        app.state.response_times.append(duration_ms)
+        app.state.response_times.append((_time.time() - start) * 1000)
     return response
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint() -> PlainTextResponse:
+    """Prometheus 文本格式指标（见 ``core/metrics.py``）。"""
+    from core.metrics import render_prometheus
+
+    return PlainTextResponse(
+        render_prometheus(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 # CORS：来源白名单来自 CORS_ORIGINS（逗号分隔）。未配置时退化为通配 + 关闭凭据——

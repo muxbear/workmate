@@ -24,6 +24,7 @@ from api.knowledge_base import (
     graph_router,
     kb_router,
     search_router,
+    health_router,
     share_router,
 )
 from api.mcp import router as mcp_router
@@ -75,6 +76,7 @@ router.include_router(graph_router)
 router.include_router(chunk_router)
 router.include_router(search_router)
 router.include_router(share_router)
+router.include_router(health_router)
 router.include_router(notification_router)
 router.include_router(notification_admin_router)
 router.include_router(overview_router)

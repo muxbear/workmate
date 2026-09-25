@@ -123,12 +123,21 @@ async def get_system_health(db: AsyncSession, app_state: Any) -> dict[str, Any]:
     except Exception:
         checks.append({"name": "database", "status": "error"})
 
-    # 向量库
+    # 向量库：必须**真的探一次**。此前只判断 `vector_store is not None` 就报 ok——
+    # Milvus 挂了照样显示健康，是最糟的一类健康检查（它说谎）。
+    # 知识库更细的依赖检查（embedding / reranker 与降级影响）见 ``/health/kb``。
     vector_store = getattr(app_state, "vector_store", None)
-    if vector_store is not None:
-        checks.append({"name": "vector_store", "status": "ok"})
-    else:
+    if vector_store is None:
         checks.append({"name": "vector_store", "status": "error"})
+    else:
+        try:
+            ready = await vector_store.health_check()
+        except Exception:  # noqa: BLE001 - 健康检查只报告，不抛
+            logger.warning("向量库健康探测异常", exc_info=True)
+            ready = False
+        checks.append({
+            "name": "vector_store", "status": "ok" if ready else "error",
+        })
 
     # 计算运行时长
     uptime_seconds = 0
