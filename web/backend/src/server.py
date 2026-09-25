@@ -139,6 +139,15 @@ async def lifespan(app: FastAPI):
                 logging.getLogger(__name__).exception("索引调度器停止失败")
         await artifact_maintenance.stop()
         await automation_scheduler.stop()
+        # embedding 客户端是全实例复用的长连接（见 core.rag.embedding），显式关闭；
+        # 尽力而为：它没关成功也不该拦住关停流程
+        _embedding = getattr(app.state, "embedding_model", None)
+        _aclose = getattr(_embedding, "aclose", None)
+        if _aclose is not None:
+            try:
+                await _aclose()
+            except Exception:
+                logging.getLogger(__name__).exception("embedding 客户端关闭失败")
         await shutdown_graph()
 
 

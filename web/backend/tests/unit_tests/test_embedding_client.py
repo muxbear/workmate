@@ -233,3 +233,51 @@ class TestBatchCallback:
         with caplog.at_level(logging.WARNING):
             with pytest.raises(RuntimeError):
                 await client.aembed_documents(["好1", "坏文本", "好2"])
+
+
+class TestHttpClientIsReused:
+    """回归：HTTP 客户端**不能每次调用新建**（本机构造一次 ≈350ms，且是同步的）。
+
+    此前 ``aembed_documents`` 每次都 ``async with httpx.AsyncClient(...)``，于是每次
+    查询向量化都把事件循环按住约 350ms。实测（8 路并发查询向量化）：墙钟 2.8s、
+    **事件循环停顿 2.57s**——并发被完全串行化，单次时长呈 0.6/0.9/1.2/…/2.8s 的
+    等差阶梯，正是"每次一段同步阻塞"的特征；期间健康检查与其它请求全程排队。
+    """
+
+    @staticmethod
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return ok_response(json.loads(request.content)["input"])
+
+    async def test_same_client_is_reused_across_calls(self):
+        client = make_client(self._handler)
+
+        await client.aembed_documents(["第一段"])
+        first = client._client
+        await client.aembed_documents(["第二段"])
+
+        assert first is not None, "调用后应当持有一个复用客户端"
+        assert client._client is first, "客户端被重建了：每次向量化又会阻塞事件循环约 350ms"
+        await client.aclose()
+
+    async def test_aclose_closes_and_next_use_recreates(self):
+        """关停后不该拿着已关闭的客户端继续用。"""
+        client = make_client(self._handler)
+        await client.aembed_documents(["第一段"])
+
+        await client.aclose()
+
+        assert client._client is None
+        await client.aembed_documents(["第二段"])   # 自动重建
+        assert client._client is not None
+        await client.aclose()
+
+    async def test_aclose_is_idempotent(self):
+        """没建过、建过又关过、重复关——都不该抛（关停路径最忌讳这个）。"""
+        client = make_client(self._handler)
+
+        await client.aclose()
+        await client.aembed_documents(["第一段"])
+        await client.aclose()
+        await client.aclose()
+
+        assert client._client is None

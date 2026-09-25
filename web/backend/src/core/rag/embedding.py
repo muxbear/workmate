@@ -66,6 +66,29 @@ class _DashScopeEmbeddings:
         )
         #: 可注入的传输层（测试用），生产为 None
         self._transport = transport
+        #: 复用的 HTTP 客户端（惰性创建，见 ``_client_for_requests``）
+        self._client: httpx.AsyncClient | None = None
+
+    def _client_for_requests(self) -> httpx.AsyncClient:
+        """取本实例**复用**的 HTTP 客户端（惰性创建，关闭后自动重建）。
+
+        为什么不能每次调用新建：``httpx.AsyncClient()`` 的构造在本机要 ~350ms，而且是
+        **同步**的——在事件循环里按调用新建，等于每次向量化都把整个服务按住 350ms。
+        实测（8 路并发查询向量化）：墙钟 2.8s、**事件循环停顿 2.57s**，并发被完全串行化
+        （单次时长呈 0.6/0.9/1.2/…/2.8s 的等差阶梯），期间健康检查与其它请求全程排队。
+        复用同一个客户端还顺带省掉每次调用的 TLS 握手。
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=self._TIMEOUT, transport=self._transport,
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """关闭复用的 HTTP 客户端（应用关停时调用；重复调用无副作用）。"""
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
 
     async def _embed_batch(self, texts: list[str], client: httpx.AsyncClient) -> list[list[float]]:
         """发送单次 embedding 请求（≤_BATCH_SIZE 条）。"""
@@ -158,22 +181,21 @@ class _DashScopeEmbeddings:
         results: list[list[list[float]]] = [[] for _ in batches]
         semaphore = asyncio.Semaphore(self._concurrency)
 
-        async with httpx.AsyncClient(
-            timeout=self._TIMEOUT, transport=self._transport,
-        ) as client:
-            async def run(index: int, batch: list[str]) -> None:
-                # 回调放在信号量内：写入很慢时不该继续放行新的批次，
-                # 否则"待写入的向量"会重新堆满内存，白做分批
-                async with semaphore:
-                    vectors = await self._embed_batch_with_retry(batch, client)
-                    KB_EMBEDDING_CALLS.labels(result="success").inc()
-                    results[index] = vectors
-                    if on_batch is not None:
-                        await on_batch(index * self._BATCH_SIZE, batch, vectors)
+        client = self._client_for_requests()
 
-            await asyncio.gather(*(
-                run(index, batch) for index, batch in enumerate(batches)
-            ))
+        async def run(index: int, batch: list[str]) -> None:
+            # 回调放在信号量内：写入很慢时不该继续放行新的批次，
+            # 否则"待写入的向量"会重新堆满内存，白做分批
+            async with semaphore:
+                vectors = await self._embed_batch_with_retry(batch, client)
+                KB_EMBEDDING_CALLS.labels(result="success").inc()
+                results[index] = vectors
+                if on_batch is not None:
+                    await on_batch(index * self._BATCH_SIZE, batch, vectors)
+
+        await asyncio.gather(*(
+            run(index, batch) for index, batch in enumerate(batches)
+        ))
 
         logger.debug("Embedded %d texts in %d batches", len(texts), len(batches))
         return [vector for batch_vectors in results for vector in batch_vectors]
