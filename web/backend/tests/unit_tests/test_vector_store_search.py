@@ -264,7 +264,11 @@ class TestMilvusUpdateChunk:
         assert row["doc_id"] == "doc-1"
         assert row["chunk_index"] == 3
         assert row["doc_name"] == "手册.pdf"
-        assert row["metadata_"] == {"h1": "第一章"}
+        # 原元数据必须保留，同时刷新内容哈希（T4.5：正文变了哈希就得跟着变）
+        from core.rag.vector_store import chunk_content_hash
+
+        assert row["metadata_"]["h1"] == "第一章"
+        assert row["metadata_"]["content_hash"] == chunk_content_hash("新内容")
         assert row["chunk_text"] == "新内容"
 
     async def test_update_missing_chunk_raises(self):

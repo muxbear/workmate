@@ -123,6 +123,9 @@ class FakeChromaCollection:
     def add(self, **kwargs):
         self._recorder.record("collection.add")
 
+    def upsert(self, **kwargs):
+        self._recorder.record("collection.upsert")
+
     def get(self, **kwargs):
         self._recorder.record("collection.get")
         return {
@@ -218,8 +221,7 @@ class TestMilvusCallsAreThreaded:
         await store.update_chunk("kb-1", "c1", "新正文", [0.2] * 8)
 
         assert recorder.called >= {
-            "collection.insert", "collection.delete", "collection.upsert",
-            "collection.flush",
+            "collection.upsert", "collection.delete", "collection.flush",
         }
         assert recorder.loop_thread_calls == []
 
@@ -268,6 +270,9 @@ class TestMilvusCallsAreThreaded:
         monkeypatch.setattr(utility, "drop_collection", lambda name: (
             recorder.record("utility.drop_collection")
         ))
+        monkeypatch.setattr(utility, "rename_collection", lambda old, new: (
+            recorder.record("utility.rename_collection")
+        ))
 
         store = MilvusVectorStore(uri="http://fake:19530", user="u", password="p")
         await store.create_collection("kb-1", dim=8)
@@ -275,7 +280,7 @@ class TestMilvusCallsAreThreaded:
 
         assert {"utility.has_collection", "Collection.__init__",
                 "collection.create_index", "collection.load",
-                "utility.drop_collection"} <= recorder.called
+                "utility.rename_collection", "utility.drop_collection"} <= recorder.called
         assert recorder.loop_thread_calls == []
 
 

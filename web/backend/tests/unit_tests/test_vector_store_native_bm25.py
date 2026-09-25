@@ -245,7 +245,7 @@ class TestClientFallback:
 
 
 class TestWritePathExcludesGeneratedField:
-    async def test_insert_does_not_send_sparse(self):
+    async def test_write_does_not_send_sparse(self):
         """Milvus 会拒绝显式提供 Function 的输出字段（实测报错）。"""
         from langchain_core.documents import Document
 
@@ -258,8 +258,8 @@ class TestWritePathExcludesGeneratedField:
             [[0.1] * 8],
         )
 
-        assert collection.inserted
-        assert "sparse" not in collection.inserted[0]
+        assert collection.upserted
+        assert "sparse" not in collection.upserted[0]
 
     async def test_update_does_not_send_sparse(self):
         collection = FakeCollection(native=True)
@@ -286,7 +286,9 @@ class TestCollectionSchemaCreation:
         class FakeCollectionCtor:
             def __init__(self, name=None, schema=None):
                 captured["name"] = name
-                captured["schema"] = schema
+                if schema is not None:
+                    # 换名之后会再构造一次句柄（不带 schema），不要覆盖这里捕获的
+                    captured["schema"] = schema
                 self._index_params: list[tuple[str, dict]] = []
 
             def create_index(self, field_name, index_params):
@@ -302,6 +304,8 @@ class TestCollectionSchemaCreation:
         }))
         monkeypatch.setattr(utility, "has_collection", lambda name: False)
         monkeypatch.setattr(utility, "drop_collection", lambda name: None)
+        # 换名式替换（T4.5）：这里只关心建出来的 schema，换名给个空实现即可
+        monkeypatch.setattr(utility, "rename_collection", lambda old, new: None)
 
         store = MilvusVectorStore(uri="http://fake:19530", user="u", password="p")
         await store.create_collection(
@@ -334,7 +338,8 @@ class TestCollectionSchemaCreation:
 
         class FakeCollectionCtor:
             def __init__(self, name=None, schema=None):
-                captured["schema"] = schema
+                if schema is not None:
+                    captured["schema"] = schema
 
             def create_index(self, field_name, index_params):
                 pass
@@ -347,6 +352,7 @@ class TestCollectionSchemaCreation:
             "connect": staticmethod(lambda **kwargs: None),
         }))
         monkeypatch.setattr(utility, "has_collection", lambda name: False)
+        monkeypatch.setattr(utility, "rename_collection", lambda old, new: None)
 
         store = MilvusVectorStore(uri="http://fake:19530", user="u", password="p")
         await store.create_collection("kb-1", dim=8, enable_bm25=False)

@@ -11,8 +11,10 @@ BM25 得分。上层（``search_service``）依赖该约定做融合与展示。
 """
 
 import asyncio
+import hashlib
 import logging
 import re
+import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -40,9 +42,29 @@ _HNSW_MIN_EF = 64
 #: 使 ``"x\\n"`` 这样的值通过校验。
 _SAFE_ID_PATTERN = re.compile(r"[0-9a-zA-Z_-]{1,64}")
 
+#: 切片 ID 的命名空间——``uuid5(namespace, f"{doc_id}:{chunk_index}")``。
+#: **确定性 ID 是入库幂等的前提**：此前每片都是随机 uuid4，同一文档重复索引一次就
+#: 多出一份切片（内容相同、ID 不同），库内计数虚高、检索结果重复。现在同一个
+#: (文档, 切片号) 永远得到同一个 ID，配合 upsert 写入即为"覆盖"而非"追加"。
+_CHUNK_ID_NAMESPACE = uuid.UUID("6f5b0f0e-7a1c-5b2e-9a10-2f4d8c3e5a71")
+
+
+def chunk_id_for(doc_id: str, chunk_index: int) -> str:
+    """由 (文档, 切片号) 推导切片 ID——幂等键。"""
+    return str(uuid.uuid5(_CHUNK_ID_NAMESPACE, f"{doc_id}:{chunk_index}"))
+
+
+def chunk_content_hash(text: str) -> str:
+    """切片正文的内容哈希——用于判断"内容是否变过"（增量索引的基础）。"""
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:32]
+
 #: 原生稀疏检索用到的字段名 / 函数名（Milvus 侧的 schema 约定）
 _SPARSE_FIELD = "sparse"
 _SPARSE_FUNCTION = "chunk_text_bm25"
+
+#: 换名式重建用到的临时后缀——先建 `xxx__new`，成功后与正式集合换名
+_STAGING_SUFFIX = "__new"
+_TRASH_SUFFIX = "__old"
 
 #: ``chunk_text`` 的分析器配置——**必须显式指定中文分析器**。
 #: Milvus 默认的 standard 分析器按空白与标点切词，中文整句会变成一个大 token，
@@ -310,101 +332,42 @@ class MilvusVectorStore(BaseVectorStore):
         collection_name = self._collection_name(kb_id)
 
         try:
-            from pymilvus import (
-                Collection,
-                CollectionSchema,
-                DataType,
-                FieldSchema,
-                Function,
-                FunctionType,
-                utility,
+            from pymilvus import utility
+
+            await self._recover_interrupted_swap(collection_name)
+
+            # 先在**临时名字**下把新集合建好，成功之后再替换：
+            # 此前是"先删旧集合、再建新的"——删除之后任何一步失败（维度不对、
+            # 服务端拒绝稀疏参数、建索引超时）都意味着**旧数据已经没了且不可恢复**。
+            # 现在建失败时旧集合原封不动，调用方如实拿到异常即可。
+            staging = f"{collection_name}{_STAGING_SUFFIX}"
+            if await self.run_sync(utility.has_collection, staging):
+                logger.warning("清理上次残留的临时集合: %s", staging)
+                await self.run_sync(utility.drop_collection, staging)
+                await self._await_collection_gone(staging)
+
+            collection = await self._build_collection(
+                staging, kb_id, dim, enable_bm25, sparse_params,
             )
-            # 删除旧集合（可能由旧版 Schema 创建，与新版本不兼容）
+
+            # 换名：旧 → 回收站，临时 → 正式，再删回收站。
+            # 中途崩溃可在下次调用时由 _recover_interrupted_swap 收拾。
+            trash = f"{collection_name}{_TRASH_SUFFIX}"
             if await self.run_sync(utility.has_collection, collection_name):
-                logger.info("Dropping existing collection: %s", collection_name)
-                # 注意：pymilvus 的 utility.drop_collection 是**同步**函数，返回 None。
-                # 此前写成 `await utility.drop_collection(...)`，一旦集合已存在
-                # （即每次重建）就会抛 "object NoneType can't be used in 'await'
-                # expression"，被上层记为"集合重建失败"，而集合其实已经被删掉了。
-                await self.run_sync(utility.drop_collection, collection_name)
-                # 删除是异步传播的：紧接着用同名建集合可能报"已存在"，
-                # 表现为"重建索引时集合创建失败"（实测踩过）。这里等到真的消失。
-                for _ in range(20):
-                    if not await self.run_sync(utility.has_collection, collection_name):
-                        break
-                    await asyncio.sleep(0.5)
-                else:
-                    logger.warning(
-                        "集合 %s 删除后仍未消失，继续尝试创建", collection_name,
-                    )
-
-            fields = [
-                FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=36),
-                FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=36),
-                FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=36),
-                FieldSchema(name="chunk_index", dtype=DataType.INT64),
-                FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535,
-                            **(_ANALYZED_TEXT_FIELD if enable_bm25 else {})),
-                FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
-                FieldSchema(name="doc_name", dtype=DataType.VARCHAR, max_length=256),
-                FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=16),
-                FieldSchema(name="metadata_", dtype=DataType.JSON),
-                FieldSchema(name="created_at", dtype=DataType.INT64),
-            ]
-            functions = []
-            if enable_bm25:
-                # 稀疏向量由 BM25 Function 从 chunk_text 自动生成——**不要**在写入时
-                # 显式提供该字段（Milvus 会直接报错 "unexpected function output field"）
-                fields.append(FieldSchema(name=_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR))
-                functions.append(Function(
-                    name=_SPARSE_FUNCTION,
-                    function_type=FunctionType.BM25,
-                    input_field_names=["chunk_text"],
-                    output_field_names=[_SPARSE_FIELD],
-                    params={},
-                ))
-
-            schema = CollectionSchema(
-                fields=fields, functions=functions, description=f"Knowledge base: {kb_id}",
-            )
-            collection = await self.run_sync(
-                Collection, name=collection_name, schema=schema,
-            )
-
-            # Dense vector index (COSINE)
-            await self.run_sync(
-                collection.create_index,
-                field_name="embedding",
-                index_params={
-                    "metric_type": "COSINE",
-                    "index_type": "HNSW",
-                    "params": {"M": 16, "efConstruction": 200},
-                },
-            )
-
-            if enable_bm25:
-                # k1/b 固化在索引里，因此建集合时必须带上知识库配置的参数
+                if await self.run_sync(utility.has_collection, trash):
+                    await self.run_sync(utility.drop_collection, trash)
+                    await self._await_collection_gone(trash)
                 await self.run_sync(
-                    collection.create_index,
-                    field_name=_SPARSE_FIELD,
-                    index_params={
-                        "index_type": "SPARSE_INVERTED_INDEX",
-                        "metric_type": "BM25",
-                        "params": {
-                            "inverted_index_algo": "DAAT_MAXSCORE",
-                            **_sparse_index_params(sparse_params),
-                        },
-                    },
+                    utility.rename_collection, collection_name, trash,
                 )
+            await self.run_sync(utility.rename_collection, staging, collection_name)
 
-            # Scalar indices
-            for field_name in ["doc_id", "kb_id"]:
-                await self.run_sync(
-                    collection.create_index,
-                    field_name=field_name,
-                    index_params={"index_type": "INVERTED"},
-                )
+            if await self.run_sync(utility.has_collection, trash):
+                await self.run_sync(utility.drop_collection, trash)
 
+            # 换名后原句柄指向的名字已经不存在了，按正式名重新取一个
+            from pymilvus import Collection
+            collection = await self.run_sync(Collection, name=collection_name)
             await self.run_sync(collection.load)
             self._collections[kb_id] = collection
             self._sparse_cache.invalidate(kb_id)
@@ -414,6 +377,125 @@ class MilvusVectorStore(BaseVectorStore):
         except Exception as e:
             logger.error("Failed to create Milvus collection kb=%s: %s", kb_id, e)
             raise
+
+    async def _build_collection(
+        self, name: str, kb_id: str, dim: int, enable_bm25: bool,
+        sparse_params: dict[str, float] | None,
+    ) -> Any:
+        """按当前 schema 建一个集合（含 dense / 稀疏 / 标量索引）并加载。"""
+        from pymilvus import (
+            Collection,
+            CollectionSchema,
+            DataType,
+            FieldSchema,
+            Function,
+            FunctionType,
+        )
+
+        fields = [
+            FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=36),
+            FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=36),
+            FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=36),
+            FieldSchema(name="chunk_index", dtype=DataType.INT64),
+            FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535,
+                        **(_ANALYZED_TEXT_FIELD if enable_bm25 else {})),
+            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
+            FieldSchema(name="doc_name", dtype=DataType.VARCHAR, max_length=256),
+            FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=16),
+            FieldSchema(name="metadata_", dtype=DataType.JSON),
+            FieldSchema(name="created_at", dtype=DataType.INT64),
+        ]
+        functions = []
+        if enable_bm25:
+            # 稀疏向量由 BM25 Function 从 chunk_text 自动生成——**不要**在写入时
+            # 显式提供该字段（Milvus 会直接报错 "unexpected function output field"）
+            fields.append(FieldSchema(name=_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR))
+            functions.append(Function(
+                name=_SPARSE_FUNCTION,
+                function_type=FunctionType.BM25,
+                input_field_names=["chunk_text"],
+                output_field_names=[_SPARSE_FIELD],
+                params={},
+            ))
+
+        schema = CollectionSchema(
+            fields=fields, functions=functions, description=f"Knowledge base: {kb_id}",
+        )
+        collection = await self.run_sync(Collection, name=name, schema=schema)
+
+        await self.run_sync(
+            collection.create_index,
+            field_name="embedding",
+            index_params={
+                "metric_type": "COSINE",
+                "index_type": "HNSW",
+                "params": {"M": 16, "efConstruction": 200},
+            },
+        )
+
+        if enable_bm25:
+            # k1/b 固化在索引里，因此建集合时必须带上知识库配置的参数
+            await self.run_sync(
+                collection.create_index,
+                field_name=_SPARSE_FIELD,
+                index_params={
+                    "index_type": "SPARSE_INVERTED_INDEX",
+                    "metric_type": "BM25",
+                    "params": {
+                        "inverted_index_algo": "DAAT_MAXSCORE",
+                        **_sparse_index_params(sparse_params),
+                    },
+                },
+            )
+
+        for field_name in ["doc_id", "kb_id"]:
+            await self.run_sync(
+                collection.create_index,
+                field_name=field_name,
+                index_params={"index_type": "INVERTED"},
+            )
+
+        await self.run_sync(collection.load)
+        return collection
+
+    async def _await_collection_gone(self, name: str) -> None:
+        """等待集合真正消失——删除是异步传播的，紧接着用同名建/改名会报"已存在"。"""
+        from pymilvus import utility
+
+        for _ in range(20):
+            if not await self.run_sync(utility.has_collection, name):
+                return
+            await asyncio.sleep(0.5)
+        logger.warning("集合 %s 删除后仍未消失，继续尝试后续操作", name)
+
+    async def _recover_interrupted_swap(self, collection_name: str) -> None:
+        """收拾上次换名中途失败留下的残局。
+
+        换名是两步（正式 → 回收站、临时 → 正式），中间崩溃会留下两种状态：
+        - 只有临时集合：正式集合还在，丢掉临时即可；
+        - 正式集合缺失、数据在回收站里：**把回收站改回正式名**——这一步是回滚，
+          不是清理。少了它，用户会看到"库还在、但检索什么都搜不到"。
+        """
+        from pymilvus import utility
+
+        staging = f"{collection_name}{_STAGING_SUFFIX}"
+        trash = f"{collection_name}{_TRASH_SUFFIX}"
+        has_live = await self.run_sync(utility.has_collection, collection_name)
+        has_staging = await self.run_sync(utility.has_collection, staging)
+        has_trash = await self.run_sync(utility.has_collection, trash)
+
+        if not has_live and has_trash:
+            logger.warning(
+                "检测到上次换名中断：把 %s 恢复为 %s", trash, collection_name,
+            )
+            await self.run_sync(utility.rename_collection, trash, collection_name)
+            has_trash = False
+        if has_staging and has_live:
+            logger.warning("清理上次残留的临时集合: %s", staging)
+            await self.run_sync(utility.drop_collection, staging)
+            await self._await_collection_gone(staging)
+        if has_trash:
+            await self.run_sync(utility.drop_collection, trash)
 
     async def delete_collection(self, kb_id: str) -> None:
         await self._ensure_connected()
@@ -431,35 +513,73 @@ class MilvusVectorStore(BaseVectorStore):
     async def add_documents(
         self, kb_id: str, documents: list[Document], embeddings: list[list[float]]
     ) -> list[str]:
+        """写入切片——**幂等**：ID 由 (doc_id, chunk_index) 推导，重复写入即覆盖。
+
+        此前 ID 是随机 uuid4 + ``insert``：同一文档被索引两次就多一份切片（内容
+        相同、ID 不同），库内计数虚高且检索结果重复。现在改用确定性 ID + upsert，
+        同一个 (文档, 切片号) 永远落成同一行——重试、重复入队、断点续传都不会
+        产生重复数据。
+        """
         await self._ensure_connected()
         import time
-        import uuid
 
         collection = await self._get_collection(kb_id)
-
-        chunk_ids = [str(uuid.uuid4()) for _ in documents]
         now_ms = int(time.time() * 1000)
 
+        chunk_ids: list[str] = []
         data = []
         for i, doc in enumerate(documents):
+            doc_id = doc.metadata.get("doc_id", "")
+            chunk_index = doc.metadata.get("chunk_index", i)
+            chunk_id = chunk_id_for(doc_id, int(chunk_index))
+            chunk_ids.append(chunk_id)
+            metadata = dict(doc.metadata.get("metadata_", {}) or {})
+            # 内容哈希随元数据落库：它是"内容有没有变"的唯一可靠依据，
+            # 也是后续增量索引（只重算变了的切片）的基础
+            metadata["content_hash"] = chunk_content_hash(doc.page_content)
             data.append({
-                "id": chunk_ids[i],
-                "doc_id": doc.metadata.get("doc_id", ""),
+                "id": chunk_id,
+                "doc_id": doc_id,
                 "kb_id": kb_id,
-                "chunk_index": doc.metadata.get("chunk_index", i),
+                "chunk_index": int(chunk_index),
                 "chunk_text": doc.page_content[:65535],
                 "embedding": embeddings[i],
                 "doc_name": doc.metadata.get("doc_name", ""),
                 "doc_type": doc.metadata.get("doc_type", ""),
-                "metadata_": doc.metadata.get("metadata_", {}),
+                "metadata_": metadata,
                 "created_at": now_ms,
             })
 
-        await self.run_sync(collection.insert, data)
+        await self.run_sync(collection.upsert, data)
+        await self._prune_stale_tail(collection, kb_id, documents)
         await self.run_sync(collection.flush)
         self._sparse_cache.invalidate(kb_id)
-        logger.info("Milvus inserted %d chunks for kb=%s", len(data), kb_id)
+        logger.info("Milvus upserted %d chunks for kb=%s", len(data), kb_id)
         return chunk_ids
+
+    async def _prune_stale_tail(
+        self, collection: Any, kb_id: str, documents: list[Document],
+    ) -> None:
+        """删掉超出本次写入范围的旧切片（文档变短时的残留）。
+
+        幂等键是 (doc_id, chunk_index)，因此写入只是"覆盖同号切片"——如果同一文档
+        这次切出的片数比上次少（换了切片策略、原文删减），**多出来的尾部切片不会被
+        覆盖**，会以旧内容留在库里继续被检索到。这里按本次各文档的最大切片号收口。
+        """
+        max_index: dict[str, int] = {}
+        for i, doc in enumerate(documents):
+            doc_id = doc.metadata.get("doc_id", "")
+            if not doc_id:
+                continue
+            index = int(doc.metadata.get("chunk_index", i))
+            max_index[doc_id] = max(max_index.get(doc_id, -1), index)
+
+        for doc_id, highest in max_index.items():
+            expr = (
+                f'doc_id == "{safe_expr_id(doc_id, "doc_id")}" '
+                f"and chunk_index > {highest}"
+            )
+            await self.run_sync(collection.delete, expr)
 
     async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
         collection = await self._get_collection(kb_id)
@@ -552,6 +672,10 @@ class MilvusVectorStore(BaseVectorStore):
         if not existing:
             raise ValueError(f"Chunk not found: {chunk_id}")
         old = existing[0]
+        metadata = dict(old.get("metadata_", {}) or {})
+        # 正文被改写后哈希必须跟着更新，否则"内容哈希"就成了过期信息
+        # （增量索引按它判断"这片要不要重算"）
+        metadata["content_hash"] = chunk_content_hash(new_text)
 
         await self.run_sync(collection.upsert, [{
             "id": chunk_id,
@@ -562,7 +686,7 @@ class MilvusVectorStore(BaseVectorStore):
             "embedding": new_embedding,
             "doc_name": old.get("doc_name", ""),
             "doc_type": old.get("doc_type", ""),
-            "metadata_": old.get("metadata_", {}) or {},
+            "metadata_": metadata,
             "created_at": now_ms,
         }])
         await self.run_sync(collection.flush)
@@ -826,36 +950,41 @@ class ChromaVectorStore(BaseVectorStore):
     async def add_documents(
         self, kb_id: str, documents: list[Document], embeddings: list[list[float]],
     ) -> list[str]:
+        """写入切片——幂等，语义与 Milvus 侧一致（确定性 ID + upsert）。"""
         import json
-        import uuid
 
         collection = await self._get_collection(kb_id)
 
-        chunk_ids = [str(uuid.uuid4()) for _ in documents]
+        chunk_ids: list[str] = []
         chroma_docs: list[str] = []
         metadatas: list[dict[str, Any]] = []
 
         for i, doc in enumerate(documents):
+            doc_id = doc.metadata.get("doc_id", "")
+            chunk_index = int(doc.metadata.get("chunk_index", i))
+            chunk_ids.append(chunk_id_for(doc_id, chunk_index))
+            metadata = dict(doc.metadata.get("metadata_", {}) or {})
+            metadata["content_hash"] = chunk_content_hash(doc.page_content)
             chroma_docs.append(doc.page_content)
             metadatas.append({
-                "doc_id": doc.metadata.get("doc_id", ""),
+                "doc_id": doc_id,
                 "kb_id": kb_id,
-                "chunk_index": doc.metadata.get("chunk_index", i),
+                "chunk_index": chunk_index,
                 "doc_name": doc.metadata.get("doc_name", ""),
                 "doc_type": doc.metadata.get("doc_type", ""),
-                "metadata_": json.dumps(doc.metadata.get("metadata_", {})),
+                "metadata_": json.dumps(metadata),
                 "created_at": doc.metadata.get("created_at", 0),
             })
 
         await self.run_sync(
-            collection.add,
+            collection.upsert,
             ids=chunk_ids,
             documents=chroma_docs,
             embeddings=embeddings,
             metadatas=metadatas,
         )
         self._sparse_cache.invalidate(kb_id)
-        logger.info("Chroma inserted %d chunks for kb=%s", len(chunk_ids), kb_id)
+        logger.info("Chroma upserted %d chunks for kb=%s", len(chunk_ids), kb_id)
         return chunk_ids
 
     async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
