@@ -712,19 +712,20 @@ class MilvusVectorStore(BaseVectorStore):
         # 64（开启精排后 hybrid 会按 top_k*8 取候选，top_k>=9 即触发）整次检索失败。
         ef = max(_HNSW_MIN_EF, top_k * 2)
         expr = self._build_filter_expr(doc_ids, doc_types)
-        results = await self.run_sync(
-            collection.search,
-            data=[query_embedding],
-            anns_field="embedding",
-            param={"metric_type": "COSINE", "params": {"ef": ef}},
-            limit=top_k,
-            expr=expr or None,
-            output_fields=[],
-        )
-        pairs: list[tuple[str, float]] = []
-        if results and results[0]:
-            for hit in results[0]:
-                pairs.append((hit.id, round(float(hit.distance), 6)))
+
+        def _search_sync() -> list[tuple[str, float]]:
+            # search 与命中遍历必须在同一个工作线程里（pymilvus 的命中是惰性的，
+            # 遍历时可能触发额外请求——留在事件循环里就是一次隐藏的阻塞）
+            return self._materialize_hits(collection.search(
+                data=[query_embedding],
+                anns_field="embedding",
+                param={"metric_type": "COSINE", "params": {"ef": ef}},
+                limit=top_k,
+                expr=expr or None,
+                output_fields=[],
+            ))
+
+        pairs = await self.run_sync(_search_sync)
         logger.info("Milvus similarity search kb=%s top_k=%d returned=%d", kb_id, top_k, len(pairs))
         return pairs
 
@@ -845,27 +846,44 @@ class MilvusVectorStore(BaseVectorStore):
             except (TypeError, ValueError):
                 continue
 
-    async def _native_bm25_search(
-        self, collection: Any, kb_id: str, query: str, top_k: int,
+    @staticmethod
+    def _materialize_hits(results: Any) -> list[tuple[str, float]]:
+        """把 Milvus 的 SearchResult 摊平成 ``(chunk_id, score)``。
+
+        **必须与 search 调用一起放在工作线程里**：pymilvus 的命中是**惰性**的，
+        ``hit.id`` / ``hit.distance`` 是访问时才去取字段（未缓存的字段要发一次
+        请求）。此前只在工作线程里发出 search、在事件循环里遍历 hits——压测显示
+        事件循环仍会被占住（实测最大停顿 647ms），正是这一步在偷偷做网络 IO。
+        """
+        pairs: list[tuple[str, float]] = []
+        if results and results[0]:
+            for hit in results[0]:
+                pairs.append((hit.id, round(float(hit.distance), 6)))
+        return pairs
+
+    def _native_bm25_search_sync(
+        self, collection: Any, query: str, top_k: int,
     ) -> list[tuple[str, float]]:
-        """Milvus 原生 BM25 检索——服务端倒排，客户端只发一条查询。
+        """原生 BM25 检索（同步体）。
 
         ``data`` 传**原始查询文本**而不是向量：Milvus 会用与 ``chunk_text``
         相同的分析器对它分词，再由 BM25 Function 转成稀疏向量。
         """
-        results = await self.run_sync(
-            collection.search,
+        results = collection.search(
             data=[query],
             anns_field=_SPARSE_FIELD,
             param={"metric_type": "BM25"},
             limit=top_k,
             output_fields=[],
         )
-        pairs: list[tuple[str, float]] = []
-        if results and results[0]:
-            for hit in results[0]:
-                pairs.append((hit.id, round(float(hit.distance), 6)))
-        return pairs
+        return self._materialize_hits(results)
+
+    async def _native_bm25_search(
+        self, collection: Any, kb_id: str, query: str, top_k: int,
+    ) -> list[tuple[str, float]]:
+        return await self.run_sync(
+            self._native_bm25_search_sync, collection, query, top_k,
+        )
 
 
 class ChromaVectorStore(BaseVectorStore):
