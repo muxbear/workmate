@@ -61,6 +61,21 @@ def safe_expr_id(value: str, field: str = "id") -> str:
 class BaseVectorStore(ABC):
     """向量数据库抽象接口（策略模式）。"""
 
+    @staticmethod
+    async def run_sync(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """把**同步阻塞**的向量库调用丢到线程池执行。
+
+        pymilvus 与 chromadb 的对外 API 都是同步的：直接在 ``async def`` 里调用
+        等于在事件循环里做网络 IO 与本地计算。实测最严重的是 BM25 的全量语料扫描
+        ——**2967ms 期间整个异步服务停摆**（期间所有 HTTP 请求、SSE 推送、健康检查
+        全部卡住）。所有对向量库的调用都必须经过这里。
+
+        为什么不用 ``asyncio.to_thread`` 直接写在调用点：调用点有几十处，散落的
+        ``to_thread`` 一旦漏掉一处就退化成"偶发卡死"，很难测出来；收敛到一个入口
+        才能靠 grep 审计。
+        """
+        return await asyncio.to_thread(func, *args, **kwargs)
+
     @abstractmethod
     async def create_collection(self, kb_id: str, dim: int, enable_bm25: bool = True) -> None:
         """为知识库创建 Collection。"""
@@ -146,11 +161,18 @@ class BaseVectorStore(ABC):
             sparse_config: 稀疏算法与 k1/b 参数；缺省用 bm25 默认参数。
         """
 
-    def _sparse_search(
+    async def _sparse_search(
         self, index: BM25Index, query: str, top_k: int, cfg: SparseConfig,
     ) -> list[tuple[str, float]]:
-        """BM25 检索 + 同义词兜底（两个后端共用）。"""
-        return bm25_search_with_fallback(index, query, top_k, cfg)
+        """BM25 检索 + 同义词兜底（两个后端共用）。
+
+        **必须走线程池**：客户端 BM25 是全量语料打分（O(N) Python 循环），
+        万级切片就是几百毫秒到几秒的纯 CPU——留在事件循环里等于让整个服务停摆
+        （实测单次 2967ms）。真正的解法是 T4.2 的倒排索引，这里先保证不阻塞。
+        """
+        return await self.run_sync(
+            bm25_search_with_fallback, index, query, top_k, cfg,
+        )
 
     async def _build_sparse_index(self, kb_id: str) -> BM25Index:
         """构建（或复用缓存中的）BM25 语料索引。子类需实现 :meth:`_fetch_corpus`。"""
@@ -158,7 +180,8 @@ class BaseVectorStore(ABC):
         if cached is not None:
             return cached
         corpus = await self._fetch_corpus(kb_id)
-        index = BM25Index.build(corpus)
+        # 建索引同样是对全量语料的 CPU 计算（分词 + 倒排 + df 统计）
+        index = await self.run_sync(BM25Index.build, corpus)
         self._sparse_cache.put(kb_id, index)
         return index
 
@@ -199,7 +222,8 @@ class MilvusVectorStore(BaseVectorStore):
             return
         try:
             from pymilvus import connections
-            connections.connect(
+            await self.run_sync(
+                connections.connect,
                 alias="default",
                 uri=self._uri,
                 user=self._user,
@@ -225,17 +249,17 @@ class MilvusVectorStore(BaseVectorStore):
                 utility,
             )
             # 删除旧集合（可能由旧版 Schema 创建，与新版本不兼容）
-            if utility.has_collection(collection_name):
+            if await self.run_sync(utility.has_collection, collection_name):
                 logger.info("Dropping existing collection: %s", collection_name)
                 # 注意：pymilvus 的 utility.drop_collection 是**同步**函数，返回 None。
                 # 此前写成 `await utility.drop_collection(...)`，一旦集合已存在
                 # （即每次重建）就会抛 "object NoneType can't be used in 'await'
                 # expression"，被上层记为"集合重建失败"，而集合其实已经被删掉了。
-                utility.drop_collection(collection_name)
+                await self.run_sync(utility.drop_collection, collection_name)
                 # 删除是异步传播的：紧接着用同名建集合可能报"已存在"，
                 # 表现为"重建索引时集合创建失败"（实测踩过）。这里等到真的消失。
                 for _ in range(20):
-                    if not utility.has_collection(collection_name):
+                    if not await self.run_sync(utility.has_collection, collection_name):
                         break
                     await asyncio.sleep(0.5)
                 else:
@@ -257,10 +281,13 @@ class MilvusVectorStore(BaseVectorStore):
             ]
 
             schema = CollectionSchema(fields=fields, description=f"Knowledge base: {kb_id}")
-            collection = Collection(name=collection_name, schema=schema)
+            collection = await self.run_sync(
+                Collection, name=collection_name, schema=schema,
+            )
 
             # Dense vector index (COSINE)
-            collection.create_index(  # pyright: ignore[reportUnusedCoroutine]
+            await self.run_sync(
+                collection.create_index,
                 field_name="embedding",
                 index_params={
                     "metric_type": "COSINE",
@@ -271,12 +298,13 @@ class MilvusVectorStore(BaseVectorStore):
 
             # Scalar indices
             for field_name in ["doc_id", "kb_id"]:
-                collection.create_index(  # pyright: ignore[reportUnusedCoroutine]
+                await self.run_sync(
+                    collection.create_index,
                     field_name=field_name,
                     index_params={"index_type": "INVERTED"},
                 )
 
-            collection.load()
+            await self.run_sync(collection.load)
             self._collections[kb_id] = collection
             self._sparse_cache.invalidate(kb_id)
             logger.info("Milvus collection created: %s (dim=%d)", collection_name, dim)
@@ -290,7 +318,7 @@ class MilvusVectorStore(BaseVectorStore):
         collection_name = self._collection_name(kb_id)
         try:
             from pymilvus import utility
-            utility.drop_collection(collection_name)  # 同步 API，不能 await
+            await self.run_sync(utility.drop_collection, collection_name)
             self._collections.pop(kb_id, None)
             self._sparse_cache.invalidate(kb_id)
             logger.info("Milvus collection deleted: %s", collection_name)
@@ -304,12 +332,7 @@ class MilvusVectorStore(BaseVectorStore):
         import time
         import uuid
 
-        collection = self._collections.get(kb_id)
-        if collection is None:
-            from pymilvus import Collection
-            collection = Collection(name=self._collection_name(kb_id))
-            collection.load()
-            self._collections[kb_id] = collection
+        collection = await self._get_collection(kb_id)
 
         chunk_ids = [str(uuid.uuid4()) for _ in documents]
         now_ms = int(time.time() * 1000)
@@ -329,23 +352,18 @@ class MilvusVectorStore(BaseVectorStore):
                 "created_at": now_ms,
             })
 
-        collection.insert(data)
-        collection.flush()
+        await self.run_sync(collection.insert, data)
+        await self.run_sync(collection.flush)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus inserted %d chunks for kb=%s", len(data), kb_id)
         return chunk_ids
 
     async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
-        await self._ensure_connected()
-        collection = self._collections.get(kb_id)
-        if collection is None:
-            from pymilvus import Collection
-            collection = Collection(name=self._collection_name(kb_id))
-            collection.load()
-            self._collections[kb_id] = collection
-
-        collection.delete(f'doc_id == "{safe_expr_id(doc_id, "doc_id")}"')
-        collection.flush()
+        collection = await self._get_collection(kb_id)
+        await self.run_sync(
+            collection.delete, f'doc_id == "{safe_expr_id(doc_id, "doc_id")}"',
+        )
+        await self.run_sync(collection.flush)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus deleted chunks for doc=%s in kb=%s", doc_id, kb_id)
 
@@ -355,8 +373,11 @@ class MilvusVectorStore(BaseVectorStore):
         collection = self._collections.get(kb_id)
         if collection is None:
             from pymilvus import Collection
-            collection = Collection(name=self._collection_name(kb_id))
-            collection.load()
+
+            collection = await self.run_sync(
+                Collection, name=self._collection_name(kb_id),
+            )
+            await self.run_sync(collection.load)
             self._collections[kb_id] = collection
         return collection
 
@@ -367,7 +388,8 @@ class MilvusVectorStore(BaseVectorStore):
 
     async def get_chunks_by_doc_id(self, kb_id: str, doc_id: str) -> list[dict]:
         collection = await self._get_collection(kb_id)
-        results = collection.query(
+        results = await self.run_sync(
+            collection.query,
             expr=f'doc_id == "{safe_expr_id(doc_id, "doc_id")}"',
             output_fields=self._CHUNK_OUTPUT_FIELDS,
         )
@@ -389,19 +411,21 @@ class MilvusVectorStore(BaseVectorStore):
         if include_embeddings:
             output_fields.append("embedding")
         try:
-            results = collection.query(
+            return await self.run_sync(
+                collection.query,
                 expr=expr,
                 output_fields=output_fields,
             )
-            return results
         except Exception:
             logger.exception("Milvus get_chunks_by_ids failed for kb=%s", kb_id)
             return []
 
     async def delete_chunk_by_id(self, kb_id: str, chunk_id: str) -> None:
         collection = await self._get_collection(kb_id)
-        collection.delete(f'id == "{safe_expr_id(chunk_id, "chunk_id")}"')
-        collection.flush()
+        await self.run_sync(
+            collection.delete, f'id == "{safe_expr_id(chunk_id, "chunk_id")}"',
+        )
+        await self.run_sync(collection.flush)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus deleted chunk=%s in kb=%s", chunk_id, kb_id)
 
@@ -426,7 +450,7 @@ class MilvusVectorStore(BaseVectorStore):
             raise ValueError(f"Chunk not found: {chunk_id}")
         old = existing[0]
 
-        collection.upsert([{
+        await self.run_sync(collection.upsert, [{
             "id": chunk_id,
             "doc_id": old.get("doc_id", ""),
             "kb_id": old.get("kb_id", kb_id),
@@ -438,7 +462,7 @@ class MilvusVectorStore(BaseVectorStore):
             "metadata_": old.get("metadata_", {}) or {},
             "created_at": now_ms,
         }])
-        collection.flush()
+        await self.run_sync(collection.flush)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Milvus updated chunk=%s in kb=%s", chunk_id, kb_id)
 
@@ -461,7 +485,8 @@ class MilvusVectorStore(BaseVectorStore):
         # 64（开启精排后 hybrid 会按 top_k*8 取候选，top_k>=9 即触发）整次检索失败。
         ef = max(_HNSW_MIN_EF, top_k * 2)
         expr = self._build_filter_expr(doc_ids, doc_types)
-        results = collection.search(
+        results = await self.run_sync(
+            collection.search,
             data=[query_embedding],
             anns_field="embedding",
             param={"metric_type": "COSINE", "params": {"ef": ef}},
@@ -485,21 +510,24 @@ class MilvusVectorStore(BaseVectorStore):
         collection = await self._get_collection(kb_id)
         corpus: list[tuple[str, str]] = []
         try:
-            iterator = collection.query_iterator(
+            iterator = await self.run_sync(
+                collection.query_iterator,
                 expr="id != ''",
                 output_fields=["id", "chunk_text"],
                 batch_size=1000,
             )
             try:
                 while True:
-                    batch = iterator.next()
+                    # 每批都走线程池：单批 1000 行也是一次远程查询，留在事件循环里
+                    # 同样会阻塞（全量语料扫描实测 2.9s，期间服务停摆）
+                    batch = await self.run_sync(iterator.next)
                     if not batch:
                         break
                     corpus.extend(
                         (row.get("id", ""), row.get("chunk_text") or "") for row in batch
                     )
             finally:
-                iterator.close()
+                await self.run_sync(iterator.close)
         except Exception:
             logger.exception("Milvus fetch corpus failed for kb=%s", kb_id)
             return []
@@ -516,7 +544,7 @@ class MilvusVectorStore(BaseVectorStore):
             return []
 
         index = await self._build_sparse_index(kb_id)
-        hits = self._sparse_search(index, query, top_k, cfg)
+        hits = await self._sparse_search(index, query, top_k, cfg)
         logger.info(
             "Milvus bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
             kb_id, top_k, cfg.sparse_algo, index.size, len(hits),
@@ -549,7 +577,7 @@ class ChromaVectorStore(BaseVectorStore):
         self._sparse_cache = SparseIndexCache()
 
     def _get_client(self) -> Any:
-        """获取或初始化 Chroma 客户端。"""
+        """获取或初始化 Chroma 客户端（**同步**，构造开销只在首次）。"""
         if self._client is None:
             import chromadb
             if self._host:
@@ -558,33 +586,40 @@ class ChromaVectorStore(BaseVectorStore):
                 self._client = chromadb.PersistentClient(path=self._persist_dir)
         return self._client
 
-    def _get_collection(self, kb_id: str) -> Any:
-        """获取 Collection，不存在时抛出异常。"""
+    def _get_collection_sync(self, kb_id: str) -> Any:
+        """获取 Collection，不存在时抛出异常（同步版本，供线程池内调用）。"""
         client = self._get_client()
         return client.get_collection(self._collection_name(kb_id))
 
+    async def _get_collection(self, kb_id: str) -> Any:
+        """线程池版 ``get_collection``——Chroma 的 get 也要做一次远程/RPC 往返。"""
+        return await self.run_sync(self._get_collection_sync, kb_id)
+
     async def create_collection(self, kb_id: str, dim: int, enable_bm25: bool = True) -> None:
-        client = self._get_client()
         collection_name = self._collection_name(kb_id)
 
-        try:
-            client.delete_collection(collection_name)
-            logger.info("Dropped existing Chroma collection: %s", collection_name)
-        except Exception:
-            pass
+        def _create() -> None:
+            client = self._get_client()
+            try:
+                client.delete_collection(collection_name)
+                logger.info("Dropped existing Chroma collection: %s", collection_name)
+            except Exception:
+                pass
+            client.create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine", "dim": dim},
+            )
 
-        client.create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine", "dim": dim},
-        )
+        await self.run_sync(_create)
         self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma collection created: %s (dim=%d)", collection_name, dim)
 
     async def delete_collection(self, kb_id: str) -> None:
-        client = self._get_client()
         collection_name = self._collection_name(kb_id)
         try:
-            client.delete_collection(collection_name)
+            await self.run_sync(
+                self._get_client().delete_collection, collection_name,
+            )
             self._sparse_cache.invalidate(kb_id)
             logger.info("Chroma collection deleted: %s", collection_name)
         except Exception as e:
@@ -596,7 +631,7 @@ class ChromaVectorStore(BaseVectorStore):
         import json
         import uuid
 
-        collection = self._get_collection(kb_id)
+        collection = await self._get_collection(kb_id)
 
         chunk_ids = [str(uuid.uuid4()) for _ in documents]
         chroma_docs: list[str] = []
@@ -614,7 +649,8 @@ class ChromaVectorStore(BaseVectorStore):
                 "created_at": doc.metadata.get("created_at", 0),
             })
 
-        collection.add(
+        await self.run_sync(
+            collection.add,
             ids=chunk_ids,
             documents=chroma_docs,
             embeddings=embeddings,
@@ -625,22 +661,24 @@ class ChromaVectorStore(BaseVectorStore):
         return chunk_ids
 
     async def delete_by_doc_id(self, kb_id: str, doc_id: str) -> None:
-        collection = self._get_collection(kb_id)
+        collection = await self._get_collection(kb_id)
         # Find all chunk IDs for this doc
-        result = collection.get(
+        result = await self.run_sync(
+            collection.get,
             where={"doc_id": doc_id},
             include=[],
         )
         if result["ids"]:
-            collection.delete(ids=result["ids"])
+            await self.run_sync(collection.delete, ids=result["ids"])
             self._sparse_cache.invalidate(kb_id)
             logger.info("Chroma deleted %d chunks for doc=%s in kb=%s", len(result["ids"]), doc_id, kb_id)
 
     async def get_chunks_by_doc_id(self, kb_id: str, doc_id: str) -> list[dict]:
         import json
 
-        collection = self._get_collection(kb_id)
-        result = collection.get(
+        collection = await self._get_collection(kb_id)
+        result = await self.run_sync(
+            collection.get,
             where={"doc_id": doc_id},
             include=["documents", "metadatas"],
         )
@@ -681,11 +719,12 @@ class ChromaVectorStore(BaseVectorStore):
         if not chunk_ids:
             return []
 
-        collection = self._get_collection(kb_id)
+        collection = await self._get_collection(kb_id)
         include = ["documents", "metadatas"]
         if include_embeddings:
             include.append("embeddings")
-        result = collection.get(
+        result = await self.run_sync(
+            collection.get,
             ids=chunk_ids,
             include=include,
         )
@@ -722,8 +761,8 @@ class ChromaVectorStore(BaseVectorStore):
         return chunks
 
     async def delete_chunk_by_id(self, kb_id: str, chunk_id: str) -> None:
-        collection = self._get_collection(kb_id)
-        collection.delete(ids=[chunk_id])
+        collection = await self._get_collection(kb_id)
+        await self.run_sync(collection.delete, ids=[chunk_id])
         self._sparse_cache.invalidate(kb_id)
         logger.info("Chroma deleted chunk=%s in kb=%s", chunk_id, kb_id)
 
@@ -739,16 +778,19 @@ class ChromaVectorStore(BaseVectorStore):
         """
         import time
 
-        collection = self._get_collection(kb_id)
+        collection = await self._get_collection(kb_id)
         now_ms = int(time.time() * 1000)
 
-        existing = collection.get(ids=[chunk_id], include=["metadatas"])
+        existing = await self.run_sync(
+            collection.get, ids=[chunk_id], include=["metadatas"],
+        )
         if not existing["ids"]:
             raise ValueError(f"Chunk not found: {chunk_id}")
         meta = dict((existing.get("metadatas") or [{}])[0] or {})
         meta["created_at"] = now_ms
 
-        collection.update(
+        await self.run_sync(
+            collection.update,
             ids=[chunk_id],
             documents=[new_text],
             embeddings=[new_embedding],
@@ -759,9 +801,9 @@ class ChromaVectorStore(BaseVectorStore):
 
     async def _fetch_corpus(self, kb_id: str) -> list[tuple[str, str]]:
         """全量拉取 ``(chunk_id, chunk_text)`` 用作 BM25 语料（Chroma get 无窗口限制）。"""
-        collection = self._get_collection(kb_id)
+        collection = await self._get_collection(kb_id)
         try:
-            result = collection.get(include=["documents"])
+            result = await self.run_sync(collection.get, include=["documents"])
         except Exception:
             logger.exception("Chroma fetch corpus failed for kb=%s", kb_id)
             return []
@@ -783,7 +825,7 @@ class ChromaVectorStore(BaseVectorStore):
         必须换算为余弦相似度 ``1 - distance`` 才能与 Milvus 侧口径一致
         （越大越相关）。此前直接透传 distance，导致"综合/向量"分值方向相反。
         """
-        collection = self._get_collection(kb_id)
+        collection = await self._get_collection(kb_id)
         where: dict | None = None
         if doc_ids and doc_types:
             where = {"$and": [
@@ -795,7 +837,8 @@ class ChromaVectorStore(BaseVectorStore):
         elif doc_types:
             where = {"doc_type": {"$in": list(doc_types)}}
 
-        result = collection.query(
+        result = await self.run_sync(
+            collection.query,
             query_embeddings=[query_embedding],
             n_results=top_k,
             include=[],
@@ -830,7 +873,7 @@ class ChromaVectorStore(BaseVectorStore):
             return []
 
         index = await self._build_sparse_index(kb_id)
-        hits = self._sparse_search(index, query, top_k, cfg)
+        hits = await self._sparse_search(index, query, top_k, cfg)
         logger.info(
             "Chroma bm25 kb=%s top_k=%d algo=%s corpus=%d returned=%d",
             kb_id, top_k, cfg.sparse_algo, index.size, len(hits),

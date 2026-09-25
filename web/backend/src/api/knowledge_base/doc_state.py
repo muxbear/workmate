@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -120,7 +121,12 @@ class ParsingState(DocState):
 
     async def handle(self, ctx: IndexingContext, pipeline: IndexingPipeline) -> None:
         try:
-            ctx.documents = pipeline.loader_registry.load(ctx.file_path, ctx.file_type)
+            # 解析是**同步 CPU/IO 密集**的（PDF 抽取、DOCX 解压、unstructured
+            # 本地推理），一个 500MB 的 PDF 能把事件循环按住好几秒——期间所有
+            # HTTP 请求、SSE 推送、健康检查全部停摆。丢到线程池。
+            ctx.documents = await asyncio.to_thread(
+                pipeline.loader_registry.load, ctx.file_path, ctx.file_type,
+            )
             await ctx.transition_to(ChunkingState(), "chunking", STAGE_PROGRESS["chunking"])
         except Exception as e:
             await ctx.fail(f"文档解析失败: {e}")
