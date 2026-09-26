@@ -12,6 +12,7 @@ import { downloadDocument, readApiError } from '@/services/knowledgeBaseApi'
 import KbDocStatusBadge from './KbDocStatusBadge.vue'
 import KbUploadDialog from './KbUploadDialog.vue'
 import KbPasteTextDialog from './KbPasteTextDialog.vue'
+import KbUrlImportDialog from './KbUrlImportDialog.vue'
 import KbIndexingPipeline from './KbIndexingPipeline.vue'
 import KbDocDetailDrawer from './KbDocDetailDrawer.vue'
 import KbFragmentEditor from './KbFragmentEditor.vue'
@@ -50,6 +51,8 @@ const filteredDocs = computed(() => {
 
 const uploading = ref(false)
 const pasteVisible = ref(false)
+const urlVisible = ref(false)
+const urlError = ref<string | null>(null)
 const batchRunning = ref(false)
 
 /** 被跳过文件的提示文案：必须说清"重复于哪一篇"，否则用户会以为文件丢了 */
@@ -87,6 +90,22 @@ async function handlePaste(name: string, content: string, config?: IndexConfig) 
     }
   } catch (err: unknown) {
     ElMessage.error(readApiError(err))
+  }
+}
+
+async function handleUrlImport(url: string, config?: IndexConfig) {
+  urlError.value = null
+  try {
+    const result = await store.importUrlDoc(props.kb.id, { url, config })
+    urlVisible.value = false
+    if (result.skipped.length) {
+      ElMessage.warning(skipSummary(result.skipped))
+    } else {
+      ElMessage.success('已导入，正在建立索引')
+    }
+  } catch (err: unknown) {
+    // 就地显示原因（含"未配置白名单"的配置指引），地址保留便于修正后重试
+    urlError.value = readApiError(err)
   }
 }
 
@@ -314,6 +333,13 @@ function handleEditFragment(doc: KBDoc) {
             >
               <ClipboardPaste :size="16" class="btn-icon" />粘贴文本
             </button>
+            <button
+              v-if="!readonly"
+              class="btn-upload btn-secondary"
+              @click="urlError = null; urlVisible = true"
+            >
+              <Globe :size="16" class="btn-icon" />导入网页
+            </button>
             <!-- 批量入口：仅在有选中项时出现（selected 与当前列表求交后的计数） -->
             <button
               v-if="!readonly && effectiveSelection.length > 0"
@@ -497,6 +523,14 @@ function handleEditFragment(doc: KBDoc) {
         :default-config="kb.config"
         @close="pasteVisible = false"
         @submit="handlePaste"
+      />
+
+      <KbUrlImportDialog
+        :visible="urlVisible"
+        :default-config="kb.config"
+        :error="urlError"
+        @close="urlVisible = false"
+        @submit="handleUrlImport"
       />
     </template>
   </div>

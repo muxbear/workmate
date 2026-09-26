@@ -16,6 +16,7 @@ import type {
   CreateDocsResult,
   DocSkip,
   PasteTextRequest,
+  UrlImportRequest,
 } from '@/types/knowledgeBase'
 
 // ─── 后端原始类型 ──────────────────────────────────────────────────────────
@@ -379,6 +380,18 @@ export async function createTextDocument(
   const res = await instance.post(`/knowledge-bases/${kbId}/documents/text`, {
     name: payload.name,
     content: payload.content,
+    config: payload.config ? configToSnake(payload.config) : undefined,
+  })
+  return mapCreateResult(res.data.data)
+}
+
+/** URL / 网页导入（后端自带 SSRF 防护；未配置白名单时返回 code 501 与配置指引） */
+export async function importFromUrl(
+  kbId: string,
+  payload: UrlImportRequest,
+): Promise<CreateDocsResult> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/documents/url`, {
+    url: payload.url,
     config: payload.config ? configToSnake(payload.config) : undefined,
   })
   return mapCreateResult(res.data.data)

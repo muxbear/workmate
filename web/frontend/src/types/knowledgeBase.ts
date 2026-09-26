@@ -461,3 +461,9 @@ export interface PasteTextRequest {
   content: string
   config?: IndexConfig
 }
+
+/** URL / 网页导入 */
+export interface UrlImportRequest {
+  url: string
+  config?: IndexConfig
+}

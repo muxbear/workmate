@@ -12,6 +12,7 @@ import type {
   KBShare,
   KBVisibility,
   PasteTextRequest,
+  UrlImportRequest,
 } from '@/types/knowledgeBase'
 import { KB_GROUP_PREVIEW_LIMIT } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
@@ -396,6 +397,19 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     return result
   }
 
+  /** URL / 网页导入（抓取与 SSRF 防护都在后端） */
+  async function importUrlDoc(kbId: string, payload: UrlImportRequest) {
+    const result = await kbApi.importFromUrl(kbId, payload)
+    if (selectedKb.value && selectedKb.value.id === kbId) {
+      selectedKb.value = {
+        ...selectedKb.value,
+        documents: [...result.created, ...selectedKb.value.documents],
+        docs: selectedKb.value.docs + result.created.length,
+      }
+    }
+    return result
+  }
+
   /** 批量删除/重试：逐项结果由调用方提示，这里只负责把本地状态对齐 */
   async function batchDocs(kbId: string, action: 'delete' | 'retry', docIds: string[]) {
     const result = await kbApi.batchDocumentOp(kbId, action, docIds)
@@ -636,6 +650,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     respondInvitation,
     uploadDocs,
     createTextDoc,
+    importUrlDoc,
     batchDocs,
     deleteDoc,
     retryDoc,
