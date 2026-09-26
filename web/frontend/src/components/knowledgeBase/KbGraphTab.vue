@@ -148,7 +148,14 @@ async function handleReExtract() {
   reExtracting.value = true
   try {
     const result = await reExtractGraphApi(props.kb.id)
-    ElMessage.success(`知识图谱重建完成：${result.entities} 个实体，${result.relations} 个关系`)
+    if (result.entities === 0 && result.relations === 0) {
+      // 0/0 不报成功：可能是该库确实没有可抽的内容，也可能是抽取失败被逐篇跳过。
+      // 两种情况都该引导用户去看文档列表里的「图谱未生成」原因，
+      // 而不是用一个成功提示把「重建了个空」盖过去。
+      ElMessage.warning('图谱重建完成，但未产出任何实体或关系：请查看文档列表中各文档的图谱提示')
+    } else {
+      ElMessage.success(`知识图谱重建完成：${result.entities} 个实体，${result.relations} 个关系`)
+    }
     await store.selectKb(props.kb.id)
   } catch (err: unknown) {
     const msg = readApiError(err)

@@ -13,6 +13,9 @@
 
 from __future__ import annotations
 
+import logging
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -25,6 +28,8 @@ from api.knowledge_base.entity_norm import (
 from api.knowledge_base.graph_service import (
     _EXTRACTION_EXAMPLES,
     _EXTRACTION_PROMPT,
+    GraphExtractionError,
+    GraphExtractionService,
     get_entity_detail,
     get_graph_data,
 )
@@ -422,3 +427,124 @@ class TestEntityDetail:
             await db.commit()
 
             assert await get_entity_detail(db, "kb-other", "milvus") is None
+
+
+class TestExtractionFormatWiring:
+    """解析格式必须与提示词侧同为一档——这是实测出来的静默零产出根因。
+
+    2026-09-26 在真库上实测：同一片 Kubernetes 正文，`lx.extract` 不传
+    ``format_type`` 时，模型按 ```yaml 围栏输出、解析侧却按 JSON 解，报
+    ``Failed to parse JSON content``；langextract 默认 ``suppress_parse_errors=True``
+    会**静默跳过**该窗口，于是抽取返回 0 条实体、``graph_error`` 也是空的
+    （7 篇文档就这样在库里躺成"索引成功但没有图谱"）。补上
+    ``format_type=YAML`` 后同一片文本得 41 条。
+
+    所以这里钉住的不是"某个字面值"，而是**两侧一致**这个不变量：谁改了一边
+    而忘了另一边，这条用例就红。
+    """
+
+    async def test_parse_format_matches_prompt_format(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_extract(**kwargs):
+            captured.update(kwargs)
+            return None  # 返回空即可：本用例只关心调用参数
+
+        monkeypatch.setattr("langextract.extract", fake_extract)
+        monkeypatch.setattr(
+            "api.knowledge_base.model_provider.load_llm_model",
+            AsyncMock(return_value=("m", "https://api.example.com", "k")),
+        )
+        # 双保险：抽取为空时本就不会走到落库，但绝不能让用例碰真库
+        monkeypatch.setattr(GraphExtractionService, "_persist", AsyncMock())
+
+        service = GraphExtractionService()
+        entities, relations = await service.extract_entities_and_relations(
+            "kb-a", "doc-a", ["切片正文"],
+        )
+
+        assert entities == []
+        assert relations == []
+        prompt_side = service._build_model_config("m", "u", "k").provider_kwargs["format_type"]
+        assert captured["format_type"] is prompt_side
+        # 围栏必须一并开启：解析侧期望 ```yaml 围栏，与提示词侧一致
+        assert captured["fence_output"] is True
+
+
+class TestExtractionFailureIsVisible:
+    """抽取失败必须**抛**出来，而不是静默返回空。
+
+    此前 `extract_entities_and_relations` 把所有失败都吞成 ``[], []``，于是
+    「模型欠费」「输出解析不出来」与「这篇文档确实没有实体」在数据上完全一样：
+    文档仍是 indexed、计数为 0、``graph_error`` 为空。7 篇文档就这样无痕地空着图谱。
+
+    现在改为抛出 :class:`GraphExtractionError`，由 ``doc_state.ExtractingState``
+    （已有逻辑）与 ``rebuild_graph_for_kb`` 记入 ``graph_error``——文档照常索引，
+    但失败在界面上看得见。这一组用例钉住的就是"不许再吞"。
+    """
+
+    @staticmethod
+    def _service(monkeypatch) -> GraphExtractionService:
+        monkeypatch.setattr(
+            "api.knowledge_base.model_provider.load_llm_model",
+            AsyncMock(return_value=("m", "https://api.example.com", "k")),
+        )
+        monkeypatch.setattr(GraphExtractionService, "_persist", AsyncMock())
+        return GraphExtractionService()
+
+    async def test_model_unavailable_raises(self, monkeypatch):
+        monkeypatch.setattr(
+            "api.knowledge_base.model_provider.load_llm_model",
+            AsyncMock(side_effect=RuntimeError("「模型」页面没有可用模型")),
+        )
+        service = GraphExtractionService()
+
+        with pytest.raises(GraphExtractionError, match="模型不可用"):
+            await service.extract_entities_and_relations("kb-a", "doc-a", ["正文"])
+
+    async def test_extract_exception_raises_with_reason(self, monkeypatch):
+        def boom(**kwargs):
+            raise RuntimeError("402 - Insufficient Balance")
+
+        monkeypatch.setattr("langextract.extract", boom)
+        service = self._service(monkeypatch)
+
+        with pytest.raises(GraphExtractionError, match="402"):
+            await service.extract_entities_and_relations("kb-a", "doc-a", ["正文"])
+
+    async def test_unparseable_output_raises_instead_of_looking_empty(self, monkeypatch):
+        """有正文、模型也回了，但窗口全被解析跳过——这是失败，不是"没有实体"。"""
+
+        def fake_extract(**kwargs):
+            # 复刻 langextract 在 suppress_parse_errors=True 下的行为：只留一行告警
+            logging.getLogger("absl").warning(
+                "Skipping chunk: parse error: Failed to parse JSON content: boom",
+            )
+            return None
+
+        monkeypatch.setattr("langextract.extract", fake_extract)
+        service = self._service(monkeypatch)
+
+        with pytest.raises(GraphExtractionError, match="无法解析"):
+            await service.extract_entities_and_relations("kb-a", "doc-a", ["正文"])
+
+    async def test_genuinely_empty_result_is_not_an_error(self, monkeypatch):
+        """没有解析告警时，抽到 0 条是合法结果——不能把"这篇没实体"报成失败。"""
+        monkeypatch.setattr("langextract.extract", lambda **kwargs: None)
+        service = self._service(monkeypatch)
+
+        assert await service.extract_entities_and_relations("kb-a", "doc-a", ["正文"]) == ([], [])
+
+    async def test_empty_input_returns_empty_without_calling_the_model(self, monkeypatch):
+        """空正文连模型都不该解析——也不能因此报错。"""
+        monkeypatch.setattr(
+            "api.knowledge_base.model_provider.load_llm_model",
+            AsyncMock(side_effect=AssertionError("空正文不该去解析模型")),
+        )
+        monkeypatch.setattr(
+            "langextract.extract",
+            lambda **kwargs: pytest.fail("空正文不该调用 LLM"),
+        )
+        service = GraphExtractionService()
+
+        assert await service.extract_entities_and_relations("kb-a", "doc-a", ["", "   "]) == ([], [])

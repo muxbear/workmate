@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 from api.knowledge_base import graph_service
 from api.knowledge_base.entity_norm import normalize_name
 from api.knowledge_base.graph_service import (
+    GraphExtractionError,
     GraphExtractionService,
     _chunk_text,
     reextract_document_graph,
@@ -391,6 +392,66 @@ class TestRebuildFromStoredChunks:
                 UnusedStore(),
             )
         assert (entities, relations) == (0, 0)
+
+    async def test_failing_doc_records_reason_and_others_still_rebuild(
+        self,
+        maker,
+        monkeypatch,
+    ):
+        """单篇失败要把原因写到该文档行上，其余文档照常重建。
+
+        此前失败只写日志然后 ``continue``，而 KB 计数按侥幸成功的那几篇重算——
+        "重建少了几篇"在界面上完全看不出来。
+        """
+
+        class FlakyExtractor(RecordingExtractor):
+            async def extract_entities_and_relations(self, kb_id, doc_id, chunks, **kw):
+                if doc_id == DOC:
+                    raise GraphExtractionError("模拟：图谱抽取模型不可用")
+                return await super().extract_entities_and_relations(
+                    kb_id, doc_id, chunks, **kw,
+                )
+
+        extractor = FlakyExtractor()
+        monkeypatch.setattr(graph_service, "GraphExtractionService", lambda: extractor)
+        async with maker() as db:
+            db.add(
+                KnowledgeBaseDocument(
+                    id="doc-2",
+                    kb_id=KB,
+                    name="另一篇.md",
+                    type="md",
+                    status="indexed",
+                    storage_path="/nonexistent/另一篇.md",
+                )
+            )
+            await db.commit()
+
+        class ByDocStore:
+            async def get_chunks_by_doc_id(self, kb_id, doc_id):
+                return [{"chunk_text": f"{doc_id} 的切片正文"}]
+
+        async with maker() as db:
+            entities, _ = await graph_service.rebuild_graph_for_kb(
+                db,
+                {"entity_model": None},
+                KB,
+                ByDocStore(),
+            )
+            await db.commit()
+
+        async with maker() as db:
+            failed_doc = await db.get(KnowledgeBaseDocument, DOC)
+            ok_doc = await db.get(KnowledgeBaseDocument, "doc-2")
+
+        # 失败的那篇：原因可见，而不是消失在一行日志里
+        assert failed_doc is not None
+        assert failed_doc.graph_error is not None
+        assert "模型不可用" in failed_doc.graph_error
+        # 另一篇不受牵连：照常抽出实体，且不该挂着任何错误
+        assert entities > 0
+        assert ok_doc is not None
+        assert ok_doc.graph_error is None
 
 
 class TestScheduling:

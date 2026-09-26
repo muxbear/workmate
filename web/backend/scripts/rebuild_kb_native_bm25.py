@@ -143,17 +143,26 @@ async def verify(store, kb_id: str) -> int:
             "SELECT chunks_count FROM knowledge_bases WHERE id = :id"
         ), {"id": kb_id})).one()
         docs = (await db.execute(text(
-            "SELECT id, name, status, chunks_count, graph_error "
-            "FROM knowledge_base_documents WHERE kb_id = :id ORDER BY name"
+            "SELECT d.id, d.name, d.status, d.chunks_count, d.graph_error, "
+            "  (SELECT count(*) FROM knowledge_base_entities e WHERE e.doc_id = d.id), "
+            "  (SELECT count(*) FROM knowledge_base_relations r WHERE r.doc_id = d.id) "
+            "FROM knowledge_base_documents d WHERE d.kb_id = :id ORDER BY d.name"
         ), {"id": kb_id})).all()
 
     real_total = 0
     print(f"\n{'文档':34} {'状态':9} {'行内':>5} {'实际':>5}  图谱")
-    for doc_id, doc_name, status, chunks_count, graph_error in docs:
+    for doc_id, doc_name, status, chunks_count, graph_error, ent, rel in docs:
         chunks = await store.get_chunks_by_doc_id(kb_id, doc_id)
         real_total += len(chunks)
         flag = "" if len(chunks) == (chunks_count or 0) else "  <-- 计数不一致"
-        graph = "已生成" if not graph_error else str(graph_error)[:26]
+        # 按**真实行数**报图谱，而不是按"有没有 graph_error 字段"：
+        # 此前把"没有错误"当成"已生成"，于是 7 篇 0 实体的文档在自检里显示"已生成"，
+        # 自检根本发现不了「索引成功但图谱为空」这种状态。
+        graph = f"{ent} 实体/{rel} 关系"
+        if graph_error:
+            graph += f"  <-- {str(graph_error)[:26]}"
+        elif ent == 0 and rel == 0 and status == "indexed":
+            graph += "  <-- 无图谱也无错误记录（历史静默失败的形态）"
         print(
             f"{str(doc_name)[:32]:34} {status:9} {chunks_count or 0:>5} "
             f"{len(chunks):>5}  {graph}{flag}",
