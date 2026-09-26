@@ -1,5 +1,5 @@
 // 知识库 API 服务
-import instance, { getAccessToken, getStreamToken } from './request'
+import instance, { ApiError, getAccessToken, getStreamToken } from './request'
 import type {
   KB,
   KBDoc,
@@ -790,6 +790,70 @@ export async function fetchGraphData(
     entities: raw.entities || [],
     // 边挂到**归一键**上（与节点 id 同一个值），不再走 `source_entity_id`：
     // 那是另一套分组下的 min()，与节点 id 对不上时前端会把整条边静默丢掉。
+    relations: (raw.relations || []).map((r) => ({
+      id: r.id,
+      from: r.from_key || r.from_entity,
+      to: r.to_key || r.to_entity,
+      label: r.label,
+      weight: r.weight,
+    })),
+  }
+}
+
+/** 实体详情——比图谱列表多出「来源文档」，那是点开一个节点最想知道的事。 */
+export interface EntityDetail {
+  /** 归一键（与图谱节点的 id 同一个值） */
+  id: string
+  name: string
+  type: string
+  /** 提到该实体的文档数 */
+  mentions: number
+  sourceText: string | null
+  documents: { id: string; name: string }[]
+  relations: { id: string; from: string; to: string; label: string; weight: number }[]
+}
+
+export async function fetchEntityDetail(
+  kbId: string,
+  entityKey: string,
+): Promise<EntityDetail | null> {
+  let res
+  try {
+    res = await instance.get(
+      `/knowledge-bases/${kbId}/graph/entities/${encodeURIComponent(entityKey)}`,
+    )
+  } catch (e) {
+    // 响应拦截器对**任何非零 code 都会 reject**（request.ts），所以后端的
+    // `code: 404`（实体不存在）是以异常形式到达的，根本走不到下面的响应体判断。
+    // 把它收敛成 null：实体不存在是正常结果（比如刚被重抽掉了），不是错误。
+    if (e instanceof ApiError && String(e.code) === '404') return null
+    throw e
+  }
+  if (!res.data.data) return null
+  const raw = res.data.data as {
+    id: string
+    name: string
+    type: string
+    mentions: number
+    source_text: string | null
+    documents?: { id: string; name: string }[]
+    relations?: {
+      id: string
+      from_key: string
+      to_key: string
+      from_entity: string
+      to_entity: string
+      label: string
+      weight: number
+    }[]
+  }
+  return {
+    id: raw.id,
+    name: raw.name,
+    type: raw.type,
+    mentions: raw.mentions,
+    sourceText: raw.source_text,
+    documents: raw.documents || [],
     relations: (raw.relations || []).map((r) => ({
       id: r.id,
       from: r.from_key || r.from_entity,

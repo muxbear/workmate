@@ -15,7 +15,11 @@ import {
 } from '@/types/knowledgeBase'
 import type { KB, Entity } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { reExtractGraph as reExtractGraphApi } from '@/services/knowledgeBaseApi'
+import {
+  fetchEntityDetail,
+  reExtractGraph as reExtractGraphApi,
+} from '@/services/knowledgeBaseApi'
+import type { EntityDetail } from '@/services/knowledgeBaseApi'
 import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph'
 
 const props = defineProps<{
@@ -71,6 +75,31 @@ const selectedEntityRelations = computed(() => {
   return props.kb.relationsData.filter(
     (r) => r.from === selectedEntityId.value || r.to === selectedEntityId.value,
   )
+})
+
+/**
+ * 实体详情（迭代 6 T6.5）。
+ *
+ * 面板的其余部分仍吃本地数组（选中即时可见，不等网络），这里只补**来源文档**——
+ * 列表接口不带这个信息，而"这个实体出自哪几篇文档"恰恰是点开一个节点最想知道的。
+ * 拿不到就只是不显示这一块，不影响面板其余部分。
+ */
+const detail = ref<EntityDetail | null>(null)
+const detailError = ref(false)
+
+watch(selectedEntityId, async (key) => {
+  detail.value = null
+  detailError.value = false
+  if (!key) return
+  try {
+    const fetched = await fetchEntityDetail(props.kb.id, key)
+    // 请求返回时用户可能已经点了别的节点——只认当前选中的
+    if (selectedEntityId.value === key) detail.value = fetched
+  } catch {
+    // 取不到不影响面板其余部分（本地数据仍在），但**不能不留痕迹**：
+    // 少了一块内容却没有任何说明，正是这个模块此前一贯的问题
+    if (selectedEntityId.value === key) detailError.value = true
+  }
 })
 
 // 关联实体（联动高亮时显示在右侧面板）
@@ -394,6 +423,25 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
                 <span class="detail-stat-value">{{ selectedEntityRelations.length }}</span>
                 <span class="detail-stat-label">关联关系</span>
               </div>
+            </div>
+
+            <!-- 来源文档：从详情接口取，列表接口不带这个信息 -->
+            <div v-if="detail?.documents.length" class="detail-source-docs">
+              <div class="detail-section-title">出自这些文档</div>
+              <div
+                v-for="d in detail.documents"
+                :key="d.id"
+                class="detail-source-doc"
+                :title="d.name"
+              >
+                {{ d.name || d.id }}
+              </div>
+            </div>
+            <div v-else-if="detail?.sourceText" class="detail-source-text">
+              原文片段：{{ detail.sourceText }}
+            </div>
+            <div v-else-if="detailError" class="detail-source-text">
+              来源信息暂时取不到，请稍后重试。
             </div>
 
             <!-- 关联关系 -->
@@ -810,6 +858,27 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 8px 0;
+}
+
+.detail-source-docs {
+  margin-top: 14px;
+}
+
+.detail-source-doc {
+  font-size: 12px;
+  color: var(--foreground);
+  padding: 4px 0;
+  /* 文档名可能很长：单行截断并靠 title 提示全名，避免撑破 320px 面板 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-source-text {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  line-height: 1.5;
 }
 
 .relation-row {
