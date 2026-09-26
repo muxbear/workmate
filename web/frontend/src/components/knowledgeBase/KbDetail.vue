@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -30,6 +31,7 @@ const emit = defineEmits<{
   changed: []
 }>()
 
+const { t } = useI18n()
 const store = useKnowledgeBaseStore()
 const router = useRouter()
 const activeTab = ref('overview')
@@ -147,9 +149,9 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
       <div class="detail-header-inner">
         <div class="header-left">
           <nav class="detail-crumbs" aria-label="breadcrumb">
-            <button class="crumb-link" @click="handleGoHome">首页</button>
+            <button class="crumb-link" @click="handleGoHome">{{ t('knowledge.detail.crumbHome') }}</button>
             <ChevronRight :size="12" class="crumb-sep" />
-            <button class="crumb-link" @click="handleBackList">知识库</button>
+            <button class="crumb-link" @click="handleBackList">{{ t('knowledge.detail.crumbKb') }}</button>
             <ChevronRight :size="12" class="crumb-sep" />
             <span class="crumb-current">{{ kb.name }}</span>
           </nav>
@@ -182,8 +184,8 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
             <el-button
               :loading="publishing"
               :title="isPublic
-                ? '取消发布后仅自己与被分享人可见'
-                : '发布后本库对本部门（按角色的数据范围）成员只读可见；范围外的部门看不到'"
+                ? t('knowledge.detail.unpublishHint')
+                : t('knowledge.detail.publishHint')"
               @click="handleToggleVisibility"
             >
               <Globe v-if="!isPublic" :size="16" class="btn-icon" />
@@ -191,17 +193,17 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
               {{ isPublic ? '取消发布' : '发布到公共知识库' }}
             </el-button>
             <el-button @click="shareVisible = true">
-              <Share2 :size="16" class="btn-icon" />分享
+              <Share2 :size="16" class="btn-icon" />{{ t('knowledge.detail.share') }}
             </el-button>
             <el-button @click="shareManageVisible = true">
-              已分享用户
+              {{ t('knowledge.detail.sharedUsers') }}
             </el-button>
             <el-button :loading="reindexing" @click="handleReindex">
-              <RefreshCw :size="16" class="btn-icon" />重新索引
+              <RefreshCw :size="16" class="btn-icon" />{{ t('knowledge.detail.reindex') }}
             </el-button>
           </template>
           <el-button v-if="canDelete" class="btn-delete" @click="$emit('delete')">
-            <Trash2 :size="16" class="btn-icon" />删除
+            <Trash2 :size="16" class="btn-icon" />{{ t('knowledge.common.delete') }}
           </el-button>
         </div>
       </div>
@@ -212,7 +214,7 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
       <el-tabs v-model="activeTab" class="kb-tabs">
         <el-tab-pane name="overview">
           <template #label>
-            <Activity :size="14" class="tab-icon" />概览
+            <Activity :size="14" class="tab-icon" />{{ t('knowledge.detail.tabOverview') }}
           </template>
           <KbOverviewTab :kb="kb" :readonly="readonly || !canEdit" />
         </el-tab-pane>
@@ -228,21 +230,21 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
 
         <el-tab-pane name="graph">
           <template #label>
-            <Network :size="14" class="tab-icon" />知识图谱
+            <Network :size="14" class="tab-icon" />{{ t('knowledge.detail.tabGraph') }}
           </template>
           <KbGraphTab :kb="kb" :readonly="readonly || !canEdit" />
         </el-tab-pane>
 
         <el-tab-pane name="search">
           <template #label>
-            <FileSearch :size="14" class="tab-icon" />检索
+            <FileSearch :size="14" class="tab-icon" />{{ t('knowledge.detail.tabSearch') }}
           </template>
           <KbSearchTab :kb="kb" />
         </el-tab-pane>
 
         <el-tab-pane name="config">
           <template #label>
-            <Settings2 :size="14" class="tab-icon" />索引配置
+            <Settings2 :size="14" class="tab-icon" />{{ t('knowledge.detail.tabConfig') }}
           </template>
           <KbConfigTab
             :config="kb.config"

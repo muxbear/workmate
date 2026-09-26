@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -18,6 +19,7 @@ import KbShareManageDialog from '@/components/knowledgeBase/KbShareManageDialog.
 import { useKbPermissions } from '@/composables/useKbPermissions'
 
 const store = useKnowledgeBaseStore()
+const { t } = useI18n()
 
 const createVisible = ref(false)
 
@@ -42,7 +44,7 @@ const tagOptions = computed(() => {
 
 async function handleCreateGroup() {
   try {
-    const { value } = await ElMessageBox.prompt('分组名称', '新建分组', {
+    const { value } = await ElMessageBox.prompt(t('knowledge.list.groupLabel'), t('knowledge.list.newGroup'), {
       inputValidator: (v: string) => (v && v.trim() ? true : '分组名不能为空'),
       confirmButtonText: '创建',
       cancelButtonText: '取消',
@@ -188,13 +190,13 @@ async function handleCancelShare(kbId: string) {
                   <Database :size="20" />
                 </div>
                 <div>
-                  <h1>知识库概览</h1>
-                  <p>企业多模态 RAG 知识库管理与维护</p>
+                  <h1>{{ t('knowledge.list.title') }}</h1>
+                  <p>{{ t('knowledge.list.subtitle') }}</p>
                 </div>
               </div>
             </div>
             <el-button v-if="canCreate" type="primary" size="large" @click="createVisible = true" class="btn-create">
-              <Plus :size="16" class="btn-icon" />新建知识库
+              <Plus :size="16" class="btn-icon" />{{ t('knowledge.list.create') }}
             </el-button>
           </div>
 
@@ -230,7 +232,7 @@ async function handleCancelShare(kbId: string) {
               <input
                 :value="store.searchQuery"
                 type="text"
-                placeholder="按名称、描述、标签检索知识库…"
+                :placeholder="t('knowledge.list.searchPlaceholder')"
                 class="search-input"
                 @input="handleSearchInput(($event.target as HTMLInputElement).value)"
               />
@@ -238,7 +240,7 @@ async function handleCancelShare(kbId: string) {
             <el-select
               v-if="tagOptions.length"
               :model-value="store.tagFilter"
-              placeholder="全部标签"
+              :placeholder="t('knowledge.list.allTags')"
               class="filter-select"
               clearable
               size="small"
@@ -248,7 +250,7 @@ async function handleCancelShare(kbId: string) {
             </el-select>
             <el-select
               :model-value="store.groupFilter"
-              placeholder="全部分组"
+              :placeholder="t('knowledge.list.allGroups')"
               class="filter-select"
               clearable
               size="small"
@@ -261,21 +263,21 @@ async function handleCancelShare(kbId: string) {
                 :value="g.id"
               />
             </el-select>
-            <button class="group-add-btn" title="新建分组" @click="handleCreateGroup">
-              <Plus :size="13" />分组
+            <button class="group-add-btn" :title="t('knowledge.list.newGroup')" @click="handleCreateGroup">
+              <Plus :size="13" />{{ t('knowledge.list.groupLabel') }}
             </button>
             <div class="view-toggle">
               <button
                 :class="['view-btn', { active: store.viewMode === 'grid' }]"
                 @click="setViewMode('grid')"
               >
-                <LayoutGrid :size="14" />卡片
+                <LayoutGrid :size="14" />{{ t('knowledge.list.viewCard') }}
               </button>
               <button
                 :class="['view-btn', { active: store.viewMode === 'list' }]"
                 @click="setViewMode('list')"
               >
-                <List :size="14" />列表
+                <List :size="14" />{{ t('knowledge.list.viewList') }}
               </button>
             </div>
           </div>
@@ -293,12 +295,12 @@ async function handleCancelShare(kbId: string) {
               />
               <div v-if="canCreate" class="create-card" @click="createVisible = true">
                 <div class="create-icon-box"><Plus :size="24" /></div>
-                <div class="create-text">新建知识库</div>
-                <div class="create-sub">向量 + BM25 + 知识图谱</div>
+                <div class="create-text">{{ t('knowledge.list.create') }}</div>
+                <div class="create-sub">{{ t('knowledge.list.schemeHint') }}</div>
               </div>
               <el-empty
                 v-if="store.filteredKbs.length === 0"
-                description="暂无匹配的知识库"
+                :description="t('knowledge.list.empty')"
               />
             </div>
 
@@ -307,16 +309,16 @@ async function handleCancelShare(kbId: string) {
               <table class="kb-table">
                 <thead>
                   <tr>
-                    <th class="col-name">名称</th>
-                    <th class="col-status">状态</th>
-                    <th class="col-docs">文档</th>
-                    <th class="col-chunks">分片</th>
-                    <th class="col-er">实体 / 关系</th>
-                    <th class="col-size">大小</th>
-                    <th class="col-scheme">索引方案</th>
-                    <th class="col-tags">标签</th>
-                    <th class="col-date">更新时间</th>
-                    <th class="col-action">操作</th>
+                    <th class="col-name">{{ t('knowledge.list.colName') }}</th>
+                    <th class="col-status">{{ t('knowledge.list.colStatus') }}</th>
+                    <th class="col-docs">{{ t('knowledge.list.colDocs') }}</th>
+                    <th class="col-chunks">{{ t('knowledge.list.colChunks') }}</th>
+                    <th class="col-er">{{ t('knowledge.list.colEntitiesRelations') }}</th>
+                    <th class="col-size">{{ t('knowledge.list.colSize') }}</th>
+                    <th class="col-scheme">{{ t('knowledge.list.colScheme') }}</th>
+                    <th class="col-tags">{{ t('knowledge.list.colTags') }}</th>
+                    <th class="col-date">{{ t('knowledge.list.colUpdated') }}</th>
+                    <th class="col-action">{{ t('knowledge.list.colActions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -348,7 +350,7 @@ async function handleCancelShare(kbId: string) {
                       <div class="table-configs">
                         <el-tag size="small" class="config-tag config-blue"><Sparkle :size="10" />{{ kb.config.embeddingModel }}</el-tag>
                         <el-tag v-if="kb.config.sparseAlgo !== 'none'" size="small" class="config-tag config-amber"><Hash :size="10" />{{ kb.config.sparseAlgo.toUpperCase() }}</el-tag>
-                        <el-tag v-if="kb.config.enableGraph" size="small" class="config-tag config-green"><Network :size="10" />图谱</el-tag>
+                        <el-tag v-if="kb.config.enableGraph" size="small" class="config-tag config-green"><Network :size="10" />{{ t('knowledge.list.colGraph') }}</el-tag>
                       </div>
                     </td>
                     <td class="col-tags">
@@ -369,7 +371,7 @@ async function handleCancelShare(kbId: string) {
                   <tr v-if="store.filteredKbs.length === 0">
                     <td colspan="10" class="empty-cell">
                       <Database :size="32" class="empty-icon" />
-                      <p>暂无匹配的知识库</p>
+                      <p>{{ t('knowledge.list.empty') }}</p>
                     </td>
                   </tr>
                 </tbody>
@@ -398,18 +400,18 @@ async function handleCancelShare(kbId: string) {
     <!-- 删除确认对话框 -->
     <el-dialog
       :model-value="!!confirmDeleteId"
-      title="确认删除知识库?"
+      :title="t('knowledge.list.deleteConfirmTitle')"
       width="420px"
       @update:model-value="(v: boolean) => !v && (confirmDeleteId = null)"
     >
       <template #default>
         <p class="delete-warning">
-          将永久删除该知识库及其全部文档、向量、图谱数据。此操作不可撤销。
+          {{ t('knowledge.list.deleteConfirmBody') }}
         </p>
       </template>
       <template #footer>
-        <el-button @click="confirmDeleteId = null">取消</el-button>
-        <el-button type="danger" @click="handleDeleteExecute">删除</el-button>
+        <el-button @click="confirmDeleteId = null">{{ t('knowledge.common.cancel') }}</el-button>
+        <el-button type="danger" @click="handleDeleteExecute">{{ t('knowledge.common.delete') }}</el-button>
       </template>
     </el-dialog>
   </div>

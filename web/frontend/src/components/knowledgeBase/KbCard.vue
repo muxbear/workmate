@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { computed } from 'vue'
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useKnowledgeBaseStore()
+const { t } = useI18n()
 const groupDialogVisible = ref(false)
 const busy = ref(false)
 
@@ -35,7 +37,7 @@ async function run(label: string, fn: () => Promise<unknown>) {
   try {
     await fn()
   } catch (err: unknown) {
-    ElMessage.error(`${label}失败：${readApiError(err)}`)
+    ElMessage.error(t('knowledge.common.actionFailed', { label, reason: readApiError(err) }))
   } finally {
     busy.value = false
   }
@@ -44,7 +46,7 @@ async function run(label: string, fn: () => Promise<unknown>) {
 function handleCommand(command: string) {
   switch (command) {
     case 'pin':
-      void run(props.kb.isPinned ? '取消置顶' : '置顶', () =>
+      void run(props.kb.isPinned ? t('knowledge.card.unpin') : t('knowledge.card.pin'), () =>
         store.togglePin(props.kb.id, !props.kb.isPinned))
       break
     case 'up':
@@ -59,13 +61,13 @@ function handleCommand(command: string) {
     case 'copy':
       void run('复制', async () => {
         const created = await store.copyKb(props.kb.id)
-        ElMessage.success(`已复制为《${created.name}》（只复制配置，文档需自行上传）`)
+        ElMessage.success(t('knowledge.card.copiedToast', { name: created.name }))
       })
       break
     case 'export':
       void run('导出', async () => {
         await store.exportKb(props.kb.id, props.kb.name)
-        ElMessage.success('配置已导出')
+        ElMessage.success(t('knowledge.card.exportedToast'))
       })
       break
     case 'group':
@@ -76,7 +78,7 @@ function handleCommand(command: string) {
 
 async function handleRename() {
   try {
-    const { value } = await ElMessageBox.prompt('新的知识库名称', '重命名', {
+    const { value } = await ElMessageBox.prompt(t('knowledge.card.renamePlaceholder'), t('knowledge.card.pinPromptTitle'), {
       inputValue: props.kb.name,
       inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空'),
       confirmButtonText: '保存',
@@ -137,7 +139,7 @@ function metricFormat(val: number): string {
       </div>
       <div class="card-header-right" @click.stop>
         <el-tag v-if="kb.isPinned" class="pin-badge" size="small" disable-transitions>
-          <Pin :size="12" />置顶
+          <Pin :size="12" />{{ t('knowledge.card.pin') }}
         </el-tag>
         <el-tag :class="['status-badge', statusCfg.cls]" size="small" disable-transitions>
           <component
@@ -148,21 +150,21 @@ function metricFormat(val: number): string {
           {{ statusCfg.label }}
         </el-tag>
         <el-dropdown v-if="canOrganize()" trigger="click" @command="handleCommand">
-          <button class="card-menu-btn" :disabled="busy" title="更多操作" aria-label="更多操作">
+          <button class="card-menu-btn" :disabled="busy" :title="t('knowledge.common.moreActions')" :aria-label="t('knowledge.common.moreActions')">
             <MoreVertical :size="16" />
           </button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="pin">
                 <PinOff v-if="kb.isPinned" :size="14" /><Pin v-else :size="14" />
-                {{ kb.isPinned ? '取消置顶' : '置顶' }}
+                {{ kb.isPinned ? t('knowledge.card.unpin') : t('knowledge.card.pin') }}
               </el-dropdown-item>
-              <el-dropdown-item command="up"><ArrowUp :size="14" />上移</el-dropdown-item>
-              <el-dropdown-item command="down"><ArrowDown :size="14" />下移</el-dropdown-item>
-              <el-dropdown-item command="rename" divided><Pencil :size="14" />重命名</el-dropdown-item>
-              <el-dropdown-item command="copy"><Copy :size="14" />复制（含配置）</el-dropdown-item>
-              <el-dropdown-item command="export"><Download :size="14" />导出配置</el-dropdown-item>
-              <el-dropdown-item command="group"><FolderInput :size="14" />归入分组…</el-dropdown-item>
+              <el-dropdown-item command="up"><ArrowUp :size="14" />{{ t('knowledge.card.moveUp') }}</el-dropdown-item>
+              <el-dropdown-item command="down"><ArrowDown :size="14" />{{ t('knowledge.card.moveDown') }}</el-dropdown-item>
+              <el-dropdown-item command="rename" divided><Pencil :size="14" />{{ t('knowledge.card.rename') }}</el-dropdown-item>
+              <el-dropdown-item command="copy"><Copy :size="14" />{{ t('knowledge.card.copyWithConfig') }}</el-dropdown-item>
+              <el-dropdown-item command="export"><Download :size="14" />{{ t('knowledge.card.exportConfig') }}</el-dropdown-item>
+              <el-dropdown-item command="group"><FolderInput :size="14" />{{ t('knowledge.card.moveToGroup') }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -190,19 +192,19 @@ function metricFormat(val: number): string {
     <div class="card-metrics">
       <div class="metric">
         <span class="metric-value">{{ kb.docs }}</span>
-        <span class="metric-label">文档</span>
+        <span class="metric-label">{{ t('knowledge.common.docs') }}</span>
       </div>
       <div class="metric">
         <span class="metric-value">{{ metricFormat(kb.chunks) }}</span>
-        <span class="metric-label">分片</span>
+        <span class="metric-label">{{ t('knowledge.common.chunks') }}</span>
       </div>
       <div class="metric">
         <span class="metric-value">{{ metricFormat(kb.entities) }}</span>
-        <span class="metric-label">实体</span>
+        <span class="metric-label">{{ t('knowledge.card.entity') }}</span>
       </div>
       <div class="metric">
         <span class="metric-value">{{ metricFormat(kb.relations) }}</span>
-        <span class="metric-label">关系</span>
+        <span class="metric-label">{{ t('knowledge.card.relations') }}</span>
       </div>
     </div>
 
@@ -218,7 +220,7 @@ function metricFormat(val: number): string {
         <Hash :size="10" class="config-icon" />{{ kb.config.sparseAlgo.toUpperCase() }}
       </el-tag>
       <el-tag v-if="kb.config.enableGraph" size="small" class="config-badge config-green">
-        <Network :size="10" class="config-icon" />知识图谱
+        <Network :size="10" class="config-icon" />{{ t('knowledge.card.knowledgeGraph') }}
       </el-tag>
     </div>
     <!-- 归入分组：列出本人在册的分组 + "移出分组" -->
@@ -231,8 +233,8 @@ function metricFormat(val: number): string {
     >
       <div class="group-picker">
         <button class="group-pick-item" @click="handleAssignGroup(null)">
-          不归入任何分组
-          <span v-if="!kb.groupId" class="group-pick-current">当前</span>
+          {{ t('knowledge.card.noGroup') }}
+          <span v-if="!kb.groupId" class="group-pick-current">{{ t('knowledge.card.current') }}</span>
         </button>
         <button
           v-for="g in store.kbGroups"
@@ -241,10 +243,10 @@ function metricFormat(val: number): string {
           @click="handleAssignGroup(g.id)"
         >
           {{ g.name }}
-          <span v-if="kb.groupId === g.id" class="group-pick-current">当前</span>
+          <span v-if="kb.groupId === g.id" class="group-pick-current">{{ t('knowledge.card.current') }}</span>
         </button>
         <div v-if="store.kbGroups.length === 0" class="group-pick-empty">
-          还没有分组——在知识库页的筛选栏里新建
+          {{ t('knowledge.card.noGroupsYet') }}
         </div>
       </div>
     </el-dialog>

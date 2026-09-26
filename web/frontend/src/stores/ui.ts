@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import i18n, { LOCALE_STORAGE_KEY, getInitialLocale } from '@/locales'
+import type { LocaleCode } from '@/locales'
 import {
   fetchConversations,
   deleteConversation as deleteConversationApi,
@@ -62,6 +64,8 @@ export const useUiStore = defineStore('ui', () => {
   const searchQuery = ref('')
   const selectedModel = ref('DeepSeek V4')
   const theme = ref<ThemeMode>(getInitialTheme())
+  /** 界面语言（迭代 6 T6.6）——与 theme 一样持久化到 localStorage */
+  const locale = ref<LocaleCode>(getInitialLocale())
   const histories = ref<HistoryItem[]>([])
   const activeThreadId = ref<string | null>(null)
 
@@ -86,6 +90,17 @@ export const useUiStore = defineStore('ui', () => {
 
   function toggleTheme() {
     setTheme(theme.value === 'light' ? 'dark' : 'light')
+  }
+
+  /** 切换界面语言：改 i18n 实例的 locale 并持久化，下次打开仍是它 */
+  function setLocale(next: LocaleCode) {
+    locale.value = next
+    i18n.global.locale.value = next
+    try {
+      localStorage.setItem(LOCALE_STORAGE_KEY, next)
+    } catch {
+      // 忽略本地存储不可用的场景
+    }
   }
 
   async function fetchHistories() {
@@ -176,6 +191,8 @@ export const useUiStore = defineStore('ui', () => {
     searchQuery,
     selectedModel,
     theme,
+    locale,
+    setLocale,
     histories,
     activeThreadId,
     initTheme,

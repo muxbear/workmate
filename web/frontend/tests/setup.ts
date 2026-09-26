@@ -29,3 +29,13 @@ if (!('ResizeObserver' in globalThis)) {
     writable: true,
   })
 }
+
+// vue-i18n：组件里的 useI18n() 需要一个已安装的 i18n 实例，否则挂载即抛
+// "Not installed"。**这一条是组件迁移到 i18n 的前置**——不注册的话，任何用了
+// useI18n 的组件一被测试挂载就全挂（迭代 6 T6.6）。
+//
+// 用真实实例而不是桩：测试断言的是渲染出来的中文文案，而 zh-CN 就是默认语言，
+// 所以迁移前后渲染结果逐字一致。
+import i18n from '@/locales'
+
+config.global.plugins = [...(config.global.plugins ?? []), i18n]

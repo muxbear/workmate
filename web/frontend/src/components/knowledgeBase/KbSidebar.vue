@@ -6,6 +6,7 @@
  * 鼠标移入时右侧淡入「三点」与「折叠/展开」按钮；三点悬停弹出「查看更多」。
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   ChevronDown, Database, FolderOpen, Globe, LayoutGrid, MoreVertical,
   Share2, User, Users,
@@ -15,6 +16,7 @@ import type { KbGroupDef } from '@/stores/knowledgeBase'
 import type { KB, KBShare, KbScope } from '@/types/knowledgeBase'
 
 const store = useKnowledgeBaseStore()
+const { t } = useI18n()
 const emit = defineEmits<{
   (e: 'share-manage', kbId: string): void
   (e: 'cancel-share', kbId: string): void
@@ -89,7 +91,7 @@ async function respond(shareId: string, accept: boolean) {
       @click="openOverview"
     >
       <LayoutGrid :size="15" />
-      <span>知识库概览</span>
+      <span>{{ t('knowledge.sidebar.overview') }}</span>
     </button>
 
     <div class="kb-groups-list">
@@ -106,7 +108,7 @@ async function respond(shareId: string, accept: boolean) {
             <span
               v-if="group.id === 'sharedWithMe' && store.pendingInvitationCount"
               class="kb-badge"
-              :title="`${store.pendingInvitationCount} 个待接受邀请`"
+              :title="t('knowledge.sidebar.pendingInvites', { n: store.pendingInvitationCount })"
             >{{ store.pendingInvitationCount }}</span>
           </button>
 
@@ -116,7 +118,7 @@ async function respond(shareId: string, accept: boolean) {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="more">查看更多</el-dropdown-item>
+                <el-dropdown-item command="more">{{ t('knowledge.sidebar.more') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -150,15 +152,15 @@ async function respond(shareId: string, accept: boolean) {
               </button>
               <div v-if="!entry.accepted" class="kb-invite-actions">
                 <button class="kb-mini-btn primary" @click.stop="respond(entry.shareId, true)">
-                  接受
+                  {{ t('knowledge.sidebar.accept') }}
                 </button>
                 <button class="kb-mini-btn" @click.stop="respond(entry.shareId, false)">
-                  拒绝
+                  {{ t('knowledge.sidebar.reject') }}
                 </button>
               </div>
-              <span v-else class="kb-lib-status" title="已接受">已接受</span>
+              <span v-else class="kb-lib-status" :title="t('knowledge.sidebar.accepted')">{{ t('knowledge.sidebar.accepted') }}</span>
             </div>
-            <p v-if="!sharedWithMeEntries.length" class="kb-group-empty">暂无</p>
+            <p v-if="!sharedWithMeEntries.length" class="kb-group-empty">{{ t('knowledge.sidebar.empty') }}</p>
           </template>
 
           <!-- 其余分组：知识库列表 -->
@@ -192,13 +194,13 @@ async function respond(shareId: string, accept: boolean) {
                 </button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="manage">查看已分享用户</el-dropdown-item>
-                    <el-dropdown-item command="cancel">取消分享</el-dropdown-item>
+                    <el-dropdown-item command="manage">{{ t('knowledge.sidebar.viewShared') }}</el-dropdown-item>
+                    <el-dropdown-item command="cancel">{{ t('knowledge.sidebar.cancelShare') }}</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
             </div>
-            <p v-if="!groupItems(group).length" class="kb-group-empty">暂无</p>
+            <p v-if="!groupItems(group).length" class="kb-group-empty">{{ t('knowledge.sidebar.empty') }}</p>
           </template>
 
           <button

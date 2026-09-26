@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -27,6 +28,7 @@ const props = defineProps<{
 // 注意：computed 必须在 props 之后定义（下面 selectedDoc 会用到 props.kb）
 
 const store = useKnowledgeBaseStore()
+const { t } = useI18n()
 
 const uploadVisible = ref(false)
 // 只存 id，面板用 computed 从最新列表里取——列表在 SSE/轮询后会被整体替换，
@@ -329,21 +331,21 @@ function handleEditFragment(doc: KBDoc) {
               />
             </div>
             <button v-if="!readonly" class="btn-upload" @click="uploadVisible = true">
-              <Upload :size="16" class="btn-icon" />上传文档
+              <Upload :size="16" class="btn-icon" />{{ t('knowledge.docs.upload') }}
             </button>
             <button
               v-if="!readonly"
               class="btn-upload btn-secondary"
               @click="pasteVisible = true"
             >
-              <ClipboardPaste :size="16" class="btn-icon" />粘贴文本
+              <ClipboardPaste :size="16" class="btn-icon" />{{ t('knowledge.docs.pasteText') }}
             </button>
             <button
               v-if="!readonly"
               class="btn-upload btn-secondary"
               @click="urlError = null; urlVisible = true"
             >
-              <Globe :size="16" class="btn-icon" />导入网页
+              <Globe :size="16" class="btn-icon" />{{ t('knowledge.docs.importUrl') }}
             </button>
             <!-- 批量入口：仅在有选中项时出现（selected 与当前列表求交后的计数） -->
             <button
@@ -377,12 +379,12 @@ function handleEditFragment(doc: KBDoc) {
                       @change="toggleSelectAll"
                     />
                   </th>
-                  <th class="col-doc">文档</th>
-                  <th class="col-size">大小</th>
-                  <th class="col-chunks">分片</th>
-                  <th class="col-er">实体/关系</th>
-                  <th class="col-status">状态</th>
-                  <th class="col-action">操作</th>
+                  <th class="col-doc">{{ t('knowledge.docs.colDoc') }}</th>
+                  <th class="col-size">{{ t('knowledge.common.size') }}</th>
+                  <th class="col-chunks">{{ t('knowledge.common.chunks') }}</th>
+                  <th class="col-er">{{ t('knowledge.docs.colEntitiesRelations') }}</th>
+                  <th class="col-status">{{ t('knowledge.common.status') }}</th>
+                  <th class="col-action">{{ t('knowledge.common.actions') }}</th>
                 </tr>
               </thead>
               <tbody>

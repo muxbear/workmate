@@ -100,4 +100,20 @@ describe('KbCard · 组织操作入口', () => {
     expect(wrapper.text()).toContain('置顶')
   })
 
+
+  it('切到英文后渲染英文文案（真双语的端到端验证）', async () => {
+    // 前面都是断言中文——那些断言能过是因为 zh-CN 仍是默认语言、渲染结果逐字未变。
+    // 这条换到英文，证明迁移过的文案**确实跟着语言走**，而不是把中文写进了 key。
+    const i18n = (await import('@/locales')).default
+    const original = i18n.global.locale.value
+    try {
+      i18n.global.locale.value = 'en'
+      const wrapper = mountCard()
+      const text = wrapper.text()
+      expect(text).toContain('Knowledge graph')
+      expect(text).not.toContain('知识图谱')
+    } finally {
+      i18n.global.locale.value = original
+    }
+  })
 })

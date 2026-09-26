@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted } from 'vue'
 import {
   ChevronLeft, Search, Layers, Network, ChevronUp, ChevronDown,
@@ -14,6 +15,7 @@ const props = defineProps<{
   kbId?: string
 }>()
 
+const { t } = useI18n()
 const emit = defineEmits<{
   back: []
 }>()
@@ -96,7 +98,7 @@ function copyChunkContent() {
     <div class="detail-header">
       <div class="detail-header-left">
         <button class="back-btn" @click="$emit('back')">
-          <ChevronLeft :size="16" />返回文档列表
+          <ChevronLeft :size="16" />{{ t('knowledge.drawer.back') }}
         </button>
         <div class="header-divider" />
         <div class="doc-title-row">
@@ -120,7 +122,7 @@ function copyChunkContent() {
           <input
             v-model="search"
             type="text"
-            placeholder="在分片中搜索…"
+            :placeholder="t('knowledge.drawer.searchPlaceholder')"
             class="search-input"
           />
         </div>
@@ -162,7 +164,7 @@ function copyChunkContent() {
           </div>
           <div v-else-if="filtered.length === 0" class="chunk-empty">
             <Layers :size="24" class="chunk-empty-icon" />
-            没有匹配的分片
+            {{ t('knowledge.drawer.noMatch') }}
           </div>
         </div>
       </div>
@@ -173,17 +175,17 @@ function copyChunkContent() {
           <!-- Metadata bar -->
           <div class="metadata-bar">
             <div class="metadata-items">
-              <span class="metadata-item">章节: <strong>{{ selectedChunk.section }}</strong></span>
-              <span class="metadata-item">页码: <strong>{{ selectedChunk.pageRef }}</strong></span>
+              <span class="metadata-item">{{ t('knowledge.drawer.section') }} <strong>{{ selectedChunk.section }}</strong></span>
+              <span class="metadata-item">{{ t('knowledge.drawer.page') }} <strong>{{ selectedChunk.pageRef }}</strong></span>
               <span class="metadata-item">Token: <strong>{{ selectedChunk.tokenCount }}</strong></span>
-              <span class="metadata-item">字符: <strong>{{ selectedChunk.charCount }}</strong></span>
+              <span class="metadata-item">{{ t('knowledge.drawer.chars') }} <strong>{{ selectedChunk.charCount }}</strong></span>
             </div>
             <div class="metadata-actions">
               <button
                 class="nav-btn"
                 :disabled="!prevChunk"
                 @click="prevChunk && (selectedChunk = prevChunk)"
-                title="上一个分片"
+                :title="t('knowledge.drawer.prev')"
                aria-label="上一个分片">
                 <ChevronUp :size="14" />
               </button>
@@ -191,18 +193,18 @@ function copyChunkContent() {
                 class="nav-btn"
                 :disabled="!nextChunk"
                 @click="nextChunk && (selectedChunk = nextChunk)"
-                title="下一个分片"
+                :title="t('knowledge.drawer.next')"
                aria-label="下一个分片">
                 <ChevronDown :size="14" />
               </button>
-              <button class="nav-btn" title="复制分片内容" @click="copyChunkContent" aria-label="复制分片内容">
+              <button class="nav-btn" :title="t('knowledge.drawer.copy')" @click="copyChunkContent" aria-label="复制分片内容">
                 <Check v-if="copiedId === selectedChunk.id" :size="14" class="copy-check-icon" />
                 <Copy v-else :size="14" />
               </button>
             </div>
           </div>
           <div v-if="selectedChunk.entities.length > 0" class="metadata-entities">
-            <span class="entity-label">实体:</span>
+            <span class="entity-label">{{ t('knowledge.drawer.entities') }}</span>
             <span v-for="e in selectedChunk.entities" :key="e" class="entity-tag">{{ e }}</span>
           </div>
 
@@ -211,7 +213,7 @@ function copyChunkContent() {
             <div class="context-card">
               <div class="context-card-header">
                 <ScrollText :size="14" class="context-header-icon" />
-                原文对照视图
+                {{ t('knowledge.drawer.compareView') }}
                 <span class="context-header-right">分片 {{ selectedChunk.index }} / {{ chunks.length }}</span>
               </div>
               <div class="context-card-body">
@@ -247,24 +249,24 @@ function copyChunkContent() {
 
             <!-- Stats card -->
             <div class="stats-card">
-              <h4 class="stats-title"><Activity :size="14" class="stats-title-icon" />分片统计</h4>
+              <h4 class="stats-title"><Activity :size="14" class="stats-title-icon" />{{ t('knowledge.drawer.stats') }}</h4>
               <div class="stats-grid">
                 <div class="stat-item">
                   <div class="stat-value">{{ selectedChunk.tokenCount }}</div>
-                  <div class="stat-label">Token 数</div>
+                  <div class="stat-label">{{ t('knowledge.drawer.tokens') }}</div>
                 </div>
                 <div class="stat-item">
                   <div class="stat-value">{{ selectedChunk.charCount }}</div>
-                  <div class="stat-label">字符数</div>
+                  <div class="stat-label">{{ t('knowledge.drawer.charCount') }}</div>
                 </div>
                 <div class="stat-item">
                   <div class="stat-value">{{ selectedChunk.entities.length }}</div>
-                  <div class="stat-label">实体数</div>
+                  <div class="stat-label">{{ t('knowledge.drawer.entityCount') }}</div>
                 </div>
               </div>
               <div class="stats-position">
                 <div class="stats-position-header">
-                  <span>分片位置</span>
+                  <span>{{ t('knowledge.drawer.position') }}</span>
                   <span>{{ selectedChunk.index }} / {{ chunks.length }}</span>
                 </div>
                 <div class="stats-position-bar">
@@ -279,7 +281,7 @@ function copyChunkContent() {
         </template>
         <div v-else class="detail-empty">
           <Layers :size="32" class="detail-empty-icon" />
-          <div>从左侧选择一个分片查看详情</div>
+          <div>{{ t('knowledge.drawer.pickChunk') }}</div>
         </div>
       </div>
     </div>

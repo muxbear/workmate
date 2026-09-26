@@ -11,9 +11,11 @@ import {
   Palette,
   KeyRound,
   ShieldCheck,
+  Languages,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
+import { LOCALE_OPTIONS } from '@/locales'
 import { useNotificationStore } from '@/stores/notification'
 import NotificationPanel from './NotificationPanel.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -300,6 +302,24 @@ onUnmounted(() => {
                 <span class="theme-option">深色</span>
                 <span class="theme-thumb" />
               </button>
+            </div>
+            <!-- 界面语言（迭代 6 T6.6）。用两个按钮而不是开关：语言没有"开/关"的
+                 语义，开关形态会读成"中文开、英文关" -->
+            <div class="user-dropdown-item appearance-item">
+              <Languages :size="14" />
+              <span>语言</span>
+              <div class="locale-switch" role="group" aria-label="界面语言">
+                <button
+                  v-for="opt in LOCALE_OPTIONS"
+                  :key="opt.value"
+                  class="locale-option"
+                  :class="{ active: uiStore.locale === opt.value }"
+                  :aria-pressed="uiStore.locale === opt.value"
+                  @click.stop="uiStore.setLocale(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
             </div>
             <div class="user-dropdown-divider" />
             <button class="user-dropdown-item" @click="openChangePassword">
@@ -646,6 +666,30 @@ onUnmounted(() => {
   cursor: pointer;
   overflow: hidden;
   flex-shrink: 0;
+}
+
+.locale-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.locale-option {
+  padding: 2px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-secondary);
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.locale-option.active {
+  color: var(--foreground-primary);
+  border-color: var(--accent-primary, var(--border-medium));
 }
 
 .theme-option {
