@@ -64,6 +64,7 @@ interface RawDoc {
   indexed_at: string | null
   error_message: string | null
   graph_error?: string | null
+  parse_warning?: string | null
   stages: { name: string; status: string; pct: number }[]
   config: Record<string, unknown> | null
 }
@@ -156,6 +157,7 @@ function mapDoc(raw: RawDoc): KBDoc {
     uploadedAt: raw.uploaded_at?.split('T')[0] || '',
     errorMessage: raw.error_message || null,
     graphError: raw.graph_error || null,
+    parseWarning: raw.parse_warning || null,
     stages: (raw.stages || []) as KBDoc['stages'],
     config: raw.config ? mapConfig(raw.config as Record<string, unknown>) : null,
   }

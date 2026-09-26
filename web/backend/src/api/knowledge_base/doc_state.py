@@ -52,6 +52,21 @@ def _graph_extract_timeout(stage_timeout: float | None) -> float:
     return max(1.0, min(DEFAULT_GRAPH_TIMEOUT_SECONDS, stage_timeout - _GRAPH_TIMEOUT_MARGIN))
 
 
+#: OCR 与图谱抽取共用同一个阶段（parsing vs extracting，但都受同一个 stage_timeout 约束）。
+#: 取值比图谱宽松下限、比阶段超时短一截：解析阶段还要留给基础解析（PDF 抽取、DOCX
+#: 解压）与下游切片，OCR 把阶段时间吃光就意味着整篇文档超时失败——那份钱也白花了。
+_OCR_BUDGET_RATIO = 0.5
+
+
+def _ocr_budget_seconds(stage_timeout: float | None) -> float:
+    """OCR 的时间预算：取"阶段超时的一半"，让 OCR 提前停而不是把阶段拖到超时。"""
+    from core.rag.ocr import DEFAULT_OCR_BUDGET_SECONDS
+
+    if stage_timeout is None or stage_timeout <= 0:
+        return DEFAULT_OCR_BUDGET_SECONDS
+    return max(1.0, min(DEFAULT_OCR_BUDGET_SECONDS, stage_timeout * _OCR_BUDGET_RATIO))
+
+
 def is_graph_enabled(config: dict | None) -> bool:
     """判断是否启用知识图谱抽取（默认启用）。
 
@@ -67,7 +82,7 @@ def is_graph_enabled(config: dict | None) -> bool:
     return True
 
 
-def is_ocr_enabled(config: dict | None) -> bool:
+def is_ocr_enabled(config: dict[str, Any] | None) -> bool:
     """判断是否启用 OCR（视觉模型解析扫描件与图片）。
 
     与 :func:`is_graph_enabled` 相反，这里默认**关闭**：开启后扫描件与图片会逐页调用
@@ -83,6 +98,53 @@ def is_ocr_enabled(config: dict | None) -> bool:
         if key in config:
             return bool(config[key])
     return False
+
+
+def _collect_load_report(ctx: IndexingContext) -> None:
+    """取出加载器挂的诊断计数，转成一句可展示的告警。
+
+    计数由加载器挂在**首个 Document 的 metadata** 上（见 ``core.rag.ocr.LOAD_REPORT_KEY``），
+    这里取走后必须 ``pop``：分片只保留 ``_prepare_chunks_for_write`` 白名单里的键，但这个
+    对象很可能就是被切片的那一个，留着会白占内存并误导后来读 metadata 的人。
+    """
+    from core.rag.ocr import LOAD_REPORT_KEY, format_ocr_warning
+
+    for doc in ctx.documents:
+        report = doc.metadata.pop(LOAD_REPORT_KEY, None) if hasattr(doc, "metadata") else None
+        if report:
+            ctx.parse_warning = format_ocr_warning(report)
+            return
+
+
+def _reject_textless_document(ctx: IndexingContext) -> None:
+    """整篇提取不到文本时**明确失败**，而不是静默入库一篇空文档。
+
+    扫描件 PDF 此前会"假成功"：``OpenDataLoaderPDFStrategy`` 抛错 → 回退到 pypdf →
+    pypdf 对纯图页不抛错、逐页返回空字符串 → 被当成成功。文档最终 ``indexed``、
+    ``chunks_count = 0``、零报错零提示，用户以为传进去了，实际一条都检索不到，
+    而列表里只显示一个 ``-``——从那个状态没有任何自助修复的路径。
+
+    检查放在**文档级**而不是 PDF 策略里：它同时覆盖空 txt、纯空白的 json、扫描件，
+    以及图片（图片已有自己的错误信息，这里是最后一道网）。
+
+    Raises:
+        RuntimeError: 整篇没有可用文本；错误信息按 OCR 是否已开启分岔，避免出现
+            "已经开了 OCR 却被告知去开 OCR"。
+    """
+    from core.rag.ocr import doc_has_usable_text
+
+    if doc_has_usable_text([(d.page_content or "") for d in ctx.documents]):
+        return
+    if is_ocr_enabled(ctx.config):
+        raise RuntimeError(
+            "已开启 OCR 但仍未从本文件提取到文字。请确认「模型」页面配置了可用的 "
+            "vision 模型，以及扫描件本身是否清晰（空白页与纯图片页会被跳过）。"
+        )
+    raise RuntimeError(
+        "未从本文件提取到任何文字，因此没有内容可索引。"
+        "若这是一份扫描件或图片，请在知识库的索引配置中开启 OCR 后重建索引；"
+        "若文件本身是空的，请删除后重新上传。"
+    )
 
 
 @dataclass
@@ -113,6 +175,10 @@ class IndexingContext:
     #: 图谱抽取失败的原因——抽取失败不影响文档索引成功，但必须让用户看得见
     #: （此前异常被吞掉后文档直接标记 indexed，界面上无法区分"没抽到"与"抽取崩了"）
     graph_error: str | None = None
+    #: 解析**部分成功**的说明（迭代 6 T6.4）。索引成功但内容不完整时必须让用户看得见：
+    #: 一份 500 页扫描件只识别了前 200 页，与一份本来就只有 200 页字的文档，在界面上
+    #: 必须能分辨——否则"检索不到后半本"会变成一个无从解释的现象。
+    parse_warning: str | None = None
 
     embedding_model: Any | None = None
     chunk_registry: ChunkStrategyRegistry | None = None
@@ -172,6 +238,8 @@ class ParsingState(DocState):
             ctx.documents = await asyncio.to_thread(
                 loader_registry.load, ctx.file_path, ctx.file_type,
             )
+            _collect_load_report(ctx)
+            _reject_textless_document(ctx)
             await ctx.transition_to(ChunkingState(), "chunking", STAGE_PROGRESS["chunking"])
         except Exception as e:
             await ctx.fail(f"文档解析失败: {e}")

@@ -225,6 +225,10 @@ class KBDocResponse(BaseModel):
     error_message: str | None = None
     #: 图谱抽取失败原因（索引本身仍成功）
     graph_error: str | None = None
+    #: 解析**部分成功**的说明（索引本身仍成功）——如"OCR：已识别 200/500 页；
+    #: 300 页因超出本次时间预算被跳过"。**不能**塞进 graph_error：那一栏在界面上
+    #: 渲染成「图谱未生成：…」，会给出错误解释。
+    parse_warning: str | None = None
     stages: list[DocStageInfo] = []
     config: IndexConfigSchema | None = None
 

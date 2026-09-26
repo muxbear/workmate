@@ -103,6 +103,11 @@ export interface KBDoc {
   errorMessage: string | null
   /** 图谱抽取失败原因（索引本身成功，图谱页签会因此为空） */
   graphError: string | null
+  /**
+   * 解析**部分成功**的说明（索引本身成功）——如「OCR：已识别 200/500 页；
+   * 300 页因超出本次时间预算被跳过」。与 graphError 分开：含义不同，不能混渲染。
+   */
+  parseWarning: string | null
   stages: DocStage[]
   config: IndexConfig | null
 }

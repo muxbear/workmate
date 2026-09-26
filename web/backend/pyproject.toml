@@ -33,6 +33,11 @@ dependencies = [
     "langchain-community>=0.4.2",
     "langchain-text-splitters>=1.1.2",
     "pypdf>=6.13.2",
+    # 扫描件 OCR 的逐页光栅化（迭代 6 T6.4）。**必须显式声明**：它原本只是
+    # unstructured / unstructured_client 的传递依赖，而上游对它的引入是有条件的
+    # （unstructured 只在 python>=3.12 或非 Windows 时才带），上游改一次 extras，
+    # 整条扫描件解析就会静默失效。自带 pdfium 二进制，不需要系统依赖。
+    "pypdfium2>=5.0.0",
     "tiktoken>=0.12.0",
     "transformers>=5.11.0",
     "pymilvus>=3.0.0",

@@ -26,6 +26,7 @@ from api.knowledge_base.doc_state import (
 from api.knowledge_base.doc_state import (
     IndexingContext,
     QueuedState,
+    _ocr_budget_seconds,
     is_ocr_enabled,
 )
 from api.knowledge_base.schemas import (
@@ -301,6 +302,7 @@ class DatabaseProgressObserver(ProgressObserver):
                 "entities_count": ctx.entities_count,
                 "relations_count": ctx.relations_count,
                 "graph_error": ctx.graph_error,
+                "parse_warning": ctx.parse_warning,
             }
             # indexed_at 只在索引成功时写入：此前无条件传 None，
             # 会让每次中间状态更新都把已完成文档的索引时间抹掉。
@@ -383,6 +385,7 @@ class DatabaseProgressObserver(ProgressObserver):
             "relations_count": ctx.relations_count,
             "error_message": ctx.error_message,
             "graph_error": ctx.graph_error,
+            "parse_warning": ctx.parse_warning,
             # 阶段进度一并推送：否则前端面板要等 30 秒兜底轮询才前进
             "stages": compute_stages(ctx.status, ctx.error_message, ctx.progress),
         })
@@ -759,7 +762,11 @@ class IndexingPipeline:
         # 那里发不了异步的数据库查询，只能把建好的客户端递进去（与 LLM 交给
         # agentic 切片是同一手法）。未开启 OCR 时这里是零开销的一次分支。
         ocr = await self._get_or_create_ocr(config)
-        loader_reg = create_default_loader_registry(ocr) if ocr is not None else None
+        loader_reg = None
+        if ocr is not None:
+            loader_reg = create_default_loader_registry(
+                ocr, ocr_budget_seconds=_ocr_budget_seconds(self.stage_timeout),
+            )
 
         ctx = IndexingContext(
             doc_id=task.doc_id,
@@ -1923,6 +1930,7 @@ async def list_documents(
             indexed_at=r.indexed_at,
             error_message=r.error_message,
             graph_error=r.graph_error,
+            parse_warning=r.parse_warning,
             stages=[
                 DocStageInfo(**s)
                 for s in compute_stages(
@@ -1969,6 +1977,7 @@ async def get_document(
         indexed_at=doc.indexed_at,
         error_message=doc.error_message,
         graph_error=doc.graph_error,
+        parse_warning=doc.parse_warning,
         stages=[
             DocStageInfo(**s)
             for s in compute_stages(doc.status or "queued", doc.error_message, doc.progress)
@@ -2154,6 +2163,7 @@ async def retry_document(
         indexed_at=doc.indexed_at,
         error_message=doc.error_message,
         graph_error=doc.graph_error,
+        parse_warning=doc.parse_warning,
         stages=[DocStageInfo(**s) for s in compute_stages("queued")],
         config=cast(IndexConfigSchema | None, doc.config),
     )
@@ -2270,6 +2280,7 @@ async def cancel_document(
         indexed_at=refreshed.indexed_at,
         error_message=refreshed.error_message,
         graph_error=refreshed.graph_error,
+        parse_warning=refreshed.parse_warning,
         stages=[
             DocStageInfo(**s)
             for s in compute_stages(

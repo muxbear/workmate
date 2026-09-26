@@ -50,6 +50,7 @@ function doc(overrides: Partial<KBDoc> = {}): KBDoc {
     uploadedAt: '2026-09-24',
     errorMessage: null,
     graphError: null,
+    parseWarning: null,
     stages: [],
     config: null,
     ...overrides,
@@ -112,6 +113,44 @@ describe('知识库索引进度：SSE 与兜底', () => {
     expect(updated?.status).toBe('indexed')
     expect(updated?.progress).toBe(100)
     expect(updated?.chunks).toBe(42)
+    store.stopIndexPolling()
+  })
+
+  it('SSE 事件里的解析告警会合入本地文档', async () => {
+    // 漏掉 store 里的这处合并，会出现"刷新页面才有告警、索引过程中看不到"——
+    // 而用户恰恰是在刚传完文档、盯着进度的时候最需要看到它。
+    api.buildIndexingStreamUrl.mockReturnValue('/stream?token=t')
+    const store = useKnowledgeBaseStore()
+    store.selectedKb = kb([doc()])
+
+    store.startIndexPolling()
+    FakeEventSource.instances[0].emit({
+      doc_id: 'doc-1',
+      status: 'indexed',
+      progress: 100,
+      chunks_count: 200,
+      error_message: null,
+      parse_warning: 'OCR：已识别 200 页；300 页因超出本次时间预算被跳过（全文 500 页）',
+    })
+
+    const updated = store.selectedKb?.documents[0]
+    expect(updated?.parseWarning).toContain('300 页')
+    // 事件里没带这个字段时必须保留原值，不能被 undefined 抹掉
+    expect(updated?.graphError).toBeNull()
+    store.stopIndexPolling()
+  })
+
+  it('事件未带告警时不清空已有的告警', async () => {
+    api.buildIndexingStreamUrl.mockReturnValue('/stream?token=t')
+    const store = useKnowledgeBaseStore()
+    store.selectedKb = kb([doc({ parseWarning: 'OCR：3 页识别失败' })])
+
+    store.startIndexPolling()
+    FakeEventSource.instances[0].emit({
+      doc_id: 'doc-1', status: 'embedding', progress: 30, chunks_count: 0,
+    })
+
+    expect(store.selectedKb?.documents[0].parseWarning).toBe('OCR：3 页识别失败')
     store.stopIndexPolling()
   })
 

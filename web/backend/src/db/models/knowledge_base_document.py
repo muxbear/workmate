@@ -31,6 +31,11 @@ class KnowledgeBaseDocument(Base):
     #: 图谱抽取失败原因——抽取失败不影响文档索引成功，此前异常被吞掉后
     #: 用户在界面上无法区分"这篇文档没有实体"与"抽取崩了"
     graph_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 解析**部分成功**的说明（迭代 6 T6.4）——索引成功但内容不完整时同样必须可见：
+    #: "一份 500 页扫描件只识别了前 200 页"与"这份文档本来就只有 200 页字"在界面上
+    #: 必须能分辨，否则"后半本检索不到"会变成一个无从解释的现象。
+    #: 与 graph_error 分开两列是刻意的：那一栏在界面上渲染成「图谱未生成：…」。
+    parse_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="文档级别的自定义索引配置")
     #: 内容哈希（原始字节的 sha256，64 位 hex）——同一知识库内按它判重，命中即跳过。
     #: 留空表示该行不参与判重（迁移前的存量文档）。**故意不加唯一约束**（理由见

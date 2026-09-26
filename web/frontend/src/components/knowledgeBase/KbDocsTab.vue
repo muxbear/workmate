@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Upload, Trash2, RefreshCw, FolderOpen, Ban, CircleAlert,
   FileType2, FileCode2, FileText, FileSpreadsheet, FileImage, Globe,
-  Eye, Scissors, Download, ClipboardPaste,
+  Eye, Scissors, Download, ClipboardPaste, ScanText,
 } from 'lucide-vue-next'
 import type { KB, KBDoc, DocType, IndexConfig } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
@@ -404,6 +404,17 @@ function handleEditFragment(doc: KBDoc) {
                         :show-after="300"
                       >
                         <CircleAlert :size="13" class="graph-warn" />
+                      </el-tooltip>
+                      <!-- 解析部分成功：索引是成功的，但内容不完整（如 OCR 到上限
+                           只识别了前 N 页）。不给提示的话，"后半本检索不到"会变成
+                           一个无从解释的现象。 -->
+                      <el-tooltip
+                        v-if="doc.parseWarning"
+                        :content="doc.parseWarning"
+                        placement="top"
+                        :show-after="300"
+                      >
+                        <ScanText :size="13" class="graph-warn" />
                       </el-tooltip>
                       <el-progress
                         v-if="isActive(doc.status) && doc.status !== 'queued'"

@@ -750,6 +750,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
               relations_count?: number
               error_message: string | null
               graph_error?: string | null
+              parse_warning?: string | null
               stages?: KBDoc['stages']
             }
             const current = selectedKb.value?.documents.find(
@@ -766,6 +767,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
                 relations: payload.relations_count ?? current.relations,
                 errorMessage: payload.error_message,
                 graphError: payload.graph_error ?? current.graphError,
+                parseWarning: payload.parse_warning ?? current.parseWarning,
                 stages: payload.stages?.length ? payload.stages : current.stages,
               })
             }

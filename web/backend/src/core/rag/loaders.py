@@ -5,11 +5,21 @@
 
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from typing import Any, cast
 
 from langchain_core.documents import Document
 
+from core.rag.ocr import (
+    DEFAULT_OCR_BUDGET_SECONDS,
+    LOAD_REPORT_KEY,
+    MAX_OCR_PAGES_PER_DOC,
+    build_load_report,
+    page_needs_ocr,
+    pdf_page_texts,
+    render_page_png,
+)
 from core.rag.vision import OCR_PROMPT, VisionClient
 
 logger = logging.getLogger(__name__)
@@ -85,7 +95,122 @@ class PyPDFLoaderStrategy(DocumentLoaderStrategy):
 
     def load(self, file_path: str) -> list[Document]:
         from langchain_community.document_loaders import PyPDFLoader
-        return PyPDFLoader(file_path).load()
+        docs = PyPDFLoader(file_path).load()
+        # 页码基准归一：pypdf 的 ``page`` 是 0 基的（首页 = 0），而
+        # ``OpenDataLoaderPDFLoader`` 是 1 基的。本机装了 Java，opendataloader 才是
+        # 实际生效的那条路，所以 1 基是事实约定——这里对齐它，否则同一批重建里
+        # 走了兜底路径的文档页码会整体差 1，而"第 0 页"对用户也不是页码。
+        for doc in docs:
+            page = doc.metadata.get("page")
+            if isinstance(page, int):
+                doc.metadata["page"] = page + 1
+        return docs
+
+
+def _ocr_pdf_page(ocr: VisionClient, file_path: str, index: int) -> str | None:
+    """渲染并识别一页；空白页、渲染失败与识别失败都返回 ``None``。
+
+    网络调用发生在 :func:`~core.rag.ocr.render_page_png` 的锁**之外**——那把锁只保护
+    pdfium，不该把并发 OCR 串成一路。
+    """
+    image = render_page_png(file_path, index)
+    if image is None:
+        return None
+    return ocr.describe(OCR_PROMPT, image)
+
+
+class OcrAugmentedPdfStrategy(DocumentLoaderStrategy):
+    """PDF 加载——文本层为主，**没有文本层的页**补 OCR（迭代 6 T6.4 批次③）。
+
+    包住既有的 PDF 策略链：先照原样拿正常页，再对扫描页逐页光栅化 + OCR，按页号合并。
+
+    两条硬约束：
+
+    1. **只补空页，绝不覆盖有文本的页**——判据见 ``core.rag.ocr.page_needs_ocr``。
+       一份数字 PDF 走这条路径时不应产生任何模型调用。
+    2. **合并后必须按页号排序**。分片的 ``chunk_index`` / 前后关系是按最终列表位置
+       编号的（``doc_state._prepare_chunks_for_write``），把 OCR 页追加到末尾会把整篇
+       的阅读顺序打乱——第 3 页的内容排到第 40 页后面。
+
+    ``ocr`` 为 ``None`` 时本策略退化成"原样透传"，不做任何判定：没有视觉模型时该怎么
+    处理"一篇提取不到文本的文档"是调用方（``ParsingState``）的决定，不是加载器的。
+    """
+
+    def __init__(
+        self,
+        base: DocumentLoaderStrategy,
+        ocr: VisionClient | None = None,
+        budget_seconds: float = DEFAULT_OCR_BUDGET_SECONDS,
+        max_pages: int = MAX_OCR_PAGES_PER_DOC,
+    ) -> None:
+        self._base = base
+        self._ocr = ocr
+        self._budget_seconds = budget_seconds
+        self._max_pages = max_pages
+
+    def load(self, file_path: str) -> list[Document]:
+        base_docs = self._base.load(file_path)
+        if self._ocr is None:
+            return base_docs
+
+        try:
+            page_texts = pdf_page_texts(file_path)
+        except RuntimeError:
+            # 打不开就交回基础链的结果——这里不是判断"文件是否损坏"的地方
+            logger.warning("PDF 无法用 pdfium 打开，跳过扫描页补 OCR: %s", file_path)
+            return base_docs
+
+        scanned = [i for i, text in enumerate(page_texts) if page_needs_ocr(text)]
+        report = build_load_report(total_pages=len(page_texts))
+        if not scanned:
+            return self._attach_report(base_docs, report)
+
+        report["ocr_candidates"] = len(scanned)
+        if len(scanned) > self._max_pages:
+            report["ocr_skipped_budget"] = len(scanned) - self._max_pages
+            scanned = scanned[: self._max_pages]
+
+        by_page = {
+            doc.metadata["page"]: doc
+            for doc in base_docs
+            if isinstance(doc.metadata.get("page"), int)
+        }
+        ocr = self._ocr
+        extra: list[Document] = []
+        deadline = time.monotonic() + self._budget_seconds
+        for position, index in enumerate(scanned):
+            if time.monotonic() >= deadline:
+                skipped = len(scanned) - position
+                report["ocr_skipped_budget"] += skipped
+                logger.info(
+                    "OCR 时间预算（%.0fs）用尽，%d 页改为跳过", self._budget_seconds, skipped,
+                )
+                break
+            text = _ocr_pdf_page(ocr, file_path, index)
+            if text is None:
+                report["ocr_failed"] += 1
+                continue
+            report["ocr_pages"] += 1
+            page_no = index + 1  # pdfium 是 0 基，metadata 统一 1 基
+            extra.append(
+                Document(
+                    page_content=text,
+                    metadata={"source": str(file_path), "page": page_no, "ocr": True},
+                )
+            )
+            by_page.pop(page_no, None)  # 同页若已有空文本行，用 OCR 结果替掉
+
+        merged = [*by_page.values(), *extra]
+        # 有页号的按页号走；没有页号的（极少数策略不写 page）保持相对顺序垫后
+        merged.sort(key=lambda d: (d.metadata.get("page") is None, d.metadata.get("page") or 0))
+        return self._attach_report(merged, report)
+
+    @staticmethod
+    def _attach_report(docs: list[Document], report: dict[str, int]) -> list[Document]:
+        """把诊断计数挂到首个文档上（见 ``ocr.LOAD_REPORT_KEY`` 的说明）。"""
+        if docs:
+            docs[0].metadata[LOAD_REPORT_KEY] = report
+        return docs
 
 
 class DocxLoaderStrategy(DocumentLoaderStrategy):
@@ -304,6 +429,8 @@ class DocumentLoaderRegistry:
 
 def create_default_loader_registry(
     ocr: VisionClient | None = None,
+    ocr_budget_seconds: float = DEFAULT_OCR_BUDGET_SECONDS,
+    ocr_max_pages: int = MAX_OCR_PAGES_PER_DOC,
 ) -> DocumentLoaderRegistry:
     """创建预注册所有内置文件类型的加载器注册表。
 
@@ -311,14 +438,22 @@ def create_default_loader_registry(
         ocr: 视觉模型客户端。为 ``None`` 时图片类文档的解析会明确失败并提示去配置
             模型——**不会**静默产出一个空文档。未开启 OCR 的知识库继续沿用启动时
             构建的那一份（见 ``api.knowledge_base.facade``），零开销。
+        ocr_budget_seconds: 单篇文档的 OCR 时间预算（由阶段超时推导，见
+            ``core.rag.ocr.DEFAULT_OCR_BUDGET_SECONDS``）。
+        ocr_max_pages: 单篇文档的 OCR 页数上限。
     """
     registry = DocumentLoaderRegistry()
 
-    # PDF: 优先 opendataloader_pdf，备选 PyPDFLoader
-    registry.register("pdf", FallbackLoaderStrategy([
-        OpenDataLoaderPDFStrategy(),
-        PyPDFLoaderStrategy(),
-    ]))
+    # PDF: 优先 opendataloader_pdf，备选 PyPDFLoader；外面再包一层"扫描页补 OCR"
+    registry.register("pdf", OcrAugmentedPdfStrategy(
+        FallbackLoaderStrategy([
+            OpenDataLoaderPDFStrategy(),
+            PyPDFLoaderStrategy(),
+        ]),
+        ocr=ocr,
+        budget_seconds=ocr_budget_seconds,
+        max_pages=ocr_max_pages,
+    ))
 
     registry.register("docx", DocxLoaderStrategy())
     registry.register("xlsx", UnstructuredExcelStrategy())
