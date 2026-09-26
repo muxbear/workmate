@@ -101,6 +101,10 @@ class KBResponse(BaseModel):
     visibility: str = "private"
     is_owner: bool = True
     owner_name: str | None = None
+    #: 访问级别（迭代 6 T6.3）：owner 可读写可管理 | write 可改内容 | read 只读。
+    #: ``is_owner`` 保留 = ``access == "owner"``——前端 12 处消费点里只有文档页签
+    #: 需要看 write，其余（配置/图谱/发布/组织/删除）本就是库主专属
+    access: str = "owner"
     #: 置顶与手工排序（迭代 6 T6.2）——**本人列表视图偏好**，只影响自己的排序
     is_pinned: bool = False
     sort_order: int = 0

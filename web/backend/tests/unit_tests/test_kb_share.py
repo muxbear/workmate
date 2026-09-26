@@ -19,6 +19,7 @@ from api.knowledge_base.service import (
     resolve_kb_access,
 )
 from db.models.knowledge_base import KnowledgeBase
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     SHARE_STATUS_PENDING,
@@ -52,6 +53,8 @@ async def sessionmaker():
     async with engine.begin() as conn:
         await conn.run_sync(KnowledgeBase.__table__.create)
         await conn.run_sync(KnowledgeBaseShare.__table__.create)
+        # 部门/角色授权（迭代 6 T6.3）：访问判定会查它
+        await conn.run_sync(KnowledgeBaseGrant.__table__.create)
         await conn.run_sync(Account.__table__.create)
         # 数据范围（T5.2）：公开库的可见性由「角色 × knowledge 数据范围」决定，
         # 因此这些表是公开库判定的必要上下文，缺表会被当成"无可见部门"

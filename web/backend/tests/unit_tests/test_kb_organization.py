@@ -33,8 +33,14 @@ from db.models.knowledge_base_entity import KnowledgeBaseEntity
 from db.models.knowledge_base_group import KnowledgeBaseGroup
 from db.models.knowledge_base_index_task import KnowledgeBaseIndexTask
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
 from db.models.knowledge_base_share import KnowledgeBaseShare
+from db.models.data_scope import DataScope
+from db.models.department import Department
+from db.models.personnel import Personnel
+from db.models.role import Role
 from db.models.user import Account
+from db.models.user_role import UserRole
 
 pytestmark = pytest.mark.anyio
 
@@ -55,7 +61,10 @@ async def sessionmaker():
             KnowledgeBase, KnowledgeBaseDocument, KnowledgeBaseEntity,
             KnowledgeBaseRelation, KnowledgeBaseIndexTask, KnowledgeBaseGroup,
             KnowledgeBaseShare,   # 访问判定会查分享记录
+            KnowledgeBaseGrant,   # 部门/角色授权（迭代 6 T6.3）
             Account,              # list_kbs 会查库主展示名
+            # 授权判定要解析"我属于哪些部门 / 持有哪些角色"，这几张表是必要上下文
+            Personnel, Department, Role, UserRole, DataScope,
         ):
             await conn.run_sync(model.__table__.create)
     maker = async_sessionmaker(engine, expire_on_commit=False)

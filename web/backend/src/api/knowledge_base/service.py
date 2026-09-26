@@ -25,6 +25,11 @@ from api.knowledge_base.schemas import (
 )
 from core.rag.vector_store import BaseVectorStore
 from db.models.knowledge_base import KnowledgeBase
+from db.models.knowledge_base_grant import (
+    GRANT_TARGET_DEPT,
+    GRANT_TARGET_ROLE,
+    KnowledgeBaseGrant,
+)
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     KnowledgeBaseShare,
@@ -52,12 +57,42 @@ SCOPE_ALL = "all"                  # 概览：自己 + 公共 + 分享给我
 
 
 class KBAccess(StrEnum):
-    """当前用户对某知识库的访问级别。"""
+    """当前用户对某知识库的访问级别（顺序即强弱：OWNER > WRITE > GRANTEE > PUBLIC > NONE）。"""
 
-    OWNER = "owner"        # 自己创建：可读写
-    GRANTEE = "grantee"    # 已接受的分享：只读
+    OWNER = "owner"        # 自己创建：可读写、可管理（改配置/分享/删库）
+    WRITE = "write"        # 被授予写权限（用户分享 / 链接 / 部门或角色授权）：可改内容
+    GRANTEE = "grantee"    # 被授予读权限：只读
     PUBLIC = "public"      # 公共库：只读
     NONE = "none"          # 无权限
+
+
+#: KBAccess 的强弱序（取"多来源里最强的一档"用）
+_ACCESS_ORDER = {
+    KBAccess.NONE: 0,
+    KBAccess.PUBLIC: 1,
+    KBAccess.GRANTEE: 2,
+    KBAccess.WRITE: 3,
+    KBAccess.OWNER: 4,
+}
+
+
+def access_rank(access: KBAccess) -> int:
+    """访问级别的强弱值（同一用户可能同时命中多条授权，取最大）。"""
+    return _ACCESS_ORDER.get(access, 0)
+
+
+def _level_for_permission(permission: str | None) -> KBAccess:
+    """分享/授权的 permission 字段 → 访问级别。"""
+    return KBAccess.WRITE if permission == "write" else KBAccess.GRANTEE
+
+
+def access_str(access: KBAccess) -> str:
+    """访问级别 → 给客户端的三个值（owner / write / read）。"""
+    if access is KBAccess.OWNER:
+        return "owner"
+    if access is KBAccess.WRITE:
+        return "write"
+    return "read"
 
 
 async def _public_scope_condition(
@@ -85,12 +120,91 @@ async def _public_scope_condition(
     )
 
 
+def _accepted_share_condition(user_id: str):
+    """「有效的」已接受分享：状态已接受、**且未过期**。
+
+    过期是**派生态**（刻意不写 ``status='expired'``），所以判定必须现算。时钟统一
+    用 Python 侧的 ``datetime.utcnow()`` 绑定参数——PG 的 ``func.now()`` 是服务器
+    本地时间，与本仓业务时间戳（全部 utcnow）混用会在非 UTC 部署上产生漂移。
+    """
+    now = datetime.utcnow()
+    return and_(
+        KnowledgeBaseShare.grantee_id == user_id,
+        KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
+        or_(
+            KnowledgeBaseShare.expires_at.is_(None),
+            KnowledgeBaseShare.expires_at > now,
+        ),
+    )
+
+
+def _accepted_share_kb_ids(user_id: str):
+    """上面那条条件的 ``kb_id`` 子查询（供 ``KnowledgeBase.id.in_()`` 复用）。"""
+    return select(KnowledgeBaseShare.kb_id).where(_accepted_share_condition(user_id))
+
+
+async def _grant_subject_conditions(db: AsyncSession, user_id: str) -> list:
+    """「我属于哪些授权对象」的条件：部门祖先链 / 我持有的有效角色。
+
+    整表过滤与"按 id 判定"共用它——两份实现正是"列表藏起来、按 id 仍能打开"的老坑。
+
+    - **部门**：授权挂在某部门上时，``include_subtree`` 决定是否覆盖其子孙。所以
+      分两支：命中**本部门**（含不含子树都覆盖）、命中**祖先部门且该授权含子树**。
+    - **角色**：匹配用户**持有的任一有效角色**（不是"当前活动角色"）——授权是
+      "这个角色的人可以看"的客观事实，不该随用户今天把哪个角色设为活动而变。
+    """
+    from api.rbac.data_scope import dept_ancestors, resolve_user_dept
+    from api.rbac.role_utils import list_active_user_roles
+
+    branches: list = []
+    own_dept = await resolve_user_dept(db, user_id)
+    if own_dept:
+        ancestors = await dept_ancestors(db, own_dept)
+        branches.append(and_(
+            KnowledgeBaseGrant.target_type == GRANT_TARGET_DEPT,
+            or_(
+                KnowledgeBaseGrant.target_id == own_dept,
+                and_(
+                    KnowledgeBaseGrant.include_subtree.is_(True),
+                    KnowledgeBaseGrant.target_id.in_(ancestors - {own_dept}),
+                ),
+            ),
+        ))
+
+    role_keys = {r.key for r in await list_active_user_roles(db, user_id)}
+    if role_keys:
+        branches.append(and_(
+            KnowledgeBaseGrant.target_type == GRANT_TARGET_ROLE,
+            KnowledgeBaseGrant.target_id.in_(role_keys),
+        ))
+
+    return branches
+
+
+async def _grant_condition(db: AsyncSession, user_id: str):
+    """部门 / 角色维度授权的可读条件（立即生效、无需接受）。"""
+    branches = await _grant_subject_conditions(db, user_id)
+    if not branches:
+        return false()
+    return KnowledgeBase.id.in_(
+        select(KnowledgeBaseGrant.kb_id).where(
+            KnowledgeBaseGrant.revoked_at.is_(None),
+            or_(*branches),
+        )
+    )
+
+
 async def _readable_condition(
     db: AsyncSession, user_id: str, role_key: str | None = None,
 ):
     """构造「当前用户可读」的 SQL 条件。
 
-    三个来源：**自己创建的 ∪ 已接受分享的 ∪ 部门范围内公开的**。
+    四个来源：**自己创建的 ∪ 部门范围内公开的 ∪ 已接受且未过期的分享 ∪ 部门/角色授权**。
+
+    **消费方有三处，必须共用这一条**：``list_kbs``（列表）、``get_kb_stats``（统计）、
+    以及 agent 工具 ``agent/tools/kb_search.py``（智能体检索）。任何一处自己拼条件，
+    就会出现"网页里搜不到、智能体却搜得到"（或反过来）的越权/漏检——
+    有测试 `test_kb_tenant_isolation.TestListPathsAgree` 守这条。
 
     公开库此前等于"全站可见"，与部门无关；接入 RBAC 的数据范围后收敛为
     "**数据范围内**公开"（迭代 5 T5.2）。这里只**收紧**、不放宽：
@@ -110,12 +224,10 @@ async def _readable_condition(
     return or_(
         KnowledgeBase.user_id == user_id,
         await _public_scope_condition(db, user_id, role_key),
-        KnowledgeBase.id.in_(
-            select(KnowledgeBaseShare.kb_id).where(
-                KnowledgeBaseShare.grantee_id == user_id,
-                KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
-            )
-        ),
+        # 已接受且**未过期**的用户分享（过期在 SQL 里排除，不靠逐行过滤）
+        KnowledgeBase.id.in_(_accepted_share_kb_ids(user_id)),
+        # 部门 / 角色维度授权（立即生效）
+        await _grant_condition(db, user_id),
     )
 
 
@@ -180,11 +292,16 @@ def _kb_to_response(
     *,
     viewer_id: str | None = None,
     owner_name: str | None = None,
+    access: str | None = None,
 ) -> KBResponse:
     """ORM 模型 → 响应对象。
 
     ``viewer_id`` 用于标记 ``is_owner``——前端据此切换到只读态；
     为空时按所有者视角处理（创建/更新的返回值）。
+
+    ``access`` 是访问级别（owner/write/read，迭代 6 T6.3）。不传时按归属推断：
+    自己的库是 owner，其余保守地按 read（"宁可少给"——写操作在后端另有判定，
+    前端只是显隐）。
     """
     return KBResponse(
         id=kb.id,
@@ -202,12 +319,72 @@ def _kb_to_response(
         created_at=kb.created_at,
         updated_at=kb.updated_at,
         visibility=kb.visibility or VISIBILITY_PRIVATE,
-        is_owner=viewer_id is None or kb.user_id == viewer_id,
+        is_owner=(access == "owner") if access is not None
+        else (viewer_id is None or kb.user_id == viewer_id),
         owner_name=owner_name,
+        access=access or ("owner" if viewer_id is None or kb.user_id == viewer_id else "read"),
         is_pinned=bool(kb.is_pinned),
         sort_order=int(kb.sort_order or 0),
         group_id=kb.group_id,
     )
+
+
+async def _load_access_map(
+    db: AsyncSession, user_id: str, kb_ids: list[str],
+) -> dict[str, str]:
+    """批量算出这些库对该用户的访问级别（供列表用）。
+
+    **必须与 ``resolve_kb_access`` 同源**（复用同一批条件）：两边算法不一致就会出现
+    "列表里显示可写、点进去不能写"（或反过来）这种最难解释的错。调用方只需对
+    **不属于自己的**行调用它——自己的库一律 owner。
+    """
+    if not kb_ids:
+        return {}
+
+    levels: dict[str, KBAccess] = {}
+
+    def raise_to(kb_id: str, level: KBAccess) -> None:
+        current = levels.get(kb_id, KBAccess.NONE)
+        if access_rank(level) > access_rank(current):
+            levels[kb_id] = level
+
+    rows = (
+        await db.execute(
+            select(KnowledgeBaseShare.kb_id, KnowledgeBaseShare.permission).where(
+                KnowledgeBaseShare.kb_id.in_(kb_ids),
+                _accepted_share_condition(user_id),
+            )
+        )
+    ).all()
+    for kb_id, permission in rows:
+        raise_to(kb_id, _level_for_permission(permission))
+
+    branches = await _grant_subject_conditions(db, user_id)
+    if branches:
+        rows = (
+            await db.execute(
+                select(KnowledgeBaseGrant.kb_id, KnowledgeBaseGrant.permission).where(
+                    KnowledgeBaseGrant.kb_id.in_(kb_ids),
+                    KnowledgeBaseGrant.revoked_at.is_(None),
+                    or_(*branches),
+                )
+            )
+        ).all()
+        for kb_id, permission in rows:
+            raise_to(kb_id, _level_for_permission(permission))
+
+    public_ids = (
+        await db.execute(
+            select(KnowledgeBase.id).where(
+                KnowledgeBase.id.in_(kb_ids),
+                await _public_scope_condition(db, user_id),
+            )
+        )
+    ).scalars().all()
+    for kb_id in public_ids:
+        raise_to(kb_id, KBAccess.PUBLIC)
+
+    return {kb_id: access_str(level) for kb_id, level in levels.items()}
 
 
 async def _load_owner_names(db: AsyncSession, user_ids: list[str]) -> dict[str, str]:
@@ -251,12 +428,8 @@ async def list_kbs(
             await _public_scope_condition(db, user_id, role_key),
         )
     elif scope == SCOPE_SHARED_WITH_ME:
-        scope_condition = KnowledgeBase.id.in_(
-            select(KnowledgeBaseShare.kb_id).where(
-                KnowledgeBaseShare.grantee_id == user_id,
-                KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
-            )
-        )
+        # 与列表/按 id 判定共用同一条条件：否则"共享给我的"页签里还挂着**已过期**的库
+        scope_condition = KnowledgeBase.id.in_(_accepted_share_kb_ids(user_id))
     elif scope == SCOPE_ALL:
         scope_condition = await _readable_condition(db, user_id, role_key)
     else:
@@ -317,10 +490,18 @@ async def list_kbs(
     rows = (await db.execute(stmt)).scalars().all()
 
     owner_names = await _load_owner_names(db, [r.user_id for r in rows])
+    # personal 范围内全是自己的库（owner），不必多查两次；其余范围要算出每行的级别，
+    # 否则前端分不清"别人的公共库"和"被授予可写的库"——两者都要显示，但能不能写不同
+    access_map = {} if scope == SCOPE_PERSONAL else await _load_access_map(
+        db, user_id, [r.id for r in rows if r.user_id != user_id],
+    )
 
     return KBListResponse(
         items=[
-            _kb_to_response(r, viewer_id=user_id, owner_name=owner_names.get(r.user_id))
+            _kb_to_response(
+                r, viewer_id=user_id, owner_name=owner_names.get(r.user_id),
+                access=access_map.get(r.id),
+            )
             for r in rows
         ],
         total=total,
@@ -454,10 +635,11 @@ async def create_kb(
 
 async def get_kb(db: AsyncSession, kb_id: str, user_id: str) -> KBResponse:
     """获取知识库详情（本人所有 / 已接受分享 / 公共库均可读）。"""
-    kb, _access = await require_kb_readable(db, kb_id, user_id)
+    kb, access = await require_kb_readable(db, kb_id, user_id)
     owner_names = await _load_owner_names(db, [kb.user_id])
     return _kb_to_response(
-        kb, viewer_id=user_id, owner_name=owner_names.get(kb.user_id)
+        kb, viewer_id=user_id, owner_name=owner_names.get(kb.user_id),
+        access=access_str(access),
     )
 
 
@@ -816,17 +998,34 @@ async def resolve_kb_access(
         return None, KBAccess.NONE
     if kb.user_id == user_id:
         return kb, KBAccess.OWNER
-    share = (
-        await db.execute(
-            select(KnowledgeBaseShare).where(
-                KnowledgeBaseShare.kb_id == kb_id,
-                KnowledgeBaseShare.grantee_id == user_id,
-                KnowledgeBaseShare.status == SHARE_STATUS_ACCEPTED,
+
+    # **四路来源各判一次、取最强的一档**：同一用户可能既有只读分享、又落在某条可写
+    # 授权里（取"先命中先返回"会让人莫名其妙地只有只读）。各分支都复用上面那几条
+    # 共用条件，不另写布尔逻辑——两份实现就是"列表藏起来、按 id 仍能打开"的来源。
+    levels: list[KBAccess] = []
+
+    share_permission = await db.scalar(
+        select(KnowledgeBaseShare.permission)
+        .where(KnowledgeBaseShare.kb_id == kb_id, _accepted_share_condition(user_id))
+        .limit(1)
+    )
+    if share_permission is not None:
+        levels.append(_level_for_permission(share_permission))
+
+    grant_branches = await _grant_subject_conditions(db, user_id)
+    if grant_branches:
+        grant_permission = await db.scalar(
+            select(KnowledgeBaseGrant.permission)
+            .where(
+                KnowledgeBaseGrant.kb_id == kb_id,
+                KnowledgeBaseGrant.revoked_at.is_(None),
+                or_(*grant_branches),
             )
+            .limit(1)
         )
-    ).scalar_one_or_none()
-    if share is not None:
-        return kb, KBAccess.GRANTEE
+        if grant_permission is not None:
+            levels.append(_level_for_permission(grant_permission))
+
     if kb.visibility == VISIBILITY_PUBLIC:
         # 公开库还要落在数据范围内才算可读（复用同一条条件，避免两套口径）
         in_scope = await db.scalar(
@@ -836,8 +1035,11 @@ async def resolve_kb_access(
             )
         )
         if in_scope:
-            return kb, KBAccess.PUBLIC
-    return kb, KBAccess.NONE
+            levels.append(KBAccess.PUBLIC)
+
+    if not levels:
+        return kb, KBAccess.NONE
+    return kb, max(levels, key=access_rank)
 
 
 async def _get_kb_or_404(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:

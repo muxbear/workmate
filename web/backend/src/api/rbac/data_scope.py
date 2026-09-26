@@ -67,6 +67,24 @@ async def dept_subtree(db: AsyncSession, root_id: str) -> set[str]:
     return result
 
 
+async def dept_ancestors(db: AsyncSession, dept_id: str) -> set[str]:
+    """展开部门的**祖先链**（含自身）。
+
+    用途与 ``dept_subtree`` 正好相反：知识库授权挂在某个部门上、且 ``include_subtree``
+    为真时，该部门的**子孙**都在覆盖范围内——于是判断"我是否被这条授权覆盖"，要把
+    我所在部门的祖先链拿出来与授权的目标求交。同样一次取全表在内存里遍历。
+    """
+    rows = (await db.execute(select(Department.id, Department.parent_id))).all()
+    parents: dict[str, str | None] = {row[0]: row[1] for row in rows}
+
+    result: set[str] = set()
+    current: str | None = dept_id
+    while current and current not in result:
+        result.add(current)
+        current = parents.get(current)
+    return result
+
+
 async def resolve_dept_scope(
     db: AsyncSession, user_id: str, resource_key: str, role_key: str | None = None,
 ) -> set[str] | None:
@@ -151,6 +169,7 @@ async def resolve_dept_scope(
 
 __all__ = [
     "SCOPE_ALL",
+    "dept_ancestors",
     "dept_subtree",
     "resolve_dept_scope",
     "resolve_user_dept",

@@ -27,6 +27,7 @@ from api.rbac.data_scope import dept_subtree, resolve_dept_scope
 from db.models.data_scope import DataScope
 from db.models.department import Department
 from db.models.knowledge_base import KnowledgeBase
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
 from db.models.knowledge_base_share import KnowledgeBaseShare
 from db.models.personnel import Personnel
 from db.models.role import Role
@@ -55,8 +56,8 @@ async def db():
     )
     async with engine.begin() as conn:
         for table in (
-            KnowledgeBase, KnowledgeBaseShare, Account, Role, UserRole,
-            DataScope, Personnel, Department,
+            KnowledgeBase, KnowledgeBaseShare, KnowledgeBaseGrant,
+            Account, Role, UserRole, DataScope, Personnel, Department,
         ):
             await conn.run_sync(table.__table__.create)
     maker = async_sessionmaker(engine, expire_on_commit=False)

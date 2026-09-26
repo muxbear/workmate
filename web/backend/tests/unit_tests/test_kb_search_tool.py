@@ -21,6 +21,7 @@ from db.models.knowledge_base import KnowledgeBase
 from db.models.personnel import Personnel
 from db.models.role import Role
 from db.models.user_role import UserRole
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     SHARE_STATUS_PENDING,
@@ -66,6 +67,8 @@ async def sessionmaker():
     async with engine.begin() as conn:
         await conn.run_sync(KnowledgeBase.__table__.create)
         await conn.run_sync(KnowledgeBaseShare.__table__.create)
+        # 部门/角色授权（迭代 6 T6.3）：访问判定会查它
+        await conn.run_sync(KnowledgeBaseGrant.__table__.create)
         # 公开库的可读性由「角色 × knowledge 数据范围」决定（T5.2）
         await conn.run_sync(Role.__table__.create)
         await conn.run_sync(UserRole.__table__.create)
