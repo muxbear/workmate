@@ -1,5 +1,6 @@
 import instance from './request'
 import type {
+  DataScope,
   PermResource,
   RoleDef,
   RolePermissionsResponse,
@@ -117,7 +118,7 @@ export async function fetchRolePermissions(roleId: string): Promise<RolePermissi
 export async function saveRolePermissions(
   roleId: string,
   granted: string[],
-  dataScopes: { resourceKey: string; scope: string }[],
+  dataScopes: { resourceKey: string; scope: DataScope }[],
 ): Promise<RolePermissionsResponse> {
   const res = await instance.put(`/rbac/roles/${roleId}/permissions`, {
     granted,

@@ -176,6 +176,20 @@ const activeSection = computed(() =>
   configSections.find((s) => s.type === activeTab.value) ?? configSections[0],
 )
 
+/**
+ * 「通用配置」分支要展示的条目（工具 / 提示词 / 子智能体 / 文件）。
+ *
+ * 模板里上面的 `v-else-if` 已经把定时任务分流走了，所以走到这里的一定是字符串数组；
+ * 但类型上 `agent[key]` 是**所有数组字段的联合**（含 `CronJobBrief[]`），模板里收窄
+ * 不了——`：key` 与 `remove-config` 两处都因此报错。用 computed 收口一次，并且**按
+ * 字符串过滤**：万一将来又加一个对象数组类型的配置，这里渲染空白而不是一堆乱码。
+ */
+const genericConfigItems = computed<string[]>(() => {
+  const items = (props.agent as unknown as Record<string, unknown>)[activeSection.value.key]
+  if (!Array.isArray(items)) return []
+  return items.filter((i): i is string => typeof i === 'string')
+})
+
 /** 作用域图标映射 */
 const SCOPE_ICON: Record<MemoryScope, typeof Bot> = {
   agent: Bot,
@@ -651,9 +665,9 @@ function getStatusColor(status: string): string {
 
         <!-- Generic config tags for non-skill tabs -->
         <div v-else class="tags-wrap">
-          <template v-if="agent[activeSection.key] && agent[activeSection.key].length > 0">
+          <template v-if="genericConfigItems.length > 0">
             <span
-              v-for="item in agent[activeSection.key]"
+              v-for="item in genericConfigItems"
               :key="item"
               class="config-tag"
               :class="activeSection.colorClass"

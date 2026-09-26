@@ -458,8 +458,14 @@ function makePieChartOptions(): echarts.EChartsOption {
       backgroundColor: c.tooltipBg,
       borderColor: c.tooltipBorder,
       textStyle: { color: c.tooltipText, fontSize: 12 },
-      formatter: (params: { name: string; value: number }) =>
-        `${params.name}: ${params.value}%`,
+      // 参数声明为 unknown 再自行收窄：ECharts 的 formatter 既可能收到单个参数、
+      // 也可能收到数组（多系列），签名写窄了会因为参数逆变而整个 tooltip 类型不成立
+      formatter: (params: unknown) => {
+        const p = (Array.isArray(params) ? params[0] : params) as
+          | { name?: string; value?: number }
+          | undefined
+        return `${p?.name ?? ''}: ${p?.value ?? ''}%`
+      },
     },
   }
 }

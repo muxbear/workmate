@@ -150,7 +150,9 @@ export const useRbacStore = defineStore('rbac', () => {
       // Augment with frontend presentation fields
       roles.value = r.map((role) => ({
         ...role,
-        status: (role as Record<string, unknown>).is_active !== false ? 'active' as const : 'inactive' as const,
+        // 后端用 serialization_alias="isActive" 序列化（实测 by_alias 两种取值下都发
+        // isActive），此前的 `is_active` 永远读不到——所有角色都被显示成「活跃」
+        status: role.isActive !== false ? 'active' as const : 'inactive' as const,
         ...roleColors(role.key),
       }))
 
@@ -211,7 +213,7 @@ export const useRbacStore = defineStore('rbac', () => {
     })
     const augmented: RoleDef = {
       ...r,
-      status: (r as Record<string, unknown>).is_active !== false ? 'active' as const : 'inactive' as const,
+      status: r.isActive !== false ? 'active' as const : 'inactive' as const,
       ...roleColors(r.key),
     }
     roles.value.push(augmented)
@@ -246,6 +248,7 @@ export const useRbacStore = defineStore('rbac', () => {
 
   return {
     roles,
+    permsMap,
     permResources,
     dataResources,
     activeRoleId,

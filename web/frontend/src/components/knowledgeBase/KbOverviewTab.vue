@@ -27,21 +27,24 @@ const recentDocs = computed(() => props.kb.documents.slice(0, 5))
     <div class="overview-grid">
       <!-- 左侧：统计 + 最近活动 -->
       <div class="overview-main">
+        <!-- icon 必须**绑定组件对象**而不是传字符串：lucide 没有全局注册，
+             `<component :is="'FileText'">` 解析不到任何东西，图标是空白的。
+             同组件的另一处调用（KnowledgeBaseView）一直用的是绑定写法。 -->
         <div class="stats-row">
           <KbStatCard
-            icon="FileText" color="blue-cyan" label="文档总数"
+            :icon="FileText" color="blue-cyan" label="文档总数"
             :value="kb.docs" sub="篇"
           />
           <KbStatCard
-            icon="Layers" color="purple-pink" label="分片"
+            :icon="Layers" color="purple-pink" label="分片"
             :value="kb.chunks" sub="块"
           />
           <KbStatCard
-            icon="Network" color="emerald-teal" label="实体"
+            :icon="Network" color="emerald-teal" label="实体"
             :value="kb.entities" sub="个"
           />
           <KbStatCard
-            icon="GitBranch" color="amber-orange" label="关系"
+            :icon="GitBranch" color="amber-orange" label="关系"
             :value="kb.relations" sub="条"
           />
         </div>

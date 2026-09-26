@@ -91,7 +91,9 @@ export interface AgentFileContent {
 }
 
 /** 配置项类型 (技能不再走通用 config 流程) */
-export type ConfigType = 'tool' | 'prompt' | 'subagent' | 'file'
+//: 'cronjob' 是后端真实支持的配置类型（`GET /agents/{id}/cron-jobs` 返回
+//: CronJobBrief，AgentDetail 里也有对应页签），此前漏在联合之外——3 处类型错误都由它引起
+export type ConfigType = 'tool' | 'prompt' | 'subagent' | 'file' | 'cronjob'
 
 /** 状态中文标签 */
 export const STATUS_LABELS: Record<string, string> = {
@@ -109,6 +111,8 @@ export const CONFIG_TYPE_MAP: Record<
   prompt: { label: '提示词', color: '#22c55e', bgClass: 'config--green' },
   subagent: { label: '子智能体', color: '#f97316', bgClass: 'config--orange' },
   file: { label: '文件', color: '#eab308', bgClass: 'config--yellow' },
+  //: 与 AgentDetail 里「定时任务」页签的配色保持一致
+  cronjob: { label: '定时任务', color: '#22c55e', bgClass: 'config--green' },
 }
 
 /** 记忆作用域样式映射（颜色 + 标签 + CSS class） */

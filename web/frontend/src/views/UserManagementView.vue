@@ -508,7 +508,6 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
                   <span class="bind-username">{{ a.username }}</span>
                   <span class="bind-nickname">{{ a.nickname || '-' }}</span>
                 </div>
-                <span class="bind-email">{{ a.email || '-' }}</span>
               </div>
               <div v-if="bindAccounts.length === 0" class="empty-state">未找到匹配账号</div>
             </div>
@@ -577,14 +576,6 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
               <div class="drawer-field">
                 <span class="drawer-label">昵称</span>
                 <span class="drawer-value">{{ detailAccount.nickname || '-' }}</span>
-              </div>
-              <div class="drawer-field">
-                <span class="drawer-label">邮箱</span>
-                <span class="drawer-value">{{ detailAccount.email || '-' }}</span>
-              </div>
-              <div class="drawer-field">
-                <span class="drawer-label">手机</span>
-                <span class="drawer-value">{{ detailAccount.phone || '-' }}</span>
               </div>
               <div class="drawer-field">
                 <span class="drawer-label">状态</span>

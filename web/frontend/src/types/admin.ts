@@ -216,7 +216,8 @@ export interface RoleCoverage {
 export interface RolePermissionsResponse {
   roleId: string
   granted: string[]
-  dataScopes: { resourceKey: string; scope: string }[]
+  //: 后端只会发 DataScope 联合里的值，声明成 string 会让读取处必须再断言一次
+  dataScopes: { resourceKey: string; scope: DataScope }[]
 }
 
 export interface MyMenuNode {

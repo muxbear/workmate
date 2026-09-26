@@ -30,6 +30,7 @@ const iconComponent = computed(() => {
     case 'file': return FileText
     case 'prompt': return Clock
     case 'subagent': return Users
+    case 'cronjob': return Clock
   }
 })
 
@@ -39,6 +40,7 @@ const placeholders = computed(() => {
     case 'file': return { name: '例如: AGENTS.md, USER.md', desc: '描述此文件的用途和内容...' }
     case 'prompt': return { name: '例如: 每天执行一次, 每小时检查', desc: '输入 Cron 表达式和执行任务...' }
     case 'subagent': return { name: '例如: 数据处理子智能体', desc: '描述此子智能体的职责和功能...' }
+    case 'cronjob': return { name: '例如: 每日早报, 每周清理', desc: '描述这个定时任务要做什么...' }
   }
 })
 

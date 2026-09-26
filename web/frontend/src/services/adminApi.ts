@@ -20,7 +20,15 @@ import type {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function toSnakeCase(obj: Record<string, unknown>): Record<string, unknown> {
+/**
+ * 把对象的键名从驼峰转成下划线（后端 FastAPI 用的是下划线）。
+ *
+ * 入参声明为 ``object`` 而不是 ``Record<string, unknown>``：调用方传的都是各种
+ * 请求接口（``OrgNode``/``CreateUserRequest``/…），它们**没有索引签名**，用
+ * ``Record`` 接会逼着每个调用点写一次 ``as Record<string, unknown>`` 断言——
+ * 3 处断言其实只是在迁就这个过窄的签名。
+ */
+function toSnakeCase(obj: object): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj)) {
     if (value === undefined) continue
@@ -38,12 +46,12 @@ export async function fetchOrgNodes(): Promise<OrgNode[]> {
 }
 
 export async function createOrgNode(data: Omit<OrgNode, 'id' | 'createdAt'>): Promise<OrgNode> {
-  const res = await instance.post('/departments', toSnakeCase(data as Record<string, unknown>))
+  const res = await instance.post('/departments', toSnakeCase(data))
   return res.data.data
 }
 
 export async function updateOrgNode(data: OrgNode): Promise<OrgNode | null> {
-  const res = await instance.put(`/departments/${data.id}`, toSnakeCase(data as Record<string, unknown>))
+  const res = await instance.put(`/departments/${data.id}`, toSnakeCase(data))
   return res.data.data
 }
 
@@ -69,7 +77,7 @@ export async function fetchUsers(deptId?: string): Promise<SystemUser[]> {
 }
 
 export async function createUser(data: CreateUserRequest): Promise<SystemUser> {
-  const res = await instance.post('/personnel', toSnakeCase(data as Record<string, unknown>))
+  const res = await instance.post('/personnel', toSnakeCase(data))
   return res.data.data
 }
 
@@ -101,7 +109,7 @@ export async function fetchAccount(id: string): Promise<AccountInfo> {
 }
 
 export async function createAccount(data: AccountCreateRequest): Promise<AccountInfo> {
-  const res = await instance.post('/accounts', toSnakeCase(data as Record<string, unknown>))
+  const res = await instance.post('/accounts', toSnakeCase(data))
   return res.data.data
 }
 
@@ -111,7 +119,7 @@ export async function updateAccount(
 ): Promise<AccountInfo> {
   const res = await instance.put(
     `/accounts/${id}`,
-    toSnakeCase(data as Record<string, unknown>),
+    toSnakeCase(data),
   )
   return res.data.data
 }

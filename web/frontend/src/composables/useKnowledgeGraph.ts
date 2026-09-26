@@ -1,4 +1,5 @@
 import { ref, computed, markRaw } from 'vue'
+import type { EdgeTypesObject, NodeTypesObject } from '@vue-flow/core'
 import type { Node, Edge } from '@vue-flow/core'
 import { MarkerType } from '@vue-flow/core'
 import {
@@ -21,8 +22,16 @@ const NODE_WIDTH = 200
 const NODE_HEIGHT = 60
 
 export function useKnowledgeGraph() {
-  const nodeTypes = { kbEntity: markRaw(KbGraphNode) }
-  const edgeTypes = { kbRelation: markRaw(KbGraphEdge) }
+  /**
+   * 自定义节点/边的类型映射。
+   *
+   * 断言到 Vue Flow 的 `NodeTypesObject` 是必要的：库要求组件的 props 签名与
+   * `NodeProps` **完全一致**，而 `KbGraphNode` 只声明了它实际用到的 `id` 与 `data`
+   * ——运行时完全兼容（Vue Flow 多传的 `selected`/`connectable` 等它不用就是了），
+   * 只是库的类型比这严。补全 `NodeProps` 会把组件改造成库的形状，收益不抵风险。
+   */
+  const nodeTypes = { kbEntity: markRaw(KbGraphNode) } as unknown as NodeTypesObject
+  const edgeTypes = { kbRelation: markRaw(KbGraphEdge) } as unknown as EdgeTypesObject
 
   const graphNodes = ref<Node[]>([])
   const graphEdges = ref<Edge[]>([])

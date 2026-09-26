@@ -1,4 +1,5 @@
 import { ref, computed, watch, markRaw } from 'vue'
+import type { EdgeTypesObject, NodeTypesObject } from '@vue-flow/core'
 import type { Node, Edge } from '@vue-flow/core'
 import { MarkerType } from '@vue-flow/core'
 import dagre from 'dagre'
@@ -13,8 +14,10 @@ const NODE_HEIGHT = 130
 export function useAgentGraph() {
   const agentStore = useAgentStore()
 
-  const nodeTypes = { agent: markRaw(AgentNode) }
-  const edgeTypes = { agent: markRaw(AgentEdge) }
+  // 断言到 NodeTypesObject：库要求组件 props 与 `NodeProps` 完全一致，而自定义节点只
+  // 声明了它用到的部分——运行时兼容，只是类型更严（与 useKnowledgeGraph 同款处理）。
+  const nodeTypes = { agent: markRaw(AgentNode) } as unknown as NodeTypesObject
+  const edgeTypes = { agent: markRaw(AgentEdge) } as unknown as EdgeTypesObject
   const graphNodes = ref<Node[]>([])
   const graphEdges = ref<Edge[]>([])
 
