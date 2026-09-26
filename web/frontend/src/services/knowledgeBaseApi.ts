@@ -354,20 +354,40 @@ function mapCreateResult(raw: unknown): CreateDocsResult {
   }
 }
 
-export async function uploadDocuments(
+/**
+ * 上传**一个**文件，可订阅上传进度。
+ *
+ * 一次一个文件而不是一次一坨：只有这样才能给出**逐文件**的进度与成败
+ * （后端本来就收文件列表，传一个也照收）。代价是请求数变多，由调用方的并发池
+ * 与后端 `kb_upload` 限流一起兜住。
+ *
+ * `timeout: 0` 是必须的：全局 axios 超时是 15s，大文件在慢网下必然超过——而那时
+ * **后端其实已经落盘并入队**，前端却报"上传失败"，是最恶劣的一类假失败。
+ */
+export async function uploadDocument(
   kbId: string,
-  files: File[],
+  file: File,
   config?: IndexConfig,
+  onProgress?: (percent: number) => void,
 ): Promise<CreateDocsResult> {
   const formData = new FormData()
-  files.forEach((f) => formData.append('files', f))
+  formData.append('files', file)
   if (config) {
     formData.append('config', JSON.stringify(configToSnake(config)))
   }
   const res = await instance.post(
     `/knowledge-bases/${kbId}/documents/upload`,
     formData,
-    { headers: { 'Content-Type': 'multipart/form-data' } },
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+      onUploadProgress: (event) => {
+        // 到 100% 只代表**请求体发完**，后端还要落盘/建行/入队
+        if (onProgress && event.total) {
+          onProgress(Math.round((event.loaded / event.total) * 100))
+        }
+      },
+    },
   )
   return mapCreateResult(res.data.data)
 }

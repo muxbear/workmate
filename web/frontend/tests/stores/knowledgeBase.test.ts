@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import * as api from '@/services/knowledgeBaseApi'
-import type { KB, KBShare } from '@/types/knowledgeBase'
+import type { KB, KBDoc, KBShare } from '@/types/knowledgeBase'
 
 vi.mock('@/services/knowledgeBaseApi', () => ({
   fetchKBPage: vi.fn(),
@@ -22,6 +22,12 @@ vi.mock('@/services/knowledgeBaseApi', () => ({
   acceptKbShare: vi.fn(),
   rejectKbShare: vi.fn(),
   updateKbVisibility: vi.fn(),
+  // 文档管理（迭代 6 T6.1）
+  uploadDocument: vi.fn(),
+  createTextDocument: vi.fn(),
+  importFromUrl: vi.fn(),
+  batchDocumentOp: vi.fn(),
+  downloadDocument: vi.fn(),
 }))
 
 function kb(overrides: Partial<KB> = {}): KB {
@@ -312,5 +318,103 @@ describe('知识库 store —— 概览', () => {
     expect(store.filteredKbs.map((k) => k.id)).toEqual(['kb-2'])
     store.searchQuery = 'doc'
     expect(store.filteredKbs.map((k) => k.id)).toEqual(['kb-1'])
+  })
+})
+
+describe('知识库 store —— 逐文件上传（迭代 6 T6.1）', () => {
+  function doc(name: string): KBDoc {
+    return {
+      id: `doc-${name}`, name, type: 'md', size: '1 KB', status: 'queued',
+      progress: 0, chunks: 0, entities: 0, relations: 0, uploadedAt: '2026-09-26',
+    }
+  }
+
+  function file(name: string): File {
+    return new File(['内容'], name, { type: 'text/markdown' })
+  }
+
+  it('每个文件一个请求，而不是一次带多个', async () => {
+    const seen: string[] = []
+    mocked.uploadDocument.mockImplementation(async (_kb: string, f: File) => {
+      seen.push(f.name)
+      return { created: [doc(f.name)], skipped: [] }
+    })
+    const store = useKnowledgeBaseStore()
+
+    await store.uploadDocs('kb-1', [file('a.md'), file('b.md'), file('c.md')])
+
+    expect(seen.sort()).toEqual(['a.md', 'b.md', 'c.md'])
+  })
+
+  it('单个文件失败不中断其余，并逐条汇总', async () => {
+    mocked.uploadDocument.mockImplementation(async (_kb: string, f: File) => {
+      if (f.name === 'bad.md') throw new Error('超过大小上限')
+      return { created: [doc(f.name)], skipped: [] }
+    })
+    const store = useKnowledgeBaseStore()
+
+    const summary = await store.uploadDocs('kb-1', [file('a.md'), file('bad.md'), file('c.md')])
+
+    expect(summary.created).toBe(2)
+    expect(summary.failed).toEqual([{ name: 'bad.md', message: '超过大小上限' }])
+  })
+
+  it('重复文件计入"跳过"而不是"失败"', async () => {
+    mocked.uploadDocument.mockResolvedValue({
+      created: [],
+      skipped: [{ name: 'a.md', reason: 'duplicate', existingDocName: '旧版.md' }],
+    })
+    const store = useKnowledgeBaseStore()
+
+    const summary = await store.uploadDocs('kb-1', [file('a.md')])
+
+    expect(summary.created).toBe(0)
+    expect(summary.failed).toEqual([])
+    expect(summary.skipped[0].existingDocName).toBe('旧版.md')
+  })
+
+  it('并发不超过上限（默认 2）', async () => {
+    let inFlight = 0
+    let peak = 0
+    mocked.uploadDocument.mockImplementation(async () => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inFlight -= 1
+      return { created: [doc('x')], skipped: [] }
+    })
+    const store = useKnowledgeBaseStore()
+
+    await store.uploadDocs('kb-1', [file('a.md'), file('b.md'), file('c.md'), file('d.md')])
+
+    expect(peak).toBeLessThanOrEqual(2)
+  })
+
+  it('成功的文件立刻并入当前知识库的文档列表', async () => {
+    mocked.uploadDocument.mockResolvedValue({ created: [doc('新来的.md')], skipped: [] })
+    const store = useKnowledgeBaseStore()
+    store.selectedKb = { ...kb({ id: 'kb-1' }), documents: [], docs: 0 }
+
+    await store.uploadDocs('kb-1', [file('新来的.md')])
+
+    expect(store.selectedKb?.documents.map((d) => d.name)).toEqual(['新来的.md'])
+    expect(store.selectedKb?.docs).toBe(1)
+  })
+
+  it('上传状态回调按文件回报进度与终态', async () => {
+    mocked.uploadDocument.mockImplementation(async (_kb: string, _f: File, _cfg: unknown, onProgress?: (p: number) => void) => {
+      onProgress?.(42)
+      return { created: [doc('a.md')], skipped: [] }
+    })
+    const store = useKnowledgeBaseStore()
+    const states: { name: string; status: string; percent: number }[] = []
+
+    await store.uploadDocs('kb-1', [file('a.md')], undefined, {
+      onFileState: (s) => states.push({ name: s.name, status: s.status, percent: s.percent }),
+    })
+
+    expect(states[0]).toMatchObject({ name: 'a.md', status: 'uploading', percent: 0 })
+    expect(states.some((s) => s.percent === 42)).toBe(true)
+    expect(states[states.length - 1]).toMatchObject({ status: 'done', percent: 100 })
   })
 })

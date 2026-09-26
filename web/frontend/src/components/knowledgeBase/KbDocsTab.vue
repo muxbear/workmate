@@ -49,7 +49,6 @@ const filteredDocs = computed(() => {
   return props.kb.documents.filter((d) => d.name.toLowerCase().includes(q))
 })
 
-const uploading = ref(false)
 const pasteVisible = ref(false)
 const urlVisible = ref(false)
 const urlError = ref<string | null>(null)
@@ -62,21 +61,6 @@ function skipSummary(skipped: { name: string; existingDocName?: string | null }[
   return skipped.length === 1
     ? `已跳过 ${first.name}${detail}`
     : `已跳过 ${skipped.length} 个重复文件，如 ${first.name}${detail}`
-}
-
-async function handleUpload(files: File[], config?: IndexConfig) {
-  uploadVisible.value = false
-  try {
-    uploading.value = true
-    const result = await store.uploadDocs(props.kb.id, files, config)
-    if (result.skipped.length) {
-      ElMessage.warning(skipSummary(result.skipped))
-    }
-  } catch (err: unknown) {
-    ElMessage.error(readApiError(err))
-  } finally {
-    uploading.value = false
-  }
 }
 
 async function handlePaste(name: string, content: string, config?: IndexConfig) {
@@ -318,13 +302,8 @@ function handleEditFragment(doc: KBDoc) {
                 class="search-input"
               />
             </div>
-            <button
-              v-if="!readonly"
-              class="btn-upload"
-              :disabled="uploading"
-              @click="uploadVisible = true"
-            >
-              <Upload :size="16" class="btn-icon" />{{ uploading ? '上传中…' : '上传文档' }}
+            <button v-if="!readonly" class="btn-upload" @click="uploadVisible = true">
+              <Upload :size="16" class="btn-icon" />上传文档
             </button>
             <button
               v-if="!readonly"
@@ -511,11 +490,13 @@ function handleEditFragment(doc: KBDoc) {
         </div>
       </div>
 
+      <!-- 上传过程由对话框自己驱动（逐文件进度只在那里看得到），
+           父组件只负责开与关 -->
       <KbUploadDialog
         :visible="uploadVisible"
         :default-config="kb.config"
+        :kb-id="kb.id"
         @close="uploadVisible = false"
-        @upload="handleUpload"
       />
 
       <KbPasteTextDialog

@@ -427,3 +427,67 @@ class TestUrlImportDocument:
 
         assert again.created == []
         assert again.skipped[0].reason == "duplicate"
+
+
+class TestNameDisambiguation:
+    """同名不同内容：加序号区分。
+
+    库里没有文档名唯一约束（同名是合法的），但目录上传会让"不同子目录里的同名
+    文件"从偶尔变成必然——两行同名会让用户分不清、删起来容易删错。
+    """
+
+    async def test_same_name_different_content_gets_a_suffix(
+        self, sessionmaker, upload_root,
+    ):
+        await seed_kb(sessionmaker)
+
+        async with sessionmaker() as db:
+            first = await upload_documents(db, KB, USER_A, [upload_file("报告.md", "# 第一版\n".encode())])
+            await db.commit()
+        async with sessionmaker() as db:
+            second = await upload_documents(db, KB, USER_A, [upload_file("报告.md", "# 第二版\n".encode())])
+            await db.commit()
+
+        assert [r.name for r in first.created] == ["报告.md"]
+        assert [r.name for r in second.created] == ["报告(2).md"]
+
+    async def test_same_batch_collisions_are_numbered_in_order(
+        self, sessionmaker, upload_root,
+    ):
+        """目录上传：同一个批次里三个同名文件，序号要按顺序给。"""
+        await seed_kb(sessionmaker)
+
+        async with sessionmaker() as db:
+            outcome = await upload_documents(db, KB, USER_A, [
+                upload_file("a/README.md", b"# A\n"),
+                upload_file("b/README.md", b"# B\n"),
+                upload_file("c/README.md", b"# C\n"),
+            ])
+            await db.commit()
+
+        assert [r.name for r in outcome.created] == ["README.md", "README(2).md", "README(3).md"]
+
+    async def test_suffix_keeps_the_extension(self, sessionmaker, upload_root):
+        await seed_kb(sessionmaker)
+        async with sessionmaker() as db:
+            await upload_documents(db, KB, USER_A, [upload_file("数据.csv", b"a,b\n1,2\n")])
+            await db.commit()
+        async with sessionmaker() as db:
+            outcome = await upload_documents(db, KB, USER_A, [upload_file("数据.csv", b"a,b\n3,4\n")])
+
+        assert outcome.created[0].name == "数据(2).csv"
+        assert outcome.created[0].type == "csv", "加序号不能把类型判没了"
+
+    async def test_dedup_still_wins_over_renaming(self, sessionmaker, upload_root):
+        """同内容不同名 → 仍然是跳过，而不是被改名收下。"""
+        await seed_kb(sessionmaker)
+        async with sessionmaker() as db:
+            await upload_documents(db, KB, USER_A, [upload_file("报告.md", CONTENT_X.encode())])
+            await db.commit()
+        async with sessionmaker() as db:
+            outcome = await upload_documents(
+                db, KB, USER_A, [upload_file("报告.md", CONTENT_X.encode())],
+            )
+
+        assert outcome.created == []
+        assert outcome.skipped[0].reason == "duplicate"

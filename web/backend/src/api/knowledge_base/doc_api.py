@@ -58,8 +58,12 @@ def _get_mediator(request: Request):
 
 
 @router.post("/{kb_id}/documents/upload", response_model=dict)
-# 上传是重操作（落盘 + 触发 embedding 计费），按 IP 限流兜住滥用与误写的循环调用
-@rate_limit(max_calls=20, period_seconds=60, key_prefix="kb_upload")
+# 上传是重操作（落盘 + 触发 embedding 计费），按 IP 限流兜住滥用与误写的循环调用。
+# **计数单位已从"一次上传请求"变为"一个文件"**（前端改成逐文件请求以获得逐文件
+# 进度）：旧值 20/分钟等于禁止文件夹上传，而且键里带客户端 IP，一个 30 文件的目录
+# 会让同一 NAT 出口的整层楼一起被限流。真正的滥用防护交给知识库配额
+# （KB_MAX_DOCS_PER_KB / KB_MAX_STORAGE_MB_PER_USER）。
+@rate_limit(max_calls=300, period_seconds=60, key_prefix="kb_upload")
 async def upload_docs(
     kb_id: str,
     request: Request,

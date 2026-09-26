@@ -35,6 +35,7 @@ vi.mock('@/services/knowledgeBaseApi', async () => {
 const store = vi.hoisted(() => ({
   uploadDocs: vi.fn(),
   createTextDoc: vi.fn(),
+  importUrlDoc: vi.fn(),
   batchDocs: vi.fn(),
   deleteDoc: vi.fn(),
   retryDoc: vi.fn(),

@@ -1487,6 +1487,38 @@ async def _finalize_created(
             await scheduler.enqueue(task)
 
 
+async def _taken_names(db: AsyncSession, kb_id: str) -> set[str]:
+    """本库已有的文档名（一次性取回，供同名区分用）。
+
+    取全量名字而不是逐个 ``LIKE`` 查询：一次请求最多几十个文件，几十次查询换来的
+    节省不值得；而这个集合在批内还要接收新落盘的名字。
+    """
+    rows = await db.execute(
+        select(KnowledgeBaseDocument.name).where(KnowledgeBaseDocument.kb_id == kb_id)
+    )
+    return {row[0] for row in rows}
+
+
+def _disambiguate_name(name: str, taken: set[str]) -> str:
+    """同名时加序号：``报告.md`` → ``报告(2).md``。
+
+    库里**没有**文档名唯一约束（同名不同内容是合法的），但界面上两行同名会让用户
+    分不清、删起来容易删错。目录上传（不同子目录里的同名文件）会让这件事从"偶尔"
+    变成"必然"，所以在这里兜住。
+    """
+    if name not in taken:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    index = 1
+    while True:
+        index += 1
+        candidate = f"{stem}({index}).{ext}" if ext else f"{stem}({index})"
+        if candidate not in taken:
+            return candidate
+
+
 async def _create_documents(
     db: AsyncSession,
     kb: KnowledgeBase,
@@ -1498,15 +1530,16 @@ async def _create_documents(
 ) -> UploadOutcome:
     """三条入口（上传 / 粘贴 / URL 导入）共用的入库内核。
 
-    每篇文档：算哈希 → 查重（跳过并记录）→ 配额（逐篇增量）→ 落盘建行 → 入队。
-    去重**先于**配额：否则"传 20 个、18 个重复、配额只剩 1 位"会被整批拒掉，
-    而实际只会新增两篇。
+    每篇文档：算哈希 → 查重（跳过并记录）→ 定名（同名加序号）→ 配额（逐篇增量）
+    → 落盘建行 → 入队。去重**先于**配额：否则"传 20 个、18 个重复、配额只剩 1 位"
+    会被整批拒掉，而实际只会新增两篇。
     """
     from api.knowledge_base.quota import ensure_doc_quota
 
     kb_id = kb.id
     upload_dir = os.path.join(settings.doc_upload_dir, kb_id)
     os.makedirs(upload_dir, exist_ok=True)
+    taken_names = await _taken_names(db, kb_id)
 
     outcome = UploadOutcome()
     persisted: list[_Persisted] = []
@@ -1529,6 +1562,15 @@ async def _create_documents(
             await ensure_doc_quota(
                 db, kb_id, user_id, len(payload.content), incoming_count=1,
             )
+
+            # 同名（不同内容）加序号区分：目录上传里不同子目录的同名文件是常态
+            final_name = _disambiguate_name(payload.name, taken_names)
+            if final_name != payload.name:
+                payload = DocPayload(
+                    name=final_name, file_type=payload.file_type,
+                    content=payload.content, source_url=payload.source_url,
+                )
+            taken_names.add(final_name)
 
             item = await _persist_payload(
                 db, kb_id, payload, upload_dir=upload_dir, custom_config=custom_config,

@@ -13,6 +13,7 @@ import type {
   KBVisibility,
   PasteTextRequest,
   UrlImportRequest,
+  DocSkip,
 } from '@/types/knowledgeBase'
 import { KB_GROUP_PREVIEW_LIMIT } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
@@ -32,6 +33,21 @@ export const KB_GROUPS: KbGroupDef[] = [
   { id: 'sharedByMe', label: '我的共享知识', apiScope: 'personal' },
   { id: 'sharedWithMe', label: '共享给我的', apiScope: 'shared_with_me' },
 ]
+
+/** 单个文件的上传状态（对话框逐行展示） */
+export interface UploadFileState {
+  name: string
+  status: 'pending' | 'uploading' | 'done' | 'skipped' | 'failed'
+  percent: number
+  message?: string
+}
+
+/** 一批上传的汇总（逐文件请求，部分成功是常态） */
+export interface UploadSummary {
+  created: number
+  skipped: DocSkip[]
+  failed: { name: string; message: string }[]
+}
 
 /** 一个分组的列表 + 分页状态 */
 interface GroupState {
@@ -371,17 +387,74 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
 
   // ─── 文档 ──────────────────────────────────────────────────────────────
 
-  async function uploadDocs(kbId: string, files: File[], config?: IndexConfig) {
-    if (!files.length) return { created: [], skipped: [] }
-    const result = await kbApi.uploadDocuments(kbId, files, config)
-    if (selectedKb.value && selectedKb.value.id === kbId) {
-      selectedKb.value = {
-        ...selectedKb.value,
-        documents: [...result.created, ...selectedKb.value.documents],
-        docs: selectedKb.value.docs + result.created.length,
+  /**
+   * 上传文件（**逐文件请求**，带并发池）。
+   *
+   * 逐文件是为了给出每个文件自己的进度与成败：一次请求带 N 个文件时，失败只能
+   * 整批算数，用户也不知道卡在哪一个上。并发限制在 2–3：既压住网络与内存，
+   * 也降低撞限流的概率（429 会单独退避重试一次）。
+   */
+  async function uploadDocs(
+    kbId: string,
+    files: File[],
+    config?: IndexConfig,
+    hooks?: {
+      onFileState?: (state: UploadFileState) => void
+      concurrency?: number
+    },
+  ): Promise<UploadSummary> {
+    const summary: UploadSummary = { created: 0, skipped: [], failed: [] }
+    if (!files.length) return summary
+
+    const concurrency = Math.min(Math.max(hooks?.concurrency ?? 2, 1), 3)
+    const queue = [...files]
+
+    const report = (state: UploadFileState) => hooks?.onFileState?.(state)
+
+    const worker = async () => {
+      for (;;) {
+        const file = queue.shift()
+        if (!file) return
+        report({ name: file.name, status: 'uploading', percent: 0 })
+        try {
+          const result = await kbApi.uploadDocument(kbId, file, config, (percent) => {
+            report({ name: file.name, status: 'uploading', percent })
+          })
+          if (result.created.length) {
+            summary.created += result.created.length
+            // 边传边出现：不必等整批结束，用户立刻看到这一篇已经进库
+            if (selectedKb.value && selectedKb.value.id === kbId) {
+              selectedKb.value = {
+                ...selectedKb.value,
+                documents: [...result.created, ...selectedKb.value.documents],
+                docs: selectedKb.value.docs + result.created.length,
+              }
+            }
+            report({ name: file.name, status: 'done', percent: 100 })
+          } else {
+            const skip = result.skipped[0]
+            summary.skipped.push(...result.skipped)
+            report({
+              name: file.name,
+              status: 'skipped',
+              percent: 100,
+              message: skip?.existingDocName
+                ? `与《${skip.existingDocName}》内容相同`
+                : '内容重复',
+            })
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : '上传失败'
+          summary.failed.push({ name: file.name, message })
+          report({ name: file.name, status: 'failed', percent: 0, message })
+        }
       }
     }
-    return result
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, files.length) }, () => worker()),
+    )
+    return summary
   }
 
   /** 粘贴文本建文档（后端落成 `.md` 后走同一条流水线） */
