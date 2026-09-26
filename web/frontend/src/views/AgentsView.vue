@@ -213,7 +213,7 @@ onMounted(() => {
                 class="eye-btn"
                 :title="showRelationGraph ? '隐藏关系图' : '显示关系图'"
                 @click="showRelationGraph = !showRelationGraph"
-              >
+               :aria-label="showRelationGraph ? '隐藏关系图' : '显示关系图'">
                 <Eye v-if="showRelationGraph" :size="16" />
                 <EyeOff v-else :size="16" />
               </button>
@@ -230,7 +230,7 @@ onMounted(() => {
               v-if="agentStore.searchQuery"
               class="search-clear"
               @click="agentStore.searchQuery = ''"
-            >
+             aria-label="清空搜索">
               <X :size="12" />
             </button>
           </div>

@@ -48,7 +48,7 @@ const iconComponent = computed(() => getToolIcon(cm.value.icon))
           class="toggle-btn"
           :title="tool.status === 'enabled' ? '禁用' : '启用'"
           @click="emit('toggle', tool.id)"
-        >
+         :aria-label="tool.status === 'enabled' ? '禁用' : '启用'">
           <ToggleRight v-if="tool.status === 'enabled'" :size="20" class="toggle-on" />
           <ToggleLeft v-else :size="20" class="toggle-off" />
         </button>
@@ -79,14 +79,14 @@ const iconComponent = computed(() => getToolIcon(cm.value.icon))
         </span>
       </div>
       <div class="hover-actions">
-        <button class="action-btn" title="查看详情" @click="emit('detail', tool)">
+        <button class="action-btn" title="查看详情" @click="emit('detail', tool)" aria-label="查看详情">
           <Package :size="14" />
         </button>
         <template v-if="!isBuiltin">
-          <button class="action-btn" title="编辑" @click="emit('edit', tool)">
+          <button class="action-btn" title="编辑" @click="emit('edit', tool)" aria-label="编辑">
             <Pencil :size="14" />
           </button>
-          <button class="action-btn action-btn--danger" title="删除" @click="emit('delete', tool.id)">
+          <button class="action-btn action-btn--danger" title="删除" @click="emit('delete', tool.id)" aria-label="删除">
             <Trash2 :size="14" />
           </button>
         </template>

@@ -87,7 +87,7 @@ function resolveIcon(name: string): Component {
         :class="{ invisible: childrenList.length === 0 }"
         @pointerdown.stop
         @click.stop="emit('toggleExpand', resource.id)"
-      >
+       aria-label="展开或折叠">
         <ChevronDown v-if="expandedIds.has(resource.id)" :size="14" />
         <ChevronRight v-else :size="14" />
       </button>
@@ -116,13 +116,13 @@ function resolveIcon(name: string): Component {
           class="action-btn"
           @click.stop="emit('addChild', resource)"
           title="添加子节点"
-        >
+         aria-label="添加子节点">
           <Plus :size="14" />
         </button>
-        <button class="action-btn" @click.stop="emit('edit', resource)" title="编辑">
+        <button class="action-btn" @click.stop="emit('edit', resource)" title="编辑" aria-label="编辑">
           <Edit2 :size="14" />
         </button>
-        <button class="action-btn danger" @click.stop="emit('delete', resource)" title="删除">
+        <button class="action-btn danger" @click.stop="emit('delete', resource)" title="删除" aria-label="删除">
           <Trash2 :size="14" />
         </button>
       </div>

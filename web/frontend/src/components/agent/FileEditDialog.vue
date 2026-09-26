@@ -51,7 +51,7 @@ function handleClose() {
                 <p class="dialog-desc">修改文件名和描述</p>
               </div>
             </div>
-            <button class="modal-close" @click="handleClose">
+            <button class="modal-close" @click="handleClose" aria-label="关闭">
               <X :size="18" />
             </button>
           </div>

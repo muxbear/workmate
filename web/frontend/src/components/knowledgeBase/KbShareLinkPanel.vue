@@ -181,7 +181,7 @@ function formatTime(value: string | null): string {
           :disabled="busyId === link.id"
           title="撤销链接"
           @click="handleRevoke(link)"
-        >
+         aria-label="撤销链接">
           <Trash2 :size="14" />
         </button>
       </div>

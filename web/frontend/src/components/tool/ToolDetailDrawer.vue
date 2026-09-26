@@ -35,14 +35,14 @@ const isBuiltin = computed(() => props.tool.source === 'builtin')
           </div>
           <div class="drawer-header__right">
             <template v-if="!isBuiltin">
-              <button class="drawer-action" title="编辑" @click="emit('edit', tool)">
+              <button class="drawer-action" title="编辑" @click="emit('edit', tool)" aria-label="编辑">
                 <Pencil :size="15" />
               </button>
-              <button class="drawer-action drawer-action--danger" title="删除" @click="emit('delete', tool.id)">
+              <button class="drawer-action drawer-action--danger" title="删除" @click="emit('delete', tool.id)" aria-label="删除">
                 <Trash2 :size="15" />
               </button>
             </template>
-            <button class="drawer-close" @click="emit('close')">
+            <button class="drawer-close" @click="emit('close')" aria-label="关闭">
               <X :size="16" />
             </button>
           </div>

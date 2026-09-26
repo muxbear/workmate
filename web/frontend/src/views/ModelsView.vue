@@ -793,14 +793,14 @@ onMounted(() => {
               </div>
             </div>
             <div class="provider-actions">
-              <button class="action-btn" title="编辑" @click.stop="openEditProvider(p)">
+              <button class="action-btn" title="编辑" @click.stop="openEditProvider(p)" aria-label="编辑">
                 <Edit3 :size="12" />
               </button>
               <button
                 class="action-btn action-btn--danger"
                 title="删除"
                 @click.stop="confirmDelete('provider', p.id, p.name)"
-              >
+               aria-label="删除">
                 <Trash2 :size="12" />
               </button>
             </div>
@@ -952,11 +952,11 @@ onMounted(() => {
                 <span class="calls-num">{{ m.callCount.toLocaleString() }}</span>
               </div>
               <div class="model-actions">
-                <button title="查看详情" class="action-btn" @click="viewingModel = m">
+                <button title="查看详情" class="action-btn" @click="viewingModel = m" aria-label="查看详情">
                   <Activity :size="14" />
                 </button>
                 <el-dropdown trigger="click" @command="(cmd: string) => handleModelCommand(cmd, m)">
-                  <button class="action-btn action-btn--more" @click.stop>
+                  <button class="action-btn action-btn--more" @click.stop aria-label="更多操作">
                     <MoreHorizontal :size="14" />
                   </button>
                   <template #dropdown>
@@ -1039,7 +1039,7 @@ onMounted(() => {
               </h2>
               <p class="modal-desc">配置 API 接入信息</p>
             </div>
-            <button class="modal-close" @click="closeProviderModal">
+            <button class="modal-close" @click="closeProviderModal" aria-label="关闭">
               <X :size="16" />
             </button>
           </div>
@@ -1091,7 +1091,11 @@ onMounted(() => {
                   placeholder="sk-..."
                   class="form-input form-input--mono"
                 />
-                <button class="input-btn" @click="showApiKey = !showApiKey">
+                <button
+                class="input-btn"
+                :aria-label="showApiKey ? '隐藏密钥' : '显示密钥'"
+                @click="showApiKey = !showApiKey"
+              >
                   <EyeOff v-if="showApiKey" :size="16" />
                   <Eye v-else :size="16" />
                 </button>
@@ -1142,7 +1146,7 @@ onMounted(() => {
               </h2>
               <p class="modal-desc">{{ store.selectedProvider?.name }}</p>
             </div>
-            <button class="modal-close" @click="closeModelModal">
+            <button class="modal-close" @click="closeModelModal" aria-label="关闭">
               <X :size="16" />
             </button>
           </div>
@@ -1377,7 +1381,7 @@ onMounted(() => {
                 {{ getModelTypeMeta(viewingModel.type).label }}
               </span>
             </div>
-            <button class="modal-close" @click="viewingModel = null">
+            <button class="modal-close" @click="viewingModel = null" aria-label="关闭">
               <X :size="16" />
             </button>
           </div>

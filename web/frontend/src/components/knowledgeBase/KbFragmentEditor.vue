@@ -265,7 +265,7 @@ async function saveAll() {
                 class="row-action-btn edit-action"
                 title="编辑"
                 @click="startEdit(chunk)"
-              >
+               aria-label="编辑">
                 <PencilLine :size="14" />
               </button>
               <button
@@ -273,7 +273,7 @@ async function saveAll() {
                 class="row-action-btn delete-action"
                 title="删除"
                 @click="handleDeleteChunk(chunk.id)"
-              >
+               aria-label="删除">
                 <Trash2 :size="14" />
               </button>
             </div>

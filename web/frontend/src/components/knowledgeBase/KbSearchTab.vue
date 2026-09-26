@@ -472,7 +472,7 @@ function highlightText(text: string): { text: string; hl: boolean }[] {
             <span v-if="r.vec !== null" class="score-label">| 余弦 {{ r.vec.toFixed(3) }}</span>
             <span v-if="r.bm25 !== null" class="score-label">| BM25 {{ r.bm25.toFixed(2) }}</span>
             <el-tooltip content="复制引用" placement="top" :show-after="300">
-              <button class="copy-cite" @click.stop="copyCitation(r)">
+              <button class="copy-cite" @click.stop="copyCitation(r)" aria-label="复制引用">
                 <Quote :size="12" />
               </button>
             </el-tooltip>

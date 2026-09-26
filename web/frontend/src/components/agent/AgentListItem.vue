@@ -78,7 +78,7 @@ function getStatusLabel(status: string): string {
         v-if="hasChildren && !searchQuery"
         class="expand-btn"
         @click.stop="emit('toggle-expand', agent.id)"
-      >
+       aria-label="展开或折叠">
         <ChevronDown v-if="isExpanded" :size="14" />
         <ChevronRight v-else :size="14" />
       </button>
@@ -131,7 +131,7 @@ function getStatusLabel(status: string): string {
         else if (cmd === 'clone') emit('clone', agent)
         else if (cmd === 'delete') emit('delete', agent.id)
       }">
-        <button class="more-btn" @click.stop>
+        <button class="more-btn" @click.stop aria-label="更多操作">
           <MoreVertical :size="14" />
         </button>
         <template #dropdown>

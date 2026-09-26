@@ -254,7 +254,7 @@ const typeOptions = computed<ParamType[]>(() => {
             v-if="store.searchQuery"
             class="search-clear"
             @click="store.searchQuery = String()"
-          >
+           aria-label="清空搜索">
             <X :size="12" />
           </button>
         </div>
@@ -292,10 +292,10 @@ const typeOptions = computed<ParamType[]>(() => {
             </div>
             <span class="child-count" title="子参数数量">{{ node.childCount }}</span>
             <div class="row-actions" @click.stop>
-              <button class="row-btn" title="编辑" @click="openEdit(node)">
+              <button class="row-btn" title="编辑" @click="openEdit(node)" aria-label="编辑">
                 <Edit2 :size="13" />
               </button>
-              <button class="row-btn danger" title="删除" @click="confirmDelete(node)">
+              <button class="row-btn danger" title="删除" @click="confirmDelete(node)" aria-label="删除">
                 <Trash2 :size="13" />
               </button>
             </div>
@@ -373,10 +373,10 @@ const typeOptions = computed<ParamType[]>(() => {
                 </span>
                 <span class="cell-time">{{ formatTime(item.updatedAt) }}</span>
                 <span class="col-actions">
-                  <button class="row-btn" title="编辑" @click="openEdit(item)">
+                  <button class="row-btn" title="编辑" @click="openEdit(item)" aria-label="编辑">
                     <Edit2 :size="13" />
                   </button>
-                  <button class="row-btn danger" title="删除" @click="confirmDelete(item)">
+                  <button class="row-btn danger" title="删除" @click="confirmDelete(item)" aria-label="删除">
                     <Trash2 :size="13" />
                   </button>
                 </span>

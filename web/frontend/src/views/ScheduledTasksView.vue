@@ -400,25 +400,25 @@ onUnmounted(() => {
                   {{ TASK_STATUS_META[taskStatusKey(task)].label }}
                 </span>
                 <div class="auto-card-actions">
-                  <button class="auto-icon-btn" title="立即运行" @click="handleRunNow(task)">
+                  <button class="auto-icon-btn" title="立即运行" @click="handleRunNow(task)" aria-label="立即运行">
                     <Zap :size="13" />
                   </button>
                   <button
                     class="auto-icon-btn"
                     :title="task.enabled ? '暂停' : '继续'"
                     @click="handleToggle(task)"
-                  >
+                   :aria-label="task.enabled ? '暂停' : '继续'">
                     <Pause v-if="task.enabled" :size="13" />
                     <Play v-else :size="13" />
                   </button>
-                  <button class="auto-icon-btn" title="编辑" @click="openEdit(task)">
+                  <button class="auto-icon-btn" title="编辑" @click="openEdit(task)" aria-label="编辑">
                     <Pencil :size="13" />
                   </button>
                   <button
                     class="auto-icon-btn auto-icon-btn--danger"
                     title="删除"
                     @click="handleDelete(task)"
-                  >
+                   aria-label="删除">
                     <Trash2 :size="13" />
                   </button>
                 </div>
@@ -542,7 +542,7 @@ onUnmounted(() => {
       <div class="auto-dialog">
         <div class="auto-dialog-head">
           <p class="auto-dialog-title">运行结果</p>
-          <button class="auto-icon-btn" title="关闭" @click="runDetail = null">
+          <button class="auto-icon-btn" title="关闭" @click="runDetail = null" aria-label="关闭">
             <X :size="15" />
           </button>
         </div>

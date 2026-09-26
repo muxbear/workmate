@@ -165,7 +165,11 @@ onUnmounted(() => {
   <aside class="sidebar" :class="{ collapsed: uiStore.sidebarCollapsed }">
     <div class="side-top">
       <span class="logo">Ke-Work</span>
-      <button class="collapse-btn" @click="uiStore.toggleSidebar">
+      <button
+        class="collapse-btn"
+        :aria-label="uiStore.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+        @click="uiStore.toggleSidebar"
+      >
         <PanelLeftClose v-if="!uiStore.sidebarCollapsed" :size="14" />
         <PanelLeftOpen v-else :size="14" />
       </button>
@@ -191,7 +195,7 @@ onUnmounted(() => {
           v-if="searchQuery"
           class="search-clear-btn"
           @click.stop="clearSearch"
-        >
+         aria-label="清空搜索">
           <X :size="12" />
         </button>
       </div>

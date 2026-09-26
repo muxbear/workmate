@@ -159,7 +159,7 @@ onMounted(() => {
             placeholder="搜索专家..."
             @keyup.enter="handleSearch"
           />
-          <button v-if="expertStore.searchQuery" class="search-clear" @click="expertStore.searchQuery = ''; handleSearch()">
+          <button v-if="expertStore.searchQuery" class="search-clear" @click="expertStore.searchQuery = ''; handleSearch()" aria-label="清空搜索">
             <X :size="12" />
           </button>
         </div>

@@ -75,7 +75,7 @@ const permStats = computed(() => {
         :class="checkState"
         :disabled="readonly"
         @click="emit('toggle', node.id)"
-      >
+       aria-label="切换勾选">
         <Check v-if="checkState === 'all'" :size="10" stroke-width="3" />
         <Minus v-else-if="checkState === 'partial'" :size="10" stroke-width="3" />
       </button>
@@ -84,7 +84,7 @@ const permStats = computed(() => {
         v-if="childrenList.length > 0"
         class="expand-btn"
         @click="emit('toggleExpand', node.id)"
-      >
+       aria-label="展开或折叠">
         <ChevronDown v-if="isExpanded()" :size="14" />
         <ChevronRight v-else :size="14" />
       </button>

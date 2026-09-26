@@ -162,7 +162,7 @@ function handleNewConversation() {
   >
     <!-- 收起态：仅保留展开按钮 -->
     <div v-if="uiStore.rightPanelCollapsed" class="panel-collapsed">
-      <button class="expand-btn" title="展开右栏" @click="uiStore.toggleRightPanel">
+      <button class="expand-btn" title="展开右栏" @click="uiStore.toggleRightPanel" aria-label="展开右栏">
         <PanelRightOpen :size="14" />
       </button>
     </div>
@@ -170,7 +170,7 @@ function handleNewConversation() {
     <div v-else class="panel-expanded">
       <div class="panel-bar">
         <!-- 收起按钮：位于「历史对话」标签页左侧 -->
-        <button class="collapse-btn" title="收起右栏" @click="uiStore.toggleRightPanel">
+        <button class="collapse-btn" title="收起右栏" @click="uiStore.toggleRightPanel" aria-label="收起右栏">
           <PanelRightClose :size="14" />
         </button>
 
@@ -209,7 +209,7 @@ function handleNewConversation() {
           title="标签页向左移动"
           :disabled="!canScrollLeft"
           @click="scrollTabs(-1)"
-        >
+         aria-label="标签页向左移动">
           <ChevronLeft :size="14" />
         </button>
         <button
@@ -218,7 +218,7 @@ function handleNewConversation() {
           title="标签页向右移动"
           :disabled="!canScrollRight"
           @click="scrollTabs(1)"
-        >
+         aria-label="标签页向右移动">
           <ChevronRight :size="14" />
         </button>
 
@@ -229,7 +229,7 @@ function handleNewConversation() {
           :title="uiStore.rightPanelFullscreen ? '还原' : '全屏'"
           :aria-pressed="uiStore.rightPanelFullscreen"
           @click="uiStore.toggleRightPanelFullscreen"
-        >
+         :aria-label="uiStore.rightPanelFullscreen ? '还原' : '全屏'">
           <Minimize v-if="uiStore.rightPanelFullscreen" :size="14" />
           <Maximize v-else :size="14" />
         </button>
@@ -255,7 +255,7 @@ function handleNewConversation() {
               <button
                 class="delete-btn"
                 @click.stop="handleDeleteHistory(item.thread_id, item.title)"
-              >
+               aria-label="删除">
                 <Trash2 :size="14" />
               </button>
             </div>

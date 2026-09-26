@@ -451,7 +451,7 @@ function totalPages() {
           <!-- Header -->
           <div class="modal-header">
             <span class="modal-title">{{ isEditing ? '编辑技能' : '创建技能' }}</span>
-            <button class="modal-close" @click="emit('close')">
+            <button class="modal-close" @click="emit('close')" aria-label="关闭">
               <X :size="18" />
             </button>
           </div>

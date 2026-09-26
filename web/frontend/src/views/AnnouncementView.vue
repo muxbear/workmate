@@ -598,10 +598,10 @@ onMounted(() => {
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }: { row: AnnouncementItem }">
                 <div class="ops">
-                  <button class="op-btn" title="查看" @click="openViewAnnouncement(row)">
+                  <button class="op-btn" title="查看" @click="openViewAnnouncement(row)" aria-label="查看">
                     <Eye :size="14" />
                   </button>
-                  <button class="op-btn" title="编辑" @click="openEditAnnouncement(row)">
+                  <button class="op-btn" title="编辑" @click="openEditAnnouncement(row)" aria-label="编辑">
                     <Edit3 :size="14" />
                   </button>
                   <button
@@ -609,14 +609,14 @@ onMounted(() => {
                     class="op-btn op-btn--publish"
                     title="发布"
                     @click="handlePublish(row)"
-                  >
+                   aria-label="发布">
                     <Send :size="14" />
                   </button>
                   <button
                     class="op-btn op-btn--danger"
                     title="删除"
                     @click="handleDeleteAnnouncement(row)"
-                  >
+                   aria-label="删除">
                     <Trash2 :size="14" />
                   </button>
                 </div>
@@ -740,17 +740,17 @@ onMounted(() => {
             <el-table-column label="操作" width="130" fixed="right">
               <template #default="{ row }: { row: AdminNotificationItem }">
                 <div class="ops">
-                  <button class="op-btn" title="查看" @click="openViewNotification(row)">
+                  <button class="op-btn" title="查看" @click="openViewNotification(row)" aria-label="查看">
                     <Eye :size="14" />
                   </button>
-                  <button class="op-btn" title="编辑" @click="openEditNotification(row)">
+                  <button class="op-btn" title="编辑" @click="openEditNotification(row)" aria-label="编辑">
                     <Edit3 :size="14" />
                   </button>
                   <button
                     class="op-btn op-btn--danger"
                     title="删除"
                     @click="handleDeleteNotification(row)"
-                  >
+                   aria-label="删除">
                     <Trash2 :size="14" />
                   </button>
                 </div>

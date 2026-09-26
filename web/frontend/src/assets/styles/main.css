@@ -33,3 +33,25 @@ html, body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-medium);
 }
+/* === 无障碍工具类（迭代 6 T6.6） === */
+
+/*
+ * 只给读屏软件看的文本。
+ *
+ * 用于两类场景：图标按钮的可访问名字（不过本仓的图标按钮统一用 aria-label，
+ * 更省事）、以及需要额外上下文但视觉上多余的说明（如"（必填）"、"打开新窗口"）。
+ *
+ * 用 clip-path 而不是 `display: none` / `visibility: hidden`——后两者会把内容
+ * 从无障碍树里一并移除，读屏软件同样看不到。
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

@@ -217,7 +217,7 @@ onUnmounted(() => {
   <div class="plus-menu" :class="{ 'plus-menu--narrow': isNarrow }">
     <div v-if="isNarrow" class="plus-menu-head">
       <span>添加</span>
-      <button class="plus-menu-close" title="关闭" @click="emit('close')">
+      <button class="plus-menu-close" title="关闭" @click="emit('close')" aria-label="关闭">
         <X :size="14" />
       </button>
     </div>

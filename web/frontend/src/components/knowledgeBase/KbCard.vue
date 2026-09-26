@@ -116,7 +116,14 @@ function metricFormat(val: number): string {
 </script>
 
 <template>
-  <div class="kb-card" @click="emit('click')">
+  <div
+    class="kb-card"
+    role="button"
+    tabindex="0"
+    @click="emit('click')"
+    @keydown.enter="emit('click')"
+    @keydown.space.prevent="emit('click')"
+  >
     <!-- 头部 -->
     <div class="card-header">
       <div class="card-header-left">
@@ -141,7 +148,7 @@ function metricFormat(val: number): string {
           {{ statusCfg.label }}
         </el-tag>
         <el-dropdown v-if="canOrganize()" trigger="click" @command="handleCommand">
-          <button class="card-menu-btn" :disabled="busy" title="更多操作">
+          <button class="card-menu-btn" :disabled="busy" title="更多操作" aria-label="更多操作">
             <MoreVertical :size="16" />
           </button>
           <template #dropdown>

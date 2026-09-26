@@ -215,7 +215,12 @@ async function handleRetryFailed() {
       <!-- 拖拽区 -->
       <div
         class="dropzone"
+        role="button"
+        tabindex="0"
+        aria-label="选择或拖入文件上传"
         @click="triggerFileInput"
+        @keydown.enter="triggerFileInput"
+        @keydown.space.prevent="triggerFileInput"
         @dragover="handleDragOver"
         @drop="handleDrop"
       >
@@ -259,7 +264,7 @@ async function handleRetryFailed() {
             :show-text="false"
             class="file-item-progress"
           />
-          <button v-if="!uploading" class="file-item-del" @click="removeFile(i)">
+          <button v-if="!uploading" class="file-item-del" @click="removeFile(i)" aria-label="删除">
             <X :size="14" />
           </button>
         </div>

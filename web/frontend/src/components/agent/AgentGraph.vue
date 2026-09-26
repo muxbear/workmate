@@ -51,7 +51,7 @@ function minimapNodeColor(node: { data?: { agent?: { status?: string } } }) {
           class="graph-header-btn"
           :title="isLocked ? '解锁' : '锁定'"
           @click="isLocked = !isLocked"
-        >
+         :aria-label="isLocked ? '解锁' : '锁定'">
           <Unlock v-if="isLocked" :size="16" />
           <Lock v-else :size="16" />
         </button>
@@ -59,7 +59,7 @@ function minimapNodeColor(node: { data?: { agent?: { status?: string } } }) {
           class="graph-header-btn"
           :title="isMaximized ? '还原' : '最大化'"
           @click="toggleMaximize"
-        >
+         :aria-label="isMaximized ? '还原' : '最大化'">
           <Minimize2 v-if="isMaximized" :size="16" />
           <Maximize2 v-else :size="16" />
         </button>

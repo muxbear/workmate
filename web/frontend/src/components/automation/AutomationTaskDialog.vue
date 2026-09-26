@@ -546,7 +546,7 @@ onUnmounted(() => {
           <p class="atd-title">{{ task ? '编辑自动化' : '新建自动化' }}</p>
           <p class="atd-subtitle">配置提示词与执行频率，到点后自动唤醒智能体执行</p>
         </div>
-        <button class="atd-close" title="关闭" @click="emit('close')">
+        <button class="atd-close" title="关闭" @click="emit('close')" aria-label="关闭">
           <X :size="16" />
         </button>
       </div>
@@ -622,7 +622,7 @@ onUnmounted(() => {
                   class="atd-tool"
                   title="添加文件 / 技能 / 专家 / 知识库 / 模式"
                   @click="openMenu('root')"
-                >
+                 aria-label="添加文件 / 技能 / 专家 / 知识库 / 模式">
                   <Plus :size="15" />
                 </button>
                 <div v-if="menuOpen" class="atd-menu">
@@ -733,7 +733,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <button class="atd-tool" title="上传本地文件" @click="openPicker('file')">
+              <button class="atd-tool" title="上传本地文件" @click="openPicker('file')" aria-label="上传本地文件">
                 <Paperclip :size="15" />
               </button>
 

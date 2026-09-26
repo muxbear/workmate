@@ -164,7 +164,7 @@ function getStatusBadgeClass(status: string) {
             v-if="store.treeSearch"
             class="od-tree-search-clear"
             @click="store.treeSearch = ''"
-          >
+           aria-label="清空搜索">
             <X :size="12" />
           </button>
         </div>
@@ -460,10 +460,10 @@ function getStatusBadgeClass(status: string) {
                     </div>
                   </div>
                   <div class="od-card-card-actions" @click.stop>
-                    <button class="od-icon-btn" title="编辑" @click="openEdit(child)">
+                    <button class="od-icon-btn" title="编辑" @click="openEdit(child)" aria-label="编辑">
                       <Edit2 :size="14" />
                     </button>
-                    <button class="od-icon-btn danger" title="删除" @click="openDelete([child.id])">
+                    <button class="od-icon-btn danger" title="删除" @click="openDelete([child.id])" aria-label="删除">
                       <Trash2 :size="14" />
                     </button>
                   </div>
@@ -551,10 +551,10 @@ function getStatusBadgeClass(status: string) {
                       </span>
                     </td>
                     <td class="od-td-actions" @click.stop>
-                      <button class="od-icon-btn" title="编辑" @click="openEdit(child)">
+                      <button class="od-icon-btn" title="编辑" @click="openEdit(child)" aria-label="编辑">
                         <Edit2 :size="14" />
                       </button>
-                      <button class="od-icon-btn danger" title="删除" @click="openDelete([child.id])">
+                      <button class="od-icon-btn danger" title="删除" @click="openDelete([child.id])" aria-label="删除">
                         <Trash2 :size="14" />
                       </button>
                     </td>
@@ -577,7 +577,7 @@ function getStatusBadgeClass(status: string) {
               <Edit2 v-else :size="16" class="text-cyan" />
               {{ dialogMode === 'create' ? '新建子节点' : `编辑节点 · ${form.name}` }}
             </h2>
-            <button class="od-dialog-close" @click="closeDialog"><X :size="16" /></button>
+            <button class="od-dialog-close" @click="closeDialog" aria-label="关闭"><X :size="16" /></button>
           </div>
           <div class="od-dialog-body">
             <div class="od-form-grid">

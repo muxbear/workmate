@@ -185,7 +185,7 @@ const categoryOptions = computed(() =>
               <h2 class="modal-title">{{ isNew ? '添加第三方工具' : `编辑 ${tool?.displayName || ''}` }}</h2>
               <p class="modal-sub">{{ isNew ? '上传工具包或手动填写配置信息' : '修改工具基本信息与参数' }}</p>
             </div>
-            <button class="modal-close" @click="emit('close')">
+            <button class="modal-close" @click="emit('close')" aria-label="关闭">
               <X :size="18" />
             </button>
           </div>
@@ -280,7 +280,7 @@ const categoryOptions = computed(() =>
                       <input v-model="p.required" type="checkbox" />
                       <span>必填</span>
                     </label>
-                    <button class="param-remove" @click="removeParam(idx)">
+                    <button class="param-remove" aria-label="移除参数" @click="removeParam(idx)">
                       <Trash2 :size="13" />
                     </button>
                   </div>
@@ -295,7 +295,7 @@ const categoryOptions = computed(() =>
                     <input v-model="newParam.required" type="checkbox" />
                     <span>必填</span>
                   </label>
-                  <button class="param-add-btn" :disabled="!newParam.key.trim() || !newParam.label.trim()" @click="addParam">
+                  <button class="param-add-btn" :disabled="!newParam.key.trim() || !newParam.label.trim()" @click="addParam" aria-label="添加参数">
                     <Plus :size="14" />
                   </button>
                 </div>
@@ -334,7 +334,7 @@ const categoryOptions = computed(() =>
                       <span v-else-if="parseState === 'error'" class="state-tag state-tag--error">
                         <XCircle :size="12" />解析失败
                       </span>
-                      <button class="btn-remove" @click="clearPkg">
+                      <button class="btn-remove" @click="clearPkg" aria-label="删除">
                         <X :size="14" />
                       </button>
                     </div>

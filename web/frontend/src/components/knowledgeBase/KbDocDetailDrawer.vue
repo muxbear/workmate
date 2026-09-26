@@ -131,7 +131,11 @@ function copyChunkContent() {
             v-for="chunk in filtered"
             :key="chunk.id"
             :class="['chunk-card', { 'chunk-card--sel': selectedChunk?.id === chunk.id }]"
+            role="button"
+            tabindex="0"
             @click="selectedChunk = chunk"
+            @keydown.enter="selectedChunk = chunk"
+            @keydown.space.prevent="selectedChunk = chunk"
           >
             <div class="chunk-card-top">
               <div class="chunk-card-badges">
@@ -175,7 +179,7 @@ function copyChunkContent() {
                 :disabled="!prevChunk"
                 @click="prevChunk && (selectedChunk = prevChunk)"
                 title="上一个分片"
-              >
+               aria-label="上一个分片">
                 <ChevronUp :size="14" />
               </button>
               <button
@@ -183,10 +187,10 @@ function copyChunkContent() {
                 :disabled="!nextChunk"
                 @click="nextChunk && (selectedChunk = nextChunk)"
                 title="下一个分片"
-              >
+               aria-label="下一个分片">
                 <ChevronDown :size="14" />
               </button>
-              <button class="nav-btn" title="复制分片内容" @click="copyChunkContent">
+              <button class="nav-btn" title="复制分片内容" @click="copyChunkContent" aria-label="复制分片内容">
                 <Check v-if="copiedId === selectedChunk.id" :size="14" class="copy-check-icon" />
                 <Copy v-else :size="14" />
               </button>

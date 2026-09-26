@@ -287,13 +287,13 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
               <button
                 :class="{ active: store.viewMode === 'card' }"
                 @click="store.viewMode = 'card'"
-              >
+               aria-label="卡片视图">
                 <Grid3X3 :size="16" />
               </button>
               <button
                 :class="{ active: store.viewMode === 'table' }"
                 @click="store.viewMode = 'table'"
-              >
+               aria-label="表格视图">
                 <List :size="16" />
               </button>
             </div>
@@ -336,10 +336,10 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
               </span>
             </div>
             <div class="user-card-actions">
-              <button class="action-btn" title="查看详情" @click.stop="openDetail(user)"><Eye :size="14" /></button>
-              <button class="action-btn" title="绑定账号" @click.stop="openBindDialog(user)"><Link2 :size="14" /></button>
-              <button class="action-btn" title="编辑" @click.stop="openEditDialog(user)"><Edit2 :size="14" /></button>
-              <button class="action-btn danger" title="删除" @click.stop="handleDeleteUser(user)"><Trash2 :size="14" /></button>
+              <button class="action-btn" title="查看详情" @click.stop="openDetail(user)" aria-label="查看详情"><Eye :size="14" /></button>
+              <button class="action-btn" title="绑定账号" @click.stop="openBindDialog(user)" aria-label="绑定账号"><Link2 :size="14" /></button>
+              <button class="action-btn" title="编辑" @click.stop="openEditDialog(user)" aria-label="编辑"><Edit2 :size="14" /></button>
+              <button class="action-btn danger" title="删除" @click.stop="handleDeleteUser(user)" aria-label="删除"><Trash2 :size="14" /></button>
             </div>
           </div>
           <div v-if="totalFiltered === 0" class="empty-state">
@@ -382,10 +382,10 @@ watch([() => store.selectedDeptId, () => store.searchQuery], () => {
                 <td>{{ user.joinDate }}</td>
                 <td>
                   <div class="row-actions">
-                    <button class="action-btn" title="详情" @click.stop="openDetail(user)"><Eye :size="14" /></button>
-                    <button class="action-btn" title="绑定账号" @click.stop="openBindDialog(user)"><Link2 :size="14" /></button>
-                    <button class="action-btn" title="编辑" @click.stop="openEditDialog(user)"><Edit2 :size="14" /></button>
-                    <button class="action-btn danger" title="删除" @click.stop="handleDeleteUser(user)"><Trash2 :size="14" /></button>
+                    <button class="action-btn" title="详情" @click.stop="openDetail(user)" aria-label="详情"><Eye :size="14" /></button>
+                    <button class="action-btn" title="绑定账号" @click.stop="openBindDialog(user)" aria-label="绑定账号"><Link2 :size="14" /></button>
+                    <button class="action-btn" title="编辑" @click.stop="openEditDialog(user)" aria-label="编辑"><Edit2 :size="14" /></button>
+                    <button class="action-btn danger" title="删除" @click.stop="handleDeleteUser(user)" aria-label="删除"><Trash2 :size="14" /></button>
                   </div>
                 </td>
               </tr>

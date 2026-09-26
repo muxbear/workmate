@@ -150,7 +150,7 @@ onMounted(() => {
     <div v-else class="puzzle-container">
       <div class="puzzle-header">
         <span class="puzzle-label">请拖动滑块，使拼图与缺口对齐</span>
-        <button class="refresh-btn" title="刷新验证码" @click="refresh">
+        <button class="refresh-btn" title="刷新验证码" @click="refresh" aria-label="刷新验证码">
           <RefreshCw :size="14" />
         </button>
       </div>

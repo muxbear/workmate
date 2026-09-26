@@ -52,7 +52,7 @@ const isMatch = computed(() =>
       <button
         :class="['od-tree-toggle', { invisible: !hasChildren }]"
         @click.stop="emit('toggle', node.id)"
-      >
+       aria-label="展开或折叠">
         <ChevronDown v-if="isExpanded" :size="14" />
         <ChevronRight v-else :size="14" />
       </button>
@@ -73,14 +73,14 @@ const isMatch = computed(() =>
           class="od-tree-action add"
           title="添加子节点"
           @click.stop="emit('addChild', node.id)"
-        >
+         aria-label="添加子节点">
           <Plus :size="12" />
         </button>
         <button
           class="od-tree-action edit"
           title="编辑"
           @click.stop="emit('edit', node)"
-        >
+         aria-label="编辑">
           <Edit2 :size="12" />
         </button>
         <button
@@ -88,7 +88,7 @@ const isMatch = computed(() =>
           class="od-tree-action del"
           title="删除"
           @click.stop="emit('delete', node)"
-        >
+         aria-label="删除">
           <Trash2 :size="12" />
         </button>
       </div>

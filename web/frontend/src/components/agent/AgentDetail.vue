@@ -364,13 +364,13 @@ function getStatusColor(status: string): string {
                   >
                     <FileText :size="12" class="tag-icon" />
                     {{ brief.filename }}
-                    <button class="tag-edit" @click.stop="openEditDialog(brief.filename, 'agent')">
+                    <button class="tag-edit" @click.stop="openEditDialog(brief.filename, 'agent')" aria-label="编辑">
                       <Pencil :size="11" />
                     </button>
                     <button
                       class="tag-delete"
                       @click.stop="handleRemoveFile(brief.filename, 'agent')"
-                    >
+                     aria-label="删除">
                       <Trash2 :size="11" />
                     </button>
                   </span>
@@ -468,13 +468,13 @@ function getStatusColor(status: string): string {
                   >
                     <FileText :size="12" class="tag-icon" />
                     {{ brief.filename }}
-                    <button class="tag-edit" @click.stop="openEditDialog(brief.filename, 'user')">
+                    <button class="tag-edit" @click.stop="openEditDialog(brief.filename, 'user')" aria-label="编辑">
                       <Pencil :size="11" />
                     </button>
                     <button
                       class="tag-delete"
                       @click.stop="handleRemoveFile(brief.filename, 'user')"
-                    >
+                     aria-label="删除">
                       <Trash2 :size="11" />
                     </button>
                   </span>
@@ -531,13 +531,13 @@ function getStatusColor(status: string): string {
                   >
                     <FileText :size="12" class="tag-icon" />
                     {{ brief.filename }}
-                    <button class="tag-edit" @click.stop="openEditDialog(brief.filename, 'mixture')">
+                    <button class="tag-edit" @click.stop="openEditDialog(brief.filename, 'mixture')" aria-label="编辑">
                       <Pencil :size="11" />
                     </button>
                     <button
                       class="tag-delete"
                       @click.stop="handleRemoveFile(brief.filename, 'mixture')"
-                    >
+                     aria-label="删除">
                       <Trash2 :size="11" />
                     </button>
                   </span>
@@ -605,7 +605,7 @@ function getStatusColor(status: string): string {
                 <button
                   class="tag-delete"
                   @click.stop="emit('remove-skill', skill.id)"
-                >
+                 aria-label="删除">
                   <Trash2 :size="11" />
                 </button>
               </span>
@@ -663,7 +663,7 @@ function getStatusColor(status: string): string {
               <button
                 class="tag-delete"
                 @click="emit('remove-config', activeSection.type as ConfigType, item)"
-              >
+               aria-label="删除">
                 <Trash2 :size="11" />
               </button>
             </span>

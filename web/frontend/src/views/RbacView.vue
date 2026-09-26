@@ -312,7 +312,7 @@ function getPermStats(node: PermResource) {
                     :class="store.getCheckState(child.id)"
                     :disabled="store.readonly"
                     @click="store.togglePerm(child.id)"
-                  >
+                   aria-label="切换勾选">
                     <Check v-if="store.getCheckState(child.id) === 'all'" :size="10" stroke-width="3" />
                     <Minus v-else-if="store.getCheckState(child.id) === 'partial'" :size="10" stroke-width="3" />
                   </button>

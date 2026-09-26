@@ -100,14 +100,14 @@ function toggleTrace() {
         <button class="icon-btn" title="下一条" :disabled="!matchIds.length" @click="gotoSearch(1)">
           下
         </button>
-        <button class="icon-btn" title="关闭" @click="toggleSearch"><X :size="13" /></button>
+        <button class="icon-btn" title="关闭" @click="toggleSearch" aria-label="关闭"><X :size="13" /></button>
       </div>
       <button
         class="icon-btn"
         :class="{ active: searchOpen }"
         title="对话内搜索"
         @click="toggleSearch"
-      >
+       aria-label="对话内搜索">
         <Search :size="15" />
       </button>
       <button
@@ -115,7 +115,7 @@ function toggleTrace() {
         :class="{ active: chatStore.shareMode }"
         title="分享"
         @click="toggleSharePanel"
-      >
+       aria-label="分享">
         <Link2 :size="15" />
       </button>
       <div class="menu-wrap">
@@ -124,7 +124,7 @@ function toggleTrace() {
           :class="{ active: historyOpen }"
           title="历史提问"
           @click="historyOpen = !historyOpen"
-        >
+         aria-label="历史提问">
           <MessagesSquare :size="15" />
           <ChevronDown :size="12" />
         </button>

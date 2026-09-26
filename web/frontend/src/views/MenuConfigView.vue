@@ -313,8 +313,8 @@ function handleBack() {
                   <td>{{ PERM_STATUS_CONFIG[b.status].label }}</td>
                   <td>{{ store.roleCoverages.filter(rc => rc.hasPermission).length }} 个角色</td>
                   <td>
-                    <button class="sm-btn" @click="openEdit(b)"><Edit2 :size="14" /></button>
-                    <button v-if="!b.isBuiltin" class="sm-btn danger" @click="handleDelete(b)"><Trash2 :size="14" /></button>
+                    <button class="sm-btn" @click="openEdit(b)" aria-label="编辑"><Edit2 :size="14" /></button>
+                    <button v-if="!b.isBuiltin" class="sm-btn danger" @click="handleDelete(b)" aria-label="删除"><Trash2 :size="14" /></button>
                   </td>
                 </tr>
               </tbody>

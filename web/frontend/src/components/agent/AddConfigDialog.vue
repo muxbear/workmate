@@ -104,7 +104,7 @@ watch(
                 </p>
               </div>
             </div>
-            <button class="modal-close" @click="handleClose">
+            <button class="modal-close" @click="handleClose" aria-label="关闭">
               <X :size="18" />
             </button>
           </div>

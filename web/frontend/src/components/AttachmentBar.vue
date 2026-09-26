@@ -56,7 +56,7 @@ function triggerUpload() {
           v-if="att.status !== 'uploading'"
           class="delete-btn"
           @click.stop="chatStore.removeAttachment(att.id)"
-        >
+         aria-label="删除">
           <X :size="10" />
         </button>
       </div>

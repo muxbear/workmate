@@ -264,7 +264,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
             class="search-input"
             @keyup.enter="handleSearchEnter"
           />
-          <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+          <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''" aria-label="清空搜索">
             <X :size="14" />
           </button>
         </div>
@@ -274,12 +274,12 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
           <el-option v-for="t in entityTypes" :key="t" :label="t" :value="t" />
         </el-select>
 
-        <button class="toolbar-btn" :title="isLocked ? '解锁布局（允许拖拽节点）' : '锁定布局（禁止拖拽节点）'" @click="isLocked = !isLocked">
+        <button class="toolbar-btn" :title="isLocked ? '解锁布局（允许拖拽节点）' : '锁定布局（禁止拖拽节点）'" @click="isLocked = !isLocked" :aria-label="isLocked ? '解锁布局（允许拖拽节点）' : '锁定布局（禁止拖拽节点）'">
           <Lock v-if="isLocked" :size="16" />
           <Unlock v-else :size="16" />
         </button>
 
-        <button class="toolbar-btn" title="重新计算力导向布局" :disabled="loadingLayout" @click="handleResetLayout">
+        <button class="toolbar-btn" title="重新计算力导向布局" :disabled="loadingLayout" @click="handleResetLayout" aria-label="重新计算力导向布局">
           <RefreshCw :size="16" :class="{ 'spin': loadingLayout }" />
         </button>
 
@@ -371,7 +371,12 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
                   'entity-item--dimmed': selectedEntityId && !connectedNodeIds.has(e.id),
                 },
               ]"
+              role="button"
+              tabindex="0"
+              :aria-label="`查看实体 ${e.name}`"
               @click="navigateToEntity(e.id)"
+              @keydown.enter="navigateToEntity(e.id)"
+              @keydown.space.prevent="navigateToEntity(e.id)"
             >
               <div class="entity-item-dot" :style="{ background: ENTITY_TYPE_COLORS[e.type] || ENTITY_TYPE_FALLBACK_COLOR }" />
               <div class="entity-item-info">
@@ -390,7 +395,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
         <div v-if="selectedEntity" class="panel-section panel-detail">
           <div class="detail-header">
             <h4 class="panel-title">实体详情</h4>
-            <button class="detail-close" @click="selectEntity(null)">
+            <button class="detail-close" @click="selectEntity(null)" aria-label="关闭">
               <X :size="14" />
             </button>
           </div>
@@ -452,7 +457,11 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
                 <span
                   class="relation-entity"
                   :class="{ 'relation-link': r.from !== selectedEntityId }"
+                  role="button"
+                  tabindex="0"
                   @click="r.from !== selectedEntityId && navigateToEntity(r.from)"
+                  @keydown.enter="r.from !== selectedEntityId && navigateToEntity(r.from)"
+                  @keydown.space.prevent="r.from !== selectedEntityId && navigateToEntity(r.from)"
                 >
                   {{ props.kb.entitiesData.find(e => e.id === r.from)?.name || r.from }}
                 </span>
@@ -460,7 +469,11 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
                 <span
                   class="relation-entity"
                   :class="{ 'relation-link': r.to !== selectedEntityId }"
+                  role="button"
+                  tabindex="0"
                   @click="r.to !== selectedEntityId && navigateToEntity(r.to)"
+                  @keydown.enter="r.to !== selectedEntityId && navigateToEntity(r.to)"
+                  @keydown.space.prevent="r.to !== selectedEntityId && navigateToEntity(r.to)"
                 >
                   {{ props.kb.entitiesData.find(e => e.id === r.to)?.name || r.to }}
                 </span>
@@ -474,7 +487,12 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
                 v-for="e in relatedEntities"
                 :key="e.id"
                 class="entity-item entity-item--sm"
+                role="button"
+                tabindex="0"
+                :aria-label="`查看实体 ${e.name}`"
                 @click="navigateToEntity(e.id)"
+                @keydown.enter="navigateToEntity(e.id)"
+                @keydown.space.prevent="navigateToEntity(e.id)"
               >
                 <div class="entity-item-dot" :style="{ background: ENTITY_TYPE_COLORS[e.type] || ENTITY_TYPE_FALLBACK_COLOR }" />
                 <span class="entity-item-name">{{ e.name }}</span>

@@ -386,7 +386,15 @@ function handleEditFragment(doc: KBDoc) {
                   <td class="cell-text">{{ doc.size }}</td>
                   <td class="cell-text">{{ doc.chunks || '-' }}</td>
                   <td class="cell-text">{{ doc.entities || '-' }} / {{ doc.relations || '-' }}</td>
-                  <td class="col-status" @click.stop="toggleDocPanel(doc)">
+                  <td
+                    class="col-status"
+                    role="button"
+                    tabindex="0"
+                    :aria-label="`查看《${doc.name}》的索引情况`"
+                    @click.stop="toggleDocPanel(doc)"
+                    @keydown.enter.stop="toggleDocPanel(doc)"
+                    @keydown.space.prevent.stop="toggleDocPanel(doc)"
+                  >
                     <div class="status-cell">
                       <el-tooltip
                         v-if="doc.status === 'failed' && doc.errorMessage"
@@ -428,13 +436,13 @@ function handleEditFragment(doc: KBDoc) {
                   <td class="col-action">
                     <div class="action-row">
                       <el-tooltip content="查看详情" placement="top" :show-after="300">
-                        <button class="action-btn action-view" @click.stop="handleViewDetail(doc)" title="查看详情">
+                        <button class="action-btn action-view" @click.stop="handleViewDetail(doc)" title="查看详情" aria-label="查看详情">
                           <Eye :size="14" />
                         </button>
                       </el-tooltip>
                       <!-- 下载原文是读操作：能看正文的人就能下载，不受 readonly 限制 -->
                       <el-tooltip content="下载原文" placement="top" :show-after="300">
-                        <button class="action-btn" @click.stop="handleDownload(doc)" title="下载原文">
+                        <button class="action-btn" @click.stop="handleDownload(doc)" title="下载原文" aria-label="下载原文">
                           <Download :size="14" />
                         </button>
                       </el-tooltip>
@@ -444,7 +452,7 @@ function handleEditFragment(doc: KBDoc) {
                           @click.stop="handleEditFragment(doc)"
                           title="编辑分片"
                           :disabled="doc.status === 'failed'"
-                        >
+                         aria-label="编辑分片">
                           <Scissors :size="14" />
                         </button>
                       </el-tooltip>
@@ -458,7 +466,7 @@ function handleEditFragment(doc: KBDoc) {
                           class="action-btn"
                           @click.stop="handleRetry(doc.id)"
                           title="重试"
-                        >
+                         aria-label="重试">
                           <RefreshCw :size="14" />
                         </button>
                       </el-tooltip>
@@ -472,12 +480,12 @@ function handleEditFragment(doc: KBDoc) {
                           class="action-btn"
                           @click.stop="handleCancel(doc.id)"
                           title="取消索引"
-                        >
+                         aria-label="取消索引">
                           <Ban :size="14" />
                         </button>
                       </el-tooltip>
                       <el-tooltip v-if="!readonly" content="删除" placement="top" :show-after="300">
-                        <button class="action-btn action-del" @click.stop="handleDelete(doc.id)" title="删除">
+                        <button class="action-btn action-del" @click.stop="handleDelete(doc.id)" title="删除" aria-label="删除">
                           <Trash2 :size="14" />
                         </button>
                       </el-tooltip>

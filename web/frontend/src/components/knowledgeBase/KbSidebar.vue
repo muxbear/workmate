@@ -111,7 +111,7 @@ async function respond(shareId: string, accept: boolean) {
           </button>
 
           <el-dropdown trigger="hover" placement="bottom-end" @command="showMore(group)">
-            <button class="kb-group-more" :title="`${group.label}操作`">
+            <button class="kb-group-more" :title="`${group.label}操作`" :aria-label="`${group.label}操作`">
               <MoreVertical :size="15" />
             </button>
             <template #dropdown>
@@ -126,7 +126,7 @@ async function respond(shareId: string, accept: boolean) {
             :class="{ 'is-collapsed': !store.groupExpanded[group.id] }"
             :title="store.groupExpanded[group.id] ? '折叠' : '展开'"
             @click="selectGroup(group)"
-          >
+           :aria-label="store.groupExpanded[group.id] ? '折叠' : '展开'">
             <ChevronDown :size="14" />
           </button>
         </div>
@@ -187,7 +187,7 @@ async function respond(shareId: string, accept: boolean) {
                   ? emit('share-manage', kb.id)
                   : emit('cancel-share', kb.id)"
               >
-                <button class="kb-lib-more" :title="`「${kb.name}」操作`">
+                <button class="kb-lib-more" :title="`「${kb.name}」操作`" :aria-label="`「${kb.name}」操作`">
                   <MoreVertical :size="15" />
                 </button>
                 <template #dropdown>

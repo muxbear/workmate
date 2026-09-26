@@ -115,10 +115,10 @@ function handleBundleDownload(): void {
         class="document-action"
         :title="tab.bundleTurn ? '打包下载本轮交付物' : '打包下载整个会话交付物'"
         @click="handleBundleDownload"
-      >
+       :aria-label="tab.bundleTurn ? '打包下载本轮交付物' : '打包下载整个会话交付物'">
         <Package :size="14" />
       </button>
-      <button class="document-action" title="下载" @click="handleDownload">
+      <button class="document-action" title="下载" @click="handleDownload" aria-label="下载">
         <Download :size="14" />
       </button>
     </div>

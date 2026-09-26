@@ -250,7 +250,7 @@ watch(
             data-plus-trigger
             title="添加文件 / 专家 / 技能 / 连接器"
             @click.stop="plusOpen = !plusOpen"
-          >
+           aria-label="添加文件 / 专家 / 技能 / 连接器">
             <Plus :size="16" />
           </button>
           <ChatPlusMenu
@@ -261,7 +261,7 @@ watch(
             @navigate="onNavigate"
           />
         </div>
-        <button class="tool-btn" title="上传本地文件" @click="openPicker('file')">
+        <button class="tool-btn" title="上传本地文件" @click="openPicker('file')" aria-label="上传本地文件">
           <Paperclip :size="16" />
         </button>
         <button
@@ -270,7 +270,7 @@ watch(
           title="AI 改写润色"
           :disabled="polishing"
           @click="handlePolish"
-        >
+         aria-label="AI 改写润色">
           <Sparkles :size="16" />
         </button>
         <div v-if="polishBackup" class="polish-chip">
@@ -280,10 +280,10 @@ watch(
         </div>
         <div class="toolbar-spacer"></div>
         <ModelSelector />
-        <button v-if="!chatStore.loading" class="send-btn" :disabled="!canSend" @click="handleSend">
+        <button v-if="!chatStore.loading" class="send-btn" :disabled="!canSend" @click="handleSend" aria-label="发送">
           <ArrowUp :size="18" />
         </button>
-        <button v-else class="stop-btn" title="停止生成" @click="chatStore.stopGeneration()">
+        <button v-else class="stop-btn" title="停止生成" @click="chatStore.stopGeneration()" aria-label="停止生成">
           <Square :size="14" />
         </button>
       </div>

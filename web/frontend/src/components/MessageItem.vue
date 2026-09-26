@@ -271,7 +271,7 @@ function fileExtension(filename: string): string {
             class="artifact-download"
             title="下载"
             @click.stop="chatStore.downloadArtifact(artifact)"
-          >
+           aria-label="下载">
             <Download :size="12" />
           </button>
         </div>
@@ -316,7 +316,7 @@ function fileExtension(filename: string): string {
           :class="{ active: message.feedback === 'up' }"
           title="点赞"
           @click="chatStore.setFeedback(message.id, 'up')"
-        >
+         aria-label="点赞">
           <ThumbsUp :size="14" />
         </button>
         <button
@@ -324,10 +324,10 @@ function fileExtension(filename: string): string {
           :class="{ active: message.feedback === 'down' }"
           title="点踩"
           @click="chatStore.setFeedback(message.id, 'down')"
-        >
+         aria-label="点踩">
           <ThumbsDown :size="14" />
         </button>
-        <button class="action-btn" title="分享" @click="handleShare">
+        <button class="action-btn" title="分享" @click="handleShare" aria-label="分享">
           <Share2 :size="14" />
         </button>
       </div>

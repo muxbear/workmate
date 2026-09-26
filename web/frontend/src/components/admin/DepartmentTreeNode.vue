@@ -35,7 +35,7 @@ function isSelected(): boolean {
         v-if="department.children.length > 0"
         class="expand-btn"
         @click.stop="emit('toggle', department.id)"
-      >
+       aria-label="展开或折叠">
         <ChevronDown v-if="isExpanded()" :size="14" />
         <ChevronRight v-else :size="14" />
       </button>

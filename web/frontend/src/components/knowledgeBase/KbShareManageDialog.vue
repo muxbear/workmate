@@ -130,7 +130,7 @@ function formatTime(iso: string | null): string {
             :disabled="busyId === s.id"
             title="移除该用户"
             @click="removeOne(s)"
-          >
+           aria-label="移除该用户">
             <Trash2 :size="14" />
           </button>
         </div>

@@ -358,12 +358,12 @@ async function handleCancelShare(kbId: string) {
                     </td>
                     <td class="col-date">{{ kb.updatedAt }}</td>
                     <td class="col-action">
-                      <button class="action-btn" @click.stop="handleSelectKb(kb)"><Eye :size="14" /></button>
+                      <button class="action-btn" @click.stop="handleSelectKb(kb)" aria-label="查看"><Eye :size="14" /></button>
                       <button
                         v-if="kb.isOwner"
                         class="action-btn action-del"
                         @click.stop="handleDeleteConfirm(kb)"
-                      ><Trash2 :size="14" /></button>
+                       aria-label="删除"><Trash2 :size="14" /></button>
                     </td>
                   </tr>
                   <tr v-if="store.filteredKbs.length === 0">

@@ -83,7 +83,7 @@ function generateQr() {
     </button>
     <button class="share-action" @click="openShareInBrowser">浏览器打开</button>
     <div class="share-spacer" />
-    <button class="share-close" title="关闭" @click="chatStore.closeSharePanel()">
+    <button class="share-close" title="关闭" @click="chatStore.closeSharePanel()" aria-label="关闭">
       <X :size="14" />
     </button>
   </div>

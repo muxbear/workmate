@@ -218,15 +218,15 @@ const pageSizeOptions = [10, 20, 50]
             </td>
             <td>
               <div class="row-actions">
-                <button class="action-btn" title="分配角色" @click="openRoleDialog(a)"><ShieldCheck :size="14" /></button>
-                <button class="action-btn" title="查看详情" @click="openDetail(a)"><Eye :size="14" /></button>
-                <button class="action-btn" title="编辑" @click="openEdit(a)"><Edit2 :size="14" /></button>
-                <button class="action-btn" :title="a.isActive ? '禁用' : '启用'" @click="handleToggleStatus(a)">
+                <button class="action-btn" title="分配角色" @click="openRoleDialog(a)" aria-label="分配角色"><ShieldCheck :size="14" /></button>
+                <button class="action-btn" title="查看详情" @click="openDetail(a)" aria-label="查看详情"><Eye :size="14" /></button>
+                <button class="action-btn" title="编辑" @click="openEdit(a)" aria-label="编辑"><Edit2 :size="14" /></button>
+                <button class="action-btn" :title="a.isActive ? '禁用' : '启用'" @click="handleToggleStatus(a)" :aria-label="a.isActive ? '禁用' : '启用'">
                   <ShieldBan v-if="a.isActive" :size="14" />
                   <CheckCircle2 v-else :size="14" />
                 </button>
-                <button class="action-btn" title="重置密码" @click="handleResetPassword(a)"><KeyRound :size="14" /></button>
-                <button class="action-btn danger" title="删除" @click="handleDelete(a)"><Trash2 :size="14" /></button>
+                <button class="action-btn" title="重置密码" @click="handleResetPassword(a)" aria-label="重置密码"><KeyRound :size="14" /></button>
+                <button class="action-btn danger" title="删除" @click="handleDelete(a)" aria-label="删除"><Trash2 :size="14" /></button>
               </div>
             </td>
           </tr>

@@ -61,7 +61,7 @@ onUnmounted(() => {
         <div class="captcha-modal">
           <div class="captcha-header">
             <span class="captcha-title">安全验证</span>
-            <button class="captcha-close" @click="close">
+            <button class="captcha-close" @click="close" aria-label="关闭">
               <X :size="18" />
             </button>
           </div>

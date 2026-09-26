@@ -218,7 +218,7 @@ watch(
                 </p>
               </div>
             </div>
-            <button class="modal-close" @click="handleClose">
+            <button class="modal-close" @click="handleClose" aria-label="关闭">
               <X :size="18" />
             </button>
           </div>
@@ -329,11 +329,11 @@ watch(
 
             <!-- Pagination -->
             <div v-if="total > 0" class="pagination">
-              <button class="page-btn" :disabled="page <= 1" @click="goToPage(page - 1)">
+              <button class="page-btn" :disabled="page <= 1" @click="goToPage(page - 1)" aria-label="上一页">
                 <ChevronLeft :size="14" />
               </button>
               <span class="page-info">{{ page }} / {{ totalPages }}</span>
-              <button class="page-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)">
+              <button class="page-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)" aria-label="下一页">
                 <ChevronRight :size="14" />
               </button>
             </div>
