@@ -168,6 +168,16 @@ async def refresh_counters_after_chunk_change(
     await recalc_kb_counters(db, kb_id)
     await db.commit()
 
+    # 图谱跟着切片改动走（迭代 6 T6.5）。**后台执行**：抽取是 LLM 调用，单篇几十秒到
+    # 几分钟，而这里是用户在等的请求、前端走默认 15s 超时——同步做必然"假失败"（服务端
+    # 成功、界面报错）。安排失败同样只记日志，不影响已经提交的切片操作。
+    try:
+        from api.knowledge_base.graph_service import schedule_document_graph_reextract
+
+        schedule_document_graph_reextract(vector_store, kb_id, doc_id)
+    except Exception:  # noqa: BLE001 - 图谱是次要派生数据，不该反过来让切片操作失败
+        logger.warning("安排图谱重抽失败 kb=%s doc=%s", kb_id, doc_id, exc_info=True)
+
 
 async def batch_operation(
     vector_store: BaseVectorStore,

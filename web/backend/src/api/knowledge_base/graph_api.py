@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_current_user_id, get_db, get_vector_store
 from api.knowledge_base.graph_service import (
     get_entity_detail,
     get_graph_data,
@@ -61,9 +61,14 @@ async def re_extract_graph(
     # 重抽图谱会清掉该库现有实体与关系并用 LLM 重建：属于库级写操作
     user_id: str = Depends(RequirePermission("knowledge:edit")),
 ):
-    """重新抽取知识图谱——遍历所有已索引文档，重建实体和关系。"""
+    """重新抽取知识图谱——遍历所有已索引文档，从**已存切片**重建实体和关系。"""
     kb = await _get_kb_or_404(db, kb_id, user_id)
-    entities_count, relations_count = await rebuild_graph_for_kb(db, kb.config, kb_id)
+    vector_store = get_vector_store(request)
+    if vector_store is None:
+        return {"code": 500, "data": None, "message": "向量库未就绪，无法重建图谱"}
+    entities_count, relations_count = await rebuild_graph_for_kb(
+        db, kb.config, kb_id, vector_store,
+    )
     await db.commit()
     return {
         "code": 0,

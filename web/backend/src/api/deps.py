@@ -31,6 +31,16 @@ def get_client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "127.0.0.1"
 
+
+def get_vector_store(request: Request):
+    """取应用启动时挂到 ``app.state`` 上的向量库实例。
+
+    启动未完成或因故没挂上时返回 ``None``——调用方据此给出可读错误，而不是让
+    ``AttributeError`` 冒到 500。此处不写返回类型：向量库是 ``BaseVectorStore``
+    的子类，但本模块不该为了一个标注去依赖 ``core.rag``。
+    """
+    return getattr(request.app.state, "vector_store", None)
+
 async def get_current_user_id(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):

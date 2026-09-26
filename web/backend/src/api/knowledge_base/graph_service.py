@@ -2,21 +2,20 @@
 
 import asyncio
 import logging
-import os
 import textwrap
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.knowledge_base.doc_state import is_graph_enabled
 from api.knowledge_base.entity_norm import (
     ENTITY_TYPES,
     canonical_type,
     name_key_expr,
     normalize_name,
 )
-from core.rag.loaders import create_default_loader_registry
-from core.rag.splitters import create_chunk_registry
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
 
@@ -277,12 +276,67 @@ async def get_graph_data(
     }
 
 
+def _chunk_text(chunk: Any) -> str:
+    """取切片正文：Document 用 ``page_content``，向量库返回的行用 ``chunk_text``。
+
+    显式认这两种形态，**不能**靠 ``str(chunk)`` 兜底——对 dict 求 str 会得到字典的
+    repr（``{'id': ..., 'chunk_text': ...}``），把库里的元数据一起喂给 LLM 抽取。
+    """
+    if hasattr(chunk, "page_content"):
+        return chunk.page_content or ""
+    if isinstance(chunk, dict):
+        # `or ""` 而不是默认参数：字段存在但值为 None 时，`str(None)` 会得到字面量
+        # "None" 并被当成正文喂给模型
+        return chunk.get("chunk_text") or ""
+    return str(chunk)
+
+
+async def _replace_document_graph(
+    db: AsyncSession,
+    kb_id: str,
+    doc_id: str,
+    texts: list[str],
+    entity_model: str | None,
+) -> tuple[int, int]:
+    """用给定文本重建**单篇文档**的图谱：删旧行 → 抽取 → 落库。
+
+    先删后插是必须的：删掉一段切片后，那段里抽出的实体与关系必须一起消失，
+    否则图谱会残留已经被用户删掉的内容。
+    """
+    await db.execute(
+        text("DELETE FROM knowledge_base_relations WHERE kb_id = :kb_id AND doc_id = :doc_id"),
+        {"kb_id": kb_id, "doc_id": doc_id},
+    )
+    await db.execute(
+        text("DELETE FROM knowledge_base_entities WHERE kb_id = :kb_id AND doc_id = :doc_id"),
+        {"kb_id": kb_id, "doc_id": doc_id},
+    )
+    await db.flush()
+
+    if not texts:
+        return 0, 0
+    entities, relations = await GraphExtractionService().extract_entities_and_relations(
+        kb_id, doc_id, texts, model_name=entity_model,
+    )
+    return len(entities), len(relations)
+
+
 async def rebuild_graph_for_kb(
     db: AsyncSession,
     kb_config: dict | None,
     kb_id: str,
+    vector_store: Any,
 ) -> tuple[int, int]:
-    """清除 KB 下的旧实体和关系，从剩余已索引文档重新抽取。"""
+    """清除 KB 下的旧实体和关系，从**已存切片**重新抽取。
+
+    **从已存切片抽，而不是重新解析文件**（迭代 6 T6.5）：此前这里会把每篇文档重新
+    解析、并按硬编码的 ``"recursive"`` 切分——而索引期用的是知识库配置里的策略。于是
+    "重建出来的图谱"与"索引时的图谱"可能来自**不同的文本**，重建还要重跑一遍解析
+    （慢且贵）。已存切片就是索引时真正入库的那份文本，用它既一致又便宜。
+
+    ``vector_store`` 取不到切片时该文档会被跳过并记日志——宁可少一篇，也不要用一份
+    与索引不一致的文本去改图谱。
+    """
     from db.models.knowledge_base import KnowledgeBase
     from db.models.knowledge_base_document import KnowledgeBaseDocument
 
@@ -314,28 +368,27 @@ async def rebuild_graph_for_kb(
             kb.relations_count = 0
         return 0, 0
 
-    loader_registry = create_default_loader_registry()
-    chunk_registry = create_chunk_registry(kb_config or {})
-    extractor = GraphExtractionService()
+    entity_model = (kb_config or {}).get("entity_model")
 
     total_entities = 0
     total_relations = 0
 
     for doc in doc_rows:
-        if not doc.storage_path or not os.path.exists(doc.storage_path):
-            logger.warning("File not found for graph rebuild: %s", doc.storage_path)
+        try:
+            rows = await vector_store.get_chunks_by_doc_id(kb_id, doc.id)
+        except Exception:
+            logger.exception("取已存切片失败，跳过该文档的图谱重建 doc=%s", doc.id)
+            continue
+        texts = [t for t in (_chunk_text(r) for r in rows) if t.strip()]
+        if not texts:
+            logger.warning("文档 %s 没有可用的已存切片，跳过图谱重建", doc.id)
             continue
         try:
-            documents = loader_registry.load(doc.storage_path, doc.type)
-            chunks = chunk_registry.split("recursive", documents)
-            entities, relations = await extractor.extract_entities_and_relations(
-                kb_id,
-                doc.id,
-                chunks,
-                model_name=(kb_config or {}).get("entity_model"),
+            entities_count, relations_count = await _replace_document_graph(
+                db, kb_id, doc.id, texts, entity_model,
             )
-            total_entities += len(entities)
-            total_relations += len(relations)
+            total_entities += entities_count
+            total_relations += relations_count
         except Exception:
             logger.exception("Graph rebuild failed for doc=%s", doc.id)
             continue
@@ -349,6 +402,123 @@ async def rebuild_graph_for_kb(
         kb.relations_count = len(result["relations"])
 
     return total_entities, total_relations
+
+
+#: 正在重抽图谱的文档，以及"跑完之后还需要再跑一次"的标记。
+#:
+#: 切片可能被连续编辑（`batch_operation` 一次保存多片、用户连着改好几处），每敲一次
+#: 就烧一次 LLM 抽取既慢又贵。用这两个集合把连续编辑**合并**：进行中时只记一个待办，
+#: 跑完再看一眼要不要补一次——最多两次抽取覆盖任意多次编辑。
+_reextract_inflight: set[tuple[str, str]] = set()
+_reextract_pending: set[tuple[str, str]] = set()
+
+#: 后台重抽任务的强引用。`asyncio.create_task` 只持弱引用，不存着可能在完成前被 GC。
+_reextract_tasks: set[asyncio.Task] = set()
+
+
+async def reextract_document_graph(
+    vector_store: Any,
+    kb_id: str,
+    doc_id: str,
+) -> None:
+    """按文档重抽图谱——从**已存切片**抽，不重新解析文件。
+
+    自开 session（后台任务里不能借用请求的 session，请求结束它就关了），失败只记
+    ``graph_error`` 与日志、**不抛**——切片编辑已经成功提交了，图谱跟不上是次要问题，
+    不该反过来把用户的操作判成失败。
+    """
+    from db.engine import async_session
+    from db.models.knowledge_base import KnowledgeBase
+    from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+    try:
+        async with async_session() as db:
+            kb = (
+                await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+            ).scalar_one_or_none()
+            if kb is None or not is_graph_enabled(kb.config):
+                return
+            rows = await vector_store.get_chunks_by_doc_id(kb_id, doc_id)
+            texts = [t for t in (_chunk_text(r) for r in rows) if t.strip()]
+
+            await _replace_document_graph(
+                db, kb_id, doc_id, texts, (kb.config or {}).get("entity_model"),
+            )
+            # 文档级计数与 graph_error 一起写回：抽取成功就把上一次的失败清掉
+            doc = (
+                await db.execute(
+                    select(KnowledgeBaseDocument).where(KnowledgeBaseDocument.id == doc_id)
+                )
+            ).scalar_one_or_none()
+            if doc is not None:
+                doc.graph_error = None
+            await db.commit()
+
+        from api.knowledge_base.doc_service import recalc_kb_counters
+
+        async with async_session() as db:
+            await recalc_kb_counters(db, kb_id)
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 - 后台任务，任何异常都不能逃逸
+        logger.exception("按文档重抽图谱失败 kb=%s doc=%s", kb_id, doc_id)
+        await _record_graph_error(kb_id, doc_id, f"切片改动后的图谱重抽失败: {exc}")
+
+
+async def _record_graph_error(kb_id: str, doc_id: str, message: str) -> None:
+    """把重抽失败写到文档行上，让它在界面上可见（而不是只躺在日志里）。"""
+    from db.engine import async_session
+    from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+    try:
+        async with async_session() as db:
+            doc = (
+                await db.execute(
+                    select(KnowledgeBaseDocument).where(KnowledgeBaseDocument.id == doc_id)
+                )
+            ).scalar_one_or_none()
+            if doc is not None:
+                doc.graph_error = message
+                await db.commit()
+    except Exception:  # noqa: BLE001 - 记录失败时不再尝试补救，避免无限下沉
+        logger.exception("写入 graph_error 失败 doc=%s", doc_id)
+
+
+async def _reextract_loop(vector_store: Any, kb_id: str, doc_id: str) -> None:
+    """跑重抽，并在期间又有编辑时补跑一次。"""
+    key = (kb_id, doc_id)
+    try:
+        while True:
+            _reextract_pending.discard(key)
+            await reextract_document_graph(vector_store, kb_id, doc_id)
+            if key not in _reextract_pending:
+                return
+    finally:
+        _reextract_inflight.discard(key)
+        _reextract_pending.discard(key)
+
+
+def schedule_document_graph_reextract(
+    vector_store: Any, kb_id: str, doc_id: str,
+) -> bool:
+    """安排"切片改动后按文档重抽图谱"，**后台执行**。
+
+    **为什么必须是后台**：抽取是 LLM 调用，单篇几十秒到几分钟都有过（既有的一次重建
+    里 7 篇有 3 篇撞上 300s 预算），而切片保存是用户在等的请求、前端走默认 15s 超时。
+    放同步路径上必然"假失败"——服务端成功、界面报错。这个坑项目在文件上传上踩过一次，
+    当时的结论同样是"把慢活挪出请求路径"。
+
+    Returns:
+        是否安排了新任务；已在跑（编辑被合并进这一轮）时返回 ``False``。
+    """
+    key = (kb_id, doc_id)
+    if key in _reextract_inflight:
+        _reextract_pending.add(key)
+        return False
+    _reextract_inflight.add(key)
+    task = asyncio.create_task(_reextract_loop(vector_store, kb_id, doc_id))
+    _reextract_tasks.add(task)
+    task.add_done_callback(_reextract_tasks.discard)
+    return True
 
 
 async def get_entity_detail(
