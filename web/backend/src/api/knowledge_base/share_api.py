@@ -137,7 +137,10 @@ async def create_shares(
         "knowledge.share.invite", user_id, None, target=kb_id,
         count=len(req.user_ids),
     ):
-        result = await invite_shares(db, kb_id, user_id, req.user_ids)
+        result = await invite_shares(
+            db, kb_id, user_id, req.user_ids,
+            permission=req.permission, expires_in=req.expires_in,
+        )
     return ok(result)
 
 

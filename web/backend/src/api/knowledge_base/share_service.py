@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
@@ -53,6 +53,7 @@ def _to_share_response(
         avatar=(account.avatar if account else "") or "",
         status=share.status,
         permission=share.permission,
+        expires_at=share.expires_at,
         created_at=share.created_at,
         accepted_at=share.accepted_at,
     )
@@ -76,14 +77,33 @@ async def _shares_with_accounts(
 
 
 async def invite_shares(
-    db: AsyncSession, kb_id: str, owner_id: str, user_ids: list[str]
+    db: AsyncSession, kb_id: str, owner_id: str, user_ids: list[str],
+    *,
+    permission: str = "read",
+    expires_in: str = "never",
 ) -> KBShareListResponse:
     """邀请一批用户浏览知识库（仅所有者可发起）。
 
     已存在的记录（含此前被拒绝/撤销的）复活为 pending，避免唯一约束冲突。
     自己不能邀请自己。
+
+    ``permission``（read|write）与 ``expires_in``（1d|7d|30d|never）是迭代 6 T6.3
+    新增的：``write`` 只放开**内容操作**（上传/删文档/改切片），改配置、重建、分享、
+    删库仍仅库主——那几项会改变所有人的检索语义。
     """
+    from api.knowledge_base.share_link_service import EXPIRES_IN_DAYS
+
     kb = await _get_kb_or_404(db, kb_id, owner_id)
+
+    if permission not in ("read", "write"):
+        raise HTTPException(status_code=400, detail="权限只能是 read 或 write")
+    if expires_in not in EXPIRES_IN_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"有效期只能是 {'/'.join(EXPIRES_IN_DAYS)} 之一",
+        )
+    days = EXPIRES_IN_DAYS[expires_in]
+    expires_at = None if days is None else datetime.utcnow() + timedelta(days=days)
 
     targets = [uid for uid in dict.fromkeys(user_ids) if uid and uid != owner_id]
     if not targets:
@@ -120,13 +140,16 @@ async def invite_shares(
                 owner_id=owner_id,
                 grantee_id=uid,
                 status=SHARE_STATUS_PENDING,
-                permission="read",
+                permission=permission,
+                expires_at=expires_at,
             )
             db.add(share)
         elif share.status != SHARE_STATUS_ACCEPTED:
             # 曾被拒绝或撤销的邀请复活为待接受；已接受的保持原状，避免重复打扰
             share.status = SHARE_STATUS_PENDING
             share.accepted_at = None
+            share.permission = permission
+            share.expires_at = expires_at
         else:
             continue
         await db.flush()

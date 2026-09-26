@@ -459,6 +459,9 @@ class UrlImportRequest(BaseModel):
 class KBShareCreateRequest(BaseModel):
     """邀请用户浏览知识库请求。"""
     user_ids: list[str] = Field(..., min_length=1, max_length=50)
+    #: 迭代 6 T6.3：可写分享（write 只放开内容操作）与有效期
+    permission: Literal["read", "write"] = "read"
+    expires_in: Literal["1d", "7d", "30d", "never"] = "never"
 
 
 class KBShareResponse(BaseModel):
@@ -475,6 +478,8 @@ class KBShareResponse(BaseModel):
     avatar: str = ""
     status: str
     permission: str = "read"
+    #: 有效期（迭代 6 T6.3）：为空表示永久。过期是派生态，由读条件现算
+    expires_at: datetime | None = None
     created_at: datetime
     accepted_at: datetime | None = None
     kb_name: str | None = None

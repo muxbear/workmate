@@ -646,3 +646,81 @@ class TestShareLinks:
             await create_share_link(db, "kb-1", ALICE)
 
         assert exc.value.status_code == 404
+
+
+class TestInviteCarriesPermissionAndExpiry:
+    """邀请也要能带权限与有效期（迭代 6 T6.3）——否则分享对话框上的控件是摆设。"""
+
+    async def test_invite_records_permission_and_expiry(self, db):
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import select
+
+        from api.knowledge_base.share_service import invite_shares
+
+        await seed_org(db)
+        await seed_kb(db)
+        db.add(Account(id=ALICE, username="alice", nickname="Alice"))
+        await db.commit()
+
+        await invite_shares(db, "kb-1", OWNER, [ALICE], permission="write", expires_in="7d")
+
+        row = (await db.execute(
+            select(KnowledgeBaseShare).where(KnowledgeBaseShare.grantee_id == ALICE)
+        )).scalar_one()
+        assert row.permission == "write"
+        assert row.expires_at is not None
+        delta = row.expires_at - datetime.utcnow()
+        assert timedelta(days=6) < delta <= timedelta(days=7)
+
+    async def test_never_means_no_expiry(self, db):
+        from sqlalchemy import select
+
+        from api.knowledge_base.share_service import invite_shares
+
+        await seed_org(db)
+        await seed_kb(db)
+        db.add(Account(id=ALICE, username="alice", nickname="Alice"))
+        await db.commit()
+
+        await invite_shares(db, "kb-1", OWNER, [ALICE], expires_in="never")
+
+        row = (await db.execute(
+            select(KnowledgeBaseShare).where(KnowledgeBaseShare.grantee_id == ALICE)
+        )).scalar_one()
+        assert row.expires_at is None
+
+    async def test_invalid_expires_in_is_rejected(self, db):
+        from fastapi import HTTPException
+
+        from api.knowledge_base.share_service import invite_shares
+
+        await seed_org(db)
+        await seed_kb(db)
+        db.add(Account(id=ALICE, username="alice", nickname="Alice"))
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await invite_shares(db, "kb-1", OWNER, [ALICE], expires_in="100d")
+
+        assert exc.value.status_code == 400
+
+    async def test_write_invite_then_accept_grants_write(self, db):
+        """邀请 → 接受 → 真的拿到可写（一条链走通，而不是只落库）。"""
+        from api.knowledge_base.share_service import invite_shares, respond_share
+
+        await seed_org(db)
+        await seed_kb(db)
+        db.add(Account(id=ALICE, username="alice", nickname="Alice"))
+        await db.commit()
+
+        await invite_shares(db, "kb-1", OWNER, [ALICE], permission="write")
+        from sqlalchemy import select
+
+        share = (await db.execute(
+            select(KnowledgeBaseShare).where(KnowledgeBaseShare.grantee_id == ALICE)
+        )).scalar_one()
+        await respond_share(db, share.id, ALICE, accept=True)
+
+        _, access = await resolve_kb_access(db, "kb-1", ALICE)
+        assert access is KBAccess.WRITE
