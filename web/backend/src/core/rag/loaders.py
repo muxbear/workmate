@@ -14,6 +14,39 @@ from langchain_core.documents import Document
 logger = logging.getLogger(__name__)
 
 
+def _clean_cell(text: str) -> str:
+    """单元格文本归一：换行折成空格、竖线转义。
+
+    竖线必须转义——否则单元格里的 ``|`` 会把 Markdown 表格的列切错，整张表读起来
+    就乱了（而表格正是最需要保留结构的内容）。
+    """
+    return " ".join((text or "").split()).replace("|", "\\|")
+
+
+def table_to_markdown(table: Any) -> str:
+    """把 Word/PowerPoint 的表格渲染成 Markdown 表格。
+
+    **为什么值得保留**：需求/接口文档里最要紧的往往就是那张对照表（"参数 → 默认值 →
+    说明"）。纯文本抽取会把它压成一串没有标签的词，切片后既不可检索也不可读；
+    Markdown 表格既让模型看得懂，也让人能读。
+
+    python-docx 与 python-pptx 的 ``table.rows[].cells[].text`` 接口一致，因此
+    Word 与 PowerPoint 共用这一份实现。
+    """
+    rows: list[list[str]] = [
+        [_clean_cell(cell.text) for cell in row.cells] for row in table.rows
+    ]
+    rows = [r for r in rows if any(c for c in r)]
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    header = "| " + " | ".join(rows[0]) + " |"
+    separator = "| " + " | ".join(["---"] * width) + " |"
+    body = ["| " + " | ".join(r) + " |" for r in rows[1:]]
+    return "\n".join([header, separator, *body])
+
+
 class DocumentLoaderStrategy(ABC):
     """文档加载策略抽象接口。"""
 
@@ -55,11 +88,52 @@ class PyPDFLoaderStrategy(DocumentLoaderStrategy):
 
 
 class DocxLoaderStrategy(DocumentLoaderStrategy):
-    """Word 文档加载。"""
+    """Word 文档加载——**保留表格**（迭代 6 T6.4）。
+
+    此前用 ``Docx2txtLoader``：它只抽正文，**表格与图片都被静默丢掉**——用户传了
+    一份带对照表的方案，入库后那张表根本不在了，而界面上不会有任何提示。
+
+    现在用 python-docx 按**正文顺序**（``iter_inner_content``）遍历段落与表格，
+    表格渲染成 Markdown。图片仍只计数（VLM 说明见后续批次）。
+    """
 
     def load(self, file_path: str) -> list[Document]:
-        from langchain_community.document_loaders import Docx2txtLoader
-        return Docx2txtLoader(file_path).load()
+        from docx import Document as DocxDocument
+        from docx.table import Table as DocxTable
+
+        document = DocxDocument(file_path)
+        parts: list[str] = []
+        table_count = 0
+        for item in document.iter_inner_content():
+            if isinstance(item, DocxTable):
+                rendered = table_to_markdown(item)
+                if rendered:
+                    parts.append(rendered)
+                    table_count += 1
+                continue
+            text = (item.text or "").strip()
+            if text:
+                parts.append(text)
+
+        image_count = len(document.inline_shapes)
+        if image_count:
+            # 不静默丢弃：正文里留一行明说"这里有几张图没进正文"，
+            # 让"检索不到图里的内容"变成一个可解释的现象
+            parts.append(f"（本文档含 {image_count} 张图片，其文字内容未提取）")
+        if not parts:
+            raise RuntimeError(f"No text content extracted from {file_path}")
+        logger.debug(
+            "DOCX 解析完成：%d 段/表（其中表格 %d），图片 %d",
+            len(parts), table_count, image_count,
+        )
+        return [Document(
+            page_content="\n\n".join(parts),
+            metadata={
+                "source": str(file_path),
+                "tables": table_count,
+                "images": image_count,
+            },
+        )]
 
 
 class UnstructuredExcelStrategy(DocumentLoaderStrategy):
@@ -75,11 +149,13 @@ class PythonPPTXLoaderStrategy(DocumentLoaderStrategy):
 
     def load(self, file_path: str) -> list[Document]:
         from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
 
         prs = Presentation(file_path)
         docs: list[Document] = []
         for i, slide in enumerate(prs.slides):
             texts: list[str] = []
+            pictures = 0
             for shape in slide.shapes:
                 if shape.has_text_frame:
                     tf = cast(Any, shape).text_frame
@@ -87,10 +163,22 @@ class PythonPPTXLoaderStrategy(DocumentLoaderStrategy):
                         t = para.text.strip()
                         if t:
                             texts.append(t)
+                    continue
+                # 表格此前被整块丢掉（只处理了 has_text_frame）——幻灯片里的表格
+                # 往往就是全篇的结论
+                if getattr(shape, "has_table", False):
+                    rendered = table_to_markdown(cast(Any, shape).table)
+                    if rendered:
+                        texts.append(rendered)
+                    continue
+                if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    pictures += 1
+            if pictures:
+                texts.append(f"（本页含 {pictures} 张图片，其文字内容未提取）")
             if texts:
                 docs.append(Document(
-                    page_content="\n".join(texts),
-                    metadata={"slide": i, "source": str(file_path)},
+                    page_content="\n\n".join(texts),
+                    metadata={"slide": i, "source": str(file_path), "images": pictures},
                 ))
         if not docs:
             raise RuntimeError(f"No text content extracted from {file_path}")
