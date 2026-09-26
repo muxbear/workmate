@@ -5,6 +5,7 @@
 
 import logging
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from typing import Any, cast
@@ -16,11 +17,12 @@ from core.rag.ocr import (
     LOAD_REPORT_KEY,
     MAX_OCR_PAGES_PER_DOC,
     build_load_report,
+    merge_load_reports,
     page_needs_ocr,
     pdf_page_texts,
     render_page_png,
 )
-from core.rag.vision import OCR_PROMPT, VisionClient
+from core.rag.vision import OCR_PROMPT, ImageCaptioner, VisionClient
 
 logger = logging.getLogger(__name__)
 
@@ -67,27 +69,93 @@ class DocumentLoaderStrategy(ABC):
         ...
 
 
+#: 导出的插图落在文档自己的存储目录下的这个子目录里。选这个位置有三个理由：
+#: 与文档同生共死（删除文档时 ``delete_document`` 会 rmtree 掉整个文档目录）、
+#: 天然按文档隔离、且是**绝对路径**。
+EXTRACTED_IMAGE_DIRNAME = "images"
+
+#: 导出图片的目录名会原样出现在 markdown 的图片引用里（形如
+#: ``![](<images/imageFile1.png>)``），因此按它定位引用。
+_IMAGE_REF_PATTERN = re.compile(r"!\[[^\]]*\]\(<?([^)>]+)>?\)")
+
+
 class OpenDataLoaderPDFStrategy(DocumentLoaderStrategy):
-    """PDF 加载——langchain-opendataloader-pdf（优先策略）。"""
+    """PDF 加载——langchain-opendataloader-pdf（优先策略）。
+
+    插图（``image_output="external"``）导出到**文档自己目录下的绝对路径**，并交给
+    视觉模型生成说明。
+
+    **图片目录必须是绝对的、按文档隔离的**：此前写的是 ``image_dir="./images"``，
+    而 ``--image-dir`` 会被原样交给 Java 子进程、相对路径按进程工作目录解析——于是
+    所有文档、所有知识库共用同一个 ``<进程CWD>/images``，而导出文件名是顺序计数
+    （``imageFile1.png``、``imageFile2.png``…），并发的两份文档会互相覆盖对方的插图，
+    最后一份索引到的说明配的是别人的图。
+    """
+
+    def __init__(self, captioner: ImageCaptioner | None = None) -> None:
+        self._captioner = captioner
 
     def load(self, file_path: str) -> list[Document]:
         if not os.path.isfile(file_path):
             raise FileNotFoundError(f"PDF 文件未找到: {file_path}")
         from langchain_opendataloader_pdf import OpenDataLoaderPDFLoader
+
+        image_dir = os.path.join(
+            os.path.dirname(os.path.abspath(file_path)), EXTRACTED_IMAGE_DIRNAME,
+        )
         docs = OpenDataLoaderPDFLoader(
                     file_path=str(file_path),
                     format="markdown",
                     table_method="cluster",
                     include_header_footer=True,
                     image_output="external",
-                    image_dir="./images",
+                    image_dir=image_dir,
                     image_format="png"
                 ).load()
         if not docs:
             raise RuntimeError(
                 f"OpenDataLoaderPDFLoader 加载文件 {file_path} 返回空的 Documents。"
             )
+        if self._captioner is not None:
+            self._caption_docs(docs, image_dir)
         return docs
+
+    def _caption_docs(self, docs: list[Document], image_dir: str) -> None:
+        """就地把正文里的图片引用替换成说明文字。
+
+        引用本身标出了图片在正文中的**位置**（``![](<images/imageFile1.png>)``），
+        所以就地替换天然保序——比"按文件名猜它属于哪一页"可靠得多。
+        """
+        image_total = 0
+        for doc in docs:
+            image_total += len(_IMAGE_REF_PATTERN.findall(doc.page_content))
+            doc.page_content = _IMAGE_REF_PATTERN.sub(
+                lambda m: self._caption_ref(m.group(1), image_dir) or m.group(0),
+                doc.page_content,
+            )
+        if docs:
+            docs[0].metadata[LOAD_REPORT_KEY] = build_load_report(
+                images=image_total,
+                images_captioned=self._captioner.captioned if self._captioner else 0,
+                images_failed=self._captioner.failed if self._captioner else 0,
+                images_skipped=self._captioner.skipped if self._captioner else 0,
+            )
+
+    def _caption_ref(self, ref: str, image_dir: str) -> str | None:
+        """给一条图片引用生成说明文字；读不到文件或识别失败返回 ``None``。"""
+        # 引用形如 "<导出目录名>/imageFile1.png"，取基名在本目录下定位
+        path = os.path.join(image_dir, os.path.basename(ref.strip()))
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            logger.debug("导出的插图读不到，跳过说明: %s", path, exc_info=True)
+            return None
+        if self._captioner is None:
+            return None
+        caption = self._captioner.caption(data)
+        # 拿不到说明时保留原引用（它至少标出了"这里有张图"），而不是抹成空白
+        return f"（图：{caption}）" if caption else None
 
 
 class PyPDFLoaderStrategy(DocumentLoaderStrategy):
@@ -105,6 +173,53 @@ class PyPDFLoaderStrategy(DocumentLoaderStrategy):
             if isinstance(page, int):
                 doc.metadata["page"] = page + 1
         return docs
+
+
+def _docx_images(item: Any, document: Any) -> list[tuple[bytes, str]]:
+    """取一个正文元素（段落或表格）里嵌的图片字节与 MIME，按出现顺序。
+
+    图片挂在**持有它的那个段落**上（``a:blip`` 的 ``r:embed`` 指向文档部件的关系表），
+    而 ``iter_inner_content`` 是按正文顺序吐元素的——所以"就地插入说明"天然保序，
+    不需要另找坐标。表格里若也放了图，同样能从表格元素上取到。
+    """
+    from docx.oxml.ns import qn
+
+    element = getattr(item, "_element", None)
+    if element is None:
+        return []
+    images: list[tuple[bytes, str]] = []
+    for blip in element.findall(".//" + qn("a:blip")):
+        rid = blip.get(qn("r:embed"))
+        part = document.part.related_parts.get(rid) if rid else None
+        if part is not None:
+            images.append((part.blob, part.content_type))
+    return images
+
+
+def _pptx_images(slide: Any) -> list[tuple[bytes, str]]:
+    """取一页幻灯片里的图片字节与 MIME，按形状顺序。"""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    images: list[tuple[bytes, str]] = []
+    for shape in slide.shapes:
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            image = shape.image
+            images.append((image.blob, image.content_type))
+    return images
+
+
+def _caption_all(
+    captioner: ImageCaptioner | None, images: list[tuple[bytes, str]],
+) -> list[str]:
+    """给一组图逐张生成说明，返回成功的那些（顺序与入参一致）。"""
+    if captioner is None:
+        return []
+    captions: list[str] = []
+    for blob, mime in images:
+        caption = captioner.caption(blob, mime)
+        if caption:
+            captions.append(caption)
+    return captions
 
 
 def _ocr_pdf_page(ocr: VisionClient, file_path: str, index: int) -> str | None:
@@ -207,21 +322,36 @@ class OcrAugmentedPdfStrategy(DocumentLoaderStrategy):
 
     @staticmethod
     def _attach_report(docs: list[Document], report: dict[str, int]) -> list[Document]:
-        """把诊断计数挂到首个文档上（见 ``ocr.LOAD_REPORT_KEY`` 的说明）。"""
-        if docs:
-            docs[0].metadata[LOAD_REPORT_KEY] = report
+        """把诊断计数挂到首个文档上（见 ``ocr.LOAD_REPORT_KEY`` 的说明）。
+
+        **与已有的报告合并，不能覆盖**：外层的页面 OCR 包着内层（含插图说明的
+        opendataloader 策略），内层已经挂上了图片计数。数字 PDF 恰好走"没有扫描页"
+        那条早返回路径，直接赋值会把图片的失败/跳过计数抹掉——于是"有几张图没生成
+        说明"这件事就永远不会出现在界面上。
+        """
+        if not docs:
+            return docs
+        existing = docs[0].metadata.get(LOAD_REPORT_KEY)
+        docs[0].metadata[LOAD_REPORT_KEY] = merge_load_reports(
+            existing if isinstance(existing, dict) else None, report,
+        )
         return docs
 
 
 class DocxLoaderStrategy(DocumentLoaderStrategy):
-    """Word 文档加载——**保留表格**（迭代 6 T6.4）。
+    """Word 文档加载——**保留表格与插图说明**（迭代 6 T6.4）。
 
     此前用 ``Docx2txtLoader``：它只抽正文，**表格与图片都被静默丢掉**——用户传了
     一份带对照表的方案，入库后那张表根本不在了，而界面上不会有任何提示。
 
     现在用 python-docx 按**正文顺序**（``iter_inner_content``）遍历段落与表格，
-    表格渲染成 Markdown。图片仍只计数（VLM 说明见后续批次）。
+    表格渲染成 Markdown，插图交给视觉模型生成说明文字并**就地插入**（顺序是硬约束：
+    统一追加到文末会让"图 1 的说明"跑到第 40 页后面）。没配视觉模型时退回到原来的
+    计数占位，行为与批次①一致。
     """
+
+    def __init__(self, captioner: ImageCaptioner | None = None) -> None:
+        self._captioner = captioner
 
     def load(self, file_path: str) -> list[Document]:
         from docx import Document as DocxDocument
@@ -230,36 +360,50 @@ class DocxLoaderStrategy(DocumentLoaderStrategy):
         document = DocxDocument(file_path)
         parts: list[str] = []
         table_count = 0
+        image_count = 0
         for item in document.iter_inner_content():
             if isinstance(item, DocxTable):
                 rendered = table_to_markdown(item)
                 if rendered:
                     parts.append(rendered)
                     table_count += 1
-                continue
-            text = (item.text or "").strip()
-            if text:
-                parts.append(text)
+            else:
+                text = (item.text or "").strip()
+                if text:
+                    parts.append(text)
+            images = _docx_images(item, document)
+            if images:
+                image_count += len(images)
+                parts.extend(_caption_all(self._captioner, images))
 
-        image_count = len(document.inline_shapes)
-        if image_count:
-            # 不静默丢弃：正文里留一行明说"这里有几张图没进正文"，
-            # 让"检索不到图里的内容"变成一个可解释的现象
-            parts.append(f"（本文档含 {image_count} 张图片，其文字内容未提取）")
+        report = build_load_report(images=image_count)
+        if self._captioner is not None:
+            report["images_captioned"] = self._captioner.captioned
+            report["images_failed"] = self._captioner.failed
+            report["images_skipped"] = self._captioner.skipped
+
+        # 只有**没拿到说明**的图才留占位：都解释清楚了还留一行"未提取"是自相矛盾，
+        # 而对失败的那几张，这一行正是"这段内容为什么缺失"的可解释信号。
+        missing = image_count - report["images_captioned"]
+        if missing:
+            parts.append(f"（本文档含 {missing} 张图片，其文字内容未提取）")
         if not parts:
             raise RuntimeError(f"No text content extracted from {file_path}")
         logger.debug(
-            "DOCX 解析完成：%d 段/表（其中表格 %d），图片 %d",
-            len(parts), table_count, image_count,
+            "DOCX 解析完成：%d 段/表（其中表格 %d），图片 %d（已说明 %d）",
+            len(parts), table_count, image_count, report["images_captioned"],
         )
-        return [Document(
-            page_content="\n\n".join(parts),
-            metadata={
-                "source": str(file_path),
-                "tables": table_count,
-                "images": image_count,
-            },
-        )]
+        return [
+            Document(
+                page_content="\n\n".join(parts),
+                metadata={
+                    "source": str(file_path),
+                    "tables": table_count,
+                    "images": image_count,
+                    LOAD_REPORT_KEY: report,
+                },
+            )
+        ]
 
 
 class UnstructuredExcelStrategy(DocumentLoaderStrategy):
@@ -271,7 +415,14 @@ class UnstructuredExcelStrategy(DocumentLoaderStrategy):
 
 
 class PythonPPTXLoaderStrategy(DocumentLoaderStrategy):
-    """PowerPoint 加载——使用 python-pptx（跨平台，无需 unstructured）。"""
+    """PowerPoint 加载——使用 python-pptx（跨平台，无需 unstructured）。
+
+    每页一个 Document；插图交给视觉模型生成说明并附在该页文本之后（图在页内没有
+    可靠的相对位置，页是最自然的归属粒度）。没配视觉模型时退回计数占位。
+    """
+
+    def __init__(self, captioner: ImageCaptioner | None = None) -> None:
+        self._captioner = captioner
 
     def load(self, file_path: str) -> list[Document]:
         from pptx import Presentation
@@ -279,6 +430,7 @@ class PythonPPTXLoaderStrategy(DocumentLoaderStrategy):
 
         prs = Presentation(file_path)
         docs: list[Document] = []
+        image_count = 0
         for i, slide in enumerate(prs.slides):
             texts: list[str] = []
             pictures = 0
@@ -299,8 +451,14 @@ class PythonPPTXLoaderStrategy(DocumentLoaderStrategy):
                     continue
                 if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                     pictures += 1
-            if pictures:
-                texts.append(f"（本页含 {pictures} 张图片，其文字内容未提取）")
+            images = _pptx_images(slide)
+            captioned = _caption_all(self._captioner, images)
+            texts.extend(captioned)
+            image_count += len(images)
+            if len(captioned) < pictures:
+                texts.append(
+                    f"（本页含 {pictures - len(captioned)} 张图片，其文字内容未提取）"
+                )
             if texts:
                 docs.append(Document(
                     page_content="\n\n".join(texts),
@@ -308,6 +466,13 @@ class PythonPPTXLoaderStrategy(DocumentLoaderStrategy):
                 ))
         if not docs:
             raise RuntimeError(f"No text content extracted from {file_path}")
+        if docs and self._captioner is not None:
+            docs[0].metadata[LOAD_REPORT_KEY] = build_load_report(
+                images=image_count,
+                images_captioned=self._captioner.captioned,
+                images_failed=self._captioner.failed,
+                images_skipped=self._captioner.skipped,
+            )
         return docs
 
 
@@ -444,10 +609,18 @@ def create_default_loader_registry(
     """
     registry = DocumentLoaderRegistry()
 
+    # 插图说明与扫描页 OCR 各持一份同口径的预算。DOCX/PPTX 只走前者、扫描件只走
+    # 后者；PDF 两类都可能走（页 + 图），因此单篇最坏会花掉两份预算——总量仍由外层
+    # 阶段超时兜底，而这里不追求精确到一次调用，宁可两边各自简单。
+    captioner = (
+        ImageCaptioner(ocr, budget_seconds=ocr_budget_seconds, max_images=ocr_max_pages)
+        if ocr is not None else None
+    )
+
     # PDF: 优先 opendataloader_pdf，备选 PyPDFLoader；外面再包一层"扫描页补 OCR"
     registry.register("pdf", OcrAugmentedPdfStrategy(
         FallbackLoaderStrategy([
-            OpenDataLoaderPDFStrategy(),
+            OpenDataLoaderPDFStrategy(captioner),
             PyPDFLoaderStrategy(),
         ]),
         ocr=ocr,
@@ -455,10 +628,10 @@ def create_default_loader_registry(
         max_pages=ocr_max_pages,
     ))
 
-    registry.register("docx", DocxLoaderStrategy())
+    registry.register("docx", DocxLoaderStrategy(captioner))
     registry.register("xlsx", UnstructuredExcelStrategy())
     registry.register("pptx", FallbackLoaderStrategy([
-        PythonPPTXLoaderStrategy(),
+        PythonPPTXLoaderStrategy(captioner),
         UnstructuredPPTStrategy(),
     ]))
     registry.register("csv", CSVLoaderStrategy())

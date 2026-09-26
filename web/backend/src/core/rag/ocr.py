@@ -189,15 +189,44 @@ def build_load_report(
     ocr_failed: int = 0,
     ocr_skipped_budget: int = 0,
     total_pages: int = 0,
+    images: int = 0,
+    images_captioned: int = 0,
+    images_failed: int = 0,
+    images_skipped: int = 0,
 ) -> dict[str, int]:
-    """组装 OCR 计数。字段名与含义固定，便于前端与日志共用一套说法。"""
+    """组装解析计数。字段名与含义固定，便于前端与日志共用一套说法。
+
+    页（扫描件逐页识别）与图（插图说明）分开计：两者对用户的含义不同——
+    "少了一页"和"少了一张图的说明"是两种不同的缺失。
+    """
     return {
         "ocr_pages": ocr_pages,
         "ocr_candidates": ocr_candidates,
         "ocr_failed": ocr_failed,
         "ocr_skipped_budget": ocr_skipped_budget,
         "total_pages": total_pages,
+        "images": images,
+        "images_captioned": images_captioned,
+        "images_failed": images_failed,
+        "images_skipped": images_skipped,
     }
+
+
+def merge_load_reports(*reports: dict[str, int] | None) -> dict[str, int]:
+    """合并多层加载器各自的计数——逐键取**较大值**，缺的键按 0。
+
+    层与层计的是互不重叠的东西（外层的扫描页、内层的插图），所以"取大"既不会张冠
+    李戴，也不会出现"外层的 0 把内层的计数抹掉"——而那正是直接赋值会踩的坑：数字
+    PDF 恰好走外层"没有扫描页"的早返回路径，一覆盖，"有几张图没生成说明"这件事就
+    永远不会出现在界面上。
+    """
+    merged: dict[str, int] = {}
+    for report in reports:
+        if not report:
+            continue
+        for key, value in report.items():
+            merged[key] = max(merged.get(key, 0), value)
+    return merged
 
 
 def format_ocr_warning(report: dict[str, int]) -> str | None:
@@ -207,18 +236,30 @@ def format_ocr_warning(report: dict[str, int]) -> str | None:
     忽略这一栏；全部失败走的是失败路径（``error_message``），不该混在这里。
     告警的职责是解释"为什么这份文档看起来少了一部分内容"。
     """
+    parts: list[str] = []
+
     skipped = report.get("ocr_skipped_budget", 0)
     failed = report.get("ocr_failed", 0)
-    if not skipped and not failed:
-        return None
+    if skipped or failed:
+        pages: list[str] = []
+        if report.get("ocr_pages"):
+            pages.append(f"已识别 {report['ocr_pages']} 页")
+        if skipped:
+            pages.append(f"{skipped} 页因超出本次时间预算被跳过")
+        if failed:
+            pages.append(f"{failed} 页识别失败")
+        total = report.get("total_pages") or report.get("ocr_candidates") or 0
+        suffix = f"（全文 {total} 页）" if total else ""
+        parts.append("；".join(pages) + suffix)
 
-    parts: list[str] = []
-    if report.get("ocr_pages"):
-        parts.append(f"已识别 {report['ocr_pages']} 页")
-    if skipped:
-        parts.append(f"{skipped} 页因超出本次时间预算被跳过")
-    if failed:
-        parts.append(f"{failed} 页识别失败")
-    total = report.get("total_pages") or report.get("ocr_candidates") or 0
-    suffix = f"（全文 {total} 页）" if total else ""
-    return "OCR：" + "；".join(parts) + suffix
+    images = report.get("images", 0)
+    lost = report.get("images_failed", 0) + report.get("images_skipped", 0)
+    if lost:
+        text = f"{lost} 张插图未生成说明"
+        if images:
+            text += f"（全文 {images} 张）"
+        parts.append(text)
+
+    if not parts:
+        return None
+    return "OCR：" + "；".join(parts)

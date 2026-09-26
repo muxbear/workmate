@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -54,6 +55,53 @@ CAPTION_PROMPT = (
 
 #: 模型对「图里没文字」这类情况的常见说法，用于把它归一成「没提取到内容」。
 _NO_CONTENT_MARKERS = frozenset({"无文字", "无文字内容", "没有文字", "none", "n/a"})
+
+#: 单篇文档的插图说明上限。与扫描页的页数上限同一个道理：防荒谬输入（一份 300 张
+#: 配图的 PPT 就是 300 次调用），真正的约束是时间预算。
+MAX_CAPTIONS_PER_DOC = 200
+
+
+class ImageCaptioner:
+    """按一份预算给文档内的插图生成说明文字（迭代 6 T6.4 批次④）。
+
+    与扫描页 OCR **共用同一套预算口径**：对一篇文档来说"这次解析允许花多少模型调用"
+    是一个量，不该各算各的。超预算的图只记数跳过，由调用方如实上报——静默丢图正是
+    本批次要消灭的东西。
+
+    放在 ``vision`` 而不是 ``ocr`` 里：它只管"怎么调模型、调几次"，不碰 pdfium 与
+    页级判据，那边的纯函数性质得以保留。
+    """
+
+    def __init__(
+        self,
+        ocr: VisionClient,
+        budget_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        max_images: int = MAX_CAPTIONS_PER_DOC,
+    ) -> None:
+        self._ocr = ocr
+        self._deadline = time.monotonic() + budget_seconds
+        self._remaining = max_images
+        self.captioned = 0
+        self.failed = 0
+        self.skipped = 0
+
+    def caption(self, image: bytes, mime: str | None = None) -> str | None:
+        """给一张图生成说明；超预算、模型失败都返回 ``None``。"""
+        if self._remaining <= 0 or time.monotonic() >= self._deadline:
+            self.skipped += 1
+            return None
+        self._remaining -= 1
+        text = self._ocr.describe(CAPTION_PROMPT, image, mime)
+        if text is None:
+            self.failed += 1
+            return None
+        self.captioned += 1
+        return text
+
+    @property
+    def touched(self) -> int:
+        """一共处理过多少张图（用于判断要不要挂告警）。"""
+        return self.captioned + self.failed + self.skipped
 
 #: 发送前的边长上限。超过就等比缩小——上传白名单允许单文件 100MB，原样 base64
 #: 会得到一个必然被服务端拒掉的请求（体积限制），而拒绝会被降级路径报成
