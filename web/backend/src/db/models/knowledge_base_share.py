@@ -42,12 +42,17 @@ class KnowledgeBaseShare(Base):
         String(16), default=SHARE_STATUS_PENDING, comment="pending|accepted|rejected|revoked"
     )
     permission: Mapped[str] = mapped_column(
-        String(16), default="read", comment="本期恒为 read（只读：查询/浏览/检索）"
+        String(16), default="read", comment="read 只读 | write 可写（仅内容操作）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: 有效期（迭代 6 T6.3）：为空表示永久。过期是**派生态**（读条件现算），
+    #: 不写 status='expired'——否则每处消费 status 的地方都要多一个分支
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: 这条分享由哪条链接落成（仅溯源；不建外键，链接软撤销、永不硬删）
+    link_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

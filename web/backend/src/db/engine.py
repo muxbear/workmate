@@ -262,14 +262,20 @@ async def init_db():
     from db.models.expert_skill import ExpertSkill  # noqa: F401
     from db.models.expert_tool import ExpertTool  # noqa: F401
     from db.models.expert_version import ExpertVersion  # noqa: F401
+    from db.models.knowledge_base_grant import (  # noqa: F401  ensure table is registered
+        KnowledgeBaseGrant,
+    )
     from db.models.knowledge_base_group import (  # noqa: F401  ensure table is registered
         KnowledgeBaseGroup,
     )
     from db.models.knowledge_base_index_task import (
         KnowledgeBaseIndexTask,  # noqa: F401  ensure table is registered
     )
-    from db.models.knowledge_base_share import (
+    from db.models.knowledge_base_share import (  # noqa: F401
         KnowledgeBaseShare,  # noqa: F401  ensure table is registered
+    )
+    from db.models.knowledge_base_share_link import (  # noqa: F401
+        KnowledgeBaseShareLink,
     )
     from db.models.oauth2_client import OAuth2Client  # noqa: F401
     from db.models.oauth2_consent import OAuth2Consent  # noqa: F401

@@ -606,12 +606,16 @@ async def purge_kb(
     if os.path.isdir(kb_upload_dir):
         shutil.rmtree(kb_upload_dir, ignore_errors=True)
 
-    # 子表：软删除期间保留了这些行，彻底删除时一并清掉
+    # 子表：软删除期间保留了这些行，彻底删除时一并清掉。
+    # 注：PG 侧有新表的外键 ON DELETE CASCADE 兜底，但 **SQLite 上外键不生效**，
+    # 而 `test_purge_removes_everything` 正是查残留——逐表删是两条路都成立的写法。
     for table in (
         "knowledge_base_documents",
         "knowledge_base_entities",
         "knowledge_base_relations",
         "knowledge_base_shares",
+        "knowledge_base_share_links",
+        "knowledge_base_grants",
         "knowledge_base_index_tasks",
     ):
         await db.execute(text(f"DELETE FROM {table} WHERE kb_id = :kb_id"), {"kb_id": kb_id})

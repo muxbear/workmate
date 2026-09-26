@@ -142,9 +142,11 @@ async def maker():
     那条，测了等于没测。
     """
     from db.models.knowledge_base_entity import KnowledgeBaseEntity
+    from db.models.knowledge_base_grant import KnowledgeBaseGrant
     from db.models.knowledge_base_index_task import KnowledgeBaseIndexTask
     from db.models.knowledge_base_relation import KnowledgeBaseRelation
     from db.models.knowledge_base_share import KnowledgeBaseShare
+    from db.models.knowledge_base_share_link import KnowledgeBaseShareLink
     from db.soft_delete import install_soft_delete_filter
 
     install_soft_delete_filter()   # 幂等
@@ -160,6 +162,8 @@ async def maker():
             KnowledgeBaseEntity.__table__,
             KnowledgeBaseRelation.__table__,
             KnowledgeBaseShare.__table__,
+            KnowledgeBaseShareLink.__table__,
+            KnowledgeBaseGrant.__table__,
             KnowledgeBaseIndexTask.__table__,
         ):
             await conn.run_sync(table.create)
@@ -272,12 +276,29 @@ class TestSoftDelete:
     async def test_purge_removes_everything(self, maker):
         """彻底删除是软删除之外的显式出口——否则被删的库永远占着向量与磁盘。"""
         from api.knowledge_base.service import purge_kb
+        from db.models.knowledge_base_grant import KnowledgeBaseGrant
+        from db.models.knowledge_base_share import KnowledgeBaseShare
+        from db.models.knowledge_base_share_link import KnowledgeBaseShareLink
 
         await self._seed(maker)
         async with maker() as db:
             db.add(KnowledgeBaseDocument(
                 id="d1", kb_id="kb-1", name="文档", type="md", size_bytes=1,
                 storage_path="/tmp/x.md", status="indexed",
+            ))
+            # 分享与授权也是挂在库上的子表：彻底删除必须一并清掉，否则留下
+            # 指向不存在库的链接与授权（PG 有外键 CASCADE，SQLite 没有）
+            db.add(KnowledgeBaseShare(
+                id="s1", kb_id="kb-1", owner_id="u1", grantee_id="u2",
+                status="accepted", permission="read",
+            ))
+            db.add(KnowledgeBaseShareLink(
+                id="l1", kb_id="kb-1", created_by="u1", token_hash="0" * 64,
+                permission="read",
+            ))
+            db.add(KnowledgeBaseGrant(
+                id="g1", kb_id="kb-1", target_type="dept", target_id="d-1",
+                permission="read", created_by="u1", include_subtree=True,
             ))
             await db.commit()
         await self._soft_delete(maker)
@@ -289,11 +310,17 @@ class TestSoftDelete:
         async with maker() as db:
             assert (await db.execute(select(KnowledgeBase))).scalars().all() == []
             assert (await db.execute(select(KnowledgeBaseDocument))).scalars().all() == []
+            assert (await db.execute(select(KnowledgeBaseShare))).scalars().all() == []
+            assert (await db.execute(select(KnowledgeBaseShareLink))).scalars().all() == []
+            assert (await db.execute(select(KnowledgeBaseGrant))).scalars().all() == []
 
     async def test_purge_rejects_other_users_kb(self, maker):
         from fastapi import HTTPException
 
         from api.knowledge_base.service import purge_kb
+        from db.models.knowledge_base_grant import KnowledgeBaseGrant
+        from db.models.knowledge_base_share import KnowledgeBaseShare
+        from db.models.knowledge_base_share_link import KnowledgeBaseShareLink
 
         await self._seed(maker)
 

@@ -22,9 +22,11 @@ from db.models.expert_version import ExpertVersion
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
 from db.models.knowledge_base_group import KnowledgeBaseGroup
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
 from db.models.knowledge_base_share import KnowledgeBaseShare
+from db.models.knowledge_base_share_link import KnowledgeBaseShareLink
 from db.models.login_record import LoginRecord
 from db.models.mcp_installation import McpInstallation
 from db.models.mcp_tool import McpTool
@@ -70,8 +72,11 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeBaseDocument",
     "KnowledgeBaseEntity",
+    "KnowledgeBaseGrant",
+    "KnowledgeBaseGroup",
     "KnowledgeBaseRelation",
     "KnowledgeBaseShare",
+    "KnowledgeBaseShareLink",
     Notification,
     "LoginRecord",
     "McpInstallation",
