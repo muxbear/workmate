@@ -7,12 +7,17 @@ import type { KB } from '@/types/knowledgeBase'
 import KbStatCard from './KbStatCard.vue'
 import KbDocStatusBadge from './KbDocStatusBadge.vue'
 import KbConfigSummary from './KbConfigSummary.vue'
+import KbSkeleton from './KbSkeleton.vue'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 
 const props = defineProps<{
   kb: KB
   /** 只读态（公共库 / 他人分享）：隐藏写操作入口 */
   readonly?: boolean
 }>()
+
+// 文档列表改为服务端分页加载后，这里要能区分「还在加载」与「确实没有文档」
+const store = useKnowledgeBaseStore()
 
 const recentDocs = computed(() => props.kb.documents.slice(0, 5))
 </script>
@@ -56,6 +61,9 @@ const recentDocs = computed(() => props.kb.documents.slice(0, 5))
                 class="activity-progress"
               />
             </div>
+          </div>
+          <div v-else-if="store.docQuery.loading" class="empty-text">
+            <KbSkeleton :rows="2" :count="3" />
           </div>
           <div v-else class="empty-text">暂无文档</div>
         </div>

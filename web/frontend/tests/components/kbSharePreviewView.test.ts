@@ -24,7 +24,10 @@ vi.mock('vue-router', () => ({
 const auth = vi.hoisted(() => ({ isAuthenticated: false }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 
-const store = vi.hoisted(() => ({ acceptShareLink: vi.fn() }))
+const store = vi.hoisted(() => ({
+  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
+  loadDocs: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20 })),
+  acceptShareLink: vi.fn() }))
 vi.mock('@/stores/knowledgeBase', () => ({ useKnowledgeBaseStore: () => store }))
 
 const api = vi.hoisted(() => ({ previewShareLink: vi.fn() }))

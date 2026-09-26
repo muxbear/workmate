@@ -66,6 +66,28 @@ function emptyGroup(pageSize = 12): GroupState {
   return { items: [], total: 0, page: 1, pageSize, loading: false, loaded: false }
 }
 
+/**
+ * 文档表的分页与搜索状态（迭代 6 T6.6）。
+ *
+ * **此前这里没有状态**：`selectKb` 写死 `page_size: 100` 并**丢掉 `total`**，而后端
+ * 上限恰好是 100、文档配额又默认不限——超过 100 篇的库会**静默只显示前 100 篇**，
+ * 没有分页器、没有"共 N 篇"的提示，用户以为文档丢了。这是正确性问题，不只是体验。
+ *
+ * `search` 也走服务端：列表分页之后，前端只过滤当前页会让"搜不到"变成假象——
+ * 匹配的文档可能在别的页上，那是同一类静默截断。
+ */
+interface DocQueryState {
+  page: number
+  pageSize: number
+  total: number
+  search: string
+  loading: boolean
+}
+
+function emptyDocQuery(pageSize = 20): DocQueryState {
+  return { page: 1, pageSize, total: 0, search: '', loading: false }
+}
+
 export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   // ─── 列表状态 ──────────────────────────────────────────────────────────
   const kbs = ref<KB[]>([])
@@ -87,6 +109,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
 
   // 当前选中知识库 / 文档
   const selectedKb = ref<KB | null>(null)
+  /** 文档表的分页/搜索状态（迭代 6 T6.6）——见 DocQueryState 的说明 */
+  const docQuery = ref<DocQueryState>(emptyDocQuery())
   const selectedDoc = ref<KBDoc | null>(null)
 
   // 视图模式
@@ -363,17 +387,47 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     groupExpanded.value[groupId] = !groupExpanded.value[groupId]
   }
 
+  /**
+   * 按当前分页/搜索状态重新拉取文档列表。
+   *
+   * `patch` 用来改页码或关键词；不传就沿用当前值——**轮询刷新必须沿用当前页**，
+   * 否则用户翻到第 3 页会被每 30 秒的兜底刷新弹回第 1 页。
+   */
+  async function loadDocs(kbId: string, patch: Partial<DocQueryState> = {}) {
+    docQuery.value = { ...docQuery.value, ...patch, loading: true }
+    try {
+      const data = await kbApi.fetchDocuments(kbId, {
+        page: docQuery.value.page,
+        page_size: docQuery.value.pageSize,
+        search: docQuery.value.search || undefined,
+      })
+      // 请求返回时用户可能已经切库了——只认当前选中的
+      if (selectedKb.value?.id === kbId) {
+        selectedKb.value = { ...selectedKb.value, documents: data.items }
+        docQuery.value = { ...docQuery.value, total: data.total, loading: false }
+      }
+      return data
+    } catch (err) {
+      docQuery.value = { ...docQuery.value, loading: false }
+      throw err
+    }
+  }
+
   async function selectKb(id: string) {
     loading.value = true
+    // 每次进库都从"第 1 页、无关键词"开始：沿用上一个库的页码/搜索会让用户看到
+    // 一个莫名其妙的空列表，而且没有任何线索说明为什么是空的
+    docQuery.value = emptyDocQuery(docQuery.value.pageSize)
     try {
       const kb = await kbApi.fetchKnowledgeBase(id)
       if (kb) {
-        const docData = await kbApi.fetchDocuments(id, { page_size: 100 })
         const graphData = await kbApi.fetchGraphData(id)
 
         selectedKb.value = {
           ...kb,
-          documents: docData.items,
+          // 文档先用空数组占位，紧接着由 loadDocs 填上——这样"加载中"与"确实没有文档"
+          // 在界面上才分得开
+          documents: [],
           entitiesData: graphData.entities.map((e) => ({
             ...e,
             x: 0,
@@ -382,6 +436,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
           relationsData: graphData.relations,
         }
         selectedDoc.value = null
+        // 先取数据再起轮询：起轮询在拿不到 EventSource 的环境里会抛，放在前面会让
+        // 文档列表压根拉不到（而那是这一页的主要内容）
+        await loadDocs(id)
         startIndexPolling()
       }
     } catch (err: unknown) {
@@ -709,10 +766,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     const kb = selectedKb.value
     if (!kb) return
     try {
-      const docData = await kbApi.fetchDocuments(kb.id, { page_size: 100 })
-      if (selectedKb.value && selectedKb.value.id === kb.id) {
-        selectedKb.value = { ...selectedKb.value, documents: docData.items }
-      }
+      // 沿用当前分页与关键词——翻身回第 1 页会让"翻到第 3 页正在看"这件事被
+      // 后台每 30 秒的兜底刷新打断
+      await loadDocs(kb.id)
       statsPatch(await kbApi.fetchStats('all'))
     } catch {
       // 静默忽略：下一次事件或轮询会纠正
@@ -818,6 +874,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     loading,
     error,
     selectedKb,
+    docQuery,
+    loadDocs,
     selectedDoc,
     viewMode,
     searchQuery,

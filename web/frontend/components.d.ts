@@ -89,6 +89,7 @@ declare module 'vue' {
     KbShareLinkPanel: typeof import('./src/components/knowledgeBase/KbShareLinkPanel.vue')['default']
     KbShareManageDialog: typeof import('./src/components/knowledgeBase/KbShareManageDialog.vue')['default']
     KbSidebar: typeof import('./src/components/knowledgeBase/KbSidebar.vue')['default']
+    KbSkeleton: typeof import('./src/components/knowledgeBase/KbSkeleton.vue')['default']
     KbStatCard: typeof import('./src/components/knowledgeBase/KbStatCard.vue')['default']
     KbUploadDialog: typeof import('./src/components/knowledgeBase/KbUploadDialog.vue')['default']
     KbUrlImportDialog: typeof import('./src/components/knowledgeBase/KbUrlImportDialog.vue')['default']

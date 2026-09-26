@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Upload, Trash2, RefreshCw, FolderOpen, Ban, CircleAlert,
@@ -15,6 +15,7 @@ import KbPasteTextDialog from './KbPasteTextDialog.vue'
 import KbUrlImportDialog from './KbUrlImportDialog.vue'
 import KbIndexingPipeline from './KbIndexingPipeline.vue'
 import KbDocDetailDrawer from './KbDocDetailDrawer.vue'
+import KbSkeleton from './KbSkeleton.vue'
 import KbFragmentEditor from './KbFragmentEditor.vue'
 
 const props = defineProps<{
@@ -27,7 +28,6 @@ const props = defineProps<{
 
 const store = useKnowledgeBaseStore()
 
-const search = ref('')
 const uploadVisible = ref(false)
 // 只存 id，面板用 computed 从最新列表里取——列表在 SSE/轮询后会被整体替换，
 // 若这里存对象引用，面板会永远显示打开那一刻的快照（行徽标却在更新，自相矛盾）
@@ -43,11 +43,37 @@ const docTypeIcons: Record<DocType, typeof FileText> = {
   pdf: FileType2, md: FileCode2, docx: FileText, csv: FileSpreadsheet, image: FileImage, html: Globe,
 }
 
-const filteredDocs = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return props.kb.documents
-  return props.kb.documents.filter((d) => d.name.toLowerCase().includes(q))
+/**
+ * 列表内容直接用服务端返回的（迭代 6 T6.6）。
+ *
+ * 此前这里是"拉 100 条再在前端按名字过滤"，而列表现在已经分页——只过滤当前页会让
+ * **搜不到变成假象**：匹配的文档可能就在下一页。所以搜索也走服务端。
+ */
+const filteredDocs = computed(() => props.kb.documents)
+
+// 输入防抖：每敲一个字就发一次请求既费又能让结果乱序
+const searchInput = ref(props.kb.id ? store.docQuery.search : '')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchInput, (value) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    void store.loadDocs(props.kb.id, { search: value.trim(), page: 1 })
+  }, 300)
 })
+// 换库时把输入框同步回该库的搜索词（新库一律是空）
+watch(
+  () => props.kb.id,
+  () => {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchInput.value = store.docQuery.search
+  },
+)
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
+
+/** 有搜索词时"没有结果"是另一回事——要说清是"没匹配"而不是"这个库是空的" */
+const searching = computed(() => store.docQuery.search.trim().length > 0)
 
 const pasteVisible = ref(false)
 const urlVisible = ref(false)
@@ -296,7 +322,7 @@ function handleEditFragment(doc: KBDoc) {
             <div class="search-wrap">
               <Search :size="16" class="search-icon" />
               <input
-                v-model="search"
+                v-model="searchInput"
                 type="text"
                 placeholder="检索文档…"
                 class="search-input"
@@ -492,14 +518,36 @@ function handleEditFragment(doc: KBDoc) {
                     </div>
                   </td>
                 </tr>
-                <tr v-if="filteredDocs.length === 0">
+                <!-- 加载中不显示空态：此前没有加载态，"暂无文档，点击右上角上传"这个
+                     行动号召会在数据还在路上时先冒出来，误导用户去重复上传 -->
+                <tr v-if="store.docQuery.loading && filteredDocs.length === 0">
+                  <td colspan="6" class="empty-cell">
+                    <KbSkeleton :rows="3" />
+                  </td>
+                </tr>
+                <tr v-else-if="filteredDocs.length === 0">
                   <td colspan="6" class="empty-cell">
                     <FolderOpen :size="32" class="empty-icon" />
-                    <p>{{ readonly ? '暂无文档' : '暂无文档，点击右上角上传' }}</p>
+                    <p v-if="searching">没有名称匹配「{{ store.docQuery.search }}」的文档</p>
+                    <p v-else>{{ readonly ? '暂无文档' : '暂无文档，点击右上角上传' }}</p>
                   </td>
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <!-- 分页器：只有真的超过一页才出现。此前写死 page_size=100 且丢掉 total，
+               超过 100 篇的库静默只显示前 100 篇、没有任何提示 -->
+          <div v-if="store.docQuery.total > store.docQuery.pageSize" class="docs-pager">
+            <span class="docs-pager-total">共 {{ store.docQuery.total }} 篇</span>
+            <el-pagination
+              layout="prev, pager, next"
+              background
+              :current-page="store.docQuery.page"
+              :page-size="store.docQuery.pageSize"
+              :total="store.docQuery.total"
+              @current-change="(p: number) => store.loadDocs(props.kb.id, { page: p })"
+            />
           </div>
         </div>
 
@@ -537,6 +585,19 @@ function handleEditFragment(doc: KBDoc) {
 </template>
 
 <style scoped>
+.docs-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 4px 2px;
+}
+
+.docs-pager-total {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
 .docs-tab {
   width: 100%;
   height: 100%;

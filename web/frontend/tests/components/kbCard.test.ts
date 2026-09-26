@@ -15,6 +15,8 @@ import type { KB } from '@/types/knowledgeBase'
  */
 
 const store = vi.hoisted(() => ({
+  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
+  loadDocs: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20 })),
   kbGroups: [] as unknown[],
   togglePin: vi.fn(),
   moveKb: vi.fn(),

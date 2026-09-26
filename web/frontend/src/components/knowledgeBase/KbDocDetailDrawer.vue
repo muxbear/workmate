@@ -7,6 +7,7 @@ import {
 import type { KBDoc, DocChunk } from '@/types/knowledgeBase'
 import { fetchDocumentChunks } from '@/services/knowledgeBaseApi'
 import KbDocStatusBadge from './KbDocStatusBadge.vue'
+import KbSkeleton from './KbSkeleton.vue'
 
 const props = defineProps<{
   doc: KBDoc
@@ -155,7 +156,11 @@ function copyChunkContent() {
               <span v-for="e in chunk.entities" :key="e" class="entity-tag">{{ e }}</span>
             </div>
           </div>
-          <div v-if="filtered.length === 0" class="chunk-empty">
+          <!-- 切片还在路上时不再显示"没有匹配的分片"——那个 loading ref 此前是死状态 -->
+          <div v-if="loading" class="chunk-empty">
+            <KbSkeleton :rows="4" />
+          </div>
+          <div v-else-if="filtered.length === 0" class="chunk-empty">
             <Layers :size="24" class="chunk-empty-icon" />
             没有匹配的分片
           </div>

@@ -33,6 +33,8 @@ vi.mock('@/services/knowledgeBaseApi', async () => {
 })
 
 const store = vi.hoisted(() => ({
+  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
+  loadDocs: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20 })),
   uploadDocs: vi.fn(),
   createTextDoc: vi.fn(),
   importUrlDoc: vi.fn(),
@@ -92,6 +94,31 @@ async function mountTab(docs: KBDoc[], readonly = false) {
   await flushPromises()
   return wrapper
 }
+
+
+  it('加载中不显示"暂无文档，点击右上角上传"这个行动号召', async () => {
+    // 回归（迭代 6 T6.6）：此前文档表没有任何加载态，数据还在路上时就先渲染空态，
+    // 而那句空态是个**行动号召**——用户会以为库是空的、跑去重复上传
+    store.docQuery.loading = true
+    const wrapper = await mountTab([])
+
+    // 断言 .empty-cell 的**文本**而不是 wrapper.html()：Vue 会保留模板里的注释，
+    // 而组件源码的注释里就有这句文案——断言 html() 会撞上自己的注释，是假失败
+    expect(wrapper.find('.empty-cell').text()).not.toContain('暂无文档')
+    expect(wrapper.find('.kb-skeleton').exists()).toBe(true)
+
+    store.docQuery.loading = false
+  })
+
+  it('有搜索词时"没结果"与"库是空的"说两句话', async () => {
+    store.docQuery.search = '架构'
+    const wrapper = await mountTab([])
+
+    expect(wrapper.find('.empty-cell').text()).toContain('没有名称匹配')
+    expect(wrapper.find('.empty-cell').text()).not.toContain('暂无文档')
+
+    store.docQuery.search = ''
+  })
 
 /** 行复选框：第 0 个是表头的全选，行从第 1 个开始 */
 function rowChecks(wrapper: ReturnType<typeof mount>) {

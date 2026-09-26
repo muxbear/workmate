@@ -64,6 +64,9 @@ vi.mock('@/stores/knowledgeBase', async () => {
       // 统计卡直接读这些字段并 toLocaleString，字段名/类型不对会在渲染期抛错
       stats: { totalKbs: 1, totalDocs: 1, totalChunks: 10, totalEntities: 0, indexingCount: 0 },
       viewMode: 'grid',
+  // 文档表的分页/搜索状态（迭代 6 T6.6）——组件读它，桩里缺了就渲染期抛错
+  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
+  loadDocs: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20 })),
       filteredKbs: [],
       activeNav: 'overview',
     }),

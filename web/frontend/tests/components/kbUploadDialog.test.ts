@@ -17,6 +17,7 @@ import type { IndexConfig } from '@/types/knowledgeBase'
 const uploadDocs = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/knowledgeBase', () => ({
   useKnowledgeBaseStore: () => ({ uploadDocs }),
+
 }))
 
 const CONFIG = {

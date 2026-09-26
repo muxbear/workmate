@@ -12,6 +12,9 @@ vi.mock('@/services/knowledgeBaseApi', () => ({
   updateKnowledgeBase: vi.fn(),
   deleteKnowledgeBase: vi.fn(),
   fetchStats: vi.fn(),
+  fetchDocuments: vi.fn(),
+  fetchGraphData: vi.fn(),
+  searchKnowledgeBase: vi.fn(),
   fetchKbShares: vi.fn(),
   createKbShares: vi.fn(),
   deleteKbShare: vi.fn(),
@@ -372,6 +375,105 @@ describe('知识库 store —— 概览', () => {
     expect(mocked.fetchKBPage).toHaveBeenLastCalledWith(
       expect.objectContaining({ tag: '运维', page: 1 }),
     )
+  })
+
+  // ─── 文档表分页（迭代 6 T6.6）────────────────────────────────────────────
+
+  describe('文档列表分页', () => {
+    function kbDoc(id: string): KBDoc {
+      return {
+        id, name: `${id}.md`, type: 'md', size: '1 KB', status: 'indexed',
+        progress: 100, chunks: 3, entities: 0, relations: 0,
+        uploadedAt: '2026-09-26', errorMessage: null, graphError: null,
+        parseWarning: null, stages: [], config: null,
+      }
+    }
+
+    beforeEach(() => {
+      mocked.fetchKnowledgeBase.mockResolvedValue({
+        id: 'kb-1', name: '库', description: '', status: 'ready',
+        docs: 150, chunks: 0, entities: 0, relations: 0, size: '1 KB',
+        updatedAt: '2026-09-26', tags: [], documents: [], entitiesData: [],
+        relationsData: [], visibility: 'private', isOwner: true,
+        ownerName: null, isPinned: false, sortOrder: 0, groupId: null,
+        config: {} as never,
+      })
+      mocked.fetchGraphData.mockResolvedValue({ entities: [], relations: [] })
+      mocked.fetchStats.mockResolvedValue({
+        totalKbs: 1, totalDocs: 150, totalChunks: 0, totalEntities: 0, indexing: 0,
+      })
+    })
+
+    it('把 total 存进状态，并把当前页交给服务端', async () => {
+      // 回归：此前写死 page_size=100 且**丢掉 total**——超过 100 篇的库静默只显示
+      // 前 100 篇，没有分页器也没有任何提示
+      mocked.fetchDocuments.mockResolvedValue({
+        items: [kbDoc('d1')], total: 150, page: 1, page_size: 20,
+      })
+      const store = useKnowledgeBaseStore()
+
+      await store.selectKb('kb-1')
+
+      expect(mocked.fetchDocuments).toHaveBeenLastCalledWith(
+        'kb-1', expect.objectContaining({ page: 1, page_size: 20 }),
+      )
+      expect(store.docQuery.total).toBe(150)
+      expect(store.selectedKb?.documents).toHaveLength(1)
+    })
+
+    it('翻页时把新页码交给服务端', async () => {
+      mocked.fetchDocuments.mockResolvedValue({
+        items: [], total: 150, page: 3, page_size: 20,
+      })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+
+      await store.loadDocs('kb-1', { page: 3 })
+
+      expect(mocked.fetchDocuments).toHaveBeenLastCalledWith(
+        'kb-1', expect.objectContaining({ page: 3 }),
+      )
+    })
+
+    it('搜索走服务端（分页之后只过滤当前页会让"搜不到"变成假象）', async () => {
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+
+      await store.loadDocs('kb-1', { search: '架构', page: 1 })
+
+      expect(mocked.fetchDocuments).toHaveBeenLastCalledWith(
+        'kb-1', expect.objectContaining({ search: '架构' }),
+      )
+    })
+
+    it('不带 patch 的 loadDocs 沿用当前页与关键词', async () => {
+      // 这是后台每 30 秒兜底刷新（refreshActiveDocuments）赖以不把用户弹回第 1 页的
+      // 不变量：它调的就是无参 loadDocs。测试走公开 API 断言这条不变量本身。
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 150, page: 3, page_size: 20 })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+      await store.loadDocs('kb-1', { page: 3, search: '架构' })
+      mocked.fetchDocuments.mockClear()
+
+      await store.loadDocs('kb-1')
+
+      expect(mocked.fetchDocuments).toHaveBeenLastCalledWith(
+        'kb-1', expect.objectContaining({ page: 3, search: '架构' }),
+      )
+    })
+
+    it('换库时重置到第 1 页并清空关键词', async () => {
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+      await store.loadDocs('kb-1', { page: 5, search: '旧词' })
+
+      await store.selectKb('kb-1')
+
+      expect(store.docQuery.page).toBe(1)
+      expect(store.docQuery.search).toBe('')
+    })
   })
 
   it('分页参数随页大小一起传给服务端', async () => {
