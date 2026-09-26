@@ -25,7 +25,6 @@ from api.knowledge_base.service import (
 )
 from core.notification_bus import NotificationBus, NotificationEvent
 from db.models.knowledge_base import KnowledgeBase
-from db.models.personnel import Personnel
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     SHARE_STATUS_PENDING,
@@ -33,6 +32,7 @@ from db.models.knowledge_base_share import (
     SHARE_STATUS_REVOKED,
     KnowledgeBaseShare,
 )
+from db.models.personnel import Personnel
 from db.models.user import Account
 
 logger = logging.getLogger(__name__)
