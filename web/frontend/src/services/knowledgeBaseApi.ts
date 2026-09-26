@@ -764,7 +764,7 @@ export async function retryDocument(
 
 export interface GraphDataResponse {
   entities: { id: string; name: string; type: string; mentions: number }[]
-  relations: { id: string; from: string; to: string; label: string; weight: number; sourceEntityId?: string; targetEntityId?: string }[]
+  relations: { id: string; from: string; to: string; label: string; weight: number }[]
 }
 
 export async function fetchGraphData(
@@ -776,18 +776,26 @@ export async function fetchGraphData(
   })
   const raw = res.data.data as {
     entities: { id: string; name: string; type: string; mentions: number }[]
-    relations: { id: string; from_entity: string; to_entity: string; label: string; weight: number; source_entity_id?: string; target_entity_id?: string }[]
+    relations: {
+      id: string
+      from_key: string
+      to_key: string
+      from_entity: string
+      to_entity: string
+      label: string
+      weight: number
+    }[]
   }
   return {
     entities: raw.entities || [],
+    // 边挂到**归一键**上（与节点 id 同一个值），不再走 `source_entity_id`：
+    // 那是另一套分组下的 min()，与节点 id 对不上时前端会把整条边静默丢掉。
     relations: (raw.relations || []).map((r) => ({
       id: r.id,
-      from: r.source_entity_id || r.from_entity,
-      to: r.target_entity_id || r.to_entity,
+      from: r.from_key || r.from_entity,
+      to: r.to_key || r.to_entity,
       label: r.label,
       weight: r.weight,
-      sourceEntityId: r.source_entity_id,
-      targetEntityId: r.target_entity_id,
     })),
   }
 }

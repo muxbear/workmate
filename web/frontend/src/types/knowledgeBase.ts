@@ -114,9 +114,11 @@ export interface KBDoc {
 
 // 知识图谱实体
 export interface Entity {
+  /** 归一键（迭代 6 T6.5）——实体详情接口的入参就是它，不再是实体行的 UUID */
   id: string
   name: string
   type: string
+  /** 提到该实体的**文档数**（不再是"出现次数"） */
   mentions: number
   x: number
   y: number
@@ -125,12 +127,11 @@ export interface Entity {
 // 知识图谱关系
 export interface Relation {
   id: string
+  /** 两端的归一键，与实体的 `id` 同一口径，因此边永远能挂到节点上 */
   from: string
   to: string
   label: string
   weight?: number
-  sourceEntityId?: string
-  targetEntityId?: string
 }
 
 // 知识库

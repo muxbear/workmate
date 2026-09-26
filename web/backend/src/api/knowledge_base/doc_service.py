@@ -29,6 +29,7 @@ from api.knowledge_base.doc_state import (
     _ocr_budget_seconds,
     is_ocr_enabled,
 )
+from api.knowledge_base.entity_norm import name_key_expr
 from api.knowledge_base.schemas import (
     DocStageInfo,
     IndexConfigSchema,
@@ -465,15 +466,33 @@ async def recalc_kb_counters(db: AsyncSession, kb_id: str) -> None:
             KnowledgeBaseDocument.kb_id == kb_id,
         )
     )
+    # 实体/关系按**归一后的分组数**计，与图谱页签上看到的节点数一致（迭代 6 T6.5）。
+    # 此前这里数**行数**，而 rebuild_graph_for_kb 数**分组数**——两处口径不同，正是
+    # 方案里记的"255 / 282 / 322 三值不等"的成因。同一个实体出现在两篇文档里是两行
+    # 但只有一个节点，用户看到的是节点。
+    entity_key = name_key_expr(KnowledgeBaseEntity.name_key, KnowledgeBaseEntity.name)
     entity_total = await db.scalar(
-        select(func.count()).select_from(KnowledgeBaseEntity).where(
+        select(func.count(func.distinct(entity_key))).where(
             KnowledgeBaseEntity.kb_id == kb_id,
         )
     )
+    relation_from = name_key_expr(
+        KnowledgeBaseRelation.from_key, KnowledgeBaseRelation.from_entity,
+    )
+    relation_to = name_key_expr(
+        KnowledgeBaseRelation.to_key, KnowledgeBaseRelation.to_entity,
+    )
+    # 分组键**必须与 get_graph_data 完全一致**（含 label），否则统计卡的数字与图谱
+    # 页签上的条数又会对不上——那正是本轮要消灭的东西。用 \x1f 做分隔符避免
+    # "a"+"b|c" 与 "a|b"+"c" 拼成同一个串（字符串 + 号在两种方言下都渲染成 ||）。
     relation_total = await db.scalar(
-        select(func.count()).select_from(KnowledgeBaseRelation).where(
-            KnowledgeBaseRelation.kb_id == kb_id,
-        )
+        select(
+            func.count(
+                func.distinct(
+                    relation_from + "\x1f" + relation_to + "\x1f" + KnowledgeBaseRelation.label
+                )
+            )
+        ).where(KnowledgeBaseRelation.kb_id == kb_id)
     )
     # 仍在索引中的文档（queued 与各中间态都算）
     active_count = await db.scalar(

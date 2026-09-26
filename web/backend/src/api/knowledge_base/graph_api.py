@@ -31,18 +31,23 @@ async def get_graph(
     return {"code": 0, "data": result, "message": "ok"}
 
 
-@router.get("/{kb_id}/graph/entities/{entity_id}", response_model=dict)
+@router.get("/{kb_id}/graph/entities/{entity_key}", response_model=dict)
 async def get_entity(
     kb_id: str,
-    entity_id: str,
+    entity_key: str,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """获取实体详情。"""
+    """获取实体详情。
+
+    ``entity_key`` 是**归一键**（迭代 6 T6.5）——与图谱接口给出的节点 id 同一个值。
+    此前这里收的是实体行的 UUID，而图谱的节点 id 是分组值 `min(行 id)`：两者口径不同，
+    "点节点看详情"在构造上就对不上，只是没人调用过所以没暴露。
+    """
     # 该接口此前只按 kb_id 查询、未做归属校验，等于把任意知识库的实体暴露给
     # 任何已登录用户；补上可读校验（本人 / 已接受分享 / 公共库）。
     await require_kb_readable(db, kb_id, user_id)
-    result = await get_entity_detail(db, kb_id, entity_id)
+    result = await get_entity_detail(db, kb_id, entity_key)
     if result is None:
         return {"code": 404, "data": None, "message": "实体不存在"}
     return {"code": 0, "data": result, "message": "ok"}

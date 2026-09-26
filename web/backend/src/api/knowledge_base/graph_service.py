@@ -9,6 +9,7 @@ import uuid
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.knowledge_base.entity_norm import canonical_type, name_key_expr, normalize_name
 from core.rag.loaders import create_default_loader_registry
 from core.rag.splitters import create_chunk_registry
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
@@ -182,38 +183,61 @@ async def get_graph_data(
     kb_id: str,
     entity_type: str | None = None,
 ) -> dict:
-    """获取知识图谱数据（实体 + 关系），聚合跨文档的重复实体/关系。"""
+    """获取知识图谱数据（实体 + 关系），按**归一键**聚合跨文档的重复实体/关系。
+
+    与旧行为的三处差别（迭代 6 T6.5）：
+
+    1. 节点按 ``name_key`` 分组，所以 ``LangChain`` 与 ``langchain`` 是同一个节点；
+       节点的 ``id`` 就是归一键——**稳定、可复现、可直接用于详情路由**。此前是
+       ``min(行 id)``，与详情接口按原始行 id 查的口径对不上，"点节点看详情"在构造
+       上就是断的。
+    2. ``mentions`` 改为 ``count(distinct doc_id)``——"多少篇文档提到它"。此前是
+       ``sum(mentions)``，而那个值因为写侧的跳过逻辑恒为 1。
+    3. 关系按 ``(from_key, to_key, label)`` 分组，因此两个只差大小写的端点会并成
+       一条边，边也不再引用对不上节点的 id（``source_entity_id`` 是另一套分组下的
+       ``min()``，前端拿到后会把端点找不到的边静默丢掉）。
+    """
+    entity_key = name_key_expr(
+        KnowledgeBaseEntity.name_key, KnowledgeBaseEntity.name,
+    ).label("key")
     entity_stmt = (
         select(
-            func.min(KnowledgeBaseEntity.id).label("id"),
-            KnowledgeBaseEntity.name,
-            KnowledgeBaseEntity.type,
-            func.sum(KnowledgeBaseEntity.mentions).label("mentions"),
+            entity_key,
+            # 展示名与类型取组内第一行（按 id 稳定排序），保证同一份数据每次渲一致
+            func.min(KnowledgeBaseEntity.name).label("name"),
+            func.min(KnowledgeBaseEntity.type).label("type"),
+            func.count(func.distinct(KnowledgeBaseEntity.doc_id)).label("doc_count"),
         )
         .where(KnowledgeBaseEntity.kb_id == kb_id)
-        .group_by(KnowledgeBaseEntity.name, KnowledgeBaseEntity.type)
+        .group_by(text("key"))
     )
     if entity_type:
-        entity_stmt = entity_stmt.where(KnowledgeBaseEntity.type == entity_type)
-    entity_stmt = entity_stmt.order_by(text("mentions DESC"))
+        # 对分组后的类型过滤：此前按行过滤会把端点不在节点集里的边一起返回，
+        # 前端只好自己再交一次（KbGraphTab.vue 的 filteredRelations）
+        entity_stmt = entity_stmt.having(
+            func.min(KnowledgeBaseEntity.type) == entity_type
+        )
+    entity_stmt = entity_stmt.order_by(text("doc_count DESC"))
     entity_rows = (await db.execute(entity_stmt)).all()
 
+    rel_from = name_key_expr(
+        KnowledgeBaseRelation.from_key, KnowledgeBaseRelation.from_entity,
+    ).label("from_key")
+    rel_to = name_key_expr(
+        KnowledgeBaseRelation.to_key, KnowledgeBaseRelation.to_entity,
+    ).label("to_key")
     rel_stmt = (
         select(
             func.min(KnowledgeBaseRelation.id).label("id"),
-            KnowledgeBaseRelation.from_entity,
-            KnowledgeBaseRelation.to_entity,
+            rel_from,
+            rel_to,
+            func.min(KnowledgeBaseRelation.from_entity).label("from_entity"),
+            func.min(KnowledgeBaseRelation.to_entity).label("to_entity"),
             KnowledgeBaseRelation.label,
             func.sum(KnowledgeBaseRelation.weight).label("weight"),
-            func.min(KnowledgeBaseRelation.source_entity_id).label("source_entity_id"),
-            func.min(KnowledgeBaseRelation.target_entity_id).label("target_entity_id"),
         )
         .where(KnowledgeBaseRelation.kb_id == kb_id)
-        .group_by(
-            KnowledgeBaseRelation.from_entity,
-            KnowledgeBaseRelation.to_entity,
-            KnowledgeBaseRelation.label,
-        )
+        .group_by(text("from_key"), text("to_key"), KnowledgeBaseRelation.label)
         .order_by(text("weight DESC"))
     )
     relation_rows = (await db.execute(rel_stmt)).all()
@@ -221,22 +245,22 @@ async def get_graph_data(
     return {
         "entities": [
             {
-                "id": row.id,
+                "id": row.key,
                 "name": row.name,
                 "type": row.type,
-                "mentions": int(row.mentions or 0),
+                "mentions": int(row.doc_count or 0),
             }
             for row in entity_rows
         ],
         "relations": [
             {
                 "id": row.id,
+                "from_key": row.from_key,
+                "to_key": row.to_key,
                 "from_entity": row.from_entity,
                 "to_entity": row.to_entity,
                 "label": row.label,
                 "weight": float(row.weight or 0),
-                "source_entity_id": row.source_entity_id,
-                "target_entity_id": row.target_entity_id,
             }
             for row in relation_rows
         ],
@@ -318,71 +342,96 @@ async def rebuild_graph_for_kb(
 
 
 async def get_entity_detail(
-    db: AsyncSession, kb_id: str, entity_id: str
+    db: AsyncSession, kb_id: str, entity_key: str
 ) -> dict | None:
-    """获取实体详情及关联关系（聚合跨文档数据）。"""
-    entity = (
-        await db.execute(
-            select(KnowledgeBaseEntity).where(
-                KnowledgeBaseEntity.id == entity_id,
-                KnowledgeBaseEntity.kb_id == kb_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if entity is None:
+    """按**归一键**取实体详情及关联关系（聚合跨文档数据）。
+
+    入参从"原始行 id"改成归一键，是修掉"点节点看详情"断裂的关键：图谱接口给的节点
+    id 是分组值，而详情按行 id 查——两者永远对不上。现在两边用的是同一个键。
+
+    返回里带上**来源文档**：详情面板此前只能吃列表里已有的数组，看不到"这个实体
+    出自哪几篇文档"，而那正是用户点开一个节点最想知道的。
+    """
+    from db.models.knowledge_base_document import KnowledgeBaseDocument
+
+    entity_key = normalize_name(entity_key)
+    if not entity_key:
         return None
 
-    total_mentions = await db.scalar(
-        select(func.sum(KnowledgeBaseEntity.mentions)).where(
-            KnowledgeBaseEntity.kb_id == kb_id,
-            KnowledgeBaseEntity.name == entity.name,
+    entity_rows = (
+        await db.execute(
+            select(KnowledgeBaseEntity).where(
+                KnowledgeBaseEntity.kb_id == kb_id,
+                KnowledgeBaseEntity.name_key == entity_key,
+            )
         )
-    )
+    ).scalars().all()
+    if not entity_rows:
+        return None
+
+    doc_ids = {row.doc_id for row in entity_rows if row.doc_id}
+    doc_names = {
+        doc_id: name
+        for doc_id, name in (
+            await db.execute(
+                select(KnowledgeBaseDocument.id, KnowledgeBaseDocument.name).where(
+                    KnowledgeBaseDocument.id.in_(doc_ids)
+                )
+            )
+        ).all()
+    } if doc_ids else {}
 
     import sqlalchemy as sa
 
-    rel_rows = (
-        await db.execute(
-            select(
-                func.min(KnowledgeBaseRelation.id).label("id"),
-                KnowledgeBaseRelation.from_entity,
-                KnowledgeBaseRelation.to_entity,
-                KnowledgeBaseRelation.label,
-                func.sum(KnowledgeBaseRelation.weight).label("weight"),
-                func.min(KnowledgeBaseRelation.source_entity_id).label("source_entity_id"),
-                func.min(KnowledgeBaseRelation.target_entity_id).label("target_entity_id"),
-            )
-            .where(
-                KnowledgeBaseRelation.kb_id == kb_id,
-                sa.or_(
-                    KnowledgeBaseRelation.from_entity == entity.name,
-                    KnowledgeBaseRelation.to_entity == entity.name,
-                ),
-            )
-            .group_by(
-                KnowledgeBaseRelation.from_entity,
-                KnowledgeBaseRelation.to_entity,
-                KnowledgeBaseRelation.label,
-            )
+    rel_stmt = (
+        select(
+            func.min(KnowledgeBaseRelation.id).label("id"),
+            name_key_expr(
+                KnowledgeBaseRelation.from_key, KnowledgeBaseRelation.from_entity,
+            ).label("from_key"),
+            name_key_expr(
+                KnowledgeBaseRelation.to_key, KnowledgeBaseRelation.to_entity,
+            ).label("to_key"),
+            func.min(KnowledgeBaseRelation.from_entity).label("from_entity"),
+            func.min(KnowledgeBaseRelation.to_entity).label("to_entity"),
+            KnowledgeBaseRelation.label,
+            func.sum(KnowledgeBaseRelation.weight).label("weight"),
         )
-    ).all()
+        .where(
+            KnowledgeBaseRelation.kb_id == kb_id,
+            sa.or_(
+                KnowledgeBaseRelation.from_key == entity_key,
+                KnowledgeBaseRelation.to_key == entity_key,
+            ),
+        )
+        .group_by(text("from_key"), text("to_key"), KnowledgeBaseRelation.label)
+        .order_by(text("weight DESC"))
+    )
+    rel_rows = (await db.execute(rel_stmt)).all()
+
+    # 展示名取组内最早写入的那一行（按 id 稳定），保证同一实体每次渲染同一个写法
+    display = sorted(entity_rows, key=lambda r: r.id)[0]
 
     return {
-        "id": entity.id,
-        "name": entity.name,
-        "type": entity.type,
-        "mentions": int(total_mentions or 0),
-        "metadata_": entity.metadata_,
-        "source_text": entity.source_text,
+        "id": entity_key,
+        "name": display.name,
+        "type": display.type,
+        "mentions": len(doc_ids) or len(entity_rows),
+        "metadata_": display.metadata_,
+        "source_text": display.source_text,
+        "documents": [
+            {"id": doc_id, "name": doc_names.get(doc_id, "")}
+            for doc_id in sorted(doc_ids)
+        ],
         "relations": [
             {
                 "id": row.id,
+                "from_key": row.from_key,
+                "to_key": row.to_key,
                 "from_entity": row.from_entity,
                 "to_entity": row.to_entity,
                 "label": row.label,
                 "weight": float(row.weight or 0),
-                "source_entity_id": row.source_entity_id,
-                "target_entity_id": row.target_entity_id,
             }
             for row in rel_rows
         ],
@@ -501,14 +550,18 @@ class GraphExtractionService:
 
         async with async_session() as db:
             try:
-                # Phase 1: Upsert 实体，构建 name -> id 映射
+                # Phase 1: Upsert 实体，构建 name_key -> id 映射
+                #
+                # 查重键用**归一键**而不是原始名：`LangChain` 与 `langchain` 是同一个
+                # 实体，写成两行就是此前实测到的"并存"缺陷。展示名保留首次出现的写法。
                 entity_map: dict[str, str] = {}
+                name_by_key: dict[str, str] = {}
                 for e in entities:
                     name = e.get("name", "").strip()
-                    etype = e.get("type", "概念")
-                    if not name:
+                    key = normalize_name(name)
+                    if not key:
                         continue
-                    if name in entity_map:
+                    if key in entity_map:
                         continue
 
                     existing = (
@@ -516,14 +569,18 @@ class GraphExtractionService:
                             select(KnowledgeBaseEntity).where(
                                 KnowledgeBaseEntity.kb_id == kb_id,
                                 KnowledgeBaseEntity.doc_id == doc_id,
-                                KnowledgeBaseEntity.name == name,
+                                KnowledgeBaseEntity.name_key == key,
                             )
                         )
                     ).scalar_one_or_none()
 
                     if existing:
-                        existing.mentions = (existing.mentions or 0) + 1
-                        entity_map[name] = existing.id
+                        # 不再自增 mentions：它的语义已改为"多少篇文档提到"，由读侧
+                        # count(distinct doc_id) 现算。留着自增会诱导下一个人以为它在
+                        # 计数——而它恒为 1 的原因正是这里（同一文档内的重复被上面的
+                        # 跳过挡掉了）。
+                        entity_map[key] = existing.id
+                        name_by_key[key] = existing.name
                     else:
                         ent_id = str(uuid.uuid4())
                         db.add(
@@ -532,41 +589,49 @@ class GraphExtractionService:
                                 kb_id=kb_id,
                                 doc_id=doc_id,
                                 name=name,
-                                type=etype,
+                                name_key=key,
+                                type=canonical_type(e.get("type")),
                                 mentions=1,
                                 source_text=e.get("source_text"),
                                 char_start=e.get("char_start"),
                                 char_end=e.get("char_end"),
                             )
                         )
-                        entity_map[name] = ent_id
+                        entity_map[key] = ent_id
+                        name_by_key[key] = name
 
                 await db.flush()  # 确保实体 ID 已持久化
 
                 # Phase 2: Upsert 关系，使用实体 ID
                 for r in relations:
-                    from_name = r.get("from", "").strip()
-                    to_name = r.get("to", "").strip()
+                    from_key = normalize_name(r.get("from"))
+                    to_key = normalize_name(r.get("to"))
                     label = r.get("label", "").strip()
-                    if not from_name or not to_name or not label:
+                    if not from_key or not to_key or not label:
                         continue
 
-                    source_id = entity_map.get(from_name)
-                    target_id = entity_map.get(to_name)
+                    source_id = entity_map.get(from_key)
+                    target_id = entity_map.get(to_key)
 
                     if not source_id or not target_id:
                         logger.warning(
-                            "跳过关系 '%s' -> '%s': 实体端点未找到", from_name, to_name
+                            "跳过关系 '%s' -> '%s': 实体端点未找到",
+                            r.get("from"), r.get("to"),
                         )
                         continue
+
+                    # 端点写归一后的展示名：读侧按 key 分组、展示用 name，两者要一致，
+                    # 否则同一个实体在图上会出现两种写法。
+                    from_name = name_by_key.get(from_key, r.get("from", "").strip())
+                    to_name = name_by_key.get(to_key, r.get("to", "").strip())
 
                     existing_rel = (
                         await db.execute(
                             select(KnowledgeBaseRelation).where(
                                 KnowledgeBaseRelation.kb_id == kb_id,
                                 KnowledgeBaseRelation.doc_id == doc_id,
-                                KnowledgeBaseRelation.from_entity == from_name,
-                                KnowledgeBaseRelation.to_entity == to_name,
+                                KnowledgeBaseRelation.from_key == from_key,
+                                KnowledgeBaseRelation.to_key == to_key,
                                 KnowledgeBaseRelation.label == label,
                             )
                         )
@@ -586,6 +651,8 @@ class GraphExtractionService:
                                 doc_id=doc_id,
                                 from_entity=from_name,
                                 to_entity=to_name,
+                                from_key=from_key,
+                                to_key=to_key,
                                 label=label,
                                 weight=1.0,
                                 source_entity_id=source_id,

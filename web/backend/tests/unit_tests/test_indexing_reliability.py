@@ -358,10 +358,17 @@ class TestCancelAndShutdown:
 
 
 class TestCounterRecalc:
-    async def test_entity_count_matches_rows_not_distinct_names(
-        self, sessionmaker,
-    ):
-        """回归：实体数此前取 count(distinct name)，与图谱页签渲染的行数不一致。"""
+    async def test_entity_count_matches_graph_nodes(self, sessionmaker):
+        """实体/关系数按**归一后的分组数**计，与图谱页签渲染的节点数一致。
+
+        **口径变更（迭代 6 T6.5）**：此前这里数**行数**（`count(*)`，T1.6 时期的写法），
+        而 `rebuild_graph_for_kb` 数**分组数**——两处不同口径正是方案里记的
+        "255 / 282 / 322 三值不等"的成因。归一之后图谱把 `calico` 与 `Calico` 合成一个
+        节点，计数跟着按分组走，于是这条用例的期望从 2 变成 1。
+
+        这不是"把用例改成迁就实现"：T1.6 当时的意图就是"计数要与图谱页签看到的一致"，
+        归一改变了图谱看到的东西，计数必须跟着变。
+        """
         await seed_kb(sessionmaker)
         await seed_doc(sessionmaker, "doc-1", status="indexed")
         async with sessionmaker() as db:
@@ -382,11 +389,46 @@ class TestCounterRecalc:
         async with sessionmaker() as db:
             kb = await db.get(KnowledgeBase, KB)
         assert kb is not None
-        assert kb.entities_count == 2
+        assert kb.entities_count == 1, "大小写变体应合成一个节点"
         assert kb.relations_count == 1
         assert kb.chunks_count == 0
         assert kb.docs_count == 1
         assert kb.status == "ready"
+
+    async def test_counter_matches_get_graph_data(self, sessionmaker):
+        """计数与图谱接口返回的条数必须逐一对上——两条路各算各的就会漂移。"""
+        from api.knowledge_base.graph_service import get_graph_data
+
+        await seed_kb(sessionmaker)
+        await seed_doc(sessionmaker, "doc-1", status="indexed")
+        await seed_doc(sessionmaker, "doc-2", status="indexed")
+        async with sessionmaker() as db:
+            db.add_all([
+                # 同一实体跨两篇文档：两行、一个节点
+                KnowledgeBaseEntity(id="e1", kb_id=KB, doc_id="doc-1", name="Milvus", type="产品"),
+                KnowledgeBaseEntity(id="e2", kb_id=KB, doc_id="doc-2", name="milvus", type="产品"),
+                KnowledgeBaseEntity(id="e3", kb_id=KB, doc_id="doc-1", name="RAG", type="概念"),
+                KnowledgeBaseRelation(
+                    id="r1", kb_id=KB, doc_id="doc-1", from_entity="Milvus",
+                    to_entity="RAG", label="用于",
+                ),
+                KnowledgeBaseRelation(
+                    id="r2", kb_id=KB, doc_id="doc-2", from_entity="milvus",
+                    to_entity="rag", label="用于",
+                ),
+            ])
+            await db.commit()
+
+        async with sessionmaker() as db:
+            await recalc_kb_counters(db, KB)
+            await db.commit()
+
+        async with sessionmaker() as db:
+            kb = await db.get(KnowledgeBase, KB)
+            graph = await get_graph_data(db, KB)
+        assert kb is not None
+        assert kb.entities_count == len(graph["entities"]) == 2
+        assert kb.relations_count == len(graph["relations"]) == 1
 
     async def test_status_becomes_indexing_while_docs_are_active(
         self, sessionmaker,
