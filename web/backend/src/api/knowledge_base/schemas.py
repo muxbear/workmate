@@ -101,8 +101,50 @@ class KBResponse(BaseModel):
     visibility: str = "private"
     is_owner: bool = True
     owner_name: str | None = None
+    #: 置顶与手工排序（迭代 6 T6.2）——**本人列表视图偏好**，只影响自己的排序
+    is_pinned: bool = False
+    sort_order: int = 0
+    group_id: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class KBGroupResponse(BaseModel):
+    """知识库分组。"""
+    id: str
+    name: str
+    sort_order: int = 0
+    kb_count: int = 0
+
+
+class KBGroupCreateRequest(BaseModel):
+    """新建分组。"""
+    name: str = Field(..., min_length=1, max_length=64)
+
+
+class KBGroupUpdateRequest(BaseModel):
+    """重命名分组。"""
+    name: str = Field(..., min_length=1, max_length=64)
+
+
+class KBCopyRequest(BaseModel):
+    """复制知识库（只复制定义与配置，不复制文档与向量）。"""
+    name: str | None = Field(default=None, max_length=128)
+
+
+class KBPinRequest(BaseModel):
+    """置顶 / 取消置顶。"""
+    pinned: bool
+
+
+class KBMoveRequest(BaseModel):
+    """在列表里上移 / 下移一位。"""
+    direction: Literal["up", "down"]
+
+
+class KBAssignGroupRequest(BaseModel):
+    """把知识库归入分组；``group_id`` 传 null 表示移出分组。"""
+    group_id: str | None = None
 
 
 class KBListResponse(BaseModel):

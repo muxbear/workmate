@@ -7,10 +7,10 @@ import os
 import shutil
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, false, func, or_, select, text, update
+from sqlalchemy import String, and_, cast, false, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,16 +119,18 @@ async def _readable_condition(
     )
 
 
+def _escape_like(value: str) -> str:
+    """转义 LIKE 的特殊字符（``%`` / ``_`` / ``\\``）。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _like_pattern(search: str) -> str:
-    """把用户输入转成安全的 LIKE 模式串（转义 ``%`` / ``_`` / ``\\``）。
+    """把用户输入转成安全的 LIKE 模式串。
 
     配合 ``ilike(pattern, escape="\\\\")`` 使用：用户搜索 "a_b" 时应当只匹配字面
     下划线，而不是把它当成单字符通配符。
     """
-    escaped = (
-        search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
-    return f"%{escaped}%"
+    return f"%{_escape_like(search)}%"
 
 
 def _format_bytes(size_bytes: int) -> str:
@@ -202,6 +204,9 @@ def _kb_to_response(
         visibility=kb.visibility or VISIBILITY_PRIVATE,
         is_owner=viewer_id is None or kb.user_id == viewer_id,
         owner_name=owner_name,
+        is_pinned=bool(kb.is_pinned),
+        sort_order=int(kb.sort_order or 0),
+        group_id=kb.group_id,
     )
 
 
@@ -225,8 +230,9 @@ async def list_kbs(
     search: str | None = None,
     scope: str = SCOPE_PERSONAL,
     role_key: str | None = None,
+    tag: str | None = None,
 ) -> KBListResponse:
-    """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。
+    """获取知识库列表（分页 + 模糊搜索 + 标签筛选 + 可见范围过滤）。
 
     scope 取值见 ``SCOPE_*`` 常量；默认 ``personal`` 保持历史行为（只返回本人创建）。
     """
@@ -269,15 +275,36 @@ async def list_kbs(
             )
         )
 
+    if tag:
+        # tags 是 JSON 列，PG 的 ``@>`` 只对 JSONB 生效、SQLite 更是没有——用
+        # "把 JSON 转成文本再匹配带引号的标签"这种两库都认的写法。带引号是为了
+        # 避免子串误命中（"k8s" 不该匹配到 "k8s-prod"）。
+        conditions.append(
+            cast(KnowledgeBase.tags, String).like(f'%"{_escape_like(tag)}"%')
+        )
+
     # Total count
     total_stmt = select(func.count()).select_from(KnowledgeBase).where(*conditions)
     total = (await db.execute(total_stmt)).scalar() or 0
+
+    # 排序：置顶 → 手工顺序 → 最近更新。
+    # **只对「我创建的」生效**：is_pinned/sort_order 是本人列表视图偏好（存在库行上
+    # 是最省事的实现），别人的视图不该被库主的偏好改变顺序。
+    order_by: tuple[Any, ...] = (
+        (
+            KnowledgeBase.is_pinned.desc(),
+            KnowledgeBase.sort_order.asc(),
+            KnowledgeBase.updated_at.desc(),
+        )
+        if scope == SCOPE_PERSONAL
+        else (KnowledgeBase.updated_at.desc(),)
+    )
 
     # Items
     stmt = (
         select(KnowledgeBase)
         .where(*conditions)
-        .order_by(KnowledgeBase.updated_at.desc())
+        .order_by(*order_by)
         .offset(offset)
         .limit(page_size)
     )
@@ -825,3 +852,303 @@ async def require_kb_readable(
     if kb is None or access is KBAccess.NONE:
         raise HTTPException(status_code=404, detail="知识库不存在")
     return kb, access
+
+
+# ─── 组织：置顶 / 手工排序 / 分组 / 复制 / 导出（迭代 6 T6.2）───────────────
+#
+# 置顶与手工排序是**本人列表视图偏好**，存在库行上（is_pinned/sort_order）是最省事
+# 的实现；为免"库主的偏好改变了别人看到的顺序"，排序只在 scope=personal 时生效
+# （见 list_kbs），且这些写接口只对库主开放。
+
+
+async def _update_view_preference(
+    db: AsyncSession, kb_ids: list[str], values: dict[str, Any],
+) -> None:
+    """更新"视图偏好"字段，**不刷新 updated_at**。
+
+    置顶 / 手工顺序 / 归组表达的是"我的列表怎么排"，不是库内容变更。但模型的
+    ``updated_at`` 带 ``onupdate=func.now()``，任何一次 UPDATE 都会把它推到当下：
+    于是列表里"更新时间"变成今天、"按更新时间排序"的视图被顶到最前，用户会以为
+    内容刚被改过。显式把 ``updated_at`` 赋成它自己即可绕过 onupdate。
+    """
+    if not kb_ids:
+        return
+    await db.execute(
+        update(KnowledgeBase)
+        .where(KnowledgeBase.id.in_(kb_ids))
+        .values(**values, updated_at=KnowledgeBase.updated_at)
+    )
+
+
+async def _owned_kb_rows(db: AsyncSession, user_id: str) -> list[KnowledgeBase]:
+    """本人创建的知识库，按列表的显示顺序取回。"""
+    rows = await db.execute(
+        select(KnowledgeBase)
+        .where(KnowledgeBase.user_id == user_id)
+        .order_by(
+            KnowledgeBase.is_pinned.desc(),
+            KnowledgeBase.sort_order.asc(),
+            KnowledgeBase.updated_at.desc(),
+        )
+    )
+    return list(rows.scalars().all())
+
+
+async def set_kb_pinned(
+    db: AsyncSession, kb_id: str, user_id: str, pinned: bool,
+) -> KBResponse:
+    """置顶 / 取消置顶（仅库主）。"""
+    kb = await _get_kb_or_404(db, kb_id, user_id)
+    await _update_view_preference(db, [kb.id], {"is_pinned": bool(pinned)})
+    await db.refresh(kb)
+    return _kb_to_response(kb)
+
+
+async def move_kb(
+    db: AsyncSession, kb_id: str, user_id: str, direction: str,
+) -> KBResponse:
+    """在列表里上移 / 下移一位。
+
+    **只在同一个置顶分组内交换**：置顶项永远在最前，把一项"下移"穿过置顶边界会
+    让它看起来"跳了一大截"。要跨过去就显式切换置顶。
+
+    交换后把该分组的 sort_order 重新编号（0..n-1）：手工顺序值会被反复交换弄乱
+    （0/0/0 之类的并列），每次移动顺手归一一次，成本是几条 UPDATE，换来顺序永远
+    可预测。
+    """
+    kb = await _get_kb_or_404(db, kb_id, user_id)
+    if direction not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="移动方向只能是 up 或 down")
+
+    rows = await _owned_kb_rows(db, user_id)
+    group = [r for r in rows if bool(r.is_pinned) == bool(kb.is_pinned)]
+    index = next((i for i, r in enumerate(group) if r.id == kb.id), None)
+    if index is None:  # 理论上不会发生（kb 就在本人的列表里）
+        return _kb_to_response(kb)
+
+    target = index - 1 if direction == "up" else index + 1
+    if 0 <= target < len(group):
+        group[index], group[target] = group[target], group[index]
+        # 每行的新值不同，只能逐行写；条数就是"本人的知识库数"，量级很小
+        for order, row in enumerate(group):
+            await _update_view_preference(db, [row.id], {"sort_order": order})
+        await db.refresh(kb)
+    return _kb_to_response(kb)
+
+
+async def copy_kb(
+    db: AsyncSession, kb_id: str, user_id: str, name: str | None = None,
+) -> KBResponse:
+    """复制知识库——**只复制定义与配置，不复制文档与向量**。
+
+    连文档一起复制意味着重新解析、重新向量化（真金白银的 embedding 调用），
+    而且"复制一个 2000 篇的库"会让接口挂住几分钟。要文档就复制完再上传——两步
+    动作，但每一步都在用户的预期内。
+    """
+    from api.knowledge_base.quota import ensure_kb_quota
+
+    source = await _get_kb_or_404(db, kb_id, user_id)
+    await ensure_kb_quota(db, user_id)
+
+    base = (name or f"{source.name} 副本").strip() or f"{source.name} 副本"
+    taken = {
+        row[0] for row in await db.execute(
+            select(KnowledgeBase.name).where(KnowledgeBase.user_id == user_id)
+        )
+    }
+    final_name = base
+    index = 1
+    while final_name in taken:
+        index += 1
+        final_name = f"{base}({index})"
+
+    now = datetime.utcnow()
+    clone = KnowledgeBase(
+        name=final_name[:128],
+        description=source.description,
+        tags=list(source.tags or []),
+        config=dict(source.config or {}),
+        user_id=user_id,
+        status="draft",
+        visibility=source.visibility or VISIBILITY_PRIVATE,
+        dept_id=source.dept_id,     # 与来源同归属，公开范围判定保持一致
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(clone)
+    try:
+        await db.flush()
+    except IntegrityError as exc:   # 与并发复制撞 uq_kb_user_name
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f"知识库 {final_name} 已存在",
+        ) from exc
+    return _kb_to_response(clone)
+
+
+async def export_kb_config(
+    db: AsyncSession, kb_id: str, user_id: str,
+) -> dict[str, Any]:
+    """导出知识库的**定义与配置**（不含文档内容）。
+
+    带 ``format`` 与 ``version``：这份 JSON 迟早会被别处导入（新环境重建、交接、
+    排错对照），没有格式标识的话，过半年没人敢确定它是什么。
+    """
+    kb, access = await resolve_kb_access(db, kb_id, user_id)
+    if kb is None or access is KBAccess.NONE:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    return {
+        "format": "ke-hermes.knowledge-base.config",
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "knowledge_base": {
+            "name": kb.name,
+            "description": kb.description,
+            "tags": list(kb.tags or []),
+            "visibility": kb.visibility or VISIBILITY_PRIVATE,
+            "config": dict(kb.config or {}),
+        },
+        # 只读的统计信息：导入方对不上时用来判断"导出时是什么状态"
+        "stats": {
+            "docs_count": kb.docs_count,
+            "chunks_count": kb.chunks_count,
+            "entities_count": kb.entities_count,
+            "relations_count": kb.relations_count,
+        },
+    }
+
+
+# ─── 分组 ──────────────────────────────────────────────────────────────────
+
+
+async def _get_group_or_404(
+    db: AsyncSession, user_id: str, group_id: str,
+) -> Any:
+    """取本人的分组或 404。"""
+    from db.models.knowledge_base_group import KnowledgeBaseGroup
+
+    group = (
+        await db.execute(
+            select(KnowledgeBaseGroup).where(
+                KnowledgeBaseGroup.id == group_id,
+                KnowledgeBaseGroup.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if group is None:
+        raise HTTPException(status_code=404, detail="分组不存在")
+    return group
+
+
+async def list_groups(db: AsyncSession, user_id: str) -> list[dict[str, Any]]:
+    """本人的分组 + 每组的知识库数量。"""
+    from db.models.knowledge_base_group import KnowledgeBaseGroup
+
+    rows = await db.execute(
+        select(KnowledgeBaseGroup)
+        .where(KnowledgeBaseGroup.user_id == user_id)
+        .order_by(KnowledgeBaseGroup.sort_order.asc(), KnowledgeBaseGroup.created_at.asc())
+    )
+    groups = list(rows.scalars().all())
+    counts = dict(
+        (row[0], row[1]) for row in await db.execute(
+            select(KnowledgeBase.group_id, func.count())
+            .where(
+                KnowledgeBase.user_id == user_id,
+                KnowledgeBase.group_id.is_not(None),
+            )
+            .group_by(KnowledgeBase.group_id)
+        )
+    )
+    return [
+        {
+            "id": g.id, "name": g.name, "sort_order": g.sort_order,
+            "kb_count": counts.get(g.id, 0),
+        }
+        for g in groups
+    ]
+
+
+async def create_group(db: AsyncSession, user_id: str, name: str) -> dict[str, Any]:
+    """新建分组（同一用户下重名 → 409）。"""
+    from db.models.knowledge_base_group import KnowledgeBaseGroup
+
+    clean = (name or "").strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="分组名不能为空")
+    exists = (
+        await db.execute(
+            select(KnowledgeBaseGroup).where(
+                KnowledgeBaseGroup.user_id == user_id,
+                KnowledgeBaseGroup.name == clean,
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is not None:
+        raise HTTPException(status_code=409, detail=f"分组 {clean} 已存在")
+
+    max_order = await db.scalar(
+        select(func.coalesce(func.max(KnowledgeBaseGroup.sort_order), -1)).where(
+            KnowledgeBaseGroup.user_id == user_id,
+        )
+    )
+    group = KnowledgeBaseGroup(
+        user_id=user_id, name=clean[:64], sort_order=int(max_order or 0) + 1,
+    )
+    db.add(group)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"分组 {clean} 已存在") from exc
+    return {"id": group.id, "name": group.name, "sort_order": group.sort_order, "kb_count": 0}
+
+
+async def rename_group(
+    db: AsyncSession, user_id: str, group_id: str, name: str,
+) -> dict[str, Any]:
+    """重命名分组。"""
+    clean = (name or "").strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="分组名不能为空")
+    group = await _get_group_or_404(db, user_id, group_id)
+    group.name = clean[:64]
+    group.updated_at = datetime.utcnow()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"分组 {clean} 已存在") from exc
+    return {
+        "id": group.id, "name": group.name,
+        "sort_order": group.sort_order, "kb_count": 0,
+    }
+
+
+async def delete_group(db: AsyncSession, user_id: str, group_id: str) -> None:
+    """删除分组——**只解除归属，不删库**。
+
+    库里是用户的数据资产，不能因为整理分组就丢。数据库层有 ON DELETE SET NULL
+    兜底，这里显式更新一次是为了在 SQLite（测试）上也成立。
+    """
+    group = await _get_group_or_404(db, user_id, group_id)
+    await db.execute(
+        update(KnowledgeBase)
+        .where(KnowledgeBase.group_id == group.id)
+        .values(group_id=None)
+    )
+    await db.delete(group)
+    await db.flush()
+
+
+async def assign_kb_group(
+    db: AsyncSession, kb_id: str, user_id: str, group_id: str | None,
+) -> KBResponse:
+    """把知识库归入分组；``group_id=None`` 表示移出分组。"""
+    kb = await _get_kb_or_404(db, kb_id, user_id)
+    if group_id is not None:
+        await _get_group_or_404(db, user_id, group_id)   # 只能归到自己的分组
+    await _update_view_preference(db, [kb.id], {"group_id": group_id})
+    await db.refresh(kb)
+    return _kb_to_response(kb)

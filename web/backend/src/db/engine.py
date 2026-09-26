@@ -262,6 +262,9 @@ async def init_db():
     from db.models.expert_skill import ExpertSkill  # noqa: F401
     from db.models.expert_tool import ExpertTool  # noqa: F401
     from db.models.expert_version import ExpertVersion  # noqa: F401
+    from db.models.knowledge_base_group import (  # noqa: F401  ensure table is registered
+        KnowledgeBaseGroup,
+    )
     from db.models.knowledge_base_index_task import (
         KnowledgeBaseIndexTask,  # noqa: F401  ensure table is registered
     )

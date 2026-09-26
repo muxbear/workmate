@@ -6,21 +6,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user_id, get_db
 from api.knowledge_base.schemas import (
     IndexConfigSchema,
+    KBAssignGroupRequest,
+    KBCopyRequest,
     KBCreateRequest,
+    KBMoveRequest,
+    KBPinRequest,
     KBUpdateRequest,
 )
 from api.knowledge_base.service import (
     SCOPE_PERSONAL,
     _get_kb_or_404,
+    assign_kb_group,
+    copy_kb,
     create_kb,
     delete_kb,
+    export_kb_config,
     get_indexing_activity,
     get_kb,
     get_kb_stats,
     list_kbs,
+    move_kb,
     purge_kb,
     reindex_kb,
     restore_kb,
+    set_kb_pinned,
     update_kb,
 )
 from api.rbac.deps import RequirePermission
@@ -47,6 +56,7 @@ async def list_knowledge_bases(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=12, ge=1, le=100),
     search: str | None = Query(default=None),
+    tag: str | None = Query(default=None, description="按标签筛选（精确匹配某一个标签）"),
     scope: str = Query(
         default=SCOPE_PERSONAL,
         description="personal 我创建的 | public 公共库 | shared_with_me 分享给我 | all 全部可见",
@@ -57,6 +67,7 @@ async def list_knowledge_bases(
     """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。"""
     result = await list_kbs(
         db, user_id, page=page, page_size=page_size, search=search, scope=scope,
+        tag=tag,
     )
     return ok(result)
 
@@ -221,6 +232,93 @@ async def update_knowledge_base(
         result = await update_kb(db, kb_id, user_id, body)
         await db.commit()
     return ok(result)
+
+
+@router.post("/{kb_id}/pin")
+@handle_errors
+async def pin_knowledge_base(
+    kb_id: str,
+    body: KBPinRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """置顶 / 取消置顶（只影响本人的列表顺序）。"""
+    async with audit_scope("knowledge.pin", user_id, request, target=kb_id) as entry:
+        result = await set_kb_pinned(db, kb_id, user_id, body.pinned)
+        await db.commit()
+        entry.detail["pinned"] = body.pinned
+    return ok(result)
+
+
+@router.post("/{kb_id}/move")
+@handle_errors
+async def move_knowledge_base(
+    kb_id: str,
+    body: KBMoveRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """在列表里上移 / 下移一位（只在同一置顶分组内交换）。"""
+    async with audit_scope("knowledge.move", user_id, request, target=kb_id) as entry:
+        result = await move_kb(db, kb_id, user_id, body.direction)
+        await db.commit()
+        entry.detail["direction"] = body.direction
+    return ok(result)
+
+
+@router.post("/{kb_id}/copy", status_code=201)
+@handle_errors
+async def copy_knowledge_base(
+    kb_id: str,
+    body: KBCopyRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    # 复制会**新建**一个知识库，用建库权限
+    user_id: str = Depends(RequirePermission("knowledge:create")),
+):
+    """复制知识库（只复制定义与配置，不复制文档与向量）。"""
+    async with audit_scope("knowledge.copy", user_id, request, target=kb_id) as entry:
+        result = await copy_kb(db, kb_id, user_id, body.name)
+        await db.commit()
+        entry.detail["new_kb_id"] = result.id
+        entry.detail["name"] = result.name
+    return ok(result)
+
+
+@router.put("/{kb_id}/group")
+@handle_errors
+async def assign_knowledge_base_group(
+    kb_id: str,
+    body: KBAssignGroupRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """把知识库归入分组（``group_id=null`` 表示移出分组）。"""
+    async with audit_scope("knowledge.assign_group", user_id, request, target=kb_id) as entry:
+        result = await assign_kb_group(db, kb_id, user_id, body.group_id)
+        await db.commit()
+        entry.detail["group_id"] = body.group_id
+    return ok(result)
+
+
+@router.get("/{kb_id}/export")
+@handle_errors
+async def export_knowledge_base(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    # 导出的是配置与元信息（**不含文档内容**），给读权限就够——能看这个库的人
+    # 本来就看得见这些字段
+    user_id: str = Depends(get_current_user_id),
+):
+    """导出知识库的定义与配置（JSON）。
+
+    返回 JSON 而不是直接下发文件：下载由前端生成（与文档下载同样的取舍——
+    JWT 在请求头里，`<a href>` 带不上）。
+    """
+    return ok(await export_kb_config(db, kb_id, user_id))
 
 
 @router.delete("/{kb_id}")

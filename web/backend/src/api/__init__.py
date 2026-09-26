@@ -22,6 +22,7 @@ from api.knowledge_base import (
     chunk_router,
     doc_router,
     graph_router,
+    kb_group_router,
     kb_router,
     search_router,
     health_router,
@@ -77,6 +78,7 @@ router.include_router(chunk_router)
 router.include_router(search_router)
 router.include_router(share_router)
 router.include_router(health_router)
+router.include_router(kb_group_router)
 router.include_router(notification_router)
 router.include_router(notification_admin_router)
 router.include_router(overview_router)

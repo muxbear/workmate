@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -40,6 +40,19 @@ class KnowledgeBase(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, index=True, comment="软删除时间；为空表示未删除"
     )
+    #: 置顶与手工排序（迭代 6 T6.2）——**属于"我的列表视图偏好"**，不是知识库的
+    #: 公共属性：同一个人置顶不影响别人。列表排序：is_pinned DESC, sort_order ASC,
+    #: updated_at DESC。索引建在迁移里（本仓约定），ORM 侧不写 index=True。
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+        comment="是否置顶（仅影响本人的列表顺序）",
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+        comment="手工排序值，越小越靠前",
+    )
+    #: 自定义分组（用户私有）；删分组时置空而不是删库，见迁移 0003 的说明
+    group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
