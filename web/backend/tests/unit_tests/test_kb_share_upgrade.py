@@ -38,6 +38,7 @@ from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     KnowledgeBaseShare,
 )
+from db.models.knowledge_base_share_link import KnowledgeBaseShareLink
 from db.models.personnel import Personnel
 from db.models.role import Role
 from db.models.user import Account
@@ -66,6 +67,7 @@ async def db():
             KnowledgeBase, KnowledgeBaseShare, KnowledgeBaseGrant,
             KnowledgeBaseDocument,   # 文档级写操作的用例需要它
             KnowledgeBaseEntity, KnowledgeBaseRelation, KnowledgeBaseIndexTask,
+            KnowledgeBaseShareLink,   # 链接分享（S5）
             Account, Role, UserRole, DataScope, Personnel, Department,
         ):
             await conn.run_sync(model.__table__.create)
@@ -434,5 +436,213 @@ class TestWritePaths:
 
         with pytest.raises(HTTPException) as exc:
             await require_kb_writable(db, "kb-1", ALICE)
+
+        assert exc.value.status_code == 404
+
+
+class TestShareLinks:
+    """链接式分享（S5）：token 存储、失效语义、幂等接受、撤销的边界。"""
+
+    async def _link(self, db, *, permission: str = "read", expires_in: str = "never"):
+        from api.knowledge_base.share_link_service import create_share_link
+
+        return await create_share_link(
+            db, "kb-1", OWNER, permission=permission, expires_in=expires_in,
+        )
+
+    async def test_plaintext_token_is_never_stored(self, db):
+        """库里只存 sha256 摘要——数据库泄露时明文 token 等于交出所有库。"""
+        import hashlib
+
+        from sqlalchemy import select
+
+        await seed_org(db)
+        await seed_kb(db)
+        created = await self._link(db)
+        await db.commit()
+
+        row = (await db.execute(select(KnowledgeBaseShareLink))).scalar_one()
+        assert row.token_hash == hashlib.sha256(created["token"].encode()).hexdigest()
+        assert row.token_hash != created["token"]
+        assert len(created["token"]) >= 40
+
+    async def test_preview_exposes_exactly_the_whitelist(self, db):
+        """预览的字段是**白名单**：多一个字段就该失败（防"顺手带出 kb_id"）。"""
+        from api.knowledge_base.share_link_service import preview_share_link
+
+        await seed_org(db)
+        await seed_kb(db)
+        created = await self._link(db)
+        await db.commit()
+
+        preview = await preview_share_link(db, created["token"])
+
+        assert set(preview) == {
+            "valid", "kb_name", "description", "docs_count", "chunks_count",
+            "owner_name", "permission", "expires_at",
+        }
+        assert "kb_id" not in preview, "预览不该带 kb_id（键集合断言已覆盖，这里点名意图）"
+
+    async def test_invalid_links_are_indistinguishable(self, db):
+        """不存在 / 已撤销 / 已过期 三种情形返回**完全一致**的 404。
+
+        区分它们等于给出一个"这个 token 曾经有效"的预言机。
+        """
+        from datetime import datetime
+
+        from fastapi import HTTPException
+        from sqlalchemy import select
+
+        from api.knowledge_base.share_link_service import (
+            preview_share_link,
+            revoke_share_link,
+        )
+
+        await seed_org(db)
+        await seed_kb(db)
+        expired = await self._link(db, expires_in="1d")
+        revoked = await self._link(db)
+        await db.commit()
+
+        row = (await db.execute(
+            select(KnowledgeBaseShareLink).where(
+                KnowledgeBaseShareLink.id == expired["id"]
+            )
+        )).scalar_one()
+        row.expires_at = datetime(2020, 1, 1)
+        await revoke_share_link(db, "kb-1", revoked["id"], OWNER)
+        await db.commit()
+
+        seen: list[tuple[int, str]] = []
+        for token in ("完全不存在的token", expired["token"], revoked["token"]):
+            with pytest.raises(HTTPException) as exc:
+                await preview_share_link(db, token)
+            seen.append((exc.value.status_code, exc.value.detail))
+
+        assert len(set(seen)) == 1, f"失效情形必须无法区分，实测：{seen}"
+
+    async def test_accept_is_idempotent(self, db):
+        from sqlalchemy import select
+
+        from api.knowledge_base.share_link_service import accept_share_link
+
+        await seed_org(db)
+        await seed_kb(db)
+        created = await self._link(db)
+        await db.commit()
+
+        first = await accept_share_link(db, created["token"], ALICE)
+        await db.commit()
+        second = await accept_share_link(db, created["token"], ALICE)
+        await db.commit()
+
+        assert first["already"] is False
+        assert second["already"] is True
+        rows = (await db.execute(
+            select(KnowledgeBaseShare).where(KnowledgeBaseShare.grantee_id == ALICE)
+        )).scalars().all()
+        assert len(rows) == 1, "重复接受不能建出第二行"
+
+        link = (await db.execute(select(KnowledgeBaseShareLink))).scalar_one()
+        assert link.accept_count == 1, "计数只加一次"
+
+    async def test_owner_accepting_own_link_creates_nothing(self, db):
+        from sqlalchemy import select
+
+        from api.knowledge_base.share_link_service import accept_share_link
+
+        await seed_org(db)
+        await seed_kb(db)
+        created = await self._link(db)
+        await db.commit()
+
+        result = await accept_share_link(db, created["token"], OWNER)
+
+        assert result["already"] is True
+        rows = (await db.execute(select(KnowledgeBaseShare))).scalars().all()
+        assert rows == []
+
+    async def test_revoking_the_link_does_not_evict_accepted_members(self, db):
+        """撤销只关闭"再拉新人"的入口——已接受的人保留访问权（与直觉相反，故锁死）。"""
+        from fastapi import HTTPException
+
+        from api.knowledge_base.share_link_service import (
+            accept_share_link,
+            revoke_share_link,
+        )
+
+        await seed_org(db)
+        await seed_kb(db)
+        created = await self._link(db)
+        await db.commit()
+        await accept_share_link(db, created["token"], ALICE)
+        await db.commit()
+
+        await revoke_share_link(db, "kb-1", created["id"], OWNER)
+        await db.commit()
+
+        _, access = await resolve_kb_access(db, "kb-1", ALICE)
+        assert access is KBAccess.GRANTEE
+
+        with pytest.raises(HTTPException) as exc:
+            await accept_share_link(db, created["token"], BOB)
+        assert exc.value.status_code == 404
+
+    async def test_accept_does_not_downgrade_an_existing_grant(self, db):
+        """已有**可写**分享的人点了一条只读链接：不能被降级成只读。"""
+        from api.knowledge_base.share_link_service import accept_share_link
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="write")
+        created = await self._link(db, permission="read")
+        await db.commit()
+
+        await accept_share_link(db, created["token"], ALICE)
+        await db.commit()
+
+        _, access = await resolve_kb_access(db, "kb-1", ALICE)
+        assert access is KBAccess.WRITE, "取较强者，不能被链接降级"
+
+    async def test_accept_upgrades_read_to_write(self, db):
+        from api.knowledge_base.share_link_service import accept_share_link
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="read")
+        created = await self._link(db, permission="write")
+        await db.commit()
+
+        await accept_share_link(db, created["token"], ALICE)
+        await db.commit()
+
+        _, access = await resolve_kb_access(db, "kb-1", ALICE)
+        assert access is KBAccess.WRITE
+
+    async def test_link_list_hides_the_token(self, db):
+        from api.knowledge_base.share_link_service import list_share_links
+
+        await seed_org(db)
+        await seed_kb(db)
+        await self._link(db)
+        await db.commit()
+
+        items = await list_share_links(db, "kb-1", OWNER)
+
+        assert len(items) == 1
+        assert "token" not in items[0] and "token_hash" not in items[0]
+        assert items[0]["state"] == "active"
+
+    async def test_only_owner_can_create_links(self, db):
+        from fastapi import HTTPException
+
+        from api.knowledge_base.share_link_service import create_share_link
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="write")   # 可写也不能再分享
+
+        with pytest.raises(HTTPException) as exc:
+            await create_share_link(db, "kb-1", ALICE)
 
         assert exc.value.status_code == 404

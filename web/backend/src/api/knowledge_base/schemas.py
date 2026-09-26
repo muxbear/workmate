@@ -113,6 +113,30 @@ class KBResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class KBShareLinkCreateRequest(BaseModel):
+    """创建链接分享。"""
+    permission: Literal["read", "write"] = "read"
+    #: 有效期档位（枚举而非任意天数：服务端才能硬编码上限）
+    expires_in: Literal["1d", "7d", "30d", "never"] = "never"
+
+
+class KBShareLinkPreview(BaseModel):
+    """免登录预览的响应——**字段白名单**。
+
+    用显式模型而不是 ``dict`` 拼装：白名单是"漏字段"的唯一可靠防线（测试还会断言
+    键集合**恰好等于**它）。**刻意不含** kb_id / token / 文档名 / 任何正文——
+    拿到链接的人只需要知道"这是什么库、谁分享的、能不能进"。
+    """
+    valid: bool = True
+    kb_name: str
+    description: str
+    docs_count: int
+    chunks_count: int
+    owner_name: str | None = None
+    permission: str
+    expires_at: datetime | None = None
+
+
 class KBGroupResponse(BaseModel):
     """知识库分组。"""
     id: str

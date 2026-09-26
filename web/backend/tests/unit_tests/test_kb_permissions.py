@@ -47,6 +47,9 @@ PERMISSION_EXEMPT = {
     # `<a href>` 带不上，只能 fetch + blob，于是需要 POST。权限不在这里声明，
     # 而是服务层的 require_kb_readable（读到正文的人就能下载原文）。
     f"{KB_PREFIX}/{{kb_id}}/documents/{{doc_id}}/download",
+    # 接受**链接分享**：权限来自 token 本身（链接就是库主的授权），与「接受/拒绝邀请」
+    # 同类——被授权的动作不该再要求"能编辑这个库"，否则收到链接的人永远进不来。
+    f"{KB_PREFIX}/shares/links/{{token}}/accept",
 }
 
 #: 关键接口的权限键（防止"随手改成一个更宽松的键"）
@@ -56,6 +59,10 @@ EXPECTED_KEYS = {
     ("POST", f"{KB_PREFIX}/{{kb_id}}/reindex"): "knowledge:edit",
     ("DELETE", f"{KB_PREFIX}/{{kb_id}}"): "knowledge:delete",
     ("POST", f"{KB_PREFIX}/{{kb_id}}/documents/upload"): "knowledge:upload",
+    # 链接分享的创建与撤销**仍仅库主**（迭代 6 T6.3）：可写分享者能改内容，
+    # 但不能把库再分享给别人
+    ("POST", f"{KB_PREFIX}/{{kb_id}}/share-links"): "knowledge:edit",
+    ("DELETE", f"{KB_PREFIX}/{{kb_id}}/share-links/{{link_id}}"): "knowledge:edit",
 }
 
 

@@ -10,13 +10,29 @@
 ``tests/unit_tests/test_kb_routes.py`` 的路由遮蔽检查。
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user_id, get_db
 from api.knowledge_base.schemas import (
     KBShareCreateRequest,
+    KBShareLinkCreateRequest,
     KBVisibilityUpdateRequest,
+)
+from api.knowledge_base.share_link_service import (
+    accept_share_link as accept_share_link_service,
+)
+from api.knowledge_base.share_link_service import (
+    create_share_link as create_share_link_service,
+)
+from api.knowledge_base.share_link_service import (
+    list_share_links as list_share_links_service,
+)
+from api.knowledge_base.share_link_service import (
+    preview_share_link as preview_share_link_service,
+)
+from api.knowledge_base.share_link_service import (
+    revoke_share_link as revoke_share_link_service,
 )
 from api.knowledge_base.share_service import (
     cancel_shares,
@@ -31,7 +47,7 @@ from api.knowledge_base.share_service import (
 )
 from api.rbac.deps import RequirePermission
 from core.audit import audit_scope
-from core.decorators import handle_errors
+from core.decorators import handle_errors, rate_limit
 from core.response import ok
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["知识库分享"])
@@ -155,6 +171,102 @@ async def remove_share(
         await delete_share(db, kb_id, share_id, user_id)
     return ok({"deleted": True})
 
+
+
+# ─── 链接式分享（迭代 6 T6.3）──────────────────────────────────────────────
+#
+# 路径约束沿用本文件的既有约定：不带 kb_id 的接口必须以两段式 `shares/*` 开头，
+# 否则会被更早注册的 `GET /{kb_id}` 吃掉（有 test_kb_routes.py 守着）。
+
+
+@router.post("/{kb_id}/share-links", status_code=201, response_model=dict)
+async def create_share_link(
+    kb_id: str,
+    body: KBShareLinkCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """创建一条链接分享。**明文 token 只在这里出现一次**（库里只存 sha256 摘要）。"""
+    async with audit_scope("knowledge.share.link_create", user_id, request, target=kb_id) as entry:
+        result = await create_share_link_service(
+            db, kb_id, user_id,
+            permission=body.permission, expires_in=body.expires_in,
+        )
+        await db.commit()
+        entry.detail["permission"] = body.permission
+        entry.detail["expires_in"] = body.expires_in
+    return {"code": 0, "data": result, "message": "ok"}
+
+
+@router.get("/{kb_id}/share-links", response_model=dict)
+async def list_share_links(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """列出该库的链接（**不含 token 与摘要**——丢了明文只能重建）。"""
+    return {
+        "code": 0,
+        "data": await list_share_links_service(db, kb_id, user_id),
+        "message": "ok",
+    }
+
+
+@router.delete("/{kb_id}/share-links/{link_id}", response_model=dict)
+async def revoke_share_link(
+    kb_id: str,
+    link_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """撤销一条链接——**只关闭"再拉新人"的入口**，已接受的人保留访问权。"""
+    async with audit_scope("knowledge.share.link_revoke", user_id, request, target=kb_id):
+        await revoke_share_link_service(db, kb_id, link_id, user_id)
+        await db.commit()
+    return {"code": 0, "data": {"revoked": True}, "message": "ok"}
+
+
+@router.get("/shares/links/{token}/preview", response_model=dict)
+# 出网面上唯一的新增匿名端点：限流 + 不缓存（避免中间层把"某 token 的库名"存下来）
+@rate_limit(max_calls=30, period_seconds=60, key_prefix="kb_share_preview")
+async def preview_share_link(
+    token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """免登录预览：只回元信息（库名/描述/计数/权限/有效期），**不含 kb_id 与任何正文**。
+
+    "不存在 / 已撤销 / 已过期 / 库已删除"返回完全一致的 404——区分它们等于给出一个
+    "这个 token 曾经有效"的预言机。
+    """
+    data = await preview_share_link_service(db, token)
+    response = ok(data)
+    # 分享链接是凭证：中间缓存会把"某 token 对应的库名"留在缓存里
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/shares/links/{token}/accept", response_model=dict)
+@rate_limit(max_calls=20, period_seconds=60, key_prefix="kb_share_accept")
+async def accept_share_link(
+    token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """登录后接受链接（幂等）：落成一条普通的已接受分享行，于是读路径零改动。
+
+    权限来自 **token 本身**（链接就是库主的授权），所以这里不挂 `RequirePermission`——
+    与「接受/拒绝邀请」同类：被授权的动作不该再要求"能编辑这个库"。
+    """
+    async with audit_scope("knowledge.share.link_accept", user_id, request) as entry:
+        result = await accept_share_link_service(db, token, user_id)
+        await db.commit()
+        entry.detail["permission"] = result.get("permission")
+        entry.detail["already"] = result.get("already")
+    return {"code": 0, "data": result, "message": "ok"}
 
 @router.patch("/{kb_id}/visibility")
 @handle_errors
