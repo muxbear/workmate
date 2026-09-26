@@ -1,7 +1,8 @@
 """切片管理 API 路由——查询/更新/删除切片。
 
 所有接口都校验知识库访问权限：**查询类**放行本人 / 已接受分享 / 公共库
-（``require_kb_readable``），**写入类**仅限所有者（``_get_kb_or_404``），
+（``require_kb_readable``），**写入类**需可写（``require_kb_writable``：库主或被授予
+写权限的人），
 避免凭 kb_id 越权读写他人切片；写入类接口使用**知识库自身配置的**
 embedding 模型重新向量化。
 """
@@ -20,7 +21,7 @@ from api.knowledge_base.chunk_service import (
 )
 from api.knowledge_base.model_provider import load_embedding_model_for_kb
 from api.knowledge_base.schemas import BatchChunkRequest, ChunkUpdateRequest
-from api.knowledge_base.service import _get_kb_or_404, require_kb_readable
+from api.knowledge_base.service import require_kb_readable, require_kb_writable
 from api.rbac.deps import RequirePermission
 from core.audit import audit_scope
 from core.rag.vector_store import safe_expr_id
@@ -111,7 +112,7 @@ async def api_update_chunk(
     user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """更新切片内容（重新向量化）。"""
-    await _get_kb_or_404(db, kb_id, user_id)
+    await require_kb_writable(db, kb_id, user_id)
     if not _valid_id(doc_id) or not _valid_id(chunk_id):
         return _invalid_id("切片")
     vs = _get_vector_store(request)
@@ -151,7 +152,7 @@ async def api_delete_chunk(
     user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """删除单个切片。"""
-    await _get_kb_or_404(db, kb_id, user_id)
+    await require_kb_writable(db, kb_id, user_id)
     if not _valid_id(doc_id) or not _valid_id(chunk_id):
         return _invalid_id("切片")
     vs = _get_vector_store(request)
@@ -180,7 +181,7 @@ async def api_batch_chunk_operation(
     user_id: str = Depends(RequirePermission("knowledge:upload")),
 ):
     """批量操作：保存或删除切片。"""
-    await _get_kb_or_404(db, kb_id, user_id)
+    await require_kb_writable(db, kb_id, user_id)
     if not _valid_id(doc_id):
         return _invalid_id("文档")
     requested_ids = (

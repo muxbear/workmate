@@ -156,8 +156,19 @@ async def _grant_subject_conditions(db: AsyncSession, user_id: str) -> list:
     from api.rbac.data_scope import dept_ancestors, resolve_user_dept
     from api.rbac.role_utils import list_active_user_roles
 
+    try:
+        own_dept = await resolve_user_dept(db, user_id)
+        roles = await list_active_user_roles(db, user_id)
+    except Exception:  # noqa: BLE001 - 与 resolve_dept_scope 同一取向
+        # RBAC 表缺失或查询出错时**失败关闭**（按"没有任何部门/角色授权"处理）并留告警：
+        # 让读取直接 500 是更糟的结果，而"出错就当作有授权"是安全漏洞。
+        logger.warning(
+            "解析用户部门/角色失败，本次按「无部门/角色授权」处理 user=%s",
+            user_id, exc_info=True,
+        )
+        return []
+
     branches: list = []
-    own_dept = await resolve_user_dept(db, user_id)
     if own_dept:
         ancestors = await dept_ancestors(db, own_dept)
         branches.append(and_(
@@ -171,7 +182,7 @@ async def _grant_subject_conditions(db: AsyncSession, user_id: str) -> list:
             ),
         ))
 
-    role_keys = {r.key for r in await list_active_user_roles(db, user_id)}
+    role_keys = {r.key for r in roles}
     if role_keys:
         branches.append(and_(
             KnowledgeBaseGrant.target_type == GRANT_TARGET_ROLE,
@@ -1042,15 +1053,43 @@ async def resolve_kb_access(
     return kb, max(levels, key=access_rank)
 
 
-async def _get_kb_or_404(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:
-    """获取「本人所有」的知识库或抛出 404——**写路径专用**。
+async def _require_kb_access(
+    db: AsyncSession, kb_id: str, user_id: str, allowed: set[KBAccess],
+) -> tuple[KnowledgeBase, KBAccess]:
+    """按**显式白名单**取知识库或抛 404。
 
-    读路径请改用 ``require_kb_readable``，它会额外放行已接受的分享与公共库。
+    收敛的意义在于把"只认库主"从**默认**变成**必须写明**：新增写接口时，选窄
+    （只放 OWNER）是一个刻意的动作，而不是"忘了改"。
     """
     kb, access = await resolve_kb_access(db, kb_id, user_id)
-    if kb is None or access is not KBAccess.OWNER:
+    if kb is None or access not in allowed:
+        # 与"不存在"同码同文案：区分二者等于给出"这个 id 存在"的预言机
         raise HTTPException(status_code=404, detail="知识库不存在")
+    return kb, access
+
+
+async def _get_kb_or_404(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:
+    """取「本人所有」的知识库或 404——**管理类写路径专用**。
+
+    放行的只有 ``OWNER``：改配置、重建索引、分享、删库、置顶排序归组这些动作会改变
+    所有人的检索语义或库的归属，只由库主做。**内容类**写路径（上传/删文档/改切片）
+    请用 :func:`require_kb_writable`，它额外放行被授予写权限的人。
+    """
+    kb, _ = await _require_kb_access(db, kb_id, user_id, {KBAccess.OWNER})
     return kb
+
+
+async def require_kb_writable(
+    db: AsyncSession, kb_id: str, user_id: str,
+) -> tuple[KnowledgeBase, KBAccess]:
+    """取「当前用户可写」的知识库或 404——**内容类写路径专用**。
+
+    放行 ``OWNER`` 与 ``WRITE``（被授予写权限：用户分享 / 链接 / 部门或角色授权）。
+    "可写"的范围**只到内容**：上传、删除文档、编辑切片、重试取消。改配置、重建索引、
+    分享、删库、置顶排序归组仍然只认库主（见 :func:`_get_kb_or_404`）——那几项会改变
+    所有人的检索语义（向量空间、门槛、可见范围），不适合下放。
+    """
+    return await _require_kb_access(db, kb_id, user_id, {KBAccess.OWNER, KBAccess.WRITE})
 
 
 async def require_kb_readable(

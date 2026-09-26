@@ -1357,21 +1357,15 @@ def _truncate_filename(name: str, limit: int = MAX_FILENAME_LEN) -> str:
 
 
 async def _get_owned_kb(db: AsyncSession, kb_id: str, user_id: str) -> KnowledgeBase:
-    """取"本人所有"的知识库或 404（写路径共用）。
+    """取「当前用户可写」的知识库或 404（上传/粘贴/URL 导入/批量共用）。
 
-    保持按 ``user_id`` 直接过滤的既有语义；软删除由 ``db.soft_delete`` 的全局
-    过滤器兜住（已删除的库在这里查不到）。
+    原名 ``_get_owned_kb`` 起于"只认库主"的年代；迭代 6 T6.3 引入可写分享后，
+    语义已放宽为"库主 **或被授予写权限的人**"，实现委托给 ``require_kb_writable``
+    （函数名保留是为了不动四处调用点，docstring 说明真实语义）。
     """
-    kb = (
-        await db.execute(
-            select(KnowledgeBase).where(
-                KnowledgeBase.id == kb_id,
-                KnowledgeBase.user_id == user_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if kb is None:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+    from api.knowledge_base.service import require_kb_writable
+
+    kb, _access = await require_kb_writable(db, kb_id, user_id)
     return kb
 
 
@@ -1941,8 +1935,10 @@ async def delete_document(
     删除前先取消在跑的索引任务：否则任务会继续往向量库写数据，形成"删不掉的
     孤儿向量"，并不断更新一条已经不存在的文档行。
     """
-    from api.knowledge_base.service import _get_kb_or_404
-    await _get_kb_or_404(db, kb_id, user_id)
+    from api.knowledge_base.service import require_kb_writable
+
+    # 内容类写操作：库主或被授予写权限的人都可以（T6.3）
+    await require_kb_writable(db, kb_id, user_id)
 
     doc = (
         await db.execute(
@@ -2020,8 +2016,10 @@ async def retry_document(
     重试前先清掉上一次留下的向量与图谱数据——否则重跑会往同一个 ``doc_id``
     再写一份切片，库内出现重复内容且计数虚高（此前只有整库重建才会清理）。
     """
-    from api.knowledge_base.service import _get_kb_or_404
-    await _get_kb_or_404(db, kb_id, user_id)
+    from api.knowledge_base.service import require_kb_writable
+
+    # 内容类写操作（T6.3）：库主或被授予写权限的人都可以
+    await require_kb_writable(db, kb_id, user_id)
 
     doc = (
         await db.execute(
@@ -2126,9 +2124,10 @@ async def cancel_document(
 
     取消后文档可重试。
     """
-    from api.knowledge_base.service import _get_kb_or_404
+    from api.knowledge_base.service import require_kb_writable
 
-    await _get_kb_or_404(db, kb_id, user_id)
+    # 内容类写操作（T6.3）：库主或被授予写权限的人都可以
+    await require_kb_writable(db, kb_id, user_id)
 
     doc = (
         await db.execute(

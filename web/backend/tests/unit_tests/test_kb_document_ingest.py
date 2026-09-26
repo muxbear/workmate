@@ -28,6 +28,8 @@ from api.knowledge_base.doc_service import (
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
+from db.models.knowledge_base_share import KnowledgeBaseShare
 from db.models.knowledge_base_index_task import KnowledgeBaseIndexTask
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
 from unit_tests.test_indexing_reliability import RecordingScheduler
@@ -51,6 +53,8 @@ async def sessionmaker():
         for model in (
             KnowledgeBase, KnowledgeBaseDocument, KnowledgeBaseEntity,
             KnowledgeBaseRelation, KnowledgeBaseIndexTask,
+            # 访问判定（T6.3）：分享有效期 + 部门/角色授权
+            KnowledgeBaseShare, KnowledgeBaseGrant,
         ):
             await conn.run_sync(model.__table__.create)
     maker = async_sessionmaker(engine, expire_on_commit=False)

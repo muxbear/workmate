@@ -31,6 +31,8 @@ from core.rag.vector_store import safe_expr_id
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
+from db.models.knowledge_base_grant import KnowledgeBaseGrant
+from db.models.knowledge_base_share import KnowledgeBaseShare
 from db.models.knowledge_base_relation import KnowledgeBaseRelation
 
 pytestmark = pytest.mark.anyio

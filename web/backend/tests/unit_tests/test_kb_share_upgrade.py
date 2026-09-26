@@ -25,11 +25,15 @@ from api.knowledge_base.service import (
 from db.models.data_scope import DataScope
 from db.models.department import Department
 from db.models.knowledge_base import KnowledgeBase
+from db.models.knowledge_base_document import KnowledgeBaseDocument
+from db.models.knowledge_base_entity import KnowledgeBaseEntity
 from db.models.knowledge_base_grant import (
     GRANT_TARGET_DEPT,
     GRANT_TARGET_ROLE,
     KnowledgeBaseGrant,
 )
+from db.models.knowledge_base_index_task import KnowledgeBaseIndexTask
+from db.models.knowledge_base_relation import KnowledgeBaseRelation
 from db.models.knowledge_base_share import (
     SHARE_STATUS_ACCEPTED,
     KnowledgeBaseShare,
@@ -60,6 +64,8 @@ async def db():
     async with engine.begin() as conn:
         for model in (
             KnowledgeBase, KnowledgeBaseShare, KnowledgeBaseGrant,
+            KnowledgeBaseDocument,   # 文档级写操作的用例需要它
+            KnowledgeBaseEntity, KnowledgeBaseRelation, KnowledgeBaseIndexTask,
             Account, Role, UserRole, DataScope, Personnel, Department,
         ):
             await conn.run_sync(model.__table__.create)
@@ -309,3 +315,124 @@ class TestRoleGrant:
         # 即使显式指定活动角色是 member，角色授权仍然生效
         _, access = await resolve_kb_access(db, "kb-1", ALICE, role_key="member")
         assert access is KBAccess.GRANTEE
+
+
+class TestWritePaths:
+    """可写的**边界**：内容操作放开，配置/重建/分享/删库仍仅库主。
+
+    两侧都要断言，只测"能写"会把越权测没，只测"不能写"会把功能测没。
+    """
+
+    async def _seed_doc(self, db, doc_id: str = "doc-1", path: str = "/tmp/x.md") -> None:
+        db.add(KnowledgeBaseDocument(
+            id=doc_id, kb_id="kb-1", name="文档.md", type="md", size_bytes=1,
+            status="indexed", storage_path=path,
+        ))
+        await db.commit()
+
+    async def test_write_grantee_can_delete_documents(self, db):
+        from api.knowledge_base.doc_service import delete_document
+        from api.knowledge_base.service import require_kb_writable
+
+        await seed_org(db)
+        await seed_kb(db)
+        await self._seed_doc(db)
+        await share_to(db, ALICE, permission="write")
+
+        # 内容类判定放行
+        _, access = await require_kb_writable(db, "kb-1", ALICE)
+        assert access is KBAccess.WRITE
+
+        await delete_document(db, "kb-1", "doc-1", ALICE)
+        await db.commit()
+
+    async def test_read_grantee_cannot_write(self, db):
+        from fastapi import HTTPException
+
+        from api.knowledge_base.service import require_kb_writable
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="read")
+
+        with pytest.raises(HTTPException) as exc:
+            await require_kb_writable(db, "kb-1", ALICE)
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "知识库不存在", "要与'不存在'同文案，不泄漏存在性"
+
+    async def test_write_grantee_cannot_change_config(self, db):
+        """改配置会改变所有人的检索语义（向量空间/门槛），只由库主做。"""
+        from fastapi import HTTPException
+
+        from api.knowledge_base.schemas import KBUpdateRequest
+        from api.knowledge_base.service import update_kb
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="write")
+
+        with pytest.raises(HTTPException) as exc:
+            await update_kb(db, "kb-1", ALICE, KBUpdateRequest(name="改名"))
+
+        assert exc.value.status_code == 404
+
+    async def test_write_grantee_cannot_reshare(self, db):
+        """能写内容不等于能把库再分享给别人。"""
+        from fastapi import HTTPException
+
+        from api.knowledge_base.share_service import invite_shares
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="write")
+
+        with pytest.raises(HTTPException) as exc:
+            await invite_shares(db, "kb-1", ALICE, [BOB])
+
+        assert exc.value.status_code == 404
+
+    async def test_write_grantee_cannot_delete_the_kb(self, db):
+        from fastapi import HTTPException
+
+        from api.knowledge_base.service import delete_kb
+
+        await seed_org(db)
+        await seed_kb(db)
+        await share_to(db, ALICE, permission="write")
+
+        with pytest.raises(HTTPException) as exc:
+            await delete_kb(db, "kb-1", ALICE)
+
+        assert exc.value.status_code == 404
+
+    async def test_dept_write_grant_allows_content_writes(self, db):
+        from api.knowledge_base.service import require_kb_writable
+
+        await seed_org(db)
+        await seed_kb(db)
+        await grant_to_dept(db, RD, permission="write")
+
+        _, access = await require_kb_writable(db, "kb-1", ALICE)
+        assert access is KBAccess.WRITE
+
+    async def test_public_reader_cannot_write(self, db):
+        from fastapi import HTTPException
+        from sqlalchemy import select
+
+        from api.knowledge_base.service import require_kb_writable
+
+        await seed_org(db)
+        await seed_kb(db, owner=OWNER)
+        # 设为公开：读者能**读**，但公开不构成写权限
+        kb = (await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == "kb-1")
+        )).scalar_one()
+        kb.visibility = "public"
+        kb.dept_id = RD
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await require_kb_writable(db, "kb-1", ALICE)
+
+        assert exc.value.status_code == 404
