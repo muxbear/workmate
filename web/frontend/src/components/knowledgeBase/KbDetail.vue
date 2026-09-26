@@ -17,6 +17,7 @@ import KbConfigTab from './KbConfigTab.vue'
 import KbShareDialog from './KbShareDialog.vue'
 import KbShareManageDialog from './KbShareManageDialog.vue'
 import { useKbPermissions } from '@/composables/useKbPermissions'
+import { readApiError } from '@/services/knowledgeBaseApi'
 
 const props = defineProps<{
   kb: KB
@@ -75,7 +76,7 @@ async function handleToggleVisibility() {
     )
     emit('changed')
   } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '操作失败')
+    ElMessage.error(readApiError(err))
   } finally {
     publishing.value = false
   }
@@ -96,7 +97,7 @@ async function handleReindex() {
     const result = await store.reindexKb(props.kb.id, props.kb.config)
     warnIfCollectionBroken(result)
   } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '重新索引失败')
+    ElMessage.error(readApiError(err))
   } finally {
     reindexing.value = false
   }
@@ -131,7 +132,7 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
     const result = await store.reindexKb(props.kb.id, config)
     warnIfCollectionBroken(result, '配置已保存，正在重新索引全部文档')
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '重新索引失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   } finally {
     reindexing.value = false

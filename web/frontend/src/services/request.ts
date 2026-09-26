@@ -1,5 +1,27 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig, type AxiosError } from 'axios'
+import { ElMessage } from 'element-plus'
 import type { ApiResponse } from '@/types/api'
+
+// 给请求配置加一个开关。用模块增强而不是自造 config 类型：调用方仍然写
+// `instance.get(url, { notify: true })`，类型检查直接认。
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    /**
+     * 置 ``true`` 时由拦截器弹一次全局错误提示。
+     *
+     * **为什么是 opt-in 而不是默认开启**：全站有 90 处调用点自己
+     * `ElMessage.error(...)`，而它们包住的接口调用大多在 **store 方法**里
+     * （如 `agentStore.addConfig`），store 又被多处共用——没有按调用点精确
+     * opt-out 的办法。默认开启会让这 90 处全部双重报错（两条内容还不一样的提示
+     * 叠在一起），而先做 store 层管道改造才能把它们逐一标静默。
+     *
+     * 所以本轮：默认与既有行为一致（不弹），**需要全局提示的调用点显式打开**——
+     * 主要是那些此前会静默失败、用户完全看不到的路径。把默认翻成开启是管道改造
+     * 之后的一行改动，已记入遗留。
+     */
+    notify?: boolean
+  }
+}
 
 // ---- Token 存储（与 auth store 共享 key，避免循环依赖） ----
 
@@ -55,21 +77,69 @@ instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 // Token 刷新去重锁（统一走 auth store，刷新后同步用户信息并重载权限）
 let refreshPromise: Promise<void> | null = null
 
+/**
+ * 把任意错误转成**可直接展示**的中文文案。
+ *
+ * 这是全站唯一一处把错误翻成人话的地方（拦截器与 `readApiError` 共用）。存在的
+ * 理由很具体：HTTP 状态错误的 `Error.message` 是 axios 造的
+ * ``"Request failed with status code 413"``，而后端真正想说的话在
+ * ``response.data.detail`` 上（FastAPI 的 ``HTTPException(detail=...)``，本来就是
+ * 中文）。不读它，用户看到的就只是一串状态码。
+ */
+export function extractErrorMessage(error: unknown): string {
+  const shape = error as {
+    response?: { data?: { detail?: unknown; message?: unknown } }
+    code?: string
+    message?: string
+  }
+
+  const body = shape?.response?.data
+  const detail = body?.detail ?? body?.message
+  if (typeof detail === 'string' && detail) return detail
+  // 422 校验错误的 detail 是数组（每条含 msg），取第一条——否则又退回状态码文案
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: unknown }
+    if (typeof first?.msg === 'string' && first.msg) return first.msg
+  }
+
+  // 响应体里的 code != 0 由拦截器包成 ApiError，它的 message 就是后端文案
+  if (error instanceof ApiError && error.message) return error.message
+
+  if (shape?.code === 'ECONNABORTED' || shape?.code === 'ETIMEDOUT') {
+    return '请求超时，请稍后重试'
+  }
+  if (shape?.code === 'ERR_NETWORK') return '网络异常，请检查网络后重试'
+
+  if (shape?.message) return shape.message
+  return '操作失败'
+}
+
+/** 按调用点的 ``notify`` 开关决定是否弹一次全局错误提示。 */
+function notifyError(error: unknown, notify: boolean | undefined): void {
+  if (notify !== true) return
+  ElMessage.error(extractErrorMessage(error))
+}
+
 // 响应拦截器
 instance.interceptors.response.use(
   (response) => {
     const data = response.data as ApiResponse
     if (data.code !== 0) {
-      return Promise.reject(new ApiError(data.code, data.message))
+      const error = new ApiError(data.code, data.message)
+      notifyError(error, response.config?.notify)
+      return Promise.reject(error)
     }
     return response
   },
   async (error: AxiosError<ApiResponse>) => {
-    const isRefreshRequest = error.config?.url?.includes('/auth/refresh') ?? false
-    if (error.response?.status === 401 && error.config && !isRefreshRequest) {
+    const config = error.config as InternalAxiosRequestConfig | undefined
+    const isRefreshRequest = config?.url?.includes('/auth/refresh') ?? false
+
+    if (error.response?.status === 401 && config && !isRefreshRequest) {
       if (!getRefreshTokenValue()) {
         clearTokensFromStorage()
         window.location.href = '/login'
+        // 不弹提示：正在跳登录页，弹了也看不到
         return Promise.reject(error)
       }
 
@@ -82,15 +152,18 @@ instance.interceptors.response.use(
           })()
         }
         await refreshPromise
-        error.config.headers.Authorization = `Bearer ${getAccessToken()}`
-        return instance.request(error.config)
+        config.headers.Authorization = `Bearer ${getAccessToken()}`
+        return instance.request(config)
       } catch {
         clearTokensFromStorage()
         window.location.href = '/login'
+        return Promise.reject(error)
       } finally {
         refreshPromise = null
       }
     }
+
+    notifyError(error, config?.notify)
     return Promise.reject(error)
   },
 )

@@ -7,6 +7,7 @@ import {
 import type { KB, SearchMode, SearchResult, ScoreKind } from '@/types/knowledgeBase'
 import { SCORE_KIND_LABEL } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
+import { readApiError } from '@/services/knowledgeBaseApi'
 
 const props = defineProps<{
   kb: KB
@@ -180,7 +181,7 @@ async function runSearch() {
     searched.value = true
   } catch (err: unknown) {
     // 此前只 console.error：检索失败时用户看到的是"命中 0 条"，无从判断原因
-    const msg = err instanceof Error ? err.message : '检索失败'
+    const msg = readApiError(err)
     results.value = []
     rerankRequested.value = false
     rerankApplied.value = false

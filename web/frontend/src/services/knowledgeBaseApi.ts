@@ -1,5 +1,10 @@
 // 知识库 API 服务
-import instance, { ApiError, getAccessToken, getStreamToken } from './request'
+import instance, {
+  ApiError,
+  extractErrorMessage,
+  getAccessToken,
+  getStreamToken,
+} from './request'
 import type {
   KB,
   KBDoc,
@@ -660,18 +665,15 @@ async function readErrorDetail(response: Response): Promise<string> {
 /**
  * 从 axios 错误里抠可读文案。
  *
- * 响应拦截器只把 `code`/`message` 抛出来，而 `HTTPException` 的中文 detail 在
- * `error.response.data.detail` 上——不读它就只会看到 "Request failed with status
- * code 413" 这类提示。新接口的调用方用它，不动全局拦截器的既有行为。
+ * 取文案的实现已下沉到响应拦截器（`request.ts` 的 `extractErrorMessage`）——拦截器
+ * 现在要弹全局提示，而它若自己不看 `response.data.detail`，弹出的就是
+ * "Request failed with status code 413"；两处各写一份必然分叉，所以这里委托过去。
+ *
+ * 这个函数继续保留：知识库模块有 12 处调用点用它把错误渲染成**行内**文案（或配
+ * 自己的上下文措辞），与全局弹窗是两种用途。
  */
 export function readApiError(err: unknown): string {
-  const shape = err as {
-    response?: { data?: { detail?: unknown; message?: unknown } }
-  }
-  const detail = shape?.response?.data?.detail ?? shape?.response?.data?.message
-  if (typeof detail === 'string' && detail) return detail
-  if (err instanceof Error && err.message) return err.message
-  return '操作失败'
+  return extractErrorMessage(err)
 }
 
 /**
@@ -913,8 +915,12 @@ export interface AvailableProvider {
 export async function fetchAvailableProviders(
   modelType: string = 'llm',
 ): Promise<AvailableProvider[]> {
+  // notify：这个接口的失败此前是**静默**的——调用方（索引配置表单、建库对话框）
+  // 都在 catch 里把下拉置空，于是用户只看到"没有可选的模型"，不知道是接口挂了
+  // 还是模型页真的没配。置空是合理的降级，但必须说出来。
   const res = await instance.get('/knowledge-bases/available-providers', {
     params: { model_type: modelType },
+    notify: true,
   })
   return res.data.data as AvailableProvider[]
 }

@@ -7,7 +7,7 @@ import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Trash2, UserRound } from 'lucide-vue-next'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { fetchKbShares } from '@/services/knowledgeBaseApi'
+import { fetchKbShares, readApiError } from '@/services/knowledgeBaseApi'
 import { SHARE_STATUS_CONFIG } from '@/types/knowledgeBase'
 import type { KB, KBShare } from '@/types/knowledgeBase'
 import KbShareLinkPanel from './KbShareLinkPanel.vue'
@@ -36,7 +36,7 @@ async function reload() {
     const res = await fetchKbShares(props.kb.id)
     shares.value = res.items
   } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '加载分享列表失败')
+    ElMessage.error(readApiError(err))
     shares.value = []
   } finally {
     loading.value = false
@@ -62,7 +62,7 @@ async function removeOne(share: KBShare) {
     await reload()
     emit('changed')
   } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '移除失败')
+    ElMessage.error(readApiError(err))
   } finally {
     busyId.value = null
   }
@@ -85,7 +85,7 @@ async function cancelAll() {
     emit('close')
     emit('changed')
   } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '取消失败')
+    ElMessage.error(readApiError(err))
   }
 }
 

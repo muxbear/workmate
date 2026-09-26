@@ -15,10 +15,7 @@ import {
 } from '@/types/knowledgeBase'
 import type { KB, Entity } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import {
-  fetchEntityDetail,
-  reExtractGraph as reExtractGraphApi,
-} from '@/services/knowledgeBaseApi'
+import { fetchEntityDetail, reExtractGraph as reExtractGraphApi, readApiError } from '@/services/knowledgeBaseApi'
 import type { EntityDetail } from '@/services/knowledgeBaseApi'
 import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph'
 
@@ -154,7 +151,7 @@ async function handleReExtract() {
     ElMessage.success(`知识图谱重建完成：${result.entities} 个实体，${result.relations} 个关系`)
     await store.selectKb(props.kb.id)
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '图谱重建失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   } finally {
     reExtracting.value = false

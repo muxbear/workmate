@@ -3,7 +3,7 @@
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { searchShareCandidates } from '@/services/knowledgeBaseApi'
+import { readApiError, searchShareCandidates } from '@/services/knowledgeBaseApi'
 import type { KB, KBShare, ShareExpiresIn } from '@/types/knowledgeBase'
 
 const props = defineProps<{
@@ -47,7 +47,7 @@ async function runSearch(keyword: string) {
   } catch (err: unknown) {
     // 此前静默置空：接口 404/500 时用户只看到"搜不到任何人"，没有任何线索
     candidates.value = []
-    ElMessage.error(err instanceof Error ? err.message : '加载可分享用户失败')
+    ElMessage.error(readApiError(err))
   } finally {
     searching.value = false
   }
@@ -67,7 +67,7 @@ async function handleSubmit() {
     emit('shared')
     emit('close')
   } catch (err: unknown) {
-    ElMessage.error(err instanceof Error ? err.message : '分享失败')
+    ElMessage.error(readApiError(err))
   } finally {
     submitting.value = false
   }

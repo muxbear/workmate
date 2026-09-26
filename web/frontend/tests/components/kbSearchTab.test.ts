@@ -3,7 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import KbSearchTab from '@/components/knowledgeBase/KbSearchTab.vue'
 import type { KB, SearchOutcome, SearchResult } from '@/types/knowledgeBase'
 
-const api = vi.hoisted(() => ({ searchKnowledgeBase: vi.fn() }))
+const api = vi.hoisted(() => ({
+  searchKnowledgeBase: vi.fn(),
+  // 组件用 readApiError 把错误翻成可展示文案（迭代 6 T6.6 统一到这一处）。
+  // 模块桩必须把它一起提供——否则组件里它是 undefined，catch 里一调用就抛，
+  // 错误文案根本渲染不出来。
+  readApiError: (e: unknown) => (e instanceof Error ? e.message : '操作失败'),
+}))
 vi.mock('@/services/knowledgeBaseApi', () => api)
 
 function kb(): KB {

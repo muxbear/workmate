@@ -223,7 +223,7 @@ async function handleRetry(docId: string) {
   try {
     await store.retryDoc(props.kb.id, docId)
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '重试失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   }
 }
@@ -247,7 +247,7 @@ async function handleCancel(docId: string) {
     await store.cancelDoc(props.kb.id, docId)
     ElMessage.success('已取消索引')
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '取消失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   }
 }

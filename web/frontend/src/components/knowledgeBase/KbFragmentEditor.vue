@@ -6,7 +6,7 @@ import {
   PencilLine, CheckCircle2, Layers,
 } from 'lucide-vue-next'
 import type { KBDoc, DocChunk } from '@/types/knowledgeBase'
-import { fetchDocumentChunks, updateChunkContent, deleteChunk, batchChunkOp } from '@/services/knowledgeBaseApi'
+import { batchChunkOp, deleteChunk, fetchDocumentChunks, readApiError, updateChunkContent } from '@/services/knowledgeBaseApi'
 
 const props = defineProps<{
   doc: KBDoc
@@ -29,7 +29,7 @@ onMounted(async () => {
   try {
     chunks.value = await fetchDocumentChunks(props.kbId, props.doc.id)
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '加载切片失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   }
 })
@@ -79,7 +79,7 @@ async function handleDeleteChunk(id: string) {
     await deleteChunk(props.kbId, props.doc.id, id)
     chunks.value = chunks.value.filter((c) => c.id !== id)
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '删除失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   }
 }
@@ -93,7 +93,7 @@ async function deleteSelected() {
     selected.value = new Set()
     ElMessage.success(`已删除 ${ids.length} 个切片`)
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '批量删除失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   }
 }
@@ -129,7 +129,7 @@ async function saveAll() {
     ElMessage.success(`已保存 ${changed.length} 处分片修改`)
     setTimeout(() => { savedCount.value = 0 }, 2500)
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '保存失败'
+    const msg = readApiError(err)
     ElMessage.error(msg)
   }
 }

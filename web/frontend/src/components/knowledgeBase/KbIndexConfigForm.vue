@@ -108,7 +108,12 @@ onMounted(async () => {
     if (!rerankProviderId.value && rp.length > 0) rerankProviderId.value = rp[0].id
     if (!ocrProviderId.value && vp.length > 0) ocrProviderId.value = vp[0].id
   } catch {
-    /* ignore */
+    // 降级照旧（下拉留空），但不再吞掉：接口本身的失败由 intercept 的全局提示
+    // 说明（fetchAvailableProviders 标了 notify），这里只负责别让页面炸掉
+    embProviders.value = []
+    llmProviders.value = []
+    rerankProviders.value = []
+    visionProviders.value = []
   }
 })
 

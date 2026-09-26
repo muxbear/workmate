@@ -101,6 +101,8 @@ async function loadProviders() {
       }
     }
   } catch {
+    // 降级照旧（下拉留空），接口失败本身由全局提示说明——此前是完全静默，
+    // 用户只看到"没有可选的模型"，分不清是接口挂了还是模型页没配
     embProviders.value = []
     llmProviders.value = []
   }
