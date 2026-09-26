@@ -1654,6 +1654,51 @@ async def create_text_document(
     )
 
 
+async def import_document_from_url(
+    db: AsyncSession,
+    kb_id: str,
+    user_id: str,
+    *,
+    url: str,
+    custom_config: dict[str, Any] | None = None,
+    scheduler: IndexingScheduler | None = None,
+    fetcher: Any = None,
+) -> UploadOutcome:
+    """从 URL / 网页导入一篇文档。
+
+    抓取走 :mod:`core.storage.safe_fetch`（默认拒绝的域名白名单 + 解析后逐个 IP
+    判定 + 每跳复检 + 连接钉扎 + 流式大小上限）。内容**转码为 UTF-8 后落成
+    `.html` 文件**——下游解析器写死了读 UTF-8，且解析、重试、图谱重建都从磁盘读。
+
+    Raises:
+        UrlFetchError: 抓取被守卫拒绝或失败（路由层翻成可读文案）。
+    """
+    from core.storage.safe_fetch import FetchPolicy, fetch_text_page
+
+    kb = await _get_owned_kb(db, kb_id, user_id)
+    validate_doc_config(custom_config, dict(kb.config or {}))
+
+    policy = FetchPolicy(
+        allowed_hosts=tuple(settings.kb_url_import_allowed_hosts_list),
+        allowed_ports=tuple(settings.kb_url_import_allowed_ports_list),
+        max_bytes=int(settings.KB_URL_IMPORT_MAX_MB) * 1024 * 1024,
+        timeout=float(settings.KB_URL_IMPORT_TIMEOUT_SECONDS),
+        max_redirects=int(settings.KB_URL_IMPORT_MAX_REDIRECTS),
+    )
+    page = await (fetcher or fetch_text_page)(url, policy)
+
+    payload = DocPayload(
+        name=_truncate_filename(_sanitize_filename(page.suggested_name)),
+        file_type="html",
+        content=page.content,
+        source_url=page.final_url,
+    )
+    return await _create_documents(
+        db, kb, user_id, [payload],
+        custom_config=custom_config, scheduler=scheduler,
+    )
+
+
 async def download_document(
     db: AsyncSession, kb_id: str, doc_id: str, user_id: str,
 ) -> tuple[str, str, str]:

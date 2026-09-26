@@ -377,6 +377,12 @@ class TextDocRequest(BaseModel):
     config: IndexConfigSchema | None = None
 
 
+class UrlImportRequest(BaseModel):
+    """URL / 网页导入请求。"""
+    url: str = Field(..., min_length=8, max_length=2048)
+    config: IndexConfigSchema | None = None
+
+
 # ─── Share ──────────────────────────────────────────────────────────────────
 
 

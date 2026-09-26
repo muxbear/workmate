@@ -362,3 +362,68 @@ class TestPasteTextDocument:
             await db.commit()
 
         assert scheduler.enqueued == [outcome.created[0].id]
+
+
+class TestUrlImportDocument:
+    """URL 导入的服务层落库行为（抓取守卫本身见 test_url_import.py）。"""
+
+    @staticmethod
+    def _fetcher(title: str = "示例页"):
+        from core.storage.safe_fetch import FetchedPage
+
+        async def fetch(url: str, policy):   # noqa: ANN001 - 与真实抓取器同签名
+            html = f"<html><head><title>{title}</title></head><body><p>正文</p></body></html>"
+            return FetchedPage(
+                content=html.encode("utf-8"),
+                final_url=url,
+                content_type="text/html",
+                suggested_name=f"{title}.html",
+                declared_encoding="utf-8",
+            )
+
+        return fetch
+
+    async def test_creates_utf8_html_file_with_source_url(self, sessionmaker, upload_root):
+        from api.knowledge_base.doc_service import import_document_from_url
+
+        await seed_kb(sessionmaker)
+        scheduler = RecordingScheduler()
+
+        async with sessionmaker() as db:
+            outcome = await import_document_from_url(
+                db, KB, USER_A, url="https://example.com/doc",
+                fetcher=self._fetcher("示例页"), scheduler=scheduler,
+            )
+            await db.commit()
+
+        doc = outcome.created[0]
+        assert doc.name == "示例页.html"
+        assert doc.type == "html"
+        assert scheduler.enqueued == [doc.id]
+
+        async with sessionmaker() as db:
+            row = (await db.execute(select(KnowledgeBaseDocument))).scalar_one()
+        assert row.source_url == "https://example.com/doc"
+        assert row.type == "html"
+        assert row.content_hash, "URL 导入也要参与内容去重"
+        # 落盘是 UTF-8 且内容完整（下游 BSHTMLLoader 写死了 open_encoding="utf-8"）
+        text = Path(row.storage_path).read_text(encoding="utf-8")
+        assert "正文" in text
+
+    async def test_same_url_imported_twice_is_skipped(self, sessionmaker, upload_root):
+        from api.knowledge_base.doc_service import import_document_from_url
+
+        await seed_kb(sessionmaker)
+        async with sessionmaker() as db:
+            await import_document_from_url(
+                db, KB, USER_A, url="https://example.com/doc", fetcher=self._fetcher(),
+            )
+            await db.commit()
+        async with sessionmaker() as db:
+            again = await import_document_from_url(
+                db, KB, USER_A, url="https://example.com/doc", fetcher=self._fetcher(),
+            )
+            await db.commit()
+
+        assert again.created == []
+        assert again.skipped[0].reason == "duplicate"

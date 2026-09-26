@@ -89,6 +89,22 @@ class Settings(BaseSettings):
     #: 已约合 50 万汉字，远超任何真实场景
     KB_MAX_PASTE_KB: int = 1024
 
+    # ---- URL / 网页导入（T6.1）----
+    #: 允许导入的域名白名单（逗号分隔，支持 *.example.com）。
+    #: **留空 = 该功能不可用（默认拒绝）**——与 SANDBOX_ALLOWED_DOMAINS 同取向，
+    #: 而**与 `asset_fetcher._host_allowed`（空即放行）相反**：那是素材代理下载，
+    #: 自建部署合法地从内网拉图是常态；这里是"让服务器去访问用户给的任意网址"，
+    #: 性质不同，别为了"一致"把这条改成放行。
+    KB_URL_IMPORT_ALLOWED_HOSTS: str = ""
+    #: 单页字节上限（MB）
+    KB_URL_IMPORT_MAX_MB: int = 10
+    #: 单次抓取的墙钟上限（秒，含全部重定向跳）
+    KB_URL_IMPORT_TIMEOUT_SECONDS: float = 15.0
+    #: 重定向跳数上限
+    KB_URL_IMPORT_MAX_REDIRECTS: int = 3
+    #: 允许访问的端口（逗号分隔），默认仅 80/443
+    KB_URL_IMPORT_ALLOWED_PORTS: str = "80,443"
+
     @field_validator("APP_ENV", mode="before")
     @classmethod
     def _normalize_app_env(cls, value: object) -> str:
@@ -107,6 +123,20 @@ class Settings(BaseSettings):
         if raw:
             return os.path.abspath(raw)
         return os.path.join(get_default_workspace(), "docs_upload")
+
+    @property
+    def kb_url_import_allowed_hosts_list(self) -> list[str]:
+        """URL 导入的域名白名单列表；**为空表示该功能不可用**."""
+        return [h.strip() for h in self.KB_URL_IMPORT_ALLOWED_HOSTS.split(",") if h.strip()]
+
+    @property
+    def kb_url_import_allowed_ports_list(self) -> list[int]:
+        """URL 导入允许的端口列表（解析失败或为空时回退默认 80/443）."""
+        ports = [
+            int(p) for p in self.KB_URL_IMPORT_ALLOWED_PORTS.split(",")
+            if p.strip().isdigit()
+        ]
+        return ports or [80, 443]
 
 
 @lru_cache

@@ -24,6 +24,7 @@ from api.knowledge_base.doc_service import (
     delete_document,
     download_document,
     get_document,
+    import_document_from_url,
     list_documents,
     retry_document,
     upload_documents,
@@ -33,6 +34,7 @@ from api.knowledge_base.schemas import (
     BatchDocRequest,
     IndexConfigSchema,
     TextDocRequest,
+    UrlImportRequest,
 )
 from api.knowledge_base.service import require_kb_readable
 from api.rbac.deps import RequirePermission
@@ -116,6 +118,43 @@ async def create_text_doc(
         await db.commit()
         entry.detail["name"] = result.created[0].name if result.created else None
         entry.detail["bytes"] = len(body.content.encode("utf-8"))
+    return {"code": 0, "data": result.as_data(), "message": "ok"}
+
+
+@router.post("/{kb_id}/documents/url", response_model=dict)
+# 出网操作，比上传更严（企业网里"让服务器去访问一个网址"是最敏感的动作之一）
+@rate_limit(max_calls=10, period_seconds=60, key_prefix="kb_url_import")
+async def import_doc_from_url(
+    kb_id: str,
+    body: UrlImportRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:upload")),
+):
+    """从 URL / 网页导入文档（抓取自带 SSRF 防护，见 core.storage.safe_fetch）。"""
+    from urllib.parse import urlsplit
+
+    from core.storage.safe_fetch import UrlFetchError
+
+    scheduler = _get_scheduler(request)
+    async with audit_scope("knowledge.doc.url_import", user_id, request, target=kb_id) as entry:
+        try:
+            result = await import_document_from_url(
+                db, kb_id, user_id, url=body.url,
+                custom_config=body.config.model_dump() if body.config else None,
+                scheduler=scheduler,
+            )
+        except UrlFetchError as exc:
+            await db.rollback()
+            # 未配置白名单是一种"功能没开"，用 501 与真正的抓取失败区分开
+            code = 501 if exc.reason == "not_configured" else 400
+            # 审计里只记 host：完整 URL 可能带签名/token 之类的敏感 query
+            entry.detail["url_host"] = urlsplit(body.url).hostname
+            entry.detail["error"] = exc.reason
+            return {"code": code, "data": None, "message": exc.message}
+        await db.commit()
+        entry.detail["url_host"] = urlsplit(body.url).hostname
+        entry.detail["final_url"] = result.created[0].name if result.created else None
     return {"code": 0, "data": result.as_data(), "message": "ok"}
 
 
