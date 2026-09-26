@@ -57,6 +57,7 @@ async def list_knowledge_bases(
     page_size: int = Query(default=12, ge=1, le=100),
     search: str | None = Query(default=None),
     tag: str | None = Query(default=None, description="按标签筛选（精确匹配某一个标签）"),
+    group_id: str | None = Query(default=None, description="按自定义分组筛选"),
     scope: str = Query(
         default=SCOPE_PERSONAL,
         description="personal 我创建的 | public 公共库 | shared_with_me 分享给我 | all 全部可见",
@@ -67,7 +68,7 @@ async def list_knowledge_bases(
     """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。"""
     result = await list_kbs(
         db, user_id, page=page, page_size=page_size, search=search, scope=scope,
-        tag=tag,
+        tag=tag, group_id=group_id,
     )
     return ok(result)
 

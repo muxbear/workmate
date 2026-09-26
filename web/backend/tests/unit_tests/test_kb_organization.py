@@ -318,6 +318,25 @@ class TestGroups:
 
         assert exc.value.status_code == 404
 
+    async def test_filter_list_by_group(self, sessionmaker):
+        await seed_kb(sessionmaker, "a", "甲库")
+        await seed_kb(sessionmaker, "b", "乙库")
+        async with sessionmaker() as db:
+            group = await create_group(db, USER_A, "产品资料")
+            await db.commit()
+        async with sessionmaker() as db:
+            await assign_kb_group(db, "a", USER_A, group["id"])
+            await db.commit()
+
+        async with sessionmaker() as db:
+            page = await list_kbs(db, USER_A, group_id=group["id"])
+        assert [kb.name for kb in page.items] == ["甲库"]
+
+        # 未归组的库不会被这个筛选带出来
+        async with sessionmaker() as db:
+            page_all = await list_kbs(db, USER_A)
+        assert len(page_all.items) == 2
+
     async def test_delete_group_keeps_the_knowledge_base(self, sessionmaker):
         """删分组只解除归属——库里是用户的数据资产。"""
         await seed_kb(sessionmaker, "a", "库")

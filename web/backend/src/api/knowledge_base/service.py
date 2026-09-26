@@ -231,6 +231,7 @@ async def list_kbs(
     scope: str = SCOPE_PERSONAL,
     role_key: str | None = None,
     tag: str | None = None,
+    group_id: str | None = None,
 ) -> KBListResponse:
     """获取知识库列表（分页 + 模糊搜索 + 标签筛选 + 可见范围过滤）。
 
@@ -282,6 +283,11 @@ async def list_kbs(
         conditions.append(
             cast(KnowledgeBase.tags, String).like(f'%"{_escape_like(tag)}"%')
         )
+
+    if group_id:
+        # 分组筛选不需要额外校验归属：作用域条件已经把结果限制在"我可见的库"里，
+        # 传别人的分组 id 只会筛出空列表
+        conditions.append(KnowledgeBase.group_id == group_id)
 
     # Total count
     total_stmt = select(func.count()).select_from(KnowledgeBase).where(*conditions)
