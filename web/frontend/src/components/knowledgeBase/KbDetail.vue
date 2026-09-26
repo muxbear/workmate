@@ -220,7 +220,9 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
           <template #label>
             <FileText :size="14" class="tab-icon" />文档 ({{ kb.documents.length }})
           </template>
-          <KbDocsTab :kb="kb" :readonly="readonly || !canUpload" />
+          <!-- 文档页签是**唯一**按 access 判定的地方：被授予写权限（write）的人
+               可以改内容；改配置/重建/分享/删除仍是库主专属，故其它页签保持原样 -->
+          <KbDocsTab :kb="kb" :readonly="kb.access === 'read' || !canUpload" />
         </el-tab-pane>
 
         <el-tab-pane name="graph">

@@ -168,6 +168,16 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '客户端授权' },
   },
   {
+    // 链接分享的落地页（迭代 6 T6.3）：**未登录也能打开**（只显示元信息）。
+    // 刻意**不加** `meta.guest`——守卫会把已登录用户弹回首页，而"已登录的人点链接"
+    // 恰恰是最常见的场景；也不加 requiresAuth（那就只剩登录页可看）。与
+    // `/oauth2/authorize` 同类：两边都要能进。
+    path: '/share/kb/:token',
+    name: 'kb-share-preview',
+    component: () => import('@/views/KbSharePreviewView.vue'),
+    meta: { title: '知识库分享' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     redirect: '/',

@@ -33,6 +33,11 @@ vi.mock('@/services/knowledgeBaseApi', () => ({
   deleteKbGroup: vi.fn(),
   exportKnowledgeBaseConfig: vi.fn(),
   downloadKnowledgeBaseConfig: vi.fn(),
+  createShareLink: vi.fn(),
+  fetchShareLinks: vi.fn(),
+  revokeShareLink: vi.fn(),
+  acceptShareLink: vi.fn(),
+  previewShareLink: vi.fn(),
   // 文档管理（迭代 6 T6.1）
   uploadDocument: vi.fn(),
   createTextDocument: vi.fn(),
@@ -222,9 +227,13 @@ describe('知识库 store —— 分享', () => {
       items: [kb({ id: 'kb-1' })], total: 1, page: 1, page_size: 100,
     })
 
+    // 不传选项时按默认的"只读 + 永久"发邀请（与后端默认一致）
     await store.inviteShares('kb-1', ['user-b'])
 
-    expect(mocked.createKbShares).toHaveBeenCalledWith('kb-1', ['user-b'])
+    // 第三个参数是权限/有效期（迭代 6 T6.3）：不传时按"只读 + 永久"发邀请
+    expect(mocked.createKbShares).toHaveBeenCalledWith(
+      'kb-1', ['user-b'], { permission: 'read', expiresIn: 'never' },
+    )
     expect(store.ownedSharesFor('kb-1')).toHaveLength(1)
     expect(store.sharesByMe['kb-1'][0].status).toBe('pending')
     expect(store.groups.sharedByMe.items.map((k) => k.id)).toEqual(['kb-1'])
@@ -287,6 +296,35 @@ describe('知识库 store —— 分享', () => {
     expect(store.selectedKb?.visibility).toBe('public')
     expect(mocked.fetchKBPage).toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'public' }),
+    )
+  })
+})
+
+describe('知识库 store —— 链接分享（迭代 6 T6.3）', () => {
+  it('创建链接时把权限与有效期原样透传给 API', async () => {
+    mocked.createShareLink.mockResolvedValue({
+      id: 'l1', token: 't', path: '/share/kb/t', permission: 'write', expiresAt: null,
+    })
+    const store = useKnowledgeBaseStore()
+
+    await store.createShareLink('kb-1', { permission: 'write', expiresIn: '7d' })
+
+    expect(mocked.createShareLink).toHaveBeenCalledWith('kb-1', {
+      permission: 'write', expiresIn: '7d',
+    })
+  })
+
+  it('接受链接后刷新「共享给我的」', async () => {
+    mocked.acceptShareLink.mockResolvedValue({ accepted: true, already: false, permission: 'read' })
+    mocked.fetchShareInvitations.mockResolvedValue({ items: [], total: 0 })
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 12 })
+    const store = useKnowledgeBaseStore()
+
+    await store.acceptShareLink('tok-1')
+
+    expect(mocked.acceptShareLink).toHaveBeenCalledWith('tok-1')
+    expect(mocked.fetchKBPage).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'shared_with_me' }),
     )
   })
 })

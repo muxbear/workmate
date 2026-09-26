@@ -76,7 +76,7 @@ vi.mock('@/services/knowledgeBaseApi', async () => {
   return { ...actual, ...kbApi }
 })
 
-function kb(): KB {
+function kb(overrides_: Partial<KB> = {}): KB {
   return {
     id: 'kb-1', name: '库', description: '', status: 'ready',
     docs: 1, chunks: 10, entities: 0, relations: 0, size: '1 KB',
@@ -94,6 +94,8 @@ function kb(): KB {
     },
     documents: [], entitiesData: [], relationsData: [], tags: [],
     visibility: 'private', isOwner: true, ownerName: null,
+    access: 'owner',
+    ...overrides_,
   }
 }
 
@@ -196,5 +198,48 @@ describe('KnowledgeBaseView · 建库入口按权限显隐', () => {
     const wrapper = await mountView()
 
     expect(wrapper.find('.btn-create').exists()).toBe(true)
+  })
+})
+
+describe('KbDetail · 访问级别决定文档页签可写性（迭代 6 T6.3）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    granted.value = new Set(['knowledge:upload'])
+  })
+
+  async function mountWithAccess(access: 'owner' | 'write' | 'read') {
+    storeMock.selectedKb = kb({ access, isOwner: access === 'owner' })
+    const wrapper = mount(KbDetail, {
+      props: { kb: kb({ access, isOwner: access === 'owner' }) },
+      global: { stubs: { RouterLink: true } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('可写分享者：文档页签可编辑（能上传/删改切片）', async () => {
+    const KbDocsTab = (await import('@/components/knowledgeBase/KbDocsTab.vue')).default
+
+    const wrapper = await mountWithAccess('write')
+
+    const docsTab = wrapper.findComponent(KbDocsTab)
+    expect(docsTab.exists()).toBe(true)
+    expect(docsTab.props('readonly')).toBe(false)
+  })
+
+  it('只读分享者：文档页签仍是只读', async () => {
+    const KbDocsTab = (await import('@/components/knowledgeBase/KbDocsTab.vue')).default
+
+    const wrapper = await mountWithAccess('read')
+
+    expect(wrapper.findComponent(KbDocsTab).props('readonly')).toBe(true)
+  })
+
+  it('可写分享者仍进不了配置页签（改配置会改变所有人的检索语义）', async () => {
+    const KbConfigTab = (await import('@/components/knowledgeBase/KbConfigTab.vue')).default
+
+    const wrapper = await mountWithAccess('write')
+
+    expect(wrapper.findComponent(KbConfigTab).props('readonly')).toBe(true)
   })
 })

@@ -142,6 +142,9 @@ export interface KB {
   isOwner: boolean
   /** 所有者展示名（公共库/被分享的库用于标识来源） */
   ownerName: string | null
+  //: 访问级别（迭代 6 T6.3）：owner 可读写可管理 | write 可改内容 | read 只读。
+  //: 12 处 `isOwner` 消费点里只有文档页签需要看 write，其余是库主专属
+  access?: 'owner' | 'write' | 'read'
   // 迭代 6 T6.2：本人的列表视图偏好（置顶 / 手工顺序 / 自定义分组）
   isPinned?: boolean
   sortOrder?: number
@@ -179,8 +182,47 @@ export interface KBShare {
   avatar: string
   status: ShareStatus
   permission: string
+  /** 有效期（空 = 永久）；过期是派生态，由后端读条件现算 */
+  expiresAt?: string | null
   createdAt: string
   acceptedAt: string | null
+}
+
+/** 分享有效期档位（枚举而非任意天数：服务端才能硬编码上限） */
+export type ShareExpiresIn = '1d' | '7d' | '30d' | 'never'
+
+/** 链接分享（列表视图；**不含 token**——明文只在创建那一刻出现一次） */
+export interface KBShareLink {
+  id: string
+  permission: string
+  expiresAt: string | null
+  revokedAt: string | null
+  acceptCount: number
+  lastAcceptedAt: string | null
+  createdAt: string
+  /** 后端算的状态（前端自己比时钟会与判定漂移） */
+  state: 'active' | 'expired' | 'revoked'
+}
+
+/** 新建链接时返回的**唯一一次**明文 token */
+export interface KBShareLinkCreated {
+  id: string
+  token: string
+  path: string
+  permission: string
+  expiresAt: string | null
+}
+
+/** 免登录预览（字段是后端白名单，前端不要指望更多） */
+export interface KBShareLinkPreview {
+  valid: boolean
+  kbName: string
+  description: string
+  docsCount: number
+  chunksCount: number
+  ownerName: string | null
+  permission: string
+  expiresAt: string | null
 }
 
 export interface KBShareListResponse {

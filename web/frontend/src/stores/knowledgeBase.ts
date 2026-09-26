@@ -15,6 +15,8 @@ import type {
   UrlImportRequest,
   DocSkip,
   KBGroup,
+  KBShareLink,
+  ShareExpiresIn,
 } from '@/types/knowledgeBase'
 import { KB_GROUP_PREVIEW_LIMIT } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
@@ -449,10 +451,44 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
    * 不在此处手写 sharesByMe：`loadGroup('sharedByMe')` 会从服务端重拉，
    * 本地先写再被覆盖只会造成闪烁与两份真相。
    */
-  async function inviteShares(kbId: string, userIds: string[]) {
-    const res = await kbApi.createKbShares(kbId, userIds)
+  async function inviteShares(
+    kbId: string,
+    userIds: string[],
+    options?: { permission?: 'read' | 'write'; expiresIn?: ShareExpiresIn },
+  ) {
+    // 显式给默认值（只读 + 永久）：调用点不必关心默认，读代码时也一眼看得出语义
+    const res = await kbApi.createKbShares(kbId, userIds, {
+      permission: options?.permission ?? 'read',
+      expiresIn: options?.expiresIn ?? 'never',
+    })
     await loadGroup('sharedByMe', 1)
     return res
+  }
+
+  // ─── 链接式分享（迭代 6 T6.3）─────────────────────────────────────────
+
+  /** 创建链接；返回**唯一一次**明文 token（前端负责拼完整 URL 并让用户复制） */
+  async function createShareLink(
+    kbId: string,
+    options: { permission?: 'read' | 'write'; expiresIn?: ShareExpiresIn },
+  ) {
+    return kbApi.createShareLink(kbId, options)
+  }
+
+  async function loadShareLinks(kbId: string): Promise<KBShareLink[]> {
+    return kbApi.fetchShareLinks(kbId)
+  }
+
+  /** 撤销链接：只关闭"再拉新人"的入口，**已接受的人保留访问权** */
+  async function revokeShareLink(kbId: string, linkId: string) {
+    await kbApi.revokeShareLink(kbId, linkId)
+  }
+
+  /** 接受链接（幂等），成功后刷新「共享给我的」 */
+  async function acceptShareLink(token: string) {
+    const result = await kbApi.acceptShareLink(token)
+    await loadGroup('sharedWithMe', 1)
+    return result
   }
 
   /** 删除单个被分享用户 */
@@ -810,6 +846,10 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     deleteKb,
     setVisibility,
     inviteShares,
+    createShareLink,
+    loadShareLinks,
+    revokeShareLink,
+    acceptShareLink,
     removeShare,
     cancelShares,
     respondInvitation,

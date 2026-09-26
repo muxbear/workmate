@@ -18,6 +18,10 @@ import type {
   PasteTextRequest,
   UrlImportRequest,
   KBGroup,
+  KBShareLink,
+  KBShareLinkCreated,
+  KBShareLinkPreview,
+  ShareExpiresIn,
 } from '@/types/knowledgeBase'
 
 // ─── 后端原始类型 ──────────────────────────────────────────────────────────
@@ -40,6 +44,7 @@ interface RawKB {
   visibility?: string
   is_owner?: boolean
   owner_name?: string | null
+  access?: string
   is_pinned?: boolean
   sort_order?: number
   group_id?: string | null
@@ -124,6 +129,7 @@ function mapKB(raw: RawKB): KB {
     // 后端缺省视为本人所有（创建/更新接口的返回体即此语义）
     isOwner: raw.is_owner ?? true,
     ownerName: raw.owner_name ?? null,
+    access: (raw.access as KB['access']) ?? undefined,
     isPinned: raw.is_pinned ?? false,
     sortOrder: raw.sort_order ?? 0,
     groupId: raw.group_id ?? null,
@@ -328,6 +334,7 @@ interface RawShare {
   permission: string
   created_at: string
   accepted_at: string | null
+  expires_at?: string | null
 }
 
 function mapShare(raw: RawShare): KBShare {
@@ -341,6 +348,7 @@ function mapShare(raw: RawShare): KBShare {
     avatar: raw.avatar || '',
     status: raw.status as KBShare['status'],
     permission: raw.permission || 'read',
+    expiresAt: (raw.expires_at as string) ?? null,
     createdAt: raw.created_at,
     acceptedAt: raw.accepted_at ?? null,
   }
@@ -353,9 +361,108 @@ function mapShareList(data: unknown): KBShareListResponse {
 }
 
 /** 邀请用户浏览知识库（仅所有者，只读授权） */
-export async function createKbShares(kbId: string, userIds: string[]): Promise<KBShareListResponse> {
-  const res = await instance.post(`/knowledge-bases/${kbId}/shares`, { user_ids: userIds })
+export async function createKbShares(
+  kbId: string,
+  userIds: string[],
+  options?: { permission?: 'read' | 'write'; expiresIn?: ShareExpiresIn },
+): Promise<KBShareListResponse> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/shares`, {
+    user_ids: userIds,
+    permission: options?.permission ?? 'read',
+    expires_in: options?.expiresIn ?? 'never',
+  })
   return mapShareList(res.data.data)
+}
+
+// ─── 链接式分享（迭代 6 T6.3）─────────────────────────────────────────────
+
+function mapShareLink(raw: Record<string, unknown>): KBShareLink {
+  return {
+    id: String(raw.id ?? ''),
+    permission: String(raw.permission ?? 'read'),
+    expiresAt: (raw.expires_at as string) ?? null,
+    revokedAt: (raw.revoked_at as string) ?? null,
+    acceptCount: (raw.accept_count as number) ?? 0,
+    lastAcceptedAt: (raw.last_accepted_at as string) ?? null,
+    createdAt: String(raw.created_at ?? ''),
+    state: (raw.state as KBShareLink['state']) ?? 'active',
+  }
+}
+
+/** 创建链接（响应里的 token 是**唯一一次**明文，之后无法取回） */
+export async function createShareLink(
+  kbId: string,
+  options: { permission?: 'read' | 'write'; expiresIn?: ShareExpiresIn },
+): Promise<KBShareLinkCreated> {
+  const res = await instance.post(`/knowledge-bases/${kbId}/share-links`, {
+    permission: options.permission ?? 'read',
+    expires_in: options.expiresIn ?? 'never',
+  })
+  const raw = res.data.data as Record<string, unknown>
+  return {
+    id: String(raw.id ?? ''),
+    token: String(raw.token ?? ''),
+    path: String(raw.path ?? ''),
+    permission: String(raw.permission ?? 'read'),
+    expiresAt: (raw.expires_at as string) ?? null,
+  }
+}
+
+export async function fetchShareLinks(kbId: string): Promise<KBShareLink[]> {
+  const res = await instance.get(`/knowledge-bases/${kbId}/share-links`)
+  return (res.data.data as Record<string, unknown>[]).map(mapShareLink)
+}
+
+/** 撤销链接：只关闭"再拉新人"的入口，**已接受的人保留访问权** */
+export async function revokeShareLink(kbId: string, linkId: string): Promise<void> {
+  await instance.delete(`/knowledge-bases/${kbId}/share-links/${linkId}`)
+}
+
+/**
+ * 免登录预览。
+ *
+ * **刻意不走 axios 实例**：实例的拦截器会注入 token，并在 401 时触发刷新/登出流程——
+ * 而这里是匿名接口，一个过期的本地 token 不该把用户踢去登录页。用裸 fetch 保持
+ * "不带凭证、也不触发鉴权流程"。
+ */
+export async function previewShareLink(token: string): Promise<KBShareLinkPreview> {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  const response = await fetch(
+    `${baseURL}/knowledge-bases/shares/links/${encodeURIComponent(token)}/preview`,
+    { headers: { Accept: 'application/json' } },
+  )
+  const body = (await response.json().catch(() => null)) as {
+    code?: number; data?: Record<string, unknown>; message?: string
+  } | null
+  if (!response.ok || !body || body.code !== 0 || !body.data) {
+    throw new Error(body?.message || '分享链接不存在或已失效')
+  }
+  const raw = body.data
+  return {
+    valid: Boolean(raw.valid),
+    kbName: String(raw.kb_name ?? ''),
+    description: String(raw.description ?? ''),
+    docsCount: (raw.docs_count as number) ?? 0,
+    chunksCount: (raw.chunks_count as number) ?? 0,
+    ownerName: (raw.owner_name as string) ?? null,
+    permission: String(raw.permission ?? 'read'),
+    expiresAt: (raw.expires_at as string) ?? null,
+  }
+}
+
+/** 登录后接受链接（幂等；后端会落成一条普通的已接受分享行） */
+export async function acceptShareLink(
+  token: string,
+): Promise<{ accepted: boolean; already: boolean; permission: string }> {
+  const res = await instance.post(
+    `/knowledge-bases/shares/links/${encodeURIComponent(token)}/accept`,
+  )
+  const raw = res.data.data as Record<string, unknown>
+  return {
+    accepted: Boolean(raw.accepted),
+    already: Boolean(raw.already),
+    permission: String(raw.permission ?? 'read'),
+  }
 }
 
 /** 列出某知识库的分享记录（仅所有者） */

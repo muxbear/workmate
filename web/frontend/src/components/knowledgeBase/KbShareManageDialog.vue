@@ -10,6 +10,7 @@ import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { fetchKbShares } from '@/services/knowledgeBaseApi'
 import { SHARE_STATUS_CONFIG } from '@/types/knowledgeBase'
 import type { KB, KBShare } from '@/types/knowledgeBase'
+import KbShareLinkPanel from './KbShareLinkPanel.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -103,6 +104,9 @@ function formatTime(iso: string | null): string {
     @update:model-value="(v: boolean) => !v && emit('close')"
   >
     <div v-loading="loading" class="manage-body">
+      <!-- 链接分享：与"用户"是两条独立的通道，放同一弹窗便于库主集中管理 -->
+      <KbShareLinkPanel :kb-id="kb?.id ?? ''" :visible="visible" />
+
       <div v-if="shares.length" class="share-list">
         <div v-for="s in shares" :key="s.id" class="share-row">
           <div class="share-avatar">
@@ -116,6 +120,8 @@ function formatTime(iso: string | null): string {
               <template v-if="s.acceptedAt">· 接受于 {{ formatTime(s.acceptedAt) }}</template>
             </div>
           </div>
+          <span class="share-perm">{{ s.permission === 'write' ? '可写' : '只读' }}</span>
+          <span v-if="s.expiresAt" class="share-expiry">{{ formatTime(s.expiresAt) }} 到期</span>
           <el-tag :class="['share-status', SHARE_STATUS_CONFIG[s.status].cls]" size="small" disable-transitions>
             {{ SHARE_STATUS_CONFIG[s.status].label }}
           </el-tag>
@@ -147,6 +153,18 @@ function formatTime(iso: string | null): string {
 </template>
 
 <style scoped>
+.share-perm {
+  font-size: var(--font-size-xs, 12px);
+  color: var(--foreground-secondary);
+  flex-shrink: 0;
+}
+
+.share-expiry {
+  font-size: var(--font-size-xs, 12px);
+  color: var(--el-color-warning, #e6a23c);
+  flex-shrink: 0;
+}
+
 .manage-body {
   max-height: 400px;
   overflow-y: auto;
