@@ -31,6 +31,166 @@ from db.models.user_role import UserRole
 logger = logging.getLogger(__name__)
 
 
+# ─── 内置权限树与默认角色授予（模块级常量：测试要能在不建库的前提下断言
+#     "路由上声明的权限键都存在于树上"——这类检查缺位曾让一个不存在的键
+#     `knowledge:edit` 被 16 个接口引用，除超管外全部 403）───────────────
+BUILTIN_PERMISSION_RESOURCES: list[dict[str, object]] = [
+        # Home
+        {"id": "g-home", "parent": None, "type": "catalog",
+         "label": "首页", "perm_key": "home", "icon": "LayoutDashboard", "sort": 0},
+        {"id": "m-ctrl-overview", "parent": "g-home", "type": "menu",
+         "label": "概览", "perm_key": "control:overview", "path": "/overview",
+         "icon": "LayoutDashboard", "sort": 1},
+
+        # Chat
+        {"id": "g-chat", "parent": None, "type": "catalog",
+         "label": "聊天", "perm_key": "chat", "icon": "MessageSquare", "sort": 2},
+        {"id": "m-chat", "parent": "g-chat", "type": "menu",
+         "label": "对话", "perm_key": "chat:conversation", "path": "/chat", "icon": "MessageSquare", "sort": 1},
+        {"id": "b-chat-send", "parent": "m-chat", "type": "button",
+         "label": "发送消息", "perm_key": "chat:send", "icon": "Send", "sort": 1},
+        {"id": "b-chat-create", "parent": "m-chat", "type": "button",
+         "label": "创建对话", "perm_key": "chat:create", "icon": "Plus", "sort": 2},
+        {"id": "b-chat-delete", "parent": "m-chat", "type": "button",
+         "label": "删除对话", "perm_key": "chat:delete", "icon": "Trash2", "sort": 3, "danger": True},
+
+        {"id": "g-kb", "parent": None, "type": "catalog",
+         "label": "知识库", "perm_key": "knowledge", "icon": "Database", "sort": 3},
+        {"id": "m-kb", "parent": "g-kb", "type": "menu",
+         "label": "知识库", "perm_key": "knowledge:base", "path": "/knowledge-base",
+         "icon": "Database", "sort": 1},
+        {"id": "b-kb-create", "parent": "m-kb", "type": "button",
+         "label": "创建知识库", "perm_key": "knowledge:create", "icon": "Plus", "sort": 1},
+        {"id": "b-kb-upload", "parent": "m-kb", "type": "button",
+         "label": "上传文档", "perm_key": "knowledge:upload", "icon": "Upload", "sort": 2},
+        {"id": "b-kb-edit", "parent": "m-kb", "type": "button",
+         "label": "编辑知识库", "perm_key": "knowledge:edit", "icon": "Edit2",
+         "sort": 3},
+        {"id": "b-kb-delete", "parent": "m-kb", "type": "button",
+         "label": "删除知识库", "perm_key": "knowledge:delete", "icon": "Trash2",
+         "sort": 3, "danger": True},
+
+        # Control
+        {"id": "g-ctrl", "parent": None, "type": "catalog",
+         "label": "控制", "perm_key": "control", "icon": "LayoutGrid", "sort": 4},
+        {"id": "m-ctrl-scheduled", "parent": "g-ctrl", "type": "menu",
+         "label": "定时任务", "perm_key": "control:scheduled",
+         "path": "/scheduled-tasks", "icon": "Timer", "sort": 2},
+        {"id": "b-ctrl-task-create", "parent": "m-ctrl-scheduled", "type": "button",
+         "label": "创建任务", "perm_key": "control:task:create", "icon": "Plus", "sort": 1},
+        {"id": "b-ctrl-task-run", "parent": "m-ctrl-scheduled", "type": "button",
+         "label": "立即执行", "perm_key": "control:task:run", "icon": "Play", "sort": 2},
+
+        # Agent
+        {"id": "g-agent", "parent": None, "type": "catalog",
+         "label": "智能体", "perm_key": "agent", "icon": "Bot", "sort": 5},
+        {"id": "m-agent-manage", "parent": "g-agent", "type": "menu",
+         "label": "智能体管理", "perm_key": "agent:manage", "path": "/agents",
+         "icon": "Bot", "sort": 1},
+        {"id": "m-agent-models", "parent": "g-agent", "type": "menu",
+         "label": "模型", "perm_key": "agent:models", "path": "/models",
+         "icon": "Brain", "sort": 2},
+        {"id": "m-agent-tools", "parent": "g-agent", "type": "menu",
+         "label": "工具", "perm_key": "agent:tools", "path": "/tools",
+         "icon": "Wrench", "sort": 3},
+        {"id": "m-agent-skills", "parent": "g-agent", "type": "menu",
+         "label": "技能", "perm_key": "agent:skills", "path": "/skills",
+         "icon": "Zap", "sort": 4},
+        {"id": "m-agent-expert", "parent": "g-agent", "type": "menu",
+         "label": "专家", "perm_key": "agent:expert", "path": "/experts",
+         "icon": "Brain", "sort": 5},
+
+        # MCP
+        {"id": "g-mcp", "parent": None, "type": "catalog",
+         "label": "MCP", "perm_key": "mcp", "icon": "CloudMoon", "sort": 6},
+        {"id": "m-mcp-square", "parent": "g-mcp", "type": "menu",
+         "label": "MCP 广场", "perm_key": "mcp:square", "path": "/mcp",
+         "icon": "CloudMoon", "sort": 1},
+
+        # Admin
+        {"id": "g-admin", "parent": None, "type": "catalog",
+         "label": "管理", "perm_key": "admin", "icon": "Shield", "sort": 7},
+        {"id": "m-admin-users", "parent": "g-admin", "type": "menu",
+         "label": "人员管理", "perm_key": "admin:users", "path": "/admin/users",
+         "icon": "Users", "sort": 2},
+        {"id": "b-admin-user-create", "parent": "m-admin-users", "type": "button",
+         "label": "创建用户", "perm_key": "admin:user:create", "icon": "UserPlus", "sort": 1},
+        {"id": "b-admin-user-edit", "parent": "m-admin-users", "type": "button",
+         "label": "编辑用户", "perm_key": "admin:user:edit", "icon": "Edit2", "sort": 2},
+        {"id": "b-admin-user-delete", "parent": "m-admin-users", "type": "button",
+         "label": "删除用户", "perm_key": "admin:user:delete", "icon": "Trash2",
+         "sort": 3, "danger": True},
+        {"id": "m-admin-rbac", "parent": "g-admin", "type": "menu",
+         "label": "角色权限", "perm_key": "admin:rbac", "path": "/admin/rbac",
+         "icon": "ShieldCheck", "sort": 3},
+        {"id": "b-admin-role-create", "parent": "m-admin-rbac", "type": "button",
+         "label": "创建角色", "perm_key": "admin:role:create", "icon": "Plus", "sort": 1},
+        {"id": "b-admin-role-save", "parent": "m-admin-rbac", "type": "button",
+         "label": "保存配置", "perm_key": "admin:role:save", "icon": "Save", "sort": 2},
+        {"id": "m-admin-resources", "parent": "g-admin", "type": "menu",
+         "label": "资源管理", "perm_key": "admin:resources", "path": "/admin/resources",
+         "icon": "FolderTree", "sort": 4},
+        {"id": "m-admin-org", "parent": "g-admin", "type": "menu",
+         "label": "机构部门", "perm_key": "admin:org", "path": "/admin/org",
+         "icon": "Building2", "sort": 5},
+        {"id": "b-admin-org-create", "parent": "m-admin-org", "type": "button",
+         "label": "创建部门", "perm_key": "admin:org:create", "icon": "Plus", "sort": 1},
+        {"id": "b-admin-org-edit", "parent": "m-admin-org", "type": "button",
+         "label": "编辑部门", "perm_key": "admin:org:edit", "icon": "Edit2", "sort": 2},
+        {"id": "b-admin-org-delete", "parent": "m-admin-org", "type": "button",
+         "label": "删除部门", "perm_key": "admin:org:delete", "icon": "Trash2",
+         "sort": 3, "danger": True},
+        {"id": "m-admin-accounts", "parent": "g-admin", "type": "menu",
+         "label": "账号管理", "perm_key": "admin:accounts", "path": "/admin/accounts",
+         "icon": "KeyRound", "sort": 6},
+        {"id": "m-admin-announcements", "parent": "g-admin", "type": "menu",
+         "label": "公告管理", "perm_key": "admin:announcements",
+         "path": "/admin/announcements", "icon": "Megaphone", "sort": 7},
+        {"id": "m-admin-params", "parent": "g-admin", "type": "menu",
+         "label": "参数配置", "perm_key": "admin:params", "path": "/admin/params",
+         "icon": "Settings", "sort": 8},
+        {"id": "b-admin-param-create", "parent": "m-admin-params", "type": "button",
+         "label": "新增参数", "perm_key": "admin:params:create", "icon": "Plus", "sort": 1},
+        {"id": "b-admin-param-edit", "parent": "m-admin-params", "type": "button",
+         "label": "编辑参数", "perm_key": "admin:params:edit", "icon": "Edit2", "sort": 2},
+        {"id": "b-admin-param-delete", "parent": "m-admin-params", "type": "button",
+         "label": "删除参数", "perm_key": "admin:params:delete", "icon": "Trash2",
+         "sort": 3, "danger": True},
+    ]
+
+#: 树上全部权限键——"拥有全部权限"的角色取它
+ALL_PERMISSION_KEYS: list[str] = [
+    str(rd["perm_key"]) for rd in BUILTIN_PERMISSION_RESOURCES
+]
+
+DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
+        "super_admin": list(ALL_PERMISSION_KEYS),
+        "admin": list(ALL_PERMISSION_KEYS),
+        "manager": [
+            "chat:conversation", "chat:send", "chat:create",
+            # 知识库的写操作（改配置/重建/分享/发布/置顶…）以此键为门禁
+            "knowledge:base", "knowledge:create", "knowledge:edit",
+            "control:overview", "control:scheduled",
+            "agent:manage", "agent:tools", "agent:expert", "agent:skills",
+            "mcp:square",
+            "admin:users", "admin:user:create", "admin:user:edit",
+        ],
+        "member": [
+            "chat:conversation", "chat:send", "chat:create",
+            "knowledge:base", "knowledge:create",
+            "control:overview",
+            "agent:manage", "agent:tools", "agent:expert",
+            "mcp:square",
+        ],
+        "guest": [
+            "chat:conversation", "chat:send",
+            "control:overview",
+            "mcp:square",
+        ],
+    }
+
+
+
 class RbacService:
     """RBAC business logic orchestrator."""
 
@@ -451,6 +611,7 @@ class RbacService:
         if existing.first():
             await self._sync_overview_resource()
             await self._sync_remove_admin_dashboard()
+            await self._sync_kb_edit_button()
             return  # Already seeded
 
         logger.info("Seeding built-in RBAC data...")
@@ -472,128 +633,8 @@ class RbacService:
             role_map[rd["key"]] = role.id
 
         # Permission resources
-        resources_data: list[dict[str, object]] = [
-            # Home
-            {"id": "g-home", "parent": None, "type": "catalog",
-             "label": "首页", "perm_key": "home", "icon": "LayoutDashboard", "sort": 0},
-            {"id": "m-ctrl-overview", "parent": "g-home", "type": "menu",
-             "label": "概览", "perm_key": "control:overview", "path": "/overview",
-             "icon": "LayoutDashboard", "sort": 1},
 
-            # Chat
-            {"id": "g-chat", "parent": None, "type": "catalog",
-             "label": "聊天", "perm_key": "chat", "icon": "MessageSquare", "sort": 2},
-            {"id": "m-chat", "parent": "g-chat", "type": "menu",
-             "label": "对话", "perm_key": "chat:conversation", "path": "/chat", "icon": "MessageSquare", "sort": 1},
-            {"id": "b-chat-send", "parent": "m-chat", "type": "button",
-             "label": "发送消息", "perm_key": "chat:send", "icon": "Send", "sort": 1},
-            {"id": "b-chat-create", "parent": "m-chat", "type": "button",
-             "label": "创建对话", "perm_key": "chat:create", "icon": "Plus", "sort": 2},
-            {"id": "b-chat-delete", "parent": "m-chat", "type": "button",
-             "label": "删除对话", "perm_key": "chat:delete", "icon": "Trash2", "sort": 3, "danger": True},
-
-            {"id": "g-kb", "parent": None, "type": "catalog",
-             "label": "知识库", "perm_key": "knowledge", "icon": "Database", "sort": 3},
-            {"id": "m-kb", "parent": "g-kb", "type": "menu",
-             "label": "知识库", "perm_key": "knowledge:base", "path": "/knowledge-base",
-             "icon": "Database", "sort": 1},
-            {"id": "b-kb-create", "parent": "m-kb", "type": "button",
-             "label": "创建知识库", "perm_key": "knowledge:create", "icon": "Plus", "sort": 1},
-            {"id": "b-kb-upload", "parent": "m-kb", "type": "button",
-             "label": "上传文档", "perm_key": "knowledge:upload", "icon": "Upload", "sort": 2},
-            {"id": "b-kb-delete", "parent": "m-kb", "type": "button",
-             "label": "删除知识库", "perm_key": "knowledge:delete", "icon": "Trash2",
-             "sort": 3, "danger": True},
-
-            # Control
-            {"id": "g-ctrl", "parent": None, "type": "catalog",
-             "label": "控制", "perm_key": "control", "icon": "LayoutGrid", "sort": 4},
-            {"id": "m-ctrl-scheduled", "parent": "g-ctrl", "type": "menu",
-             "label": "定时任务", "perm_key": "control:scheduled",
-             "path": "/scheduled-tasks", "icon": "Timer", "sort": 2},
-            {"id": "b-ctrl-task-create", "parent": "m-ctrl-scheduled", "type": "button",
-             "label": "创建任务", "perm_key": "control:task:create", "icon": "Plus", "sort": 1},
-            {"id": "b-ctrl-task-run", "parent": "m-ctrl-scheduled", "type": "button",
-             "label": "立即执行", "perm_key": "control:task:run", "icon": "Play", "sort": 2},
-
-            # Agent
-            {"id": "g-agent", "parent": None, "type": "catalog",
-             "label": "智能体", "perm_key": "agent", "icon": "Bot", "sort": 5},
-            {"id": "m-agent-manage", "parent": "g-agent", "type": "menu",
-             "label": "智能体管理", "perm_key": "agent:manage", "path": "/agents",
-             "icon": "Bot", "sort": 1},
-            {"id": "m-agent-models", "parent": "g-agent", "type": "menu",
-             "label": "模型", "perm_key": "agent:models", "path": "/models",
-             "icon": "Brain", "sort": 2},
-            {"id": "m-agent-tools", "parent": "g-agent", "type": "menu",
-             "label": "工具", "perm_key": "agent:tools", "path": "/tools",
-             "icon": "Wrench", "sort": 3},
-            {"id": "m-agent-skills", "parent": "g-agent", "type": "menu",
-             "label": "技能", "perm_key": "agent:skills", "path": "/skills",
-             "icon": "Zap", "sort": 4},
-            {"id": "m-agent-expert", "parent": "g-agent", "type": "menu",
-             "label": "专家", "perm_key": "agent:expert", "path": "/experts",
-             "icon": "Brain", "sort": 5},
-
-            # MCP
-            {"id": "g-mcp", "parent": None, "type": "catalog",
-             "label": "MCP", "perm_key": "mcp", "icon": "CloudMoon", "sort": 6},
-            {"id": "m-mcp-square", "parent": "g-mcp", "type": "menu",
-             "label": "MCP 广场", "perm_key": "mcp:square", "path": "/mcp",
-             "icon": "CloudMoon", "sort": 1},
-
-            # Admin
-            {"id": "g-admin", "parent": None, "type": "catalog",
-             "label": "管理", "perm_key": "admin", "icon": "Shield", "sort": 7},
-            {"id": "m-admin-users", "parent": "g-admin", "type": "menu",
-             "label": "人员管理", "perm_key": "admin:users", "path": "/admin/users",
-             "icon": "Users", "sort": 2},
-            {"id": "b-admin-user-create", "parent": "m-admin-users", "type": "button",
-             "label": "创建用户", "perm_key": "admin:user:create", "icon": "UserPlus", "sort": 1},
-            {"id": "b-admin-user-edit", "parent": "m-admin-users", "type": "button",
-             "label": "编辑用户", "perm_key": "admin:user:edit", "icon": "Edit2", "sort": 2},
-            {"id": "b-admin-user-delete", "parent": "m-admin-users", "type": "button",
-             "label": "删除用户", "perm_key": "admin:user:delete", "icon": "Trash2",
-             "sort": 3, "danger": True},
-            {"id": "m-admin-rbac", "parent": "g-admin", "type": "menu",
-             "label": "角色权限", "perm_key": "admin:rbac", "path": "/admin/rbac",
-             "icon": "ShieldCheck", "sort": 3},
-            {"id": "b-admin-role-create", "parent": "m-admin-rbac", "type": "button",
-             "label": "创建角色", "perm_key": "admin:role:create", "icon": "Plus", "sort": 1},
-            {"id": "b-admin-role-save", "parent": "m-admin-rbac", "type": "button",
-             "label": "保存配置", "perm_key": "admin:role:save", "icon": "Save", "sort": 2},
-            {"id": "m-admin-resources", "parent": "g-admin", "type": "menu",
-             "label": "资源管理", "perm_key": "admin:resources", "path": "/admin/resources",
-             "icon": "FolderTree", "sort": 4},
-            {"id": "m-admin-org", "parent": "g-admin", "type": "menu",
-             "label": "机构部门", "perm_key": "admin:org", "path": "/admin/org",
-             "icon": "Building2", "sort": 5},
-            {"id": "b-admin-org-create", "parent": "m-admin-org", "type": "button",
-             "label": "创建部门", "perm_key": "admin:org:create", "icon": "Plus", "sort": 1},
-            {"id": "b-admin-org-edit", "parent": "m-admin-org", "type": "button",
-             "label": "编辑部门", "perm_key": "admin:org:edit", "icon": "Edit2", "sort": 2},
-            {"id": "b-admin-org-delete", "parent": "m-admin-org", "type": "button",
-             "label": "删除部门", "perm_key": "admin:org:delete", "icon": "Trash2",
-             "sort": 3, "danger": True},
-            {"id": "m-admin-accounts", "parent": "g-admin", "type": "menu",
-             "label": "账号管理", "perm_key": "admin:accounts", "path": "/admin/accounts",
-             "icon": "KeyRound", "sort": 6},
-            {"id": "m-admin-announcements", "parent": "g-admin", "type": "menu",
-             "label": "公告管理", "perm_key": "admin:announcements",
-             "path": "/admin/announcements", "icon": "Megaphone", "sort": 7},
-            {"id": "m-admin-params", "parent": "g-admin", "type": "menu",
-             "label": "参数配置", "perm_key": "admin:params", "path": "/admin/params",
-             "icon": "Settings", "sort": 8},
-            {"id": "b-admin-param-create", "parent": "m-admin-params", "type": "button",
-             "label": "新增参数", "perm_key": "admin:params:create", "icon": "Plus", "sort": 1},
-            {"id": "b-admin-param-edit", "parent": "m-admin-params", "type": "button",
-             "label": "编辑参数", "perm_key": "admin:params:edit", "icon": "Edit2", "sort": 2},
-            {"id": "b-admin-param-delete", "parent": "m-admin-params", "type": "button",
-             "label": "删除参数", "perm_key": "admin:params:delete", "icon": "Trash2",
-             "sort": 3, "danger": True},
-        ]
-
-        for rd in resources_data:
+        for rd in BUILTIN_PERMISSION_RESOURCES:
             resource = PermissionResource(
                 id=rd["id"],
                 parent_id=rd.get("parent"),
@@ -612,36 +653,10 @@ class RbacService:
 
         await self.db.flush()
 
-        # Collect all permKeys
-        all_perm_keys = [str(rd["perm_key"]) for rd in resources_data]
 
         # Default permission sets per role
-        perm_sets: dict[str, list[str]] = {
-            "super_admin": list(all_perm_keys),
-            "admin": list(all_perm_keys),
-            "manager": [
-                "chat:conversation", "chat:send", "chat:create",
-                "knowledge:base", "knowledge:create",
-                "control:overview", "control:scheduled",
-                "agent:manage", "agent:tools", "agent:expert", "agent:skills",
-                "mcp:square",
-                "admin:users", "admin:user:create", "admin:user:edit",
-            ],
-            "member": [
-                "chat:conversation", "chat:send", "chat:create",
-                "knowledge:base", "knowledge:create",
-                "control:overview",
-                "agent:manage", "agent:tools", "agent:expert",
-                "mcp:square",
-            ],
-            "guest": [
-                "chat:conversation", "chat:send",
-                "control:overview",
-                "mcp:square",
-            ],
-        }
 
-        for role_key, perm_keys in perm_sets.items():
+        for role_key, perm_keys in DEFAULT_ROLE_PERMISSIONS.items():
             role_id = role_map.get(role_key)
             if role_id:
                 for pk in perm_keys:
@@ -884,6 +899,66 @@ class RbacService:
 
         await self.db.flush()
         logger.info("Params menu synced successfully.")
+
+    async def _sync_kb_edit_button(self) -> None:
+        """给既有库补上「编辑知识库」按钮与默认授予。
+
+        为什么需要这个方法：``seed_builtin_data`` 只在**首次运行**播种（库里已有内置
+        角色就直接返回），所以往内置权限树里加的键对全新安装自动生效，**存量库必须
+        单独补**——这个文件里已有的 ``_sync_overview_resource`` /
+        ``_sync_remove_admin_dashboard`` 都是同一类修补。
+
+        为什么现在才补：``knowledge:edit`` 被 16 个接口用作门禁（改配置/重建/分享/
+        发布/置顶/排序/归组…），但它从未被加进权限树。默认授予是从树上取键的，于是
+        admin 与 manager 都拿不到它，唯一能过的是 ``super_admin``（``check_user_permission``
+        对它短路）——**除超管外这批功能整体 403**。
+        """
+        result = await self.db.execute(
+            select(PermissionResource).where(PermissionResource.id == "b-kb-edit")
+        )
+        if result.scalar_one_or_none() is None:
+            self.db.add(
+                PermissionResource(
+                    id="b-kb-edit",
+                    parent_id="m-kb",
+                    type="button",
+                    label="编辑知识库",
+                    perm_key="knowledge:edit",
+                    path=None,
+                    icon="Edit2",
+                    sort_order=3,
+                    status="active",
+                    is_builtin=True,
+                    description="",
+                    btn_variant=None,
+                    danger=False,
+                )
+            )
+            await self.db.flush()
+
+        # 只补这三个角色。**不要**照抄 ``_sync_params_menu`` 的"给所有持有某个键的
+        # 角色补授"——member 也持有 ``knowledge:create``，那样会把编辑权限发给普通成员。
+        for role_key in ("super_admin", "admin", "manager"):
+            role = (
+                await self.db.execute(
+                    select(Role).where(Role.key == role_key, Role.is_builtin)
+                )
+            ).scalar_one_or_none()
+            if role is None:
+                continue
+            dup = await self.db.execute(
+                select(RolePermission).where(
+                    RolePermission.role_id == role.id,
+                    RolePermission.perm_key == "knowledge:edit",
+                )
+            )
+            if dup.scalar_one_or_none() is None:
+                self.db.add(
+                    RolePermission(role_id=role.id, perm_key="knowledge:edit")
+                )
+
+        await self.db.flush()
+        logger.info("知识库编辑权限（knowledge:edit）已同步")
 
     async def _sync_remove_admin_dashboard(self) -> None:
         """Remove the retired admin console menu (后台管理) from existing databases."""

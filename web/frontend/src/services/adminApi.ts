@@ -162,7 +162,8 @@ export const PERM_RESOURCES: PermResource[] = [
   { id: 'm-kb', parentId: 'g-kb', type: 'menu', label: '知识库', permKey: 'knowledge:base', path: '/knowledge-base', icon: 'Database', sortOrder: 1, status: 'active', isBuiltin: true, description: '知识库管理页面' },
   { id: 'b-kb-create', parentId: 'm-kb', type: 'button', label: '新建知识库', permKey: 'knowledge:create', icon: 'Plus', sortOrder: 1, status: 'active', isBuiltin: true, btnVariant: 'primary' },
   { id: 'b-kb-upload', parentId: 'm-kb', type: 'button', label: '上传文档', permKey: 'knowledge:upload', icon: 'Upload', sortOrder: 2, status: 'active', isBuiltin: true, btnVariant: 'primary' },
-  { id: 'b-kb-delete', parentId: 'm-kb', type: 'button', label: '删除知识库', permKey: 'knowledge:delete', icon: 'Trash2', sortOrder: 3, status: 'active', isBuiltin: true, btnVariant: 'danger', danger: true },
+  { id: 'b-kb-edit', parentId: 'm-kb', type: 'button', label: '编辑知识库', permKey: 'knowledge:edit', icon: 'Edit2', sortOrder: 3, status: 'active', isBuiltin: true, btnVariant: 'primary' },
+  { id: 'b-kb-delete', parentId: 'm-kb', type: 'button', label: '删除知识库', permKey: 'knowledge:delete', icon: 'Trash2', sortOrder: 4, status: 'active', isBuiltin: true, btnVariant: 'danger', danger: true },
 
   { id: 'g-ctrl', parentId: null, type: 'catalog', label: '控制', permKey: 'control', icon: 'LayoutGrid', sortOrder: 3, status: 'active', isBuiltin: true, description: '控制面板相关权限' },
   { id: 'm-ctrl-overview', parentId: 'g-home', type: 'menu', label: '概览', permKey: 'control:overview', path: '/overview', icon: 'LayoutGrid', sortOrder: 1, status: 'active', isBuiltin: true, description: '系统概览仪表盘' },
