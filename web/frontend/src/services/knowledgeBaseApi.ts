@@ -17,6 +17,7 @@ import type {
   DocSkip,
   PasteTextRequest,
   UrlImportRequest,
+  KBGroup,
 } from '@/types/knowledgeBase'
 
 // ─── 后端原始类型 ──────────────────────────────────────────────────────────
@@ -39,6 +40,9 @@ interface RawKB {
   visibility?: string
   is_owner?: boolean
   owner_name?: string | null
+  is_pinned?: boolean
+  sort_order?: number
+  group_id?: string | null
 }
 
 interface RawDoc {
@@ -120,6 +124,9 @@ function mapKB(raw: RawKB): KB {
     // 后端缺省视为本人所有（创建/更新接口的返回体即此语义）
     isOwner: raw.is_owner ?? true,
     ownerName: raw.owner_name ?? null,
+    isPinned: raw.is_pinned ?? false,
+    sortOrder: raw.sort_order ?? 0,
+    groupId: raw.group_id ?? null,
   }
 }
 
@@ -161,6 +168,10 @@ export async function fetchKBPage(params?: {
   page_size?: number
   search?: string
   scope?: KBListScope
+  /** 按标签精确筛选某一个标签（迭代 6 T6.2） */
+  tag?: string
+  /** 按自定义分组筛选 */
+  group_id?: string
 }): Promise<KBPage> {
   const res = await instance.get('/knowledge-bases', { params })
   const data = res.data.data as PaginatedData<RawKB>
@@ -199,6 +210,81 @@ export async function updateKnowledgeBase(
   }
   const res = await instance.put(`/knowledge-bases/${id}`, payload)
   return mapKB(res.data.data as RawKB)
+}
+
+/** 置顶 / 取消置顶（只影响本人的列表顺序） */
+export async function pinKnowledgeBase(id: string, pinned: boolean): Promise<KB> {
+  const res = await instance.post(`/knowledge-bases/${id}/pin`, { pinned })
+  return mapKB(res.data.data as RawKB)
+}
+
+/** 在列表里上移 / 下移一位（只在同一置顶分组内交换） */
+export async function moveKnowledgeBase(id: string, direction: 'up' | 'down'): Promise<KB> {
+  const res = await instance.post(`/knowledge-bases/${id}/move`, { direction })
+  return mapKB(res.data.data as RawKB)
+}
+
+/** 复制知识库（只复制定义与配置，不复制文档与向量） */
+export async function copyKnowledgeBase(id: string, name?: string): Promise<KB> {
+  const res = await instance.post(`/knowledge-bases/${id}/copy`, { name })
+  return mapKB(res.data.data as RawKB)
+}
+
+/** 把知识库归入分组；`group_id` 传 null 表示移出分组 */
+export async function assignKbGroup(id: string, groupId: string | null): Promise<KB> {
+  const res = await instance.put(`/knowledge-bases/${id}/group`, { group_id: groupId })
+  return mapKB(res.data.data as RawKB)
+}
+
+// ─── 分组（用户私有）──────────────────────────────────────────────────────
+
+function mapGroup(raw: Record<string, unknown>): KBGroup {
+  return {
+    id: String(raw.id ?? ''),
+    name: String(raw.name ?? ''),
+    sortOrder: (raw.sort_order as number) ?? 0,
+    kbCount: (raw.kb_count as number) ?? 0,
+  }
+}
+
+export async function fetchKbGroups(): Promise<KBGroup[]> {
+  const res = await instance.get('/knowledge-base-groups')
+  return (res.data.data as Record<string, unknown>[]).map(mapGroup)
+}
+
+export async function createKbGroup(name: string): Promise<KBGroup> {
+  const res = await instance.post('/knowledge-base-groups', { name })
+  return mapGroup(res.data.data as Record<string, unknown>)
+}
+
+export async function renameKbGroup(id: string, name: string): Promise<KBGroup> {
+  const res = await instance.put(`/knowledge-base-groups/${id}`, { name })
+  return mapGroup(res.data.data as Record<string, unknown>)
+}
+
+export async function deleteKbGroup(id: string): Promise<boolean> {
+  const res = await instance.delete(`/knowledge-base-groups/${id}`)
+  return res.data.code === 0
+}
+
+/** 导出知识库的配置 JSON（不含文档内容） */
+export async function exportKnowledgeBaseConfig(id: string): Promise<Record<string, unknown>> {
+  const res = await instance.get(`/knowledge-bases/${id}/export`)
+  return res.data.data as Record<string, unknown>
+}
+
+/** 把导出的配置存成文件（走 fetch + Blob，与文档下载同理） */
+export async function downloadKnowledgeBaseConfig(id: string, name: string): Promise<void> {
+  const payload = await exportKnowledgeBaseConfig(id)
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${name || id}.kb-config.json`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 export async function deleteKnowledgeBase(id: string): Promise<boolean> {

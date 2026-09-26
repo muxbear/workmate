@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Database, Plus, Search, FileText, Layers, Network, Activity,
   LayoutGrid, List, Sparkle, Hash, Trash2, Eye,
@@ -20,6 +20,39 @@ import { useKbPermissions } from '@/composables/useKbPermissions'
 const store = useKnowledgeBaseStore()
 
 const createVisible = ref(false)
+
+// ─── 检索与筛选（迭代 6 T6.2）────────────────────────────────────────────
+// 搜索 / 标签 / 分组**都走服务端**：此前是"拉 100 条再在前端过滤"，库超过 100 个时
+// 后面的根本搜不到。输入框加防抖，避免每敲一个字打一次请求。
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+function handleSearchInput(value: string) {
+  store.searchQuery = value
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { void store.fetchKbs(1) }, 300)
+}
+
+/** 标签候选：来自当前结果集（不做全库扫描，避免为了一个下拉把整库拉回来） */
+const tagOptions = computed(() => {
+  const tags = new Set<string>()
+  for (const kb of store.kbs) {
+    for (const t of kb.tags || []) tags.add(t)
+  }
+  return [...tags].sort()
+})
+
+async function handleCreateGroup() {
+  try {
+    const { value } = await ElMessageBox.prompt('分组名称', '新建分组', {
+      inputValidator: (v: string) => (v && v.trim() ? true : '分组名不能为空'),
+      confirmButtonText: '创建',
+      cancelButtonText: '取消',
+    })
+    await store.createGroup(value.trim())
+    ElMessage.success('已创建分组')
+  } catch (err: unknown) {
+    if (err instanceof Error) ElMessage.error(err.message)
+  }
+}
 
 // 角色无 knowledge:create 时不显示任何建库入口（后端也会 403）
 const { canCreate } = useKbPermissions()
@@ -42,7 +75,7 @@ const shareManageKb = computed<KB | null>(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([store.fetchKbs(), store.loadAllGroups()])
+  await Promise.all([store.fetchKbs(), store.loadAllGroups(), store.loadKbGroups()])
 })
 
 onUnmounted(() => {
@@ -195,12 +228,42 @@ async function handleCancelShare(kbId: string) {
             <div class="search-wrap">
               <Search :size="16" class="search-icon" />
               <input
-                v-model="store.searchQuery"
+                :value="store.searchQuery"
                 type="text"
                 placeholder="按名称、描述、标签检索知识库…"
                 class="search-input"
+                @input="handleSearchInput(($event.target as HTMLInputElement).value)"
               />
             </div>
+            <el-select
+              v-if="tagOptions.length"
+              :model-value="store.tagFilter"
+              placeholder="全部标签"
+              class="filter-select"
+              clearable
+              size="small"
+              @update:model-value="store.setTagFilter($event || '')"
+            >
+              <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
+            </el-select>
+            <el-select
+              :model-value="store.groupFilter"
+              placeholder="全部分组"
+              class="filter-select"
+              clearable
+              size="small"
+              @update:model-value="store.setGroupFilter($event || '')"
+            >
+              <el-option
+                v-for="g in store.kbGroups"
+                :key="g.id"
+                :label="`${g.name} (${g.kbCount})`"
+                :value="g.id"
+              />
+            </el-select>
+            <button class="group-add-btn" title="新建分组" @click="handleCreateGroup">
+              <Plus :size="13" />分组
+            </button>
             <div class="view-toggle">
               <button
                 :class="['view-btn', { active: store.viewMode === 'grid' }]"
@@ -225,6 +288,7 @@ async function handleCancelShare(kbId: string) {
                 v-for="kb in store.filteredKbs"
                 :key="kb.id"
                 :kb="kb"
+                :readonly="!kb.isOwner"
                 @click="handleSelectKb(kb)"
               />
               <div v-if="canCreate" class="create-card" @click="createVisible = true">
@@ -352,6 +416,32 @@ async function handleCancelShare(kbId: string) {
 </template>
 
 <style scoped>
+.filter-select {
+  width: 140px;
+  flex-shrink: 0;
+}
+
+.group-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.kb-pager {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0;
+}
+
 .kb-page {
   height: 100%;
   background: var(--surface-primary);

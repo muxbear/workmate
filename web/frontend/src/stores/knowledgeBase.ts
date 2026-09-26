@@ -14,6 +14,7 @@ import type {
   PasteTextRequest,
   UrlImportRequest,
   DocSkip,
+  KBGroup,
 } from '@/types/knowledgeBase'
 import { KB_GROUP_PREVIEW_LIMIT } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
@@ -69,6 +70,19 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  // ─── 组织：分组 / 标签筛选 / 分页（迭代 6 T6.2）────────────────────────
+  /** 本人的自定义分组 */
+  const kbGroups = ref<KBGroup[]>([])
+  /** 标签筛选（空 = 不筛） */
+  const tagFilter = ref('')
+  /** 分组筛选（空 = 不筛）；与搜索一样走服务端 */
+  const groupFilter = ref('')
+  /** 当前页与总数——**搜索与筛选都在服务端做**：此前是"拉 100 条再在前端过滤"，
+   *  库超过 100 个时后面的根本搜不到 */
+  const kbPage = ref(1)
+  const kbPageSize = ref(24)
+  const kbTotal = ref(0)
+
   // 当前选中知识库 / 文档
   const selectedKb = ref<KB | null>(null)
   const selectedDoc = ref<KBDoc | null>(null)
@@ -122,16 +136,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
 
   // ─── 计算属性 ──────────────────────────────────────────────────────────
 
-  const filteredKbs = computed(() => {
-    const q = searchQuery.value.trim().toLowerCase()
-    if (!q) return kbs.value
-    return kbs.value.filter(
-      (k) =>
-        k.name.toLowerCase().includes(q) ||
-        k.description.toLowerCase().includes(q) ||
-        k.tags.some((t) => t.toLowerCase().includes(q)),
-    )
-  })
+  /** 当前页的知识库（原样返回：搜索与标签筛选都已由服务端完成） */
+  const filteredKbs = computed(() => kbs.value)
 
   /** 左栏子项：每个分组只预览前 N 条 */
   function groupPreview(groupId: string): KB[] {
@@ -172,19 +178,105 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
-  /** 概览：全部可见知识库 + 全局统计 */
-  async function fetchKbs() {
+  /** 概览：全部可见知识库（服务端分页 + 搜索 + 标签筛选）+ 全局统计 */
+  async function fetchKbs(page = kbPage.value) {
     loading.value = true
     error.value = null
     try {
-      const page = await kbApi.fetchKBPage({ scope: 'all', page: 1, page_size: 100 })
-      kbs.value = page.items
+      const result = await kbApi.fetchKBPage({
+        scope: 'all',
+        page,
+        page_size: kbPageSize.value,
+        search: searchQuery.value.trim() || undefined,
+        tag: tagFilter.value || undefined,
+        group_id: groupFilter.value || undefined,
+      })
+      kbs.value = result.items
+      kbTotal.value = result.total
+      kbPage.value = result.page
       statsPatch(await kbApi.fetchStats('all'))
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '加载知识库失败'
     } finally {
       loading.value = false
     }
+  }
+
+  /** 只改一页大小时回到第一页重新取 */
+  async function setKbPage(page: number) {
+    await fetchKbs(page)
+  }
+
+  async function setTagFilter(tag: string) {
+    tagFilter.value = tag
+    await fetchKbs(1)
+  }
+
+  async function setGroupFilter(groupId: string) {
+    groupFilter.value = groupId
+    await fetchKbs(1)
+  }
+
+  // ─── 组织动作（置顶 / 排序 / 复制 / 导出 / 分组）────────────────────────
+
+  /** 列表里替换某一项（顺序与筛选由服务端决定，替换只用于就地刷新字段） */
+  function patchKb(updated: KB) {
+    kbs.value = kbs.value.map((k) => (k.id === updated.id ? { ...k, ...updated } : k))
+    if (selectedKb.value?.id === updated.id) {
+      selectedKb.value = { ...selectedKb.value, ...updated }
+    }
+  }
+
+  /** 置顶 / 取消置顶；顺序会变，所以整页重取 */
+  async function togglePin(kbId: string, pinned: boolean) {
+    await kbApi.pinKnowledgeBase(kbId, pinned)
+    await fetchKbs(kbPage.value)
+  }
+
+  /** 上移 / 下移一位（只在同一置顶分组内交换） */
+  async function moveKb(kbId: string, direction: 'up' | 'down') {
+    await kbApi.moveKnowledgeBase(kbId, direction)
+    await fetchKbs(kbPage.value)
+  }
+
+  /** 复制（只复制定义与配置），成功后回到第一页让用户看到新库 */
+  async function copyKb(kbId: string, name?: string): Promise<KB> {
+    const created = await kbApi.copyKnowledgeBase(kbId, name)
+    await fetchKbs(1)
+    return created
+  }
+
+  /** 导出配置（前端落成 .json 文件） */
+  async function exportKb(kbId: string, name: string) {
+    await kbApi.downloadKnowledgeBaseConfig(kbId, name)
+  }
+
+  async function loadKbGroups() {
+    kbGroups.value = await kbApi.fetchKbGroups()
+  }
+
+  async function createGroup(name: string): Promise<KBGroup> {
+    const group = await kbApi.createKbGroup(name)
+    kbGroups.value = [...kbGroups.value, group]
+    return group
+  }
+
+  async function renameGroup(id: string, name: string): Promise<KBGroup> {
+    const group = await kbApi.renameKbGroup(id, name)
+    kbGroups.value = kbGroups.value.map((g) => (g.id === id ? group : g))
+    return group
+  }
+
+  async function removeGroup(id: string) {
+    await kbApi.deleteKbGroup(id)
+    // 归属被解除：本地把这些库的 groupId 一并清掉（服务端已 SET NULL）
+    kbs.value = kbs.value.map((k) => (k.groupId === id ? { ...k, groupId: null } : k))
+    kbGroups.value = kbGroups.value.filter((g) => g.id !== id)
+  }
+
+  async function assignGroup(kbId: string, groupId: string | null) {
+    patchKb(await kbApi.assignKbGroup(kbId, groupId))
+    await loadKbGroups()   // 各组的计数变了
   }
 
   /**
@@ -721,6 +813,24 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     removeShare,
     cancelShares,
     respondInvitation,
+    kbGroups,
+    tagFilter,
+    groupFilter,
+    kbPage,
+    kbPageSize,
+    kbTotal,
+    setKbPage,
+    setTagFilter,
+    setGroupFilter,
+    togglePin,
+    moveKb,
+    copyKb,
+    exportKb,
+    loadKbGroups,
+    createGroup,
+    renameGroup,
+    removeGroup,
+    assignGroup,
     uploadDocs,
     createTextDoc,
     importUrlDoc,

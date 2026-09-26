@@ -142,6 +142,18 @@ export interface KB {
   isOwner: boolean
   /** 所有者展示名（公共库/被分享的库用于标识来源） */
   ownerName: string | null
+  // 迭代 6 T6.2：本人的列表视图偏好（置顶 / 手工顺序 / 自定义分组）
+  isPinned?: boolean
+  sortOrder?: number
+  groupId?: string | null
+}
+
+/** 知识库分组（用户私有：不同人可对同一个库有不同归类） */
+export interface KBGroup {
+  id: string
+  name: string
+  sortOrder: number
+  kbCount: number
 }
 
 // ─── 可见范围 / 分享 ──────────────────────────────────────────────────────

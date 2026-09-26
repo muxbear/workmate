@@ -23,6 +23,19 @@ vi.mock('@/stores/permission', () => ({
 }))
 
 const storeMock = vi.hoisted(() => ({
+  // 知识库页在挂载时会读这些（迭代 6 T6.2：分组 / 筛选 / 分页）
+  kbs: [] as unknown[],
+  kbGroups: [] as unknown[],
+  tagFilter: '',
+  groupFilter: '',
+  kbTotal: 0,
+  kbPage: 1,
+  kbPageSize: 24,
+  loadKbGroups: vi.fn(),
+  setTagFilter: vi.fn(),
+  setGroupFilter: vi.fn(),
+  setKbPage: vi.fn(),
+  createGroup: vi.fn(),
   selectedKb: null as unknown,
   groupKbs: [] as unknown[],
   loading: false,

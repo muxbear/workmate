@@ -22,6 +22,17 @@ vi.mock('@/services/knowledgeBaseApi', () => ({
   acceptKbShare: vi.fn(),
   rejectKbShare: vi.fn(),
   updateKbVisibility: vi.fn(),
+  // 组织（迭代 6 T6.2）
+  pinKnowledgeBase: vi.fn(),
+  moveKnowledgeBase: vi.fn(),
+  copyKnowledgeBase: vi.fn(),
+  assignKbGroup: vi.fn(),
+  fetchKbGroups: vi.fn(),
+  createKbGroup: vi.fn(),
+  renameKbGroup: vi.fn(),
+  deleteKbGroup: vi.fn(),
+  exportKnowledgeBaseConfig: vi.fn(),
+  downloadKnowledgeBaseConfig: vi.fn(),
   // 文档管理（迭代 6 T6.1）
   uploadDocument: vi.fn(),
   createTextDocument: vi.fn(),
@@ -301,23 +312,40 @@ describe('知识库 store —— 概览', () => {
     expect(store.stats.totalKbs).toBe(2)
   })
 
-  it('概览本地检索匹配名称 / 描述 / 标签', async () => {
+  it('检索与筛选走服务端（不再拉 100 条在前端过滤）', async () => {
     const store = useKnowledgeBaseStore()
-    mocked.fetchKBPage.mockResolvedValue({
-      items: [
-        kb({ id: 'kb-1', name: '产品手册', tags: ['doc'] }),
-        kb({ id: 'kb-2', name: '研发规范', description: '代码风格' }),
-      ],
-      total: 2,
-      page: 1,
-      page_size: 100,
-    })
-    await store.fetchKbs()
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 })
 
     store.searchQuery = '代码'
-    expect(store.filteredKbs.map((k) => k.id)).toEqual(['kb-2'])
-    store.searchQuery = 'doc'
-    expect(store.filteredKbs.map((k) => k.id)).toEqual(['kb-1'])
+    store.tagFilter = '运维'
+    await store.fetchKbs()
+
+    expect(mocked.fetchKBPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: '代码', tag: '运维', page: 1 }),
+    )
+  })
+
+  it('标签筛选变化时回到第一页重新取', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 })
+
+    await store.setTagFilter('运维')
+
+    expect(mocked.fetchKBPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tag: '运维', page: 1 }),
+    )
+  })
+
+  it('分页参数随页大小一起传给服务端', async () => {
+    const store = useKnowledgeBaseStore()
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 50, page: 2, page_size: 24 })
+
+    await store.setKbPage(2)
+
+    expect(mocked.fetchKBPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2, page_size: 24 }),
+    )
+    expect(store.kbTotal).toBe(50)
   })
 })
 
@@ -416,5 +444,86 @@ describe('知识库 store —— 逐文件上传（迭代 6 T6.1）', () => {
     expect(states[0]).toMatchObject({ name: 'a.md', status: 'uploading', percent: 0 })
     expect(states.some((s) => s.percent === 42)).toBe(true)
     expect(states[states.length - 1]).toMatchObject({ status: 'done', percent: 100 })
+  })
+})
+
+describe('知识库 store —— 组织动作（迭代 6 T6.2）', () => {
+  function group(id: string, name: string, kbCount = 0) {
+    return { id, name, sortOrder: 0, kbCount }
+  }
+
+  it('置顶后整页重取（顺序由服务端决定）', async () => {
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 })
+    mocked.pinKnowledgeBase.mockResolvedValue(kb({ isPinned: true }))
+    const store = useKnowledgeBaseStore()
+
+    await store.togglePin('kb-1', true)
+
+    expect(mocked.pinKnowledgeBase).toHaveBeenCalledWith('kb-1', true)
+    expect(mocked.fetchKBPage).toHaveBeenCalled()
+  })
+
+  it('上移 / 下移调用对应方向', async () => {
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 })
+    mocked.moveKnowledgeBase.mockResolvedValue(kb())
+    const store = useKnowledgeBaseStore()
+
+    await store.moveKb('kb-1', 'up')
+
+    expect(mocked.moveKnowledgeBase).toHaveBeenCalledWith('kb-1', 'up')
+  })
+
+  it('复制后回到第一页', async () => {
+    mocked.copyKnowledgeBase.mockResolvedValue(kb({ id: 'kb-copy', name: '副本' }))
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 })
+    const store = useKnowledgeBaseStore()
+
+    const created = await store.copyKb('kb-1')
+
+    expect(created.name).toBe('副本')
+    expect(mocked.fetchKBPage).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 }))
+  })
+
+  it('导出走下载接口，带上库名', async () => {
+    mocked.downloadKnowledgeBaseConfig.mockResolvedValue(undefined)
+    const store = useKnowledgeBaseStore()
+
+    await store.exportKb('kb-1', '产品手册')
+
+    expect(mocked.downloadKnowledgeBaseConfig).toHaveBeenCalledWith('kb-1', '产品手册')
+  })
+
+  it('分组：创建后进入本地列表，删除后本地也移除', async () => {
+    mocked.createKbGroup.mockResolvedValue(group('g1', '产品资料'))
+    mocked.deleteKbGroup.mockResolvedValue(true)
+    const store = useKnowledgeBaseStore()
+
+    await store.createGroup('产品资料')
+    expect(store.kbGroups.map((g) => g.name)).toEqual(['产品资料'])
+
+    await store.removeGroup('g1')
+    expect(store.kbGroups).toEqual([])
+  })
+
+  it('删除分组后本地把这些库的归属清掉（服务端已 SET NULL）', async () => {
+    mocked.deleteKbGroup.mockResolvedValue(true)
+    const store = useKnowledgeBaseStore()
+    store.kbs = [kb({ id: 'kb-1', groupId: 'g1' }), kb({ id: 'kb-2', groupId: 'g2' })]
+
+    await store.removeGroup('g1')
+
+    expect(store.kbs.map((k) => k.groupId)).toEqual([null, 'g2'])
+  })
+
+  it('归组后就地更新该库并刷新分组计数', async () => {
+    mocked.assignKbGroup.mockResolvedValue(kb({ id: 'kb-1', groupId: 'g1' }))
+    mocked.fetchKbGroups.mockResolvedValue([group('g1', '产品资料', 1)])
+    const store = useKnowledgeBaseStore()
+    store.kbs = [kb({ id: 'kb-1' })]
+
+    await store.assignGroup('kb-1', 'g1')
+
+    expect(store.kbs[0].groupId).toBe('g1')
+    expect(store.kbGroups[0].kbCount).toBe(1)
   })
 })
