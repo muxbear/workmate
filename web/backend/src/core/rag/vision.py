@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -55,6 +56,25 @@ CAPTION_PROMPT = (
 
 #: 模型对「图里没文字」这类情况的常见说法，用于把它归一成「没提取到内容」。
 _NO_CONTENT_MARKERS = frozenset({"无文字", "无文字内容", "没有文字", "none", "n/a"})
+
+#: 把**整段回答**包起来的代码围栏（```markdown … ```）。
+_FENCE_PATTERN = re.compile(r"^```[A-Za-z]*[ \t]*\r?\n(?P<body>.*?)\r?\n?```$", re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """去掉把整段回答包起来的代码围栏。
+
+    实测（真实调用百炼 qwen-vl-ocr）：提示词里明确写了"不要添加任何解释、标题或
+    前后缀"，它仍然把整段结果包进 ```markdown … ```。围栏对检索没有价值，进了正文
+    只是噪音。
+
+    只处理"整段就是一个围栏块"的情形——图里本来就是源码时，答案**内部**会有围栏，
+    那种一个字符都不能动。
+    """
+    match = _FENCE_PATTERN.match(text)
+    if match is None:
+        return text
+    return match.group("body").strip()
 
 #: 单篇文档的插图说明上限。与扫描页的页数上限同一个道理：防荒谬输入（一份 300 张
 #: 配图的 PPT 就是 300 次调用），真正的约束是时间预算。
@@ -257,7 +277,7 @@ class VisionClient:
         content = extract_message_content(data)
         if not content:
             return None
-        text = content.strip()
+        text = _strip_code_fence(content.strip())
         # 空串与「无文字」都归成 None：OCR 提示词让模型在图里没字时回「无文字」，
         # 若原样返回，这四个字会被写进正文并参与切片与检索。
         if not text or text.strip("。.！!：: ").lower() in _NO_CONTENT_MARKERS:

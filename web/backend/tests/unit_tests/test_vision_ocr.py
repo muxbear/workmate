@@ -219,6 +219,34 @@ class TestFailureContract:
             is None
         )
 
+    def test_whole_answer_code_fence_is_stripped(self):
+        """实测百炼 qwen-vl-ocr 会无视提示词把整段结果包进 ```markdown 围栏。
+
+        围栏对检索没有价值，进正文只是噪音——真发出去的样子就是这样：
+        '```markdown\\n| INVOICE NO. | A-2026-0042 |\\n...\\n```'
+        """
+        transport = RecordingTransport(
+            _reply(
+                "```markdown\n| 参数 | 默认值 |\n| --- | --- |\n| timeout | 30 |\n```"
+            ),
+        )
+        result = make_client(transport).describe(OCR_PROMPT, make_png_bytes())
+
+        assert result is not None
+        assert not result.startswith("```")
+        assert not result.endswith("```")
+        assert "| timeout | 30 |" in result
+
+    def test_fence_inside_the_answer_is_left_alone(self):
+        """图里本来就是源码时，答案内部的围栏一个字符都不能动。"""
+        body = "说明如下：\n\n```python\nprint(1)\n```\n\n以上。"
+        transport = RecordingTransport(_reply(body))
+        assert make_client(transport).describe(OCR_PROMPT, make_png_bytes()) == body
+
+    def test_fence_language_tag_and_trailing_newline_are_tolerated(self):
+        transport = RecordingTransport(_reply("```\n纯文本\n```\n"))
+        assert make_client(transport).describe(OCR_PROMPT, make_png_bytes()) == "纯文本"
+
     @pytest.mark.parametrize("answer", ["", "   ", "无文字", "无文字。", "N/A"])
     def test_no_content_answers_are_normalised_to_none(self, answer: str):
         """模型答「无文字」时必须是 None。
