@@ -17,8 +17,17 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from api.knowledge_base.entity_norm import normalize_name
-from api.knowledge_base.graph_service import get_entity_detail, get_graph_data
+from api.knowledge_base.entity_norm import (
+    ENTITY_TYPES,
+    LEGACY_TYPE_MAP,
+    normalize_name,
+)
+from api.knowledge_base.graph_service import (
+    _EXTRACTION_EXAMPLES,
+    _EXTRACTION_PROMPT,
+    get_entity_detail,
+    get_graph_data,
+)
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
@@ -87,6 +96,50 @@ def _relation(
         label=label,
         weight=weight,
     )
+
+
+class TestVocabularyWiring:
+    """提示词与词表必须同源——此前三处各写一份（提示词 12 类、设计文档 8 类、前端 5 类）。"""
+
+    def test_prompt_whitelist_is_derived_from_the_vocabulary(self):
+        assert "、".join(ENTITY_TYPES) in _EXTRACTION_PROMPT
+
+    def test_whitelist_line_offers_exactly_the_vocabulary(self):
+        """白名单那一行只能给出 8 类。
+
+        注意**不能**用"提示词里不出现旧类型名"来断言：提示词里有一行归类指引
+        （"软件框架、模型…归产品"）会正当提到那些词——它是在说它们**归属于**哪一类，
+        不是在把它们列为合法类型。所以要精确断言白名单那一行。
+        """
+        whitelist_lines = [
+            line
+            for line in _EXTRACTION_PROMPT.splitlines()
+            if "实体类型必须是以下之一" in line
+        ]
+        assert len(whitelist_lines) == 1, "白名单行应当只有一条"
+
+        offered = {
+            part.strip()
+            for part in whitelist_lines[0]
+            .split(":", 1)[1]
+            .replace("。", "")
+            .split("、")
+        }
+        assert offered == set(ENTITY_TYPES), f"白名单与词表不一致: {sorted(offered)}"
+        for legacy in LEGACY_TYPE_MAP:
+            assert legacy not in offered, f"白名单仍提供已废弃的类型 {legacy}"
+
+    def test_few_shot_examples_only_use_vocabulary_types(self):
+        """示例是模型真正模仿的东西——示例越界，白名单形同虚设。"""
+        used = {
+            e["attributes"]["type"]
+            for example in _EXTRACTION_EXAMPLES
+            for e in example["extractions"]
+            if e["extraction_class"] == "entity"
+        }
+        assert used <= set(ENTITY_TYPES), (
+            f"示例里出现越界类型: {sorted(used - set(ENTITY_TYPES))}"
+        )
 
 
 class TestEntityGrouping:

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
+import {
+  ENTITY_TYPE_COLORS,
+  ENTITY_TYPE_FALLBACK_COLOR,
+} from '@/types/knowledgeBase'
 
 const props = defineProps<{
   id: string
@@ -15,16 +19,24 @@ const props = defineProps<{
   }
 }>()
 
-const ENTITY_COLORS: Record<string, string> = {
-  '人物': '#60a5fa',
-  '组织': '#a78bfa',
-  '产品': '#34d399',
-  '概念': '#fbbf24',
-  '算法': '#f87171',
-}
 
-const nodeColor = computed(() => ENTITY_COLORS[props.data.type] || '#94a3b8')
-const circleSize = computed(() => Math.min(72, 48 + props.data.mentions * 3))
+const nodeColor = computed(
+  () => ENTITY_TYPE_COLORS[props.data.type] || ENTITY_TYPE_FALLBACK_COLOR,
+)
+
+/**
+ * 节点直径随"提到该实体的文档数"增长。
+ *
+ * 用**对数**而不是线性：`mentions` 现在是文档数，一个常见实体可能出现在上百篇文档里，
+ * 线性放大会让一个枢纽节点吞掉整张画布、其余节点挤成一团。对数在 1～上百的范围内都能
+ * 拉开可辨的差距（1 篇 → 60，3 篇 → 72，7 篇 → 84，15 篇及以上封顶 96）。
+ *
+ * 此前是 `48 + mentions * 3` 封顶 72——那时 mentions 恒为 1（写侧同文档内去重 +
+ * 每次重抽先删行），所以每个节点永远都是 51，这个公式其实从未表达过任何信息。
+ */
+const circleSize = computed(() =>
+  Math.min(96, 48 + Math.log2(props.data.mentions + 1) * 12),
+)
 </script>
 
 <template>

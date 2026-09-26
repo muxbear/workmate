@@ -9,6 +9,10 @@ import {
   Lock, Unlock, ChevronRight, X,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
+import {
+  ENTITY_TYPE_COLORS,
+  ENTITY_TYPE_FALLBACK_COLOR,
+} from '@/types/knowledgeBase'
 import type { KB, Entity } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { reExtractGraph as reExtractGraphApi } from '@/services/knowledgeBaseApi'
@@ -36,13 +40,6 @@ const filterType = ref<string>('all')
 const isLocked = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 
-const ENTITY_COLORS: Record<string, string> = {
-  '人物': '#60a5fa',
-  '组织': '#a78bfa',
-  '产品': '#34d399',
-  '概念': '#fbbf24',
-  '算法': '#f87171',
-}
 
 const entityTypes = computed(() =>
   Array.from(new Set(props.kb.entitiesData.map((e) => e.type))),
@@ -350,10 +347,10 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
               ]"
               @click="navigateToEntity(e.id)"
             >
-              <div class="entity-item-dot" :style="{ background: ENTITY_COLORS[e.type] || '#94a3b8' }" />
+              <div class="entity-item-dot" :style="{ background: ENTITY_TYPE_COLORS[e.type] || ENTITY_TYPE_FALLBACK_COLOR }" />
               <div class="entity-item-info">
                 <span class="entity-item-name">{{ e.name }}</span>
-                <span class="entity-item-meta">{{ e.type }} · {{ e.mentions }}次</span>
+                <span class="entity-item-meta">{{ e.type }} · {{ e.mentions }} 篇文档</span>
               </div>
               <ChevronRight :size="14" class="entity-item-arrow" />
             </div>
@@ -375,14 +372,14 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
             <div class="detail-hero">
               <div
                 class="detail-avatar"
-                :style="{ background: ENTITY_COLORS[selectedEntity.type] || '#94a3b8' }"
+                :style="{ background: ENTITY_TYPE_COLORS[selectedEntity.type] || ENTITY_TYPE_FALLBACK_COLOR }"
               >
                 {{ selectedEntity.name.charAt(0) }}
               </div>
               <div class="detail-hero-text">
                 <span class="detail-name">{{ selectedEntity.name }}</span>
                 <span class="detail-type">
-                  <el-tag size="small" :color="ENTITY_COLORS[selectedEntity.type]" style="border: none; color: #fff;">
+                  <el-tag size="small" :color="ENTITY_TYPE_COLORS[selectedEntity.type]" style="border: none; color: #fff;">
                     {{ selectedEntity.type }}
                   </el-tag>
                 </span>
@@ -391,7 +388,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
             <div class="detail-stats">
               <div class="detail-stat">
                 <span class="detail-stat-value">{{ selectedEntity.mentions }}</span>
-                <span class="detail-stat-label">提及次数</span>
+                <span class="detail-stat-label">来源文档</span>
               </div>
               <div class="detail-stat">
                 <span class="detail-stat-value">{{ selectedEntityRelations.length }}</span>
@@ -434,7 +431,7 @@ function minimapNodeColor(node: { data?: { color?: string } }) {
                 class="entity-item entity-item--sm"
                 @click="navigateToEntity(e.id)"
               >
-                <div class="entity-item-dot" :style="{ background: ENTITY_COLORS[e.type] || '#94a3b8' }" />
+                <div class="entity-item-dot" :style="{ background: ENTITY_TYPE_COLORS[e.type] || ENTITY_TYPE_FALLBACK_COLOR }" />
                 <span class="entity-item-name">{{ e.name }}</span>
                 <span class="entity-item-meta">{{ e.type }}</span>
               </div>

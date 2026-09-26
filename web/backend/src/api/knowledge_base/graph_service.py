@@ -9,7 +9,12 @@ import uuid
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.knowledge_base.entity_norm import canonical_type, name_key_expr, normalize_name
+from api.knowledge_base.entity_norm import (
+    ENTITY_TYPES,
+    canonical_type,
+    name_key_expr,
+    normalize_name,
+)
 from core.rag.loaders import create_default_loader_registry
 from core.rag.splitters import create_chunk_registry
 from db.models.knowledge_base_entity import KnowledgeBaseEntity
@@ -17,10 +22,15 @@ from db.models.knowledge_base_relation import KnowledgeBaseRelation
 
 logger = logging.getLogger(__name__)
 
-_EXTRACTION_PROMPT = textwrap.dedent("""\
+#: 提示词里的类型白名单**从词表派生**，而不是再抄一遍——此前正是三处各写一份
+#: （提示词 12 类、设计文档 8 类、前端配色 5 类），谁也不跟谁走。
+_TYPE_WHITELIST = "、".join(ENTITY_TYPES)
+
+_EXTRACTION_PROMPT = textwrap.dedent(f"""\
     从文本中提取实体和实体之间的关系。仅提取文本中明确出现的实体和关系，不要虚构。
 
-    实体类型必须是以下之一: 人物、组织、产品、技术、概念、算法、模型、框架、数据集、地点、时间、事件。
+    实体类型必须是以下之一: {_TYPE_WHITELIST}。
+    软件框架、模型、数据集这类**具体的产物**归"产品"；技术方案、方法这类**抽象概念**归"概念"。
     每个 entity 的 extraction_text 必须是原文中出现的精确文本片段，不得改写。
     每个 entity 的 attributes 中必须包含 type 字段，写明实体类型。
 
@@ -67,17 +77,17 @@ _EXTRACTION_EXAMPLES = [
             "支持 PyTorch 和 TensorFlow 两大深度学习框架。"
         ),
         "extractions": [
-            {"extraction_class": "entity", "extraction_text": "Transformer", "attributes": {"type": "模型"}},
+            {"extraction_class": "entity", "extraction_text": "Transformer", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "Vaswani", "attributes": {"type": "人物"}},
             {"extraction_class": "entity", "extraction_text": "Self-Attention", "attributes": {"type": "算法"}},
-            {"extraction_class": "entity", "extraction_text": "BERT", "attributes": {"type": "模型"}},
+            {"extraction_class": "entity", "extraction_text": "BERT", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "Google", "attributes": {"type": "组织"}},
-            {"extraction_class": "entity", "extraction_text": "GPT", "attributes": {"type": "模型"}},
+            {"extraction_class": "entity", "extraction_text": "GPT", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "OpenAI", "attributes": {"type": "组织"}},
             {"extraction_class": "entity", "extraction_text": "HuggingFace", "attributes": {"type": "组织"}},
-            {"extraction_class": "entity", "extraction_text": "Transformers", "attributes": {"type": "框架"}},
-            {"extraction_class": "entity", "extraction_text": "PyTorch", "attributes": {"type": "框架"}},
-            {"extraction_class": "entity", "extraction_text": "TensorFlow", "attributes": {"type": "框架"}},
+            {"extraction_class": "entity", "extraction_text": "Transformers", "attributes": {"type": "产品"}},
+            {"extraction_class": "entity", "extraction_text": "PyTorch", "attributes": {"type": "产品"}},
+            {"extraction_class": "entity", "extraction_text": "TensorFlow", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "2017 年", "attributes": {"type": "时间"}},
             {"extraction_class": "entity", "extraction_text": "2018 年", "attributes": {"type": "时间"}},
             {"extraction_class": "relation", "extraction_text": "Vaswani 等人提出 Transformer 架构", "attributes": {"from": "Vaswani", "to": "Transformer", "label": "提出"}},
@@ -102,17 +112,17 @@ _EXTRACTION_EXAMPLES = [
             "LangExtract 负责知识图谱的实体关系抽取。"
         ),
         "extractions": [
-            {"extraction_class": "entity", "extraction_text": "RAG", "attributes": {"type": "技术"}},
+            {"extraction_class": "entity", "extraction_text": "RAG", "attributes": {"type": "概念"}},
             {"extraction_class": "entity", "extraction_text": "Milvus", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "Chroma", "attributes": {"type": "产品"}},
-            {"extraction_class": "entity", "extraction_text": "Embedding", "attributes": {"type": "技术"}},
-            {"extraction_class": "entity", "extraction_text": "LangChain", "attributes": {"type": "框架"}},
-            {"extraction_class": "entity", "extraction_text": "LlamaIndex", "attributes": {"type": "框架"}},
+            {"extraction_class": "entity", "extraction_text": "Embedding", "attributes": {"type": "概念"}},
+            {"extraction_class": "entity", "extraction_text": "LangChain", "attributes": {"type": "产品"}},
+            {"extraction_class": "entity", "extraction_text": "LlamaIndex", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "Ke-Hermes", "attributes": {"type": "产品"}},
-            {"extraction_class": "entity", "extraction_text": "FastAPI", "attributes": {"type": "框架"}},
-            {"extraction_class": "entity", "extraction_text": "DeepSeek", "attributes": {"type": "模型"}},
+            {"extraction_class": "entity", "extraction_text": "FastAPI", "attributes": {"type": "产品"}},
+            {"extraction_class": "entity", "extraction_text": "DeepSeek", "attributes": {"type": "产品"}},
             {"extraction_class": "entity", "extraction_text": "DashScope", "attributes": {"type": "产品"}},
-            {"extraction_class": "entity", "extraction_text": "LangExtract", "attributes": {"type": "框架"}},
+            {"extraction_class": "entity", "extraction_text": "LangExtract", "attributes": {"type": "产品"}},
             {"extraction_class": "relation", "extraction_text": "RAG 基于 Milvus", "attributes": {"from": "RAG", "to": "Milvus", "label": "使用"}},
             {"extraction_class": "relation", "extraction_text": "RAG 基于 Chroma", "attributes": {"from": "RAG", "to": "Chroma", "label": "使用"}},
             {"extraction_class": "relation", "extraction_text": "RAG 使用 Embedding", "attributes": {"from": "RAG", "to": "Embedding", "label": "使用"}},

@@ -355,6 +355,30 @@ export const RERANKER_MODEL_TYPE = 'rerank'
  */
 export const VISION_MODEL_TYPE = 'vision'
 
+/**
+ * 实体类型配色（迭代 6 T6.5）。
+ *
+ * 此前这份表在 `useKnowledgeGraph.ts`、`KbGraphTab.vue`、`KbGraphNode.vue` **各写了一份**，
+ * 而且都只有 5 类——后端提示词的 12 类里其余 7 类全渲染成灰。现在收成一处、补齐到
+ * 受控词表的 8 类（`web/backend/src/api/knowledge_base/entity_norm.py` 的 ENTITY_TYPES）。
+ *
+ * 已有的 5 类**沿用原色**（用户已经看惯了），只补缺失的 3 类；设计说明书 §35 给的是
+ * 另一套色相（组织绿、产品橙、概念紫），这里没有跟着改，避免无谓的视觉变动。
+ */
+export const ENTITY_TYPE_COLORS: Record<string, string> = {
+  人物: '#60a5fa',
+  组织: '#a78bfa',
+  产品: '#34d399',
+  概念: '#fbbf24',
+  算法: '#f87171',
+  地点: '#2dd4bf',
+  时间: '#38bdf8',
+  事件: '#f472b6',
+}
+
+/** 词表外的类型（理论上不该出现——写入侧会折进受控词表）的兜底色 */
+export const ENTITY_TYPE_FALLBACK_COLOR = '#94a3b8'
+
 // 文档类型配置
 export interface DocTypeConfig {
   label: string

@@ -10,15 +10,12 @@ import {
 } from 'd3-force'
 import KbGraphNode from '@/components/knowledgeBase/KbGraphNode.vue'
 import KbGraphEdge from '@/components/knowledgeBase/KbGraphEdge.vue'
+import {
+  ENTITY_TYPE_COLORS,
+  ENTITY_TYPE_FALLBACK_COLOR,
+} from '@/types/knowledgeBase'
 import type { Entity, Relation } from '@/types/knowledgeBase'
 
-const ENTITY_COLORS: Record<string, string> = {
-  '人物': '#60a5fa',
-  '组织': '#a78bfa',
-  '产品': '#34d399',
-  '概念': '#fbbf24',
-  '算法': '#f87171',
-}
 
 const NODE_WIDTH = 200
 const NODE_HEIGHT = 60
@@ -66,7 +63,7 @@ export function useKnowledgeGraph() {
         name: e.name,
         type: e.type,
         mentions: e.mentions,
-        color: ENTITY_COLORS[e.type] || '#94a3b8',
+        color: ENTITY_TYPE_COLORS[e.type] || ENTITY_TYPE_FALLBACK_COLOR,
         hovered: false,
         selected: e.id === selectedEntityId.value,
         dimmed: false,
