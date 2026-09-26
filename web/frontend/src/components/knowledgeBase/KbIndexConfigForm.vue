@@ -7,6 +7,7 @@ import type { IndexConfig, SparseAlgo } from '@/types/knowledgeBase'
 import {
   CHUNK_STRATEGY_OPTIONS,
   RERANKER_MODEL_TYPE,
+  VISION_MODEL_TYPE,
 } from '@/types/knowledgeBase'
 import {
   fetchAvailableProviders,
@@ -62,6 +63,15 @@ const rerankProviderModels = computed(() => {
   return p?.models || []
 })
 
+// ── OCR 视觉模型提供商 + 模型（来自「模型」页 type=vision）──
+const visionProviders = ref<AvailableProvider[]>([])
+const ocrProviderId = ref('')
+const ocrProviderModels = computed(() => {
+  if (!ocrProviderId.value) return []
+  const p = visionProviders.value.find(x => x.id === ocrProviderId.value)
+  return p?.models || []
+})
+
 /** 按模型名反查提供商，返回命中的 provider id（未命中返回空串）。 */
 function findProviderId(providers: AvailableProvider[], modelName: string): string {
   if (!modelName) return ''
@@ -73,14 +83,16 @@ function findProviderId(providers: AvailableProvider[], modelName: string): stri
 
 onMounted(async () => {
   try {
-    const [ep, lp, rp] = await Promise.all([
+    const [ep, lp, rp, vp] = await Promise.all([
       fetchAvailableProviders('embedding'),
       fetchAvailableProviders('llm'),
       fetchAvailableProviders(RERANKER_MODEL_TYPE),
+      fetchAvailableProviders(VISION_MODEL_TYPE),
     ])
     embProviders.value = ep
     llmProviders.value = lp
     rerankProviders.value = rp
+    visionProviders.value = vp
 
     // 提供商优先用配置里已保存的值，其次按模型名反查
     embProviderId.value =
@@ -88,10 +100,13 @@ onMounted(async () => {
     llmProviderId.value = findProviderId(lp, draft.entityModel)
     rerankProviderId.value =
       draft.rerankerProviderId || findProviderId(rp, draft.rerankerModel)
+    ocrProviderId.value =
+      draft.ocrProviderId || findProviderId(vp, draft.ocrModel)
 
     if (!embProviderId.value && ep.length > 0) embProviderId.value = ep[0].id
     if (!llmProviderId.value && lp.length > 0) llmProviderId.value = lp[0].id
     if (!rerankProviderId.value && rp.length > 0) rerankProviderId.value = rp[0].id
+    if (!ocrProviderId.value && vp.length > 0) ocrProviderId.value = vp[0].id
   } catch {
     /* ignore */
   }
@@ -144,6 +159,19 @@ function onRerankProviderChange(pid: string) {
 
 function onRerankModelChange(name: string) {
   set('rerankerModel', name)
+}
+
+function onOcrProviderChange(pid: string) {
+  ocrProviderId.value = pid
+  set('ocrProviderId', pid)
+  const p = visionProviders.value.find(x => x.id === pid)
+  if (p && p.models.length > 0) {
+    set('ocrModel', p.models[0].name)
+  }
+}
+
+function onOcrModelChange(name: string) {
+  set('ocrModel', name)
 }
 </script>
 
@@ -454,6 +482,53 @@ function onRerankModelChange(name: string) {
           :model-value="draft.enableHyde"
           @update:model-value="(v: boolean) => set('enableHyde', v)"
         />
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">OCR 图片与扫描件解析</div>
+          <div class="toggle-desc">
+            扫描件 PDF 逐页、上传的图片，以及 Word/PPT 里的插图都交给视觉模型转成文字后入库。
+            关闭时扫描件提取不到任何文字会明确报错（不会静默入库一篇空文档）；
+            开启后每页一次外部调用——延迟与费用都随页数增长。
+          </div>
+        </div>
+        <el-switch
+          :model-value="draft.enableOcr"
+          :disabled="visionProviders.length === 0"
+          @update:model-value="(v: boolean) => set('enableOcr', v)"
+        />
+      </div>
+      <div v-if="visionProviders.length === 0" class="hint-text">
+        尚未配置视觉模型：请到「模型」页面添加 type=vision 的模型（如 qwen-vl-ocr）后再启用。
+      </div>
+      <div v-if="draft.enableOcr && visionProviders.length > 0" class="field-row">
+        <div class="field flex-1">
+          <label class="field-label">OCR 提供商</label>
+          <el-select
+            :model-value="ocrProviderId"
+            @update:model-value="onOcrProviderChange"
+            style="width: 100%"
+            popper-class="config-select-popper"
+          >
+            <el-option v-for="p in visionProviders" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </div>
+        <div class="field flex-1">
+          <label class="field-label">OCR 模型</label>
+          <el-select
+            :model-value="draft.ocrModel"
+            @update:model-value="onOcrModelChange"
+            style="width: 100%"
+            popper-class="config-select-popper"
+          >
+            <el-option
+              v-for="m in ocrProviderModels"
+              :key="m.id"
+              :label="m.display_name || m.name"
+              :value="m.name"
+            />
+          </el-select>
+        </div>
       </div>
       <div v-if="draft.enableReranker && rerankProviders.length > 0" class="field-row">
         <div class="field flex-1">

@@ -26,6 +26,7 @@ from api.knowledge_base.doc_state import (
 from api.knowledge_base.doc_state import (
     IndexingContext,
     QueuedState,
+    is_ocr_enabled,
 )
 from api.knowledge_base.schemas import (
     DocStageInfo,
@@ -34,13 +35,14 @@ from api.knowledge_base.schemas import (
 )
 from core.config import get_settings
 from core.metrics import KB_INDEX_QUEUE_DEPTH, KB_INDEX_TASKS, KB_STAGE_SECONDS
-from core.rag.loaders import DocumentLoaderRegistry
+from core.rag.loaders import DocumentLoaderRegistry, create_default_loader_registry
 from core.rag.splitters import (
     INDEX_CONFIG_DEFAULTS,
     ChunkStrategyRegistry,
     create_chunk_registry,
 )
 from core.rag.vector_store import BaseVectorStore
+from core.rag.vision import VisionClient
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 
@@ -548,6 +550,7 @@ class IndexingPipeline:
         self._embedding_cache: dict[tuple[str, str | None], object] = {}
         self._chunk_registry_cache: dict[tuple, ChunkStrategyRegistry] = {}
         self._llm_cache: dict[tuple[str | None, str | None], object] = {}
+        self._ocr_cache: dict[tuple[str | None, str | None], VisionClient | None] = {}
 
     def attach(self, observer: ProgressObserver) -> None:
         self._observers.append(observer)
@@ -606,6 +609,49 @@ class IndexingPipeline:
             logger.warning("Agentic 切片未找到可用 LLM，将回退 recursive 切片: %s", exc)
 
         self._llm_cache[cache_key] = client
+        return client
+
+    async def _get_or_create_ocr(self, config: dict) -> VisionClient | None:
+        """获取或创建 OCR 用的视觉模型客户端（缓存避免重复创建）。
+
+        未开启 OCR 时**直接返回 ``None``，连查询都不发**——关闭状态的库不该为这个
+        能力付出任何代价。开启但模型页没配可用的 ``vision`` 模型时同样返回 ``None``，
+        并记 warning：调用方据此让扫描件/图片解析明确失败，而不是静默产出空文档。
+
+        缓存键用**模型标识**（``model_name`` + ``provider_id``），不是
+        ``client is not None`` 这种布尔——后者会让两个配置不同 OCR 模型的库共用第一个
+        库的客户端（``_get_or_create_chunk_registry`` 的缓存键就踩了这个坑）。
+        """
+        if not is_ocr_enabled(config):
+            return None
+
+        model_name = config.get("ocr_model") or config.get("ocrModel") or None
+        provider_id = config.get("ocr_provider_id") or config.get("ocrProviderId") or None
+        cache_key = (model_name, provider_id)
+        if cache_key in self._ocr_cache:
+            return self._ocr_cache[cache_key]
+
+        from db.engine import async_session
+
+        client: VisionClient | None = None
+        try:
+            async with async_session() as session:
+                from api.knowledge_base.model_provider import load_vision_model
+
+                client = await load_vision_model(
+                    session, model_name=model_name, provider_id=provider_id,
+                )
+        except RuntimeError as exc:
+            logger.warning(
+                "知识库开启了 OCR 但未找到可用的视觉模型，扫描件与图片将解析失败: %s", exc,
+            )
+
+        # **只缓存成功**。流水线是进程级单例：把「没找到模型」这个否定结果也缓存下来，
+        # 管理员随后到「模型」页补上 vision 模型也不会生效，要到重启服务为止每篇文档
+        # 都继续报"未找到可用的视觉模型"——正是"配了但没生效"那一类。代价是模型缺失
+        # 期间每篇文档多一次小查询，值得。
+        if client is not None:
+            self._ocr_cache[cache_key] = client
         return client
 
     def _get_or_create_chunk_registry(self, config: dict, emb_model, llm=None):
@@ -709,6 +755,12 @@ class IndexingPipeline:
         llm = await self._get_or_create_llm(config) if requested_strategy == "agentic" else None
         chunk_reg = self._get_or_create_chunk_registry(config, emb_model, llm=llm)
 
+        # OCR 也在这里**提前解析**：加载器在 asyncio.to_thread 的工作线程里跑，
+        # 那里发不了异步的数据库查询，只能把建好的客户端递进去（与 LLM 交给
+        # agentic 切片是同一手法）。未开启 OCR 时这里是零开销的一次分支。
+        ocr = await self._get_or_create_ocr(config)
+        loader_reg = create_default_loader_registry(ocr) if ocr is not None else None
+
         ctx = IndexingContext(
             doc_id=task.doc_id,
             kb_id=task.kb_id,
@@ -722,6 +774,7 @@ class IndexingPipeline:
             embedding_model=emb_model,
             chunk_registry=chunk_reg,
             chunk_strategy=self._resolve_strategy(config, chunk_reg),
+            loader_registry=loader_reg,
         )
 
         async def _on_status_change(c: IndexingContext) -> None:

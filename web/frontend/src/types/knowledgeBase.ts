@@ -70,6 +70,15 @@ export interface IndexConfig {
   maxChunksPerDoc: number
   /** 近重复判定阈值（0 表示关闭）：与已选结果相似度 ≥ 该值的候选被丢弃 */
   dedupSimilarity: number
+  /**
+   * 是否启用 OCR：扫描件 PDF、上传的图片，以及文档内嵌图片的说明文字都走视觉模型。
+   * 每页一次外部调用（延迟 + 费用），默认关闭。
+   */
+  enableOcr: boolean
+  /** OCR 用的视觉模型（模型页 type=vision）；留空时取模型页第一个可用者 */
+  ocrModel: string
+  /** OCR 模型所属提供商；用于消解同名模型 */
+  ocrProviderId: string
 }
 
 // 索引阶段
@@ -330,6 +339,15 @@ export const LLM_MODEL_OPTIONS = [
  * 的假配置。
  */
 export const RERANKER_MODEL_TYPE = 'rerank'
+
+/**
+ * OCR 用的视觉模型类型（迭代 6 T6.4）。同理不硬编码模型名，从「模型」页
+ * type=vision 的模型里取，没配就让开关不可用并给出指引。
+ *
+ * 注意是 vision 而不是 multimodal：后者的模型会出现在聊天模型选择器里
+ * （见 chat/ModelSelector.vue），而 OCR 模型只会 OCR，不该被当成对话模型选。
+ */
+export const VISION_MODEL_TYPE = 'vision'
 
 // 文档类型配置
 export interface DocTypeConfig {

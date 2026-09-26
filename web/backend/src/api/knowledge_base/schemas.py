@@ -56,6 +56,14 @@ class IndexConfigSchema(BaseModel):
     #: HyDE（假设文档嵌入）默认关闭：它会在多路召回里增加一路"最不像查询、
     #: 最像答案"的变体，对语义类问题收益明显，但会让延迟再涨一截。
     enable_hyde: bool = Field(default=False)
+    #: OCR 默认**关闭**：扫描件与图片会逐页调用外部视觉模型（延迟、费用、内容出网），
+    #: 按方案 §12.1 的灰度策略"默认关闭、按库开启"。开启后同时覆盖扫描件 PDF、
+    #: 直接上传的图片，以及文档内嵌图片的说明文字。
+    enable_ocr: bool = Field(default=False)
+    #: OCR 用的视觉模型（模型页 type=vision）。留空时按模型页顺序取第一个可用者，
+    #: 与 reranker_model 的解析方式一致。
+    ocr_model: str = Field(default="", description="留空时取模型页第一个可用的 vision 模型")
+    ocr_provider_id: str | None = Field(default=None, description="OCR 模型所属提供商")
 
 
 # ─── KnowledgeBase ──────────────────────────────────────────────────────────

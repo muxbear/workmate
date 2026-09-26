@@ -105,6 +105,10 @@ function mapConfig(raw: Record<string, unknown>): IndexConfig {
     scoreThreshold: (raw.score_threshold as number) ?? 0,
     maxChunksPerDoc: (raw.max_chunks_per_doc as number) ?? 3,
     dedupSimilarity: (raw.dedup_similarity as number) ?? 0.92,
+    // OCR 默认关闭：旧配置里没有这三个键，按关闭兜底
+    enableOcr: (raw.enable_ocr as boolean) ?? false,
+    ocrModel: (raw.ocr_model as string) || '',
+    ocrProviderId: (raw.ocr_provider_id as string) || '',
   }
 }
 
@@ -869,6 +873,10 @@ function configToSnake(config: IndexConfig): Record<string, unknown> {
     score_threshold: config.scoreThreshold,
     max_chunks_per_doc: config.maxChunksPerDoc,
     dedup_similarity: config.dedupSimilarity,
+    // OCR（迭代 6 T6.4）——同上，不带会被后端按默认值（关闭）覆盖
+    enable_ocr: config.enableOcr,
+    ocr_model: config.ocrModel,
+    ocr_provider_id: config.ocrProviderId || null,
   }
 }
 

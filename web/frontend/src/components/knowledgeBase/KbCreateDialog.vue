@@ -34,6 +34,9 @@ const defaultConfig: IndexConfig = {
   minSimilarity: 0.53, scoreThreshold: 0,
   // 去冗余：单文档最多 3 条 + 相似度 ≥0.92 视为重复（与后端默认一致）
   maxChunksPerDoc: 3, dedupSimilarity: 0.92,
+  // OCR 默认关闭（与后端一致）：开启后扫描件与图片逐页调用视觉模型，
+  // ocrModel 留空，由后端按「模型」页 type=vision 的配置解析。
+  enableOcr: false, ocrModel: '', ocrProviderId: '',
 }
 
 const name = ref('')

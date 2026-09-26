@@ -5,11 +5,12 @@
 
 import logging
 import os
-import shutil
 from abc import ABC, abstractmethod
 from typing import Any, cast
 
 from langchain_core.documents import Document
+
+from core.rag.vision import OCR_PROMPT, VisionClient
 
 logger = logging.getLogger(__name__)
 
@@ -240,16 +241,30 @@ class TextLoaderStrategy(DocumentLoaderStrategy):
 
 
 class ImageLoaderStrategy(DocumentLoaderStrategy):
-    """图片加载（OCR/多模态）。需要 Tesseract OCR 已安装并在 PATH 中。"""
+    """图片加载——走「模型」页面配置的视觉模型做 OCR（迭代 6 T6.4）。
+
+    此前依赖本机安装 Tesseract，未装即一律失败。而 ``png``/``jpg``/``jpeg`` 都在上传
+    白名单里，于是**每一次图片上传都必然在解析阶段报错**，且错误信息指向一个用户在
+    界面里无从解决的系统依赖。现在改为用模型页配置的 ``vision`` 模型：配了就能用，
+    没配则给出可操作的提示。
+    """
+
+    def __init__(self, ocr: VisionClient | None = None) -> None:
+        self._ocr = ocr
 
     def load(self, file_path: str) -> list[Document]:
-        if not shutil.which("tesseract"):
+        if self._ocr is None:
             raise RuntimeError(
-                "Tesseract OCR is not installed or not in PATH. "
-                "Image loading requires Tesseract for text extraction."
+                "图片解析需要视觉模型：请到「模型」页面添加 type=vision 的模型，"
+                "并在本知识库的索引配置中开启 OCR 后重试。"
             )
-        from langchain_community.document_loaders import UnstructuredImageLoader
-        return UnstructuredImageLoader(file_path).load()
+        with open(file_path, "rb") as fh:
+            data = fh.read()
+        text = self._ocr.describe(OCR_PROMPT, data)
+        if not text:
+            # 不返回空文档：那会让文档以 「indexed、0 切片」的假成功入库
+            raise RuntimeError("图片中未提取到文字（可能是纯图形、空白或过于模糊的图片）。")
+        return [Document(page_content=text, metadata={"source": str(file_path)})]
 
 
 class FallbackLoaderStrategy(DocumentLoaderStrategy):
@@ -287,8 +302,16 @@ class DocumentLoaderRegistry:
         return self.get_strategy(file_type).load(file_path)
 
 
-def create_default_loader_registry() -> DocumentLoaderRegistry:
-    """创建预注册所有内置文件类型的加载器注册表。"""
+def create_default_loader_registry(
+    ocr: VisionClient | None = None,
+) -> DocumentLoaderRegistry:
+    """创建预注册所有内置文件类型的加载器注册表。
+
+    Args:
+        ocr: 视觉模型客户端。为 ``None`` 时图片类文档的解析会明确失败并提示去配置
+            模型——**不会**静默产出一个空文档。未开启 OCR 的知识库继续沿用启动时
+            构建的那一份（见 ``api.knowledge_base.facade``），零开销。
+    """
     registry = DocumentLoaderRegistry()
 
     # PDF: 优先 opendataloader_pdf，备选 PyPDFLoader
@@ -309,7 +332,7 @@ def create_default_loader_registry() -> DocumentLoaderRegistry:
     registry.register("html", HTMLLoaderStrategy())
     registry.register("txt", TextLoaderStrategy())
 
-    image_strategy = ImageLoaderStrategy()
+    image_strategy = ImageLoaderStrategy(ocr)
     for ft in ("png", "jpg", "jpeg", "image"):
         registry.register(ft, image_strategy)
 

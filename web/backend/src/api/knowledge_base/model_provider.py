@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.rag.embedding import get_embedding_model
 from core.rag.reranker import RerankerClient
+from core.rag.vision import VisionClient
 from db.model_lookup import effective_api_base, select_usable_models
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,36 @@ async def load_reranker_model(
     model, provider, api_key = row
     logger.info("知识库重排序使用模型 %s（提供商 %s）", model.name, provider.name)
     return RerankerClient(
+        model=model.name,
+        api_base=effective_api_base(model, provider),
+        api_key=api_key,
+    )
+
+
+async def load_vision_model(
+    db: AsyncSession,
+    model_name: str | None = None,
+    provider_id: str | None = None,
+) -> VisionClient:
+    """加载知识库配置的视觉模型（type=vision），用于 OCR 与图片说明。
+
+    ``model_name`` 留空时按模型页顺序取第一个可用的 ``vision`` 模型——与
+    :func:`load_reranker_model` 同一套兜底逻辑（``select_usable_models`` 已负责跳过
+    缺 api_base、密钥解不开的提供商）。
+
+    Raises:
+        RuntimeError: 模型页未配置可用的 vision 模型。
+    """
+    row = await _load_model_row(
+        db, model_type="vision", model_name=model_name, provider_id=provider_id
+    )
+    if row is None:
+        raise RuntimeError(
+            "知识库未找到可用的视觉模型，请在“模型”页面配置 type=vision 的模型（用于 OCR）"
+        )
+    model, provider, api_key = row
+    logger.info("知识库 OCR 使用视觉模型 %s（提供商 %s）", model.name, provider.name)
+    return VisionClient(
         model=model.name,
         api_base=effective_api_base(model, provider),
         api_key=api_key,

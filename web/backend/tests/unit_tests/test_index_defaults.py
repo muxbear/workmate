@@ -17,7 +17,9 @@ class TestDefaultsConsistency:
         assert IndexConfigSchema().chunk_size == INDEX_CONFIG_DEFAULTS["chunk_size"]
 
     def test_chunk_overlap_matches_single_source_of_truth(self):
-        assert IndexConfigSchema().chunk_overlap == INDEX_CONFIG_DEFAULTS["chunk_overlap"]
+        assert (
+            IndexConfigSchema().chunk_overlap == INDEX_CONFIG_DEFAULTS["chunk_overlap"]
+        )
 
     def test_sparse_defaults_match_bm25_module(self):
         config = IndexConfigSchema()
@@ -50,6 +52,14 @@ class TestDefaultsConsistency:
         assert config.enable_query_rewrite is False
         assert config.enable_hyde is False
 
+    def test_ocr_disabled_by_default(self):
+        """OCR 默认关闭（迭代 6 T6.4）。
+
+        开启后扫描件与图片会逐页调用外部视觉模型（延迟、费用、内容出网），
+        按方案 §12.1 的灰度策略"默认关闭、按库开启"。
+        """
+        assert IndexConfigSchema().enable_ocr is False
+
 
 class TestFrontendPayloadContract:
     """前端 configToSnake() 产出的字段必须能被 schema 接收（否则被静默丢弃）。"""
@@ -76,6 +86,9 @@ class TestFrontendPayloadContract:
         "hybrid_alpha": 0.4,
         "enable_query_rewrite": True,
         "enable_hyde": True,
+        "enable_ocr": True,
+        "ocr_model": "qwen-vl-ocr",
+        "ocr_provider_id": "provider-3",
     }
 
     def test_all_fields_are_accepted(self):
@@ -90,14 +103,20 @@ class TestFrontendPayloadContract:
         assert restored.reranker_provider_id == "provider-2"
         assert restored.embedding_provider_id == "provider-1"
         assert restored.enable_graph is False
+        assert restored.enable_ocr is True
+        assert restored.ocr_provider_id == "provider-3"
 
     def test_provider_ids_are_optional(self):
         """历史配置没有 provider 字段，读取时不能报错。"""
-        legacy = {k: v for k, v in self.FRONTEND_PAYLOAD.items()
-                  if not k.endswith("_provider_id")}
+        legacy = {
+            k: v
+            for k, v in self.FRONTEND_PAYLOAD.items()
+            if not k.endswith("_provider_id")
+        }
         config = IndexConfigSchema(**legacy)
         assert config.embedding_provider_id is None
         assert config.reranker_provider_id is None
+        assert config.ocr_provider_id is None
 
     def test_unknown_fields_are_ignored_not_fatal(self):
         """旧版本前端多传字段时不应 500。"""

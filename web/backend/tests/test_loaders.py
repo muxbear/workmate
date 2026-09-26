@@ -255,10 +255,14 @@ def test_text_loader_file_not_found():
 # ==================== ImageLoaderStrategy ====================
 
 
-def test_image_loader_no_tesseract_raises():
-    """FIXED: raises RuntimeError when Tesseract is not available."""
+def test_image_loader_without_vision_model_raises():
+    """没有视觉模型时明确失败，并指出该去「模型」页面配 vision 模型（迭代 6 T6.4）。
+
+    此前这里断言的是「缺 Tesseract 就报错」——那正是要修掉的行为：png/jpg/jpeg 都在
+    上传白名单里，依赖一个用户无从在界面上解决的系统二进制，等于图片上传必然失败。
+    """
     strategy = ImageLoaderStrategy()
-    with pytest.raises(RuntimeError, match="Tesseract"):
+    with pytest.raises(RuntimeError, match="vision"):
         strategy.load(PNG_PATH)
 
 

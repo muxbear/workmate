@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
     from api.knowledge_base.doc_service import IndexingPipeline
+    from core.rag.loaders import DocumentLoaderRegistry
     from core.rag.splitters import ChunkStrategyRegistry
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,24 @@ def is_graph_enabled(config: dict | None) -> bool:
     return True
 
 
+def is_ocr_enabled(config: dict | None) -> bool:
+    """判断是否启用 OCR（视觉模型解析扫描件与图片）。
+
+    与 :func:`is_graph_enabled` 相反，这里默认**关闭**：开启后扫描件与图片会逐页调用
+    外部视觉模型（时间、费用、内容出网），按方案 §12.1 的灰度策略"默认关闭、按库开启"。
+
+    仍按上面那条教训写成"先看键在不在、再判值"，而不是
+    ``config.get("enable_ocr") or config.get("enableOcr")``——后者在默认**开启**的
+    开关上会把显式 ``False`` 短路掉（图谱那个事故的成因）；默认关闭的开关虽然不会被
+    这个写法判错，但两个读取函数保持同一形状，改动时才不会看漏。
+    """
+    config = config or {}
+    for key in ("enable_ocr", "enableOcr"):
+        if key in config:
+            return bool(config[key])
+    return False
+
+
 @dataclass
 class IndexingContext:
     """索引上下文——状态模式中的 Context 角色。
@@ -99,6 +118,9 @@ class IndexingContext:
     chunk_registry: ChunkStrategyRegistry | None = None
     #: 实际使用的切片策略——流水线可能在 agentic 不可用时回退为 recursive
     chunk_strategy: str | None = None
+    #: 带视觉模型的加载器注册表（开启 OCR 的知识库才有）。为 ``None`` 时退回流水线
+    #: 启动时构建的共享注册表——与 ``chunk_registry`` 的兜底方式一致。
+    loader_registry: DocumentLoaderRegistry | None = None
 
     on_status_change: Callable[[IndexingContext], Awaitable[None]] | None = None
 
@@ -146,8 +168,9 @@ class ParsingState(DocState):
             # 解析是**同步 CPU/IO 密集**的（PDF 抽取、DOCX 解压、unstructured
             # 本地推理），一个 500MB 的 PDF 能把事件循环按住好几秒——期间所有
             # HTTP 请求、SSE 推送、健康检查全部停摆。丢到线程池。
+            loader_registry = ctx.loader_registry or pipeline.loader_registry
             ctx.documents = await asyncio.to_thread(
-                pipeline.loader_registry.load, ctx.file_path, ctx.file_type,
+                loader_registry.load, ctx.file_path, ctx.file_type,
             )
             await ctx.transition_to(ChunkingState(), "chunking", STAGE_PROGRESS["chunking"])
         except Exception as e:

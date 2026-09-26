@@ -89,6 +89,7 @@ function kb(overrides_: Partial<KB> = {}): KB {
       rerankerModel: '', rerankerProviderId: '', enableReranker: true,
       topK: 10, hybridAlpha: 0.5, minSimilarity: 0.53, scoreThreshold: 0,
       maxChunksPerDoc: 3, dedupSimilarity: 0.92,
+      enableOcr: false, ocrModel: '', ocrProviderId: '',
       parentChunkSize: 1536, minChunkSize: 32,
       enableQueryRewrite: false, enableHyde: false,
     },
