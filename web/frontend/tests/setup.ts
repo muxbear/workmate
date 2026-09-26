@@ -39,3 +39,57 @@ if (!('ResizeObserver' in globalThis)) {
 import i18n from '@/locales'
 
 config.global.plugins = [...(config.global.plugins ?? []), i18n]
+
+// jsdom 不实现 matchMedia，而响应式侧栏（ui store 的 initResponsiveSidebar）用它。
+// 给一个可用的桩：默认按"宽屏"返回，测试可通过 window.__setViewport 改宽度。
+// （照 ChatPlusMenu.vue 的既有实现——它是全仓唯一按视口驱动 UI 的地方。）
+// 判"是不是函数"而不是 `'matchMedia' in window`：jsdom 里这个**属性存在但值是
+// undefined**，用 `in` 判断会以为环境已经提供了、于是跳过安装，而组件那边一调用
+// 就炸（或静默拿到 undefined）。这个坑实测踩过一次。
+if (typeof window.matchMedia !== 'function') {
+  type Listener = (e: MediaQueryListEvent) => void
+  const registry = new Map<MediaQueryList, { query: string; listeners: Set<Listener> }>()
+  let width = 1440
+
+  const matchesOf = (query: string, w: number) => {
+    const max = /max-width:\s*(\d+)px/.exec(query)
+    const min = /min-width:\s*(\d+)px/.exec(query)
+    if (max && w > Number(max[1])) return false
+    if (min && w < Number(min[1])) return false
+    return true
+  }
+
+  const makeList = (query: string) => {
+    const listeners = new Set<Listener>()
+    const list = {
+      matches: matchesOf(query, width),
+      media: query,
+      onchange: null,
+      addEventListener: (_: string, cb: Listener) => listeners.add(cb),
+      removeEventListener: (_: string, cb: Listener) => listeners.delete(cb),
+      addListener: (cb: Listener) => listeners.add(cb),
+      removeListener: (cb: Listener) => listeners.delete(cb),
+      dispatchEvent: () => false,
+    } as unknown as MediaQueryList
+    registry.set(list, { query, listeners })
+    return list
+  }
+
+  Object.defineProperty(window, 'matchMedia', { value: makeList, writable: true })
+  /**
+   * 测试用：改视口宽度并按各自 query 重新计算 matches 后通知监听者。
+   * 桩必须**真的按新宽度算**——永远通知 `matches: false` 的话，"变窄即收起"
+   * 这类用例根本测不出东西。
+   */
+  Object.defineProperty(window, '__setViewportWidth', {
+    value: (next: number) => {
+      width = next
+      for (const [list, { query, listeners }] of registry) {
+        const matches = matchesOf(query, next)
+        ;(list as { matches: boolean }).matches = matches
+        for (const cb of listeners) cb({ matches } as MediaQueryListEvent)
+      }
+    },
+    writable: true,
+  })
+}

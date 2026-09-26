@@ -119,6 +119,46 @@ export const useUiStore = defineStore('ui', () => {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
 
+  /** 侧栏收起前的用户偏好——窄屏自动收起后，变宽要还原成它，而不是粗暴展开 */
+  let sidebarPreference: boolean | null = null
+  let sidebarQuery: MediaQueryList | null = null
+
+  /**
+   * 按视口宽度自动收起/展开侧栏（迭代 6 T6.6）。
+   *
+   * 此前折叠**只能手动点**：`SideMenu` 是硬 240px 且带 `min-width`，永远不会自己收缩，
+   * 窄屏下被挤扁的是内容区。方案 `:1322` 的验收是"窄屏（1280/768）布局不破"。
+   *
+   * 用 `matchMedia` 而不是监听 resize：只在跨过阈值时触发一次，不必每像素重算。
+   * 照 `ChatPlusMenu.vue` 的既有写法（含 change 监听与卸载）。
+   *
+   * Returns:
+   *     卸载函数，供组件 `onBeforeUnmount` 调用。
+   */
+  function initResponsiveSidebar(): () => void {
+    if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+
+    sidebarQuery = window.matchMedia('(max-width: 1279px)')
+    const apply = (narrow: boolean) => {
+      if (narrow) {
+        // 记住用户原本的选择：变宽时要还给他，而不是一律展开
+        if (sidebarPreference === null) sidebarPreference = sidebarCollapsed.value
+        sidebarCollapsed.value = true
+      } else if (sidebarPreference !== null) {
+        sidebarCollapsed.value = sidebarPreference
+        sidebarPreference = null
+      }
+    }
+    apply(sidebarQuery.matches)
+
+    const onChange = (e: MediaQueryListEvent) => apply(e.matches)
+    sidebarQuery.addEventListener('change', onChange)
+    return () => {
+      sidebarQuery?.removeEventListener('change', onChange)
+      sidebarQuery = null
+    }
+  }
+
   function toggleRightPanel() {
     rightPanelCollapsed.value = !rightPanelCollapsed.value
     // 收起时一并退出全屏，避免再次展开直接铺满整页
@@ -201,6 +241,7 @@ export const useUiStore = defineStore('ui', () => {
     fetchHistories,
     deleteHistory,
     toggleSidebar,
+    initResponsiveSidebar,
     toggleRightPanel,
     toggleRightPanelFullscreen,
     setRightPanelWidth,

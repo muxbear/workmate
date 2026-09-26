@@ -918,4 +918,18 @@ function handleEditFragment(doc: KBDoc) {
 .btn-icon {
   margin-right: 4px;
 }
+
+/*
+ * 窄屏（<768）：文档表在手机宽度下会被挤成一团，改为容器内横向滚动。
+ * 与 KnowledgeBaseView 里同款规则一致——理由见那边的注释（普通 CSS 而非 mixin）。
+ */
+@media (max-width: 767px) {
+  .card {
+    overflow-x: auto;
+  }
+
+  .docs-table {
+    min-width: 760px;
+  }
+}
 </style>

@@ -1,6 +1,38 @@
 /* === 响应式断点 === */
+/*
+ * 阶梯（迭代 6 T6.6）：
+ *   sm  < 768        窄屏 / 移动端——侧栏自动收起
+ *   md   768 – 1023
+ *   lg   1024 – 1279
+ *   xl   1280 – 1919 方案点名的窄屏基准（`:1322` 的验收是"1280/768 布局不破"）
+ *   2xl  >= 1920     大屏
+ *
+ * 后两档是本轮补的：**代码里此前根本不存在 1280 与 1920 这两个断点**，而方案点名
+ * 要用它们验收；下面那三个 respond-* mixin 定义了很久，但**一次都没被 @include 过**。
+ */
+$breakpoint-2xl: 1920px;
+$breakpoint-xl: 1280px;
 $breakpoint-lg: 1024px;
 $breakpoint-md: 768px;
+
+@mixin respond-2xl {
+  @media (min-width: $breakpoint-2xl) {
+    @content;
+  }
+}
+
+@mixin respond-xl {
+  @media (min-width: $breakpoint-xl) and (max-width: ($breakpoint-2xl - 1px)) {
+    @content;
+  }
+}
+
+/* 窄于 1280：方案点名的另一档，侧栏收起由 JS 驱动（见 ui store） */
+@mixin respond-below-xl {
+  @media (max-width: ($breakpoint-xl - 1px)) {
+    @content;
+  }
+}
 
 @mixin respond-lg {
   @media (min-width: $breakpoint-lg) {

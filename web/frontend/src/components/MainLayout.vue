@@ -6,13 +6,19 @@ import { useAuthStore } from '@/stores/auth'
 import SideMenu from './SideMenu.vue'
 import TopBar from './TopBar.vue'
 import { usePermissionStore } from '@/stores/permission'
+import { useUiStore } from '@/stores/ui'
 
 const notificationStore = useNotificationStore()
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
+const uiStore = useUiStore()
+/** 窄屏自动收起侧栏的卸载函数（见 ui store 的 initResponsiveSidebar） */
+let disposeResponsiveSidebar: (() => void) | null = null
+
 onMounted(async () => {
+  disposeResponsiveSidebar = uiStore.initResponsiveSidebar()
   const permStore = usePermissionStore()
   if (!permStore.loaded) {
     await permStore.load()
@@ -28,6 +34,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposeResponsiveSidebar?.()
   notificationStore.disconnectSSE()
 })
 </script>

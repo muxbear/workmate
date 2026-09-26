@@ -937,4 +937,23 @@ async function handleCancelShare(kbId: string) {
 .btn-icon {
   margin-right: 4px;
 }
+
+/*
+ * 窄屏（<768）：10 列的表格在手机宽度下必然把列挤成一团。改为容器内横向滚动——
+ * 布局不破，列也都能看到。方案 `:1322` 的验收是"窄屏（1280/768）布局不破"。
+ *
+ * 这里写的是**普通 CSS 媒体查询**而不是 mixins.scss 里的 respond-sm：那个 mixin
+ * 需要 `lang="scss"`，而这个文件的样式块是普通 CSS；为了一个媒体查询把上万行的
+ * 样式块切成 SCSS，风险大于收益。断点数值以 mixins.scss 为事实来源（本轮已把
+ * 阶梯补齐到方案点名的 1280/1920），已有 SCSS 组件可以直接 @include。
+ */
+@media (max-width: 767px) {
+  .kb-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .kb-table {
+    min-width: 760px;
+  }
+}
 </style>
