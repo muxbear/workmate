@@ -246,7 +246,11 @@ async def get_graph_data(
             func.sum(KnowledgeBaseRelation.weight).label("weight"),
         )
         .where(KnowledgeBaseRelation.kb_id == kb_id)
-        .group_by(text("from_key"), text("to_key"), KnowledgeBaseRelation.label)
+        # 按**表达式**分组而不是按别名 text("from_key")：关系表里真有一列叫 from_key，
+        # Postgres 会把 GROUP BY 里的 from_key 解析成那个**输入列**，与 SELECT 里的
+        # coalesce(...) 表达式不匹配，直接报 GroupingError。SQLite 更宽松，所以单测
+        # 全绿也放过它——这个错只有连真库跑才会露出来。
+        .group_by(rel_from, rel_to, KnowledgeBaseRelation.label)
         .order_by(text("weight DESC"))
     )
     relation_rows = (await db.execute(rel_stmt)).all()
@@ -563,15 +567,19 @@ async def get_entity_detail(
 
     import sqlalchemy as sa
 
+    # 提成变量是为了让 SELECT 与 GROUP BY 用**同一个表达式对象**（理由见下面的 group_by）
+    rel_from = name_key_expr(
+        KnowledgeBaseRelation.from_key, KnowledgeBaseRelation.from_entity,
+    )
+    rel_to = name_key_expr(
+        KnowledgeBaseRelation.to_key, KnowledgeBaseRelation.to_entity,
+    )
+
     rel_stmt = (
         select(
             func.min(KnowledgeBaseRelation.id).label("id"),
-            name_key_expr(
-                KnowledgeBaseRelation.from_key, KnowledgeBaseRelation.from_entity,
-            ).label("from_key"),
-            name_key_expr(
-                KnowledgeBaseRelation.to_key, KnowledgeBaseRelation.to_entity,
-            ).label("to_key"),
+            rel_from.label("from_key"),
+            rel_to.label("to_key"),
             func.min(KnowledgeBaseRelation.from_entity).label("from_entity"),
             func.min(KnowledgeBaseRelation.to_entity).label("to_entity"),
             KnowledgeBaseRelation.label,
@@ -584,7 +592,11 @@ async def get_entity_detail(
                 KnowledgeBaseRelation.to_key == entity_key,
             ),
         )
-        .group_by(text("from_key"), text("to_key"), KnowledgeBaseRelation.label)
+        # 按**表达式**分组而不是按别名 text("from_key")：关系表里真有一列叫 from_key，
+        # Postgres 会把 GROUP BY 里的 from_key 解析成那个**输入列**，与 SELECT 里的
+        # coalesce(...) 表达式不匹配，直接报 GroupingError。SQLite 更宽松，所以单测
+        # 全绿也放过它——这个错只有连真库跑才会露出来。
+        .group_by(rel_from, rel_to, KnowledgeBaseRelation.label)
         .order_by(text("weight DESC"))
     )
     rel_rows = (await db.execute(rel_stmt)).all()
