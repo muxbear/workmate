@@ -33,8 +33,12 @@ vi.mock('@/services/knowledgeBaseApi', async () => {
 })
 
 const store = vi.hoisted(() => ({
-  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
+  // folder：目录浏览的当前位置（'' = 根目录）；folders：目录树（组件渲染期就会 filter 它）
+  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false, folder: '' },
+  folders: [] as { path: string; name: string; parent: string; docCount: number }[],
   loadDocs: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20 })),
+  loadFolders: vi.fn(async () => null),
+  selectedDoc: null,
   uploadDocs: vi.fn(),
   createTextDoc: vi.fn(),
   importUrlDoc: vi.fn(),
@@ -59,6 +63,8 @@ function makeDoc(overrides: Partial<KBDoc> = {}): KBDoc {
     entities: 0,
     relations: 0,
     progress: 100,
+    // 根目录：目录浏览的断言都基于它，想让文档"在某个目录里"就覆盖这个字段
+    folder: null,
     ...overrides,
   }
 }
@@ -247,5 +253,154 @@ describe('KbDocsTab · 下载原文', () => {
     await flushPromises()
 
     expect(api.downloadDocument).toHaveBeenCalledWith('kb-1', 'd1', '会议纪要.md')
+  })
+})
+
+describe('KbDocsTab · 目录浏览', () => {
+  function withFolders(folders: { path: string; name: string; parent: string; docCount: number }[]) {
+    store.folders.length = 0
+    store.folders.push(...folders)
+  }
+
+  beforeEach(() => {
+    store.folders.length = 0
+    store.docQuery.folder = ''
+    store.docQuery.search = ''
+    store.loadFolders.mockClear()
+  })
+
+  it('目录行不贡献勾选框，也不进入批量选择', async () => {
+    withFolders([{ path: 'a', name: 'a', parent: '', docCount: 2 }])
+    const wrapper = await mountTab([makeDoc({ id: 'd1' }), makeDoc({ id: 'd2', name: 'b.md' })])
+
+    // 表头 + 2 个文档行；目录行是"可进入的行"，不是可勾选项
+    expect(rowChecks(wrapper).length).toBe(3)
+    expect(wrapper.find('.folder-row').exists()).toBe(true)
+    expect(wrapper.find('.folder-row').text()).toContain('a')
+  })
+
+  it('只读态也能浏览目录（目录只读不影响导航）', async () => {
+    withFolders([{ path: 'a', name: 'a', parent: '', docCount: 1 }])
+    const wrapper = await mountTab([], true)
+
+    expect(wrapper.find('.folder-row').exists()).toBe(true)
+  })
+
+  it('点子目录 → 按该目录取第 1 页，并**清掉搜索词**', async () => {
+    // 不清搜索词的后果很具体：输入框里还挂着旧词，而列表已是目录内容；
+    // 防抖定时器更会把旧词在 300ms 后打回来，看起来像"点了没反应"
+    withFolders([{ path: 'a', name: 'a', parent: '', docCount: 1 }])
+    const wrapper = await mountTab([])
+    store.loadDocs.mockClear()
+
+    await wrapper.find('.folder-row').trigger('click')
+    await flushPromises()
+
+    expect(store.loadDocs).toHaveBeenCalledWith('kb-1', { folder: 'a', search: '', page: 1 })
+    expect((wrapper.find('.search-input').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('面包屑逐级可点，末级标为当前位置', async () => {
+    store.docQuery.folder = 'a/b'
+    withFolders([])
+    const wrapper = await mountTab([])
+    store.loadDocs.mockClear()
+
+    const crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.map((c) => c.text())).toEqual(['根目录', 'a', 'b'])
+    expect(crumbs[2].classes()).toContain('is-current')
+
+    await crumbs[1].trigger('click')
+    await flushPromises()
+
+    expect(store.loadDocs).toHaveBeenCalledWith('kb-1', { folder: 'a', search: '', page: 1 })
+  })
+
+  it('「上一级」回到父目录；根目录下不出现', async () => {
+    withFolders([])
+    const atRoot = await mountTab([])
+    expect(atRoot.find('.path-up').exists()).toBe(false)
+
+    store.docQuery.folder = 'a/b'
+    const wrapper = await mountTab([])
+    store.loadDocs.mockClear()
+    await wrapper.find('.path-up').trigger('click')
+    await flushPromises()
+
+    expect(store.loadDocs).toHaveBeenCalledWith('kb-1', { folder: 'a', search: '', page: 1 })
+  })
+
+  it('只有子目录、没有文档时，空态不说"点击右上角上传"', async () => {
+    withFolders([{ path: 'a', name: 'a', parent: '', docCount: 3 }])
+    const wrapper = await mountTab([])
+    store.docQuery.folder = 'a'
+    store.loadFolders.mockClear()
+
+    const emptyInFolder = await mountTab([])
+    withFolders([])
+    await emptyInFolder.setProps({ kb: makeKb([]) })
+    await flushPromises()
+
+    const text = emptyInFolder.find('.empty-cell').text()
+    expect(text).toContain('「a」下暂无文档')
+    expect(text).not.toContain('点击右上角上传')
+  })
+
+  it('搜索态隐藏目录行，并在结果里标出所在位置', async () => {
+    withFolders([{ path: 'a', name: 'a', parent: '', docCount: 1 }])
+    store.docQuery.search = '报告'
+    const wrapper = await mountTab([makeDoc({ id: 'd1', folder: 'a/b' })])
+
+    expect(wrapper.find('.folder-row').exists()).toBe(false)
+    expect(wrapper.text()).toContain('所在位置：a/b')
+
+    store.docQuery.search = ''
+  })
+
+  it('根目录的文档在搜索结果里显示「根目录」而不是空', async () => {
+    store.docQuery.search = '报告'
+    const wrapper = await mountTab([makeDoc({ id: 'd1', folder: null })])
+
+    expect(wrapper.text()).toContain('所在位置：根目录')
+
+    store.docQuery.search = ''
+  })
+})
+
+describe('KbDocsTab · 打开文档预览', () => {
+  it('点文档名把这篇文档抛给宿主（在问答区开预览标签），不在本页就地展开', async () => {
+    const wrapper = await mountTab([makeDoc({ id: 'd1', name: '甲.md' })])
+
+    await wrapper.find('.doc-cell--clickable').trigger('click')
+
+    const events = wrapper.emitted('preview-doc')
+    expect(events).toHaveLength(1)
+    expect((events![0][0] as KBDoc).id).toBe('d1')
+    // 就地展开的整页视图已经挪走：本页不该再出现文档详情
+    expect(wrapper.find('.doc-detail-view').exists()).toBe(false)
+  })
+
+  it('右侧「查看详情」按钮走同一个入口', async () => {
+    const wrapper = await mountTab([makeDoc({ id: 'd1', name: '甲.md' })])
+
+    await wrapper.find('.action-view').trigger('click')
+
+    expect(wrapper.emitted('preview-doc')).toHaveLength(1)
+  })
+
+  it('键盘回车同样能打开（可点元素必须键盘可达）', async () => {
+    const wrapper = await mountTab([makeDoc({ id: 'd1', name: '甲.md' })])
+
+    await wrapper.find('.doc-cell--clickable').trigger('keydown.enter')
+
+    expect(wrapper.emitted('preview-doc')).toHaveLength(1)
+  })
+
+  it('点勾选框不会顺带打开预览', async () => {
+    const wrapper = await mountTab([makeDoc({ id: 'd1', name: '甲.md' })])
+
+    await wrapper.find('.row-check').setValue(true)
+
+    expect(wrapper.emitted('preview-doc')).toBeUndefined()
   })
 })

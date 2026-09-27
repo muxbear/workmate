@@ -26,6 +26,7 @@ from api.knowledge_base.doc_service import (
     get_document,
     import_document_from_url,
     list_documents,
+    list_folders,
     retry_document,
     upload_documents,
 )
@@ -69,6 +70,9 @@ async def upload_docs(
     request: Request,
     files: list[UploadFile] = File(..., max_count=20),
     config: str | None = Form(default=None),
+    # 本批文件的落点目录（'' 或空 = 根目录）。前端一次只上传一个文件，因此整请求
+    # 一个 folder 就够——整目录上传时由前端逐文件算出"当前目录 + 相对路径"。
+    folder: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
     # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
     # 权限树里没有单独的"删文档"键
@@ -88,9 +92,13 @@ async def upload_docs(
 
     scheduler = _get_scheduler(request)
     async with audit_scope("knowledge.doc.upload", user_id, request, target=kb_id) as entry:
-        result = await upload_documents(db, kb_id, user_id, files, scheduler, custom_config)
+        result = await upload_documents(
+            db, kb_id, user_id, files, scheduler, custom_config, folder,
+        )
         await db.commit()
         entry.detail["files"] = [r.name for r in result.created]
+        if folder:
+            entry.detail["folder"] = folder
         if result.skipped:
             entry.detail["skipped"] = [s.name for s in result.skipped]
     return {
@@ -118,6 +126,7 @@ async def create_text_doc(
             name=body.name, content=body.content,
             custom_config=body.config.model_dump() if body.config else None,
             scheduler=scheduler,
+            folder=body.folder,
         )
         await db.commit()
         entry.detail["name"] = result.created[0].name if result.created else None
@@ -147,6 +156,7 @@ async def import_doc_from_url(
                 db, kb_id, user_id, url=body.url,
                 custom_config=body.config.model_dump() if body.config else None,
                 scheduler=scheduler,
+                folder=body.folder,
             )
         except UrlFetchError as exc:
             await db.rollback()
@@ -242,11 +252,29 @@ async def list_docs(
     page_size: int = Query(default=20, ge=1, le=100),
     search: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    # 三态：不传 = 全库（搜索/最近文档），空串 = 根目录，其余 = 该目录。
+    # **必须是 default=None**：写成 default="" 就再也区分不出"全库"。
+    folder: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
     """获取文档列表。"""
-    result = await list_documents(db, kb_id, user_id, page, page_size, search, status)
+    result = await list_documents(
+        db, kb_id, user_id, page, page_size, search, status, folder,
+    )
+    return {"code": 0, "data": result, "message": "ok"}
+
+
+# 注意：本路由必须声明在下面的 /{doc_id} **之前**。FastAPI 按声明顺序匹配，
+# 放到后面的话 "folders" 会被当成 doc_id 命中详情路由 → 404「文档不存在」。
+@router.get("/{kb_id}/documents/folders", response_model=dict)
+async def list_doc_folders(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取文档的目录清单（文档页签的目录浏览用）。可读即可浏览。"""
+    result = await list_folders(db, kb_id, user_id)
     return {"code": 0, "data": result, "message": "ok"}
 
 

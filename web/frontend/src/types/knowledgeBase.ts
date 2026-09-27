@@ -93,6 +93,13 @@ export interface KBDoc {
   id: string
   name: string
   type: DocType
+  /**
+   * 所在目录（'/'-分隔的相对路径），`null` = 根目录。
+   *
+   * **必填**（而不是可选）：文档页签的目录浏览与"新建的文档是否属于当前目录"都靠它
+   * 判断，漏填会退化成"所有文档都在根目录"——把类型写成必填，编译器会点出每一处遗漏。
+   */
+  folder: string | null
   size: string
   status: DocStatus
   progress: number
@@ -172,6 +179,23 @@ export interface KBGroup {
   name: string
   sortOrder: number
   kbCount: number
+}
+
+/**
+ * 知识库里的一个目录节点（由文档的 folder 聚合而来）。
+ *
+ * 目录不是实体：没有文档就没有目录，也没有"新建空文件夹"。中间层级会由后端补齐
+ * （只有 `a/b/c` 里有文件时，`a`、`a/b` 也要能显示出来，否则点不进去）。
+ */
+export interface KbFolder {
+  /** 相对路径（''-分隔的完整路径），如 `a/b` */
+  path: string
+  /** 末级目录名，如 `b` */
+  name: string
+  /** 上一级目录（'' = 根） */
+  parent: string
+  /** **直属**文档数（不含子目录） */
+  docCount: number
 }
 
 // ─── 可见范围 / 分享 ──────────────────────────────────────────────────────
@@ -533,6 +557,11 @@ export interface DocSkip {
   existingDocId?: string | null
   existingDocName?: string | null
   existingDocStatus?: string | null
+  /**
+   * 那一篇所在的目录（`null` = 根目录）。判重是全库级的，而目录浏览下用户只看得到
+   * 当前目录——不带路径就会出现"与《README.md》内容相同"但眼前根本没这个文件。
+   */
+  existingDocFolder?: string | null
 }
 
 /** 创建类入口（上传 / 粘贴 / URL 导入）的统一结果 */
@@ -562,10 +591,14 @@ export interface PasteTextRequest {
   name?: string
   content: string
   config?: IndexConfig
+  /** 目标目录（不传 = 根目录）；在子目录里粘贴时应传当前目录 */
+  folder?: string
 }
 
 /** URL / 网页导入 */
 export interface UrlImportRequest {
   url: string
   config?: IndexConfig
+  /** 目标目录（不传 = 根目录） */
+  folder?: string
 }

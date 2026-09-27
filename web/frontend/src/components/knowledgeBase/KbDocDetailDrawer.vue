@@ -10,10 +10,21 @@ import { fetchDocumentChunks } from '@/services/knowledgeBaseApi'
 import KbDocStatusBadge from './KbDocStatusBadge.vue'
 import KbSkeleton from './KbSkeleton.vue'
 
-const props = defineProps<{
-  doc: KBDoc
-  kbId?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    doc: KBDoc
+    kbId?: string
+    /**
+     * 是否显示顶部条（文档名 / 状态 / 统计 / 返回按钮）。
+     *
+     * 作为整页视图打开时为 true；嵌在问答区的预览标签页里时为 false——那里外层
+     * 已经有标题条了，两行同名标题叠在一起很难看，"返回列表"按钮也会把人带回
+     * 一个并不存在的前一屏。
+     */
+    showHeader?: boolean
+  }>(),
+  { showHeader: true },
+)
 
 const { t } = useI18n()
 const emit = defineEmits<{
@@ -95,7 +106,7 @@ function copyChunkContent() {
 <template>
   <div class="doc-detail-view">
     <!-- Header -->
-    <div class="detail-header">
+    <div v-if="showHeader" class="detail-header">
       <div class="detail-header-left">
         <button class="back-btn" @click="$emit('back')">
           <ChevronLeft :size="16" />{{ t('knowledge.drawer.back') }}
@@ -295,6 +306,9 @@ function copyChunkContent() {
   gap: 16px;
   height: 100%;
   min-height: 0;
+  /* 供下面的容器查询用：这个组件的宽度不再只有"整页"一种（问答区的预览标签
+     里它可能只有三四百像素），布局要按**自己的**宽度而不是视口宽度来适配 */
+  container-type: inline-size;
 }
 
 /* Header */
@@ -840,5 +854,20 @@ function copyChunkContent() {
 
 .detail-empty-icon {
   opacity: 0.4;
+}
+
+/*
+ * 窄容器（问答区的预览标签页）：左右分栏在 400px 里会把右栏整块挤出可视区，
+ * 改为上下两段——分片列表在上、选中分片的详情在下，各自内部滚动。
+ *
+ * **必须放在样式表末尾**：基础规则 `.split-layout { grid-template-columns: 5fr 7fr }`
+ * 在文件中部，同优先级下后写的胜出。放在它前面时行高改了、列宽没改（实测），
+ * 于是布局变成"两列挤在一列的空间里"，比不做适配还糟。
+ */
+@container (max-width: 720px) {
+  .split-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 2fr) minmax(0, 3fr);
+  }
 }
 </style>

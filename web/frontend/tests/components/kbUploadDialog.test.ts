@@ -157,3 +157,50 @@ describe('KbUploadDialog · 上传与重试', () => {
     expect(uploadDocs.mock.calls[1][1].map((f: File) => f.name)).toEqual(['a.md'])
   })
 })
+
+describe('KbUploadDialog · 目录归属', () => {
+  /** 挂载时指定"当前浏览的目录"（父组件把 store 里的当前目录传下来） */
+  async function mountInFolder(folder: string) {
+    const wrapper = mount(KbUploadDialog, {
+      props: { visible: false, defaultConfig: CONFIG, kbId: 'kb-1', folder },
+      global: { stubs: { teleport: true } },
+    })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('把当前目录交给 store（单文件落在它下面）', async () => {
+    uploadDocs.mockResolvedValue({ created: 1, skipped: [], failed: [] })
+    const wrapper = await mountInFolder('a/b')
+    await pickFiles(wrapper, [file('单文件.md')])
+
+    await wrapper.find('.btn-upload').trigger('click')
+    await flushPromises()
+
+    const [, , , hooks] = uploadDocs.mock.calls[0]
+    expect(hooks.folder).toBe('a/b')
+  })
+
+  it('没传 folder（不在目录里）时按根目录，而不是 undefined', async () => {
+    uploadDocs.mockResolvedValue({ created: 1, skipped: [], failed: [] })
+    const wrapper = await mountDialog()
+    await pickFiles(wrapper, [file('单文件.md')])
+
+    await wrapper.find('.btn-upload').trigger('click')
+    await flushPromises()
+
+    // 空串是"根目录"的明确表达；undefined 到了接口层就是"不带目录"，
+    // 两者在目录浏览下语义不同
+    expect(uploadDocs.mock.calls[0][3].folder).toBe('')
+  })
+
+  it('选中的文件保留相对路径做展示（落库目录由 store 按它细分）', async () => {
+    const wrapper = await mountInFolder('')
+    const nested = file('报告.pdf')
+    Object.defineProperty(nested, 'webkitRelativePath', { value: '资料/2024/报告.pdf' })
+    await pickFiles(wrapper, [nested])
+
+    expect(wrapper.find('.file-item-name').text()).toBe('资料/2024/报告.pdf')
+  })
+})

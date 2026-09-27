@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Database, Plus, Search, FileText, Layers, Network, Activity,
   LayoutGrid, List, Sparkle, Hash, Trash2, Eye,
 } from 'lucide-vue-next'
 import { useKnowledgeBaseStore, KB_GROUPS } from '@/stores/knowledgeBase'
-import type { KB, ViewMode, CreateKBRequest, KbScope } from '@/types/knowledgeBase'
+import type { KB, KBDoc, ViewMode, CreateKBRequest, KbScope } from '@/types/knowledgeBase'
 import { KB_STATUS_CONFIG } from '@/types/knowledgeBase'
+import { useKbQaStore } from '@/stores/kbQa'
+import { useKbQaResize } from '@/composables/useKbQaResize'
 import KbStatCard from '@/components/knowledgeBase/KbStatCard.vue'
 import KbCard from '@/components/knowledgeBase/KbCard.vue'
 import KbCreateDialog from '@/components/knowledgeBase/KbCreateDialog.vue'
@@ -16,9 +18,35 @@ import KbDetail from '@/components/knowledgeBase/KbDetail.vue'
 import KbSidebar from '@/components/knowledgeBase/KbSidebar.vue'
 import KbGroupList from '@/components/knowledgeBase/KbGroupList.vue'
 import KbShareManageDialog from '@/components/knowledgeBase/KbShareManageDialog.vue'
+import KbOverviewDialog from '@/components/knowledgeBase/KbOverviewDialog.vue'
+import KbQaPanel from '@/components/knowledgeBase/KbQaPanel.vue'
 
 const store = useKnowledgeBaseStore()
+const qaStore = useKbQaStore()
 const { t } = useI18n()
+
+// ─── 问答区（右侧）────────────────────────────────────────────────────────
+// 三栏骨架：左栏 + 知识库内容区 + 可拖拽分割线 + 问答区
+const shellRef = ref<HTMLElement | null>(null)
+const { dragging, onPointerDown, onKeyDown } = useKbQaResize(shellRef)
+
+/**
+ * 内容区选中哪个库，问答区就默认问哪个库（单向同步）。
+ *
+ * 反过来不成立：在问答区换库只是换"问谁"，不该把内容区也切走——用户在那里看的
+ * 是文档与图谱，被一次提问带跑会很难受。同步是**只改选择**，不会清掉已有会话。
+ */
+watch(
+  () => store.selectedKb?.id,
+  (id) => {
+    if (id) qaStore.setKb(id)
+  },
+)
+
+/** 文档页签里点开一篇文档：在问答区开一个预览标签（已开过就聚焦过去） */
+function openDocPreview(kbId: string, doc: KBDoc) {
+  qaStore.openDocTab(kbId, doc)
+}
 
 /** 建库弹窗：入口在左栏「个人知识库」的分组菜单（角色无 knowledge:create 时不出现） */
 const createVisible = ref(false)
@@ -58,6 +86,9 @@ async function handleCreateGroup() {
 
 const confirmDeleteId = ref<string | null>(null)
 const shareManageKbId = ref<string | null>(null)
+
+/** 「查看详情」弹窗：只带 kbId，内容由弹窗自己拉（左栏任意分组的库都能打开） */
+const detailKbId = ref<string | null>(null)
 
 /** 左栏当前选中的栏目（概览 / 某个分组） */
 const activeGroup = computed(() =>
@@ -146,7 +177,7 @@ async function handleCancelShare(kbId: string) {
 </script>
 
 <template>
-  <div class="kb-page panels">
+  <div ref="shellRef" class="kb-page panels" :class="{ 'is-resizing': dragging }">
     <!-- ── 左栏：概览 + 四个栏目 ── -->
     <div class="panel-left">
       <!-- 建库入口在「个人知识库」的三点菜单里，概览页不再内嵌 -->
@@ -154,11 +185,14 @@ async function handleCancelShare(kbId: string) {
         @create="createVisible = true"
         @share-manage="openShareManage"
         @cancel-share="handleCancelShare"
+        @view-detail="detailKbId = $event"
       />
     </div>
 
-    <!-- ── 右栏：详情 / 栏目列表 / 概览 ── -->
-    <div class="panel-right">
+    <!-- ── 中栏：详情 / 栏目列表 / 概览 ──
+         全屏态只隐藏不卸载（v-show）：文档列表已翻到的页、图谱画布的缩放位置
+         都留在原地，退出全屏不用重来一遍 -->
+    <div v-show="!qaStore.fullscreen" class="panel-right">
       <!-- 知识库详情（自带内边距，不套 padding 容器） -->
       <KbDetail
         v-if="store.selectedKb"
@@ -166,6 +200,7 @@ async function handleCancelShare(kbId: string) {
         @delete="handleDeleteConfirm(store.selectedKb!)"
         @update="handleUpdateKb"
         @changed="() => store.loadGroup('sharedByMe', 1)"
+        @preview-doc="(doc: KBDoc) => openDocPreview(store.selectedKb!.id, doc)"
       />
 
       <div v-else class="panel-right-inner">
@@ -370,6 +405,26 @@ async function handleCancelShare(kbId: string) {
       </div>
     </div>
 
+    <!-- 内容区与问答区之间的分割线：按住左右拖动即可改变两边宽度 -->
+    <div
+      v-if="!qaStore.collapsed && !qaStore.fullscreen"
+      class="panel-splitter"
+      :class="{ 'is-dragging': dragging }"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-label="t('knowledge.qa.splitter')"
+      :title="t('knowledge.qa.splitterHint')"
+      tabindex="0"
+      @pointerdown="onPointerDown"
+      @keydown="onKeyDown"
+      @dblclick="qaStore.resetPanelWidth()"
+    >
+      <span class="splitter-grip" />
+    </div>
+
+    <!-- 问答区：固定「问答」标签 + 可关闭的文档预览标签 -->
+    <KbQaPanel />
+
     <!-- 新建知识库对话框 -->
     <KbCreateDialog
       :visible="createVisible"
@@ -383,6 +438,14 @@ async function handleCancelShare(kbId: string) {
       :kb="shareManageKb"
       @close="shareManageKbId = null"
       @changed="() => store.loadGroup('sharedByMe', 1)"
+    />
+
+    <!-- 查看详情（原"概览"页签的内容）——只传 id，数据由弹窗自己取，
+         因为「共享给我的」里的库不在任何分组列表里，拿不到 KB 对象 -->
+    <KbOverviewDialog
+      :visible="!!detailKbId"
+      :kb-id="detailKbId"
+      @close="detailKbId = null"
     />
 
     <!-- 删除确认对话框 -->
@@ -456,6 +519,59 @@ async function handleCancelShare(kbId: string) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ── 内容区与问答区之间的分割线（与对话页右栏同一套视觉）── */
+.panel-splitter {
+  position: relative;
+  flex: 0 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  background: transparent;
+  outline: none;
+}
+
+.panel-splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border-subtle);
+  transition:
+    width var(--transition-duration) ease,
+    background var(--transition-duration) ease;
+}
+
+.panel-splitter:hover::before,
+.panel-splitter.is-dragging::before,
+.panel-splitter:focus-visible::before {
+  width: 2px;
+  background: var(--accent-primary);
+}
+
+.splitter-grip {
+  position: relative;
+  width: 4px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transition: background var(--transition-duration) ease;
+}
+
+.panel-splitter:hover .splitter-grip,
+.panel-splitter.is-dragging .splitter-grip,
+.panel-splitter:focus-visible .splitter-grip {
+  background: var(--accent-primary);
+}
+
+/* 拖拽过程中关闭问答区的宽度过渡，避免跟手延迟 */
+.kb-page.is-resizing :deep(.qa-panel) {
+  transition: none;
 }
 
 /* 概览/栏目列表：整体纵向排布 + 内部滚动 */

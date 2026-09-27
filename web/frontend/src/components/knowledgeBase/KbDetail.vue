@@ -4,12 +4,11 @@ import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Database, RefreshCw, Trash2, Globe, Lock, Share2,
-  Activity, FileText, Network, FileSearch, Settings2,
+  FileText, Network, FileSearch, Settings2,
 } from 'lucide-vue-next'
-import type { KB } from '@/types/knowledgeBase'
+import type { KB, KBDoc } from '@/types/knowledgeBase'
 import { KB_STATUS_CONFIG } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import KbOverviewTab from './KbOverviewTab.vue'
 import KbDocsTab from './KbDocsTab.vue'
 import KbGraphTab from './KbGraphTab.vue'
 import KbSearchTab from './KbSearchTab.vue'
@@ -27,11 +26,14 @@ const emit = defineEmits<{
   delete: []
   update: [patch: Partial<KB>]
   changed: []
+  /** 文档页签点开一篇文档：宿主（知识库页）据此在问答区开预览标签 */
+  previewDoc: [doc: KBDoc]
 }>()
 
 const { t } = useI18n()
 const store = useKnowledgeBaseStore()
-const activeTab = ref('overview')
+// 概览不再是页签（入口移到了左栏三点的「查看详情」弹窗），默认落在文档上
+const activeTab = ref('docs')
 const reindexing = ref(false)
 const shareVisible = ref(false)
 const shareManageVisible = ref(false)
@@ -193,20 +195,19 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
     <!-- Tab 内容 -->
     <div class="detail-body">
       <el-tabs v-model="activeTab" class="kb-tabs">
-        <el-tab-pane name="overview">
-          <template #label>
-            <Activity :size="14" class="tab-icon" />{{ t('knowledge.detail.tabOverview') }}
-          </template>
-          <KbOverviewTab :kb="kb" :readonly="readonly || !canEdit" />
-        </el-tab-pane>
-
         <el-tab-pane name="docs">
           <template #label>
-            <FileText :size="14" class="tab-icon" />文档 ({{ kb.documents.length }})
+            <!-- 计数用 store 的分页总数（当前目录的篇数）；此前用的是 kb.documents.length，
+                 那只是**当前这一页**的行数，翻页时会跟着跳 -->
+            <FileText :size="14" class="tab-icon" />文档 ({{ store.docQuery.total }})
           </template>
           <!-- 文档页签是**唯一**按 access 判定的地方：被授予写权限（write）的人
                可以改内容；改配置/重建/分享/删除仍是库主专属，故其它页签保持原样 -->
-          <KbDocsTab :kb="kb" :readonly="kb.access === 'read' || !canUpload" />
+          <KbDocsTab
+            :kb="kb"
+            :readonly="kb.access === 'read' || !canUpload"
+            @preview-doc="emit('previewDoc', $event)"
+          />
         </el-tab-pane>
 
         <el-tab-pane name="graph">

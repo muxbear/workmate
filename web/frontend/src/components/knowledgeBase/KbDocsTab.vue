@@ -3,19 +3,19 @@ import { useI18n } from 'vue-i18n'
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Upload, Trash2, RefreshCw, FolderOpen, Ban, CircleAlert,
+  Search, Upload, Trash2, RefreshCw, FolderOpen, Folder, Ban, CircleAlert,
   FileType2, FileCode2, FileText, FileSpreadsheet, FileImage, Globe,
-  Eye, Scissors, Download, ClipboardPaste, ScanText,
+  Eye, Scissors, Download, ClipboardPaste, ScanText, ChevronRight, ArrowUp,
 } from 'lucide-vue-next'
 import type { KB, KBDoc, DocType, IndexConfig } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { downloadDocument, readApiError } from '@/services/knowledgeBaseApi'
+import { crumbsOf, parentFolder } from '@/utils/kbPath'
 import KbDocStatusBadge from './KbDocStatusBadge.vue'
 import KbUploadDialog from './KbUploadDialog.vue'
 import KbPasteTextDialog from './KbPasteTextDialog.vue'
 import KbUrlImportDialog from './KbUrlImportDialog.vue'
 import KbIndexingPipeline from './KbIndexingPipeline.vue'
-import KbDocDetailDrawer from './KbDocDetailDrawer.vue'
 import KbSkeleton from './KbSkeleton.vue'
 import KbFragmentEditor from './KbFragmentEditor.vue'
 
@@ -23,6 +23,16 @@ const props = defineProps<{
   kb: KB
   /** 只读态（公共库 / 他人分享）：隐藏上传、删除、重试与切片编辑 */
   readonly?: boolean
+}>()
+
+/**
+ * 点开一篇文档 → 交给宿主在右侧问答区开一个预览标签。
+ *
+ * 预览刻意**不在这里就地展开**：文档正文是"看一眼再回到列表"的高频动作，占满整个
+ * 内容区会让人必须再点一次返回；放进问答区的标签行则可以和其它文档并排看。
+ */
+const emit = defineEmits<{
+  (e: 'preview-doc', doc: KBDoc): void
 }>()
 
 // 注意：computed 必须在 props 之后定义（下面 selectedDoc 会用到 props.kb）
@@ -38,7 +48,6 @@ const selectedDocId = ref<string | null>(null)
 const selectedDoc = computed(
   () => props.kb.documents.find((d) => d.id === selectedDocId.value) ?? null,
 )
-const detailDoc = ref<KBDoc | null>(null)
 const editDoc = ref<KBDoc | null>(null)
 
 const docTypeIcons: Record<DocType, typeof FileText> = {
@@ -77,6 +86,56 @@ onBeforeUnmount(() => {
 /** 有搜索词时"没有结果"是另一回事——要说清是"没匹配"而不是"这个库是空的" */
 const searching = computed(() => store.docQuery.search.trim().length > 0)
 
+// ─── 目录浏览 ─────────────────────────────────────────────────────────────
+
+/**
+ * 当前目录一律从 **store** 派生（不是组件局部 ref）。
+ *
+ * 文档列表会被 SSE / 30s 兜底刷新整体替换，那些刷新走的是无参 `loadDocs`、沿用
+ * store 里的 folder；组件自己再存一份就会与它失步——表现为"刷新一下跳回根目录"。
+ */
+const currentFolder = computed(() => store.docQuery.folder)
+const crumbItems = computed(() => crumbsOf(currentFolder.value))
+/** 上一级（根目录时为 null，按钮不显示） */
+const upFolder = computed(() => (currentFolder.value ? parentFolder(currentFolder.value) : null))
+
+/** 当前目录下的直属子目录（搜索态不显示：那时列的是全库匹配结果） */
+const folderRows = computed(() =>
+  searching.value ? [] : store.folders.filter((f) => f.parent === currentFolder.value),
+)
+
+/** 目录行的递归篇数：目录自身 + 各级子目录的直属数（Windows 也是这么数的） */
+function folderTotal(path: string): number {
+  const prefix = `${path}/`
+  return store.folders.reduce(
+    (sum, f) => (f.path === path || f.path.startsWith(prefix) ? sum + f.docCount : sum),
+    0,
+  )
+}
+
+async function goToFolder(path: string) {
+  if (path === currentFolder.value) return
+  // 进目录必须**同时**清掉搜索词：否则列表已是目录内容、输入框里还挂着旧词；
+  // 而防抖定时器也要一并取消——300ms 后它会把旧词再打回来，看起来像"点了没反应"
+  if (searchTimer) clearTimeout(searchTimer)
+  searchInput.value = ''
+  clearSelection()
+  store.selectedDoc = null
+  selectedDocId.value = null
+  await store.loadDocs(props.kb.id, { folder: path, search: '', page: 1 })
+}
+
+/** 文档所在位置的展示文案（搜索结果里用，根目录显示"根目录"） */
+function locationOf(doc: KBDoc): string {
+  return doc.folder || t('knowledge.docs.rootFolder')
+}
+
+/** 上传对话框关闭后对齐列表与目录树（整目录上传的新目录要立刻出现在路径条下） */
+function refreshAfterUpload() {
+  void store.loadDocs(props.kb.id)
+  void store.loadFolders(props.kb.id)
+}
+
 const pasteVisible = ref(false)
 const urlVisible = ref(false)
 const urlError = ref<string | null>(null)
@@ -93,7 +152,10 @@ function skipSummary(skipped: { name: string; existingDocName?: string | null }[
 
 async function handlePaste(name: string, content: string, config?: IndexConfig) {
   try {
-    const result = await store.createTextDoc(props.kb.id, { name, content, config })
+    // 落在当前目录：在 a/b 里粘贴却掉进根目录的话，列表纹丝不动，像功能坏了
+    const result = await store.createTextDoc(props.kb.id, {
+      name, content, config, folder: currentFolder.value,
+    })
     pasteVisible.value = false
     if (result.skipped.length) {
       ElMessage.warning(skipSummary(result.skipped))
@@ -108,7 +170,9 @@ async function handlePaste(name: string, content: string, config?: IndexConfig) 
 async function handleUrlImport(url: string, config?: IndexConfig) {
   urlError.value = null
   try {
-    const result = await store.importUrlDoc(props.kb.id, { url, config })
+    const result = await store.importUrlDoc(props.kb.id, {
+      url, config, folder: currentFolder.value,
+    })
     urlVisible.value = false
     if (result.skipped.length) {
       ElMessage.warning(skipSummary(result.skipped))
@@ -289,7 +353,7 @@ function toggleDocPanel(doc: KBDoc) {
 }
 
 function handleViewDetail(doc: KBDoc) {
-  detailDoc.value = doc
+  emit('preview-doc', doc)
 }
 
 function handleEditFragment(doc: KBDoc) {
@@ -299,17 +363,9 @@ function handleEditFragment(doc: KBDoc) {
 
 <template>
   <div class="docs-tab">
-    <!-- 查看详情 (full-page inline view) -->
-    <KbDocDetailDrawer
-      v-if="detailDoc"
-      :doc="detailDoc"
-      :kb-id="kb.id"
-      @back="detailDoc = null"
-    />
-
     <!-- 编辑分片 (full-page inline view) -->
     <KbFragmentEditor
-      v-else-if="editDoc"
+      v-if="editDoc"
       :doc="editDoc"
       :kb-id="kb.id"
       @back="editDoc = null"
@@ -366,6 +422,43 @@ function handleEditFragment(doc: KBDoc) {
             </button>
           </div>
 
+          <!-- 路径条：目录浏览的"当前位置"与回退入口 -->
+          <div class="path-bar">
+            <button
+              v-if="upFolder !== null"
+              class="path-up"
+              :title="t('knowledge.docs.goUp')"
+              @click="goToFolder(upFolder)"
+            >
+              <ArrowUp :size="14" />{{ t('knowledge.docs.goUp') }}
+            </button>
+            <nav class="crumbs" :aria-label="t('knowledge.docs.pathLabel')">
+              <button
+                class="crumb"
+                :class="{ 'is-current': !currentFolder }"
+                @click="goToFolder('')"
+              >
+                <FolderOpen :size="13" />{{ t('knowledge.docs.rootFolder') }}
+              </button>
+              <template v-for="crumb in crumbItems" :key="crumb.path">
+                <ChevronRight :size="12" class="crumb-sep" />
+                <button
+                  class="crumb"
+                  :class="{ 'is-current': crumb.path === currentFolder }"
+                  @click="goToFolder(crumb.path)"
+                >
+                  {{ crumb.name }}
+                </button>
+              </template>
+            </nav>
+            <span v-if="!searching" class="path-summary">
+              {{ t('knowledge.docs.folderSummary', {
+                folders: folderRows.length,
+                files: store.docQuery.total,
+              }) }}
+            </span>
+          </div>
+
           <!-- 文档表格 -->
           <div class="card">
             <table class="docs-table">
@@ -388,6 +481,37 @@ function handleEditFragment(doc: KBDoc) {
                 </tr>
               </thead>
               <tbody>
+                <!-- 目录行：与文件同表，但**不参与**勾选/批量/分页。勾选列渲染空单元格
+                     而不是复选框，于是"行数 = 勾选框数"的既有约束在加了目录之后依然成立 -->
+                <tr
+                  v-for="folder in folderRows"
+                  :key="`dir:${folder.path}`"
+                  class="folder-row"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="t('knowledge.docs.enterFolder', { name: folder.name })"
+                  @click="goToFolder(folder.path)"
+                  @keydown.enter="goToFolder(folder.path)"
+                >
+                  <td v-if="!readonly" class="col-check"></td>
+                  <td>
+                    <div class="doc-cell">
+                      <Folder :size="16" class="doc-type-icon folder-icon" />
+                      <div class="doc-cell-info">
+                        <div class="doc-cell-name">{{ folder.name }}</div>
+                        <div class="doc-cell-date">
+                          {{ t('knowledge.docs.folderFiles', { n: folderTotal(folder.path) }) }}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="cell-text">-</td>
+                  <td class="cell-text">-</td>
+                  <td class="cell-text">-</td>
+                  <td class="col-status"></td>
+                  <td class="col-action"></td>
+                </tr>
+
                 <tr
                   v-for="doc in filteredDocs"
                   :key="doc.id"
@@ -403,11 +527,24 @@ function handleEditFragment(doc: KBDoc) {
                     />
                   </td>
                   <td>
-                    <div class="doc-cell">
+                    <!-- 文档名可点：在问答区打开这篇的预览标签（与右侧"查看详情"同一入口） -->
+                    <div
+                      class="doc-cell doc-cell--clickable"
+                      role="button"
+                      tabindex="0"
+                      :aria-label="t('knowledge.docs.previewContent', { name: doc.name })"
+                      @click="handleViewDetail(doc)"
+                      @keydown.enter="handleViewDetail(doc)"
+                    >
                       <component :is="docTypeIcons[doc.type]" :size="16" class="doc-type-icon" />
                       <div class="doc-cell-info">
                         <div class="doc-cell-name">{{ doc.name }}</div>
-                        <div class="doc-cell-date">{{ doc.uploadedAt }}</div>
+                        <!-- 搜索是跨目录的：结果里必须标出这一篇在哪个目录，
+                             否则用户会以为"同一个文件出现了好几次" -->
+                        <div v-if="searching" class="doc-cell-date">
+                          {{ t('knowledge.docs.location', { path: locationOf(doc) }) }}
+                        </div>
+                        <div v-else class="doc-cell-date">{{ doc.uploadedAt }}</div>
                       </div>
                     </div>
                   </td>
@@ -522,15 +659,23 @@ function handleEditFragment(doc: KBDoc) {
                 </tr>
                 <!-- 加载中不显示空态：此前没有加载态，"暂无文档，点击右上角上传"这个
                      行动号召会在数据还在路上时先冒出来，误导用户去重复上传 -->
-                <tr v-if="store.docQuery.loading && filteredDocs.length === 0">
-                  <td colspan="6" class="empty-cell">
+                <tr
+                  v-if="store.docQuery.loading && filteredDocs.length === 0
+                    && folderRows.length === 0"
+                >
+                  <td :colspan="readonly ? 6 : 7" class="empty-cell">
                     <KbSkeleton :rows="3" />
                   </td>
                 </tr>
-                <tr v-else-if="filteredDocs.length === 0">
-                  <td colspan="6" class="empty-cell">
+                <tr v-else-if="filteredDocs.length === 0 && folderRows.length === 0">
+                  <td :colspan="readonly ? 6 : 7" class="empty-cell">
                     <FolderOpen :size="32" class="empty-icon" />
                     <p v-if="searching">没有名称匹配「{{ store.docQuery.search }}」的文档</p>
+                    <!-- 目录里为空是另一回事：这里**不能**出现"点击右上角上传"这种
+                         行动号召之外的说法，也不能与"整个库是空的"共用一句话 -->
+                    <p v-else-if="currentFolder">
+                      {{ t('knowledge.docs.folderEmpty', { path: currentFolder }) }}
+                    </p>
                     <p v-else>{{ readonly ? '暂无文档' : '暂无文档，点击右上角上传' }}</p>
                   </td>
                 </tr>
@@ -539,9 +684,14 @@ function handleEditFragment(doc: KBDoc) {
           </div>
 
           <!-- 分页器：只有真的超过一页才出现。此前写死 page_size=100 且丢掉 total，
-               超过 100 篇的库静默只显示前 100 篇、没有任何提示 -->
+               超过 100 篇的库静默只显示前 100 篇、没有任何提示。
+               计数口径是**当前目录**（搜索时是搜索结果），所以文案要说清 -->
           <div v-if="store.docQuery.total > store.docQuery.pageSize" class="docs-pager">
-            <span class="docs-pager-total">共 {{ store.docQuery.total }} 篇</span>
+            <span class="docs-pager-total">
+              {{ searching
+                ? t('knowledge.docs.searchTotal', { n: store.docQuery.total })
+                : t('knowledge.docs.folderTotal', { n: store.docQuery.total }) }}
+            </span>
             <el-pagination
               layout="prev, pager, next"
               background
@@ -560,12 +710,14 @@ function handleEditFragment(doc: KBDoc) {
       </div>
 
       <!-- 上传过程由对话框自己驱动（逐文件进度只在那里看得到），
-           父组件只负责开与关 -->
+           父组件只负责开与关。关闭时重取列表与目录树：整目录上传的文档落在子目录里，
+           不会出现在当前列表里（store 只前插"属于当前目录"的那些） -->
       <KbUploadDialog
         :visible="uploadVisible"
         :default-config="kb.config"
         :kb-id="kb.id"
-        @close="uploadVisible = false"
+        :folder="currentFolder"
+        @close="uploadVisible = false; refreshAfterUpload()"
       />
 
       <KbPasteTextDialog
@@ -666,6 +818,104 @@ function handleEditFragment(doc: KBDoc) {
 
 .search-input:focus {
   border-color: rgba(59, 130, 246, 0.4);
+}
+
+/* ── 路径条：当前位置 + 上一级 ── */
+.path-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  font-size: var(--font-size-xs);
+}
+
+.path-up {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 4px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.path-up:hover {
+  color: var(--foreground-primary);
+  border-color: var(--border-medium);
+}
+
+.crumbs {
+  /* flex:1 不能省：只写 min-width:0 时面包屑不会长进剩余空间，
+     实测会被压成 64px，只剩最后一个字可见（"根目录" → "录"）。
+     路径很长时由它的 overflow-x 自己滚动，右侧计数始终留在原位 */
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.crumb:hover {
+  background: var(--surface-secondary);
+  color: var(--foreground-primary);
+}
+
+.crumb.is-current {
+  color: var(--foreground-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.crumb-sep {
+  flex-shrink: 0;
+  color: var(--foreground-muted);
+}
+
+.path-summary {
+  flex: 0 0 auto;
+  color: var(--foreground-muted);
+}
+
+/* 目录行：可进入，但不参与勾选/批量 */
+.folder-row {
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.folder-row:hover {
+  background: var(--surface-secondary);
+}
+
+.folder-row:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.folder-icon {
+  color: #fcd34d;
 }
 
 .btn-upload {
@@ -854,6 +1104,16 @@ function handleEditFragment(doc: KBDoc) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.doc-cell--clickable {
+  cursor: pointer;
+}
+
+.doc-cell--clickable:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .doc-type-icon {

@@ -14,10 +14,19 @@ const props = defineProps<{
   kb: KB
   /** 只读态（公共库 / 他人分享）：隐藏写操作入口 */
   readonly?: boolean
+  /**
+   * 文档是否还在路上（区分「加载中」与「确实没有文档」）。
+   *
+   * 留空则回落到 store 的分页加载态——详情页的概览页签**自己**在拉文档，沿用 store
+   * 是对的；而「查看详情」弹窗用的是自己的请求，传这个 prop 就能不依赖 store。
+   */
+  loading?: boolean
 }>()
 
-// 文档列表改为服务端分页加载后，这里要能区分「还在加载」与「确实没有文档」
 const store = useKnowledgeBaseStore()
+
+/** 有显式传入就用它，否则沿用 store 的文档加载态 */
+const showSkeleton = computed(() => props.loading ?? store.docQuery.loading)
 
 const recentDocs = computed(() => props.kb.documents.slice(0, 5))
 </script>
@@ -65,7 +74,7 @@ const recentDocs = computed(() => props.kb.documents.slice(0, 5))
               />
             </div>
           </div>
-          <div v-else-if="store.docQuery.loading" class="empty-text">
+          <div v-else-if="showSkeleton" class="empty-text">
             <KbSkeleton :rows="2" :count="3" />
           </div>
           <div v-else class="empty-text">暂无文档</div>

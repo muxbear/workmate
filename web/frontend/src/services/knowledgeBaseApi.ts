@@ -23,6 +23,7 @@ import type {
   PasteTextRequest,
   UrlImportRequest,
   KBGroup,
+  KbFolder,
   KBShareLink,
   KBShareLinkCreated,
   KBShareLinkPreview,
@@ -70,8 +71,32 @@ interface RawDoc {
   error_message: string | null
   graph_error?: string | null
   parse_warning?: string | null
+  /** 所在目录（`null`/缺省 = 根目录）；旧版本后端没有这个字段 */
+  folder?: string | null
   stages: { name: string; status: string; pct: number }[]
   config: Record<string, unknown> | null
+}
+
+interface RawKbFolder {
+  path: string
+  name: string
+  parent: string
+  doc_count: number
+}
+
+interface RawKbFolderList {
+  folders: RawKbFolder[]
+  root_count: number
+  total: number
+}
+
+/** 目录清单（文档页签的目录浏览用） */
+export interface KbFolderList {
+  folders: KbFolder[]
+  /** 根目录下的直属文档数 */
+  rootCount: number
+  /** 全库文档总数（含所有目录） */
+  total: number
 }
 
 interface PaginatedData<T> {
@@ -151,6 +176,8 @@ function mapDoc(raw: RawDoc): KBDoc {
     id: raw.id,
     name: raw.name,
     type: raw.type as KBDoc['type'],
+    // 缺省 = 根目录：旧后端（没有这个字段）返回的文档全都属于根目录
+    folder: raw.folder ?? null,
     size: raw.size_display,
     status: raw.status as KBDoc['status'],
     // 后端在上传响应里可能缺这些字段（旧版本只有 7 个字段），兜底为 0
@@ -549,6 +576,7 @@ function mapSkip(raw: Record<string, unknown>): DocSkip {
     existingDocId: (raw.existing_doc_id as string) ?? null,
     existingDocName: (raw.existing_doc_name as string) ?? null,
     existingDocStatus: (raw.existing_doc_status as string) ?? null,
+    existingDocFolder: (raw.existing_doc_folder as string) ?? null,
   }
 }
 
@@ -579,11 +607,17 @@ export async function uploadDocument(
   file: File,
   config?: IndexConfig,
   onProgress?: (percent: number) => void,
+  folder?: string,
 ): Promise<CreateDocsResult> {
   const formData = new FormData()
   formData.append('files', file)
   if (config) {
     formData.append('config', JSON.stringify(configToSnake(config)))
+  }
+  // 目录用**文件自己的相对路径**推导（见 utils/kbPath.folderForFile）：
+  // 单文件落当前目录，整目录上传则保留其内部结构。空串表示根目录，照发不误。
+  if (folder) {
+    formData.append('folder', folder)
   }
   const res = await instance.post(
     `/knowledge-bases/${kbId}/documents/upload`,
@@ -611,6 +645,8 @@ export async function createTextDocument(
     name: payload.name,
     content: payload.content,
     config: payload.config ? configToSnake(payload.config) : undefined,
+    // 在子目录里粘贴就该落在当前目录（不传的话它会进根目录，而列表纹丝不动）
+    folder: payload.folder,
   })
   return mapCreateResult(res.data.data)
 }
@@ -623,6 +659,7 @@ export async function importFromUrl(
   const res = await instance.post(`/knowledge-bases/${kbId}/documents/url`, {
     url: payload.url,
     config: payload.config ? configToSnake(payload.config) : undefined,
+    folder: payload.folder,
   })
   return mapCreateResult(res.data.data)
 }
@@ -683,17 +720,15 @@ export function readApiError(err: unknown): string {
 }
 
 /**
- * 下载文档原文。
+ * 取文档原文的字节。
  *
  * 用原生 `fetch` 而不是 axios 实例：响应拦截器会判响应体的 `code`，而 Blob 没有
  * 这个字段、会被一律 reject；也不能用 `<a href>` 直链——JWT 在 Authorization
  * 头里，`<a>` 天然带不上。
+ *
+ * 下载与预览共用这一条（前者落盘、后者渲染），避免两份各写一遍鉴权与错误处理。
  */
-export async function downloadDocument(
-  kbId: string,
-  docId: string,
-  name: string,
-): Promise<void> {
+export async function fetchDocumentBlob(kbId: string, docId: string): Promise<Blob> {
   const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
   const response = await fetch(
     `${baseURL}/knowledge-bases/${kbId}/documents/${docId}/download`,
@@ -705,7 +740,17 @@ export async function downloadDocument(
   if (!response.ok) {
     throw new Error(await readErrorDetail(response))
   }
-  const url = URL.createObjectURL(await response.blob())
+  return await response.blob()
+}
+
+/** 下载文档原文（存成文件） */
+export async function downloadDocument(
+  kbId: string,
+  docId: string,
+  name: string,
+): Promise<void> {
+  const blob = await fetchDocumentBlob(kbId, docId)
+  const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
   link.download = name || docId
@@ -729,11 +774,40 @@ export function buildIndexingStreamUrl(kbId: string): string | null {
 
 export async function fetchDocuments(
   kbId: string,
-  params?: { page?: number; page_size?: number; search?: string; status?: string },
+  params?: {
+    page?: number
+    page_size?: number
+    search?: string
+    status?: string
+    /**
+     * 目录过滤，三态：**不传 = 全库**（搜索、以及"最近文档"这类跨目录用途）；
+     * **空串 = 根目录**；其余 = 该目录的直属文档。
+     *
+     * axios 只丢弃 `undefined`/`null`，空串会照发成 `?folder=`——后端据此区分
+     * "根目录"与"全库"，这个区分不能省（见 stores/knowledgeBase.loadDocs）。
+     */
+    folder?: string
+  },
 ): Promise<PaginatedData<KBDoc>> {
   const res = await instance.get(`/knowledge-bases/${kbId}/documents`, { params })
   const data = res.data.data as PaginatedData<RawDoc>
   return { ...data, items: data.items.map(mapDoc) }
+}
+
+/** 目录清单：一次取回整棵目录树（节点 + 直属文档数），前端按路径前缀求递归计数 */
+export async function fetchKbFolders(kbId: string): Promise<KbFolderList> {
+  const res = await instance.get(`/knowledge-bases/${kbId}/documents/folders`)
+  const data = res.data.data as RawKbFolderList
+  return {
+    folders: (data.folders ?? []).map((f) => ({
+      path: f.path,
+      name: f.name,
+      parent: f.parent,
+      docCount: f.doc_count ?? 0,
+    })),
+    rootCount: data.root_count ?? 0,
+    total: data.total ?? 0,
+  }
 }
 
 /** 取消文档的索引任务（排队中或执行中均可） */

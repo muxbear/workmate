@@ -15,12 +15,14 @@ import type {
   UrlImportRequest,
   DocSkip,
   KBGroup,
+  KbFolder,
   KBShareLink,
   ShareExpiresIn,
 } from '@/types/knowledgeBase'
 import { KB_GROUP_PREVIEW_LIMIT } from '@/types/knowledgeBase'
 import * as kbApi from '@/services/knowledgeBaseApi'
 import type { KBListScope } from '@/services/knowledgeBaseApi'
+import { folderForFile } from '@/utils/kbPath'
 
 /** 左栏分组（「知识库概览」不是分组，单独渲染） */
 export interface KbGroupDef {
@@ -82,10 +84,18 @@ interface DocQueryState {
   total: number
   search: string
   loading: boolean
+  /**
+   * 当前浏览的目录（`''` = 根目录）。
+   *
+   * 放在 store 而不是组件局部，是因为**无参的 `loadDocs`**（SSE 终止态刷新、30s
+   * 兜底轮询）也要沿用同一个目录——目录状态只存在于组件里的话，兜底刷新会把用户
+   * 悄悄踢回根目录。
+   */
+  folder: string
 }
 
 function emptyDocQuery(pageSize = 20): DocQueryState {
-  return { page: 1, pageSize, total: 0, search: '', loading: false }
+  return { page: 1, pageSize, total: 0, search: '', loading: false, folder: '' }
 }
 
 export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
@@ -111,6 +121,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const selectedKb = ref<KB | null>(null)
   /** 文档表的分页/搜索状态（迭代 6 T6.6）——见 DocQueryState 的说明 */
   const docQuery = ref<DocQueryState>(emptyDocQuery())
+  /** 当前知识库的目录树（文档页签的目录浏览用）——目录只由文档派生，随它们一起刷新 */
+  const folders = ref<KbFolder[]>([])
   const selectedDoc = ref<KBDoc | null>(null)
 
   // 视图模式
@@ -413,6 +425,10 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
         page: docQuery.value.page,
         page_size: docQuery.value.pageSize,
         search: docQuery.value.search || undefined,
+        // 搜索是**跨目录**的：带关键词时不下发 folder（后端据此返回全库匹配）。
+        // 反过来，浏览态必须原样带着 folder——写成 `folder || undefined` 会把根目录
+        // （''）当成"没传"，根视图立刻变成"全库所有目录的文档"，而且看起来像在工作。
+        folder: docQuery.value.search ? undefined : docQuery.value.folder,
       })
       // 请求返回时用户可能已经切库了——只认当前选中的
       if (selectedKb.value?.id === kbId) {
@@ -423,6 +439,24 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     } catch (err) {
       docQuery.value = { ...docQuery.value, loading: false }
       throw err
+    }
+  }
+
+  /**
+   * 取回当前知识库的目录树。
+   *
+   * 目录由文档派生，所以上传/删除之后都要重取；失败不影响文档列表（目录只是导航
+   * 的辅助信息，不该因为一次失败把主列表一起打挂）。
+   */
+  async function loadFolders(kbId: string) {
+    try {
+      const data = await kbApi.fetchKbFolders(kbId)
+      if (selectedKb.value?.id === kbId) {
+        folders.value = data.folders
+      }
+      return data
+    } catch {
+      return null
     }
   }
 
@@ -449,9 +483,10 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
           relationsData: graphData.relations,
         }
         selectedDoc.value = null
+        folders.value = []
         // 先取数据再起轮询：起轮询在拿不到 EventSource 的环境里会抛，放在前面会让
         // 文档列表压根拉不到（而那是这一页的主要内容）
-        await loadDocs(id)
+        await Promise.all([loadDocs(id), loadFolders(id)])
         startIndexPolling()
       }
     } catch (err: unknown) {
@@ -466,6 +501,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     stopIndexPolling()
     selectedKb.value = null
     selectedDoc.value = null
+    folders.value = []
   }
 
   async function createKb(data: CreateKBRequest) {
@@ -599,6 +635,11 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     hooks?: {
       onFileState?: (state: UploadFileState) => void
       concurrency?: number
+      /**
+       * 落点目录（`''` = 根目录）。每个文件的实际目录 = 它 + 文件自身的相对路径
+       * （`选择文件夹` 时浏览器给的 `webkitRelativePath`），于是整目录上传能保留结构。
+       */
+      folder?: string
     },
   ): Promise<UploadSummary> {
     const summary: UploadSummary = { created: 0, skipped: [], failed: [] }
@@ -615,19 +656,16 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
         if (!file) return
         report({ name: file.name, status: 'uploading', percent: 0 })
         try {
-          const result = await kbApi.uploadDocument(kbId, file, config, (percent) => {
-            report({ name: file.name, status: 'uploading', percent })
-          })
+          const base = hooks?.folder ?? ''
+          const result = await kbApi.uploadDocument(
+            kbId, file, config,
+            (percent) => report({ name: file.name, status: 'uploading', percent }),
+            folderForFile(base, file.webkitRelativePath),
+          )
           if (result.created.length) {
             summary.created += result.created.length
             // 边传边出现：不必等整批结束，用户立刻看到这一篇已经进库
-            if (selectedKb.value && selectedKb.value.id === kbId) {
-              selectedKb.value = {
-                ...selectedKb.value,
-                documents: [...result.created, ...selectedKb.value.documents],
-                docs: selectedKb.value.docs + result.created.length,
-              }
-            }
+            absorbCreated(kbId, result.created)
             report({ name: file.name, status: 'done', percent: 100 })
           } else {
             const skip = result.skipped[0]
@@ -652,32 +690,49 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     await Promise.all(
       Array.from({ length: Math.min(concurrency, files.length) }, () => worker()),
     )
+    if (summary.created > 0) {
+      // 新目录可能刚出现（整目录上传），目录树要跟着长出来
+      void loadFolders(kbId)
+    }
     return summary
+  }
+
+  /**
+   * 把"刚创建的文档"并入当前列表。
+   *
+   * **只并入属于当前目录的那些**：在 `a/b` 里上传到根目录、或反过来，硬插进列表会
+   * 让用户看到一堆"不属于这里"的行，而它们下次刷新就消失了。计数（`kb.docs` 与
+   * 分页总数）仍然按**全部**新增算——那是知识库与当前目录的真实口径。
+   */
+  function absorbCreated(kbId: string, created: KBDoc[]) {
+    if (!selectedKb.value || selectedKb.value.id !== kbId) return
+    const visible = docQuery.value.search
+      ? [] // 搜索态列表是全库匹配结果，不能凭"新文档"往里插行
+      : created.filter((d) => (d.folder ?? '') === (docQuery.value.folder ?? ''))
+    selectedKb.value = {
+      ...selectedKb.value,
+      documents: [...visible, ...selectedKb.value.documents],
+      docs: selectedKb.value.docs + created.length,
+    }
+    docQuery.value = {
+      ...docQuery.value,
+      total: docQuery.value.total + visible.length,
+    }
   }
 
   /** 粘贴文本建文档（后端落成 `.md` 后走同一条流水线） */
   async function createTextDoc(kbId: string, payload: PasteTextRequest) {
     const result = await kbApi.createTextDocument(kbId, payload)
-    if (selectedKb.value && selectedKb.value.id === kbId) {
-      selectedKb.value = {
-        ...selectedKb.value,
-        documents: [...result.created, ...selectedKb.value.documents],
-        docs: selectedKb.value.docs + result.created.length,
-      }
-    }
+    absorbCreated(kbId, result.created)
+    if (result.created.length) void loadFolders(kbId)
     return result
   }
 
   /** URL / 网页导入（抓取与 SSRF 防护都在后端） */
   async function importUrlDoc(kbId: string, payload: UrlImportRequest) {
     const result = await kbApi.importFromUrl(kbId, payload)
-    if (selectedKb.value && selectedKb.value.id === kbId) {
-      selectedKb.value = {
-        ...selectedKb.value,
-        documents: [...result.created, ...selectedKb.value.documents],
-        docs: selectedKb.value.docs + result.created.length,
-      }
-    }
+    absorbCreated(kbId, result.created)
+    if (result.created.length) void loadFolders(kbId)
     return result
   }
 
@@ -705,18 +760,28 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     if (action === 'delete' && selectedDoc.value && okIds.has(selectedDoc.value.id)) {
       selectedDoc.value = null
     }
+    // 删文档可能让目录空掉：目录树由文档派生，删完最后一篇目录就该消失
+    if (action === 'delete' && okIds.size) void loadFolders(kbId)
     return result
   }
 
   async function deleteDoc(kbId: string, docId: string) {
     await kbApi.deleteDocument(kbId, docId)
     if (selectedKb.value && selectedKb.value.id === kbId) {
+      const removed = selectedKb.value.documents.find((d) => d.id === docId)
       selectedKb.value = {
         ...selectedKb.value,
         documents: selectedKb.value.documents.filter((d) => d.id !== docId),
+        docs: Math.max(0, selectedKb.value.docs - 1),
+      }
+      // 当前目录的计数跟着减，否则"共 N 篇"会与列表对不上
+      docQuery.value = {
+        ...docQuery.value,
+        total: removed ? Math.max(0, docQuery.value.total - 1) : docQuery.value.total,
       }
     }
     if (selectedDoc.value?.id === docId) selectedDoc.value = null
+    void loadFolders(kbId)
   }
 
   async function retryDoc(kbId: string, docId: string) {
@@ -889,6 +954,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     selectedKb,
     docQuery,
     loadDocs,
+    folders,
+    loadFolders,
     selectedDoc,
     viewMode,
     searchQuery,

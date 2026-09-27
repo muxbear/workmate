@@ -11,7 +11,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
@@ -34,6 +34,7 @@ from api.knowledge_base.schemas import (
     DocStageInfo,
     IndexConfigSchema,
     KBDocResponse,
+    KBFolderInfo,
 )
 from core.config import get_settings
 from core.metrics import KB_INDEX_QUEUE_DEPTH, KB_INDEX_TASKS, KB_STAGE_SECONDS
@@ -45,6 +46,7 @@ from core.rag.splitters import (
 )
 from core.rag.vector_store import BaseVectorStore
 from core.rag.vision import VisionClient
+from core.storage.artifact_store import normalize_key
 from db.models.knowledge_base import KnowledgeBase
 from db.models.knowledge_base_document import KnowledgeBaseDocument
 
@@ -129,6 +131,41 @@ def _sanitize_filename(filename: str) -> str:
     if name in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="文件名不合法")
     return name
+
+
+def normalize_folder(raw: str | None) -> str | None:
+    r"""把客户端给的目录归一为库内的相对目录；``None`` / 空 = 根目录。
+
+    段规则**复用** :func:`core.storage.artifact_store.normalize_key`（``\\`` → ``/``，
+    丢弃空段与 ``.`` / ``..``）——"哪些片段该丢"只该有一份判定，两处各写一遍必然分叉。
+
+    与 normalize_key 的三点差异，都是"目录"这个用途特有的：
+
+    1. 空值（含纯空白、纯 ``/``、纯 ``..``）返回 ``None`` 而不是抛错——folder 只是
+       展示与过滤维度，不因为一个怪路径拒掉整次上传（文件本身落在
+       ``<upload_dir>/<kb_id>/<doc_id>/<name>``，与它无关）；
+    2. 超长抛 400：``folder`` 列是 ``String(512)``，交给数据库会变成 500 的截断错误；
+    3. 去掉控制字符，避免脏数据永久留在库里。
+
+    Raises:
+        HTTPException: 归一后的目录超过 :data:`MAX_FOLDER_LEN`。
+    """
+    if raw is None:
+        return None
+    cleaned = "".join(ch for ch in raw if ch.isprintable()).strip()
+    if not cleaned:
+        return None
+    try:
+        path = normalize_key(cleaned)
+    except ValueError:
+        # 全是 "." / ".." / 分隔符——视作根目录
+        return None
+    if len(path) > MAX_FOLDER_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"目录路径过长（上限 {MAX_FOLDER_LEN} 字符）",
+        )
+    return path
 
 
 def _ensure_within(path: str, base_dir: str) -> str:
@@ -1354,15 +1391,22 @@ def validate_doc_config(custom_config: dict[str, Any] | None, kb_config: dict) -
 #: Windows 上直接 OSError。
 MAX_FILENAME_LEN = 120
 
+#: 目录路径的长度上限，与 ``knowledge_base_documents.folder`` 的 String(512) 一致。
+#: 超长必须在服务层拦成 400——丢给数据库是 500 的截断错误（StringDataRightTruncation）。
+MAX_FOLDER_LEN = 512
+
 
 @dataclass(frozen=True)
 class DocPayload:
-    """待落盘的一篇文档（已净化命名、已定类型）。"""
+    """待落盘的一篇文档（已净化命名、已定类型、目录已归一）。"""
 
     name: str
     file_type: str
     content: bytes
     source_url: str | None = None
+    #: 目录归属（``None`` = 根目录）。**必须是 :func:`normalize_folder` 的输出**：
+    #: 写入与过滤用同一口径，否则"存的是 a/b、查的是 a/./b"，点进目录必然是空的。
+    folder: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1374,6 +1418,10 @@ class SkipInfo:
     existing_doc_id: str | None = None
     existing_doc_name: str | None = None
     existing_doc_status: str | None = None
+    #: 重复于哪个目录里的文档。判重是**全库**的（同内容不重复索引），而目录浏览下
+    #: 用户只看得到当前目录——不报路径就会出现"与《README.md》内容相同"但眼前
+    #: 根本没有这个文件的困惑。
+    existing_doc_folder: str | None = None
 
 
 @dataclass
@@ -1450,8 +1498,8 @@ async def _get_owned_kb(db: AsyncSession, kb_id: str, user_id: str) -> Knowledge
 
 async def _existing_by_hash(
     db: AsyncSession, kb_id: str, hashes: set[str],
-) -> dict[str, tuple[str, str, str]]:
-    """一次查出这些哈希在本库内已对应的文档：``hash -> (id, name, status)``。
+) -> dict[str, tuple[str, str, str, str | None]]:
+    """一次查出这些哈希在本库内已对应的文档：``hash -> (id, name, status, folder)``。
 
     同一内容在库里有多条时取**最早**的一条作为报告对象——否则同一个文件两次上传
     会报出不同的"重复于《X》"，用户会以为系统在乱说。
@@ -1468,6 +1516,7 @@ async def _existing_by_hash(
                 KnowledgeBaseDocument.id,
                 KnowledgeBaseDocument.name,
                 KnowledgeBaseDocument.status,
+                KnowledgeBaseDocument.folder,
             )
             .where(
                 KnowledgeBaseDocument.kb_id == kb_id,
@@ -1479,9 +1528,9 @@ async def _existing_by_hash(
             )
         )
     ).all()
-    found: dict[str, tuple[str, str, str]] = {}
-    for content_hash, doc_id, name, status in rows:
-        found.setdefault(content_hash, (doc_id, name, status))
+    found: dict[str, tuple[str, str, str, str | None]] = {}
+    for content_hash, doc_id, name, status, folder in rows:
+        found.setdefault(content_hash, (doc_id, name, status, folder))
     return found
 
 
@@ -1515,6 +1564,7 @@ async def _persist_payload(
         config=custom_config,
         content_hash=_content_hash(payload.content),
         source_url=payload.source_url,
+        folder=payload.folder,
     )
     db.add(doc)
 
@@ -1527,6 +1577,7 @@ async def _persist_payload(
         status="queued", progress=STAGE_PROGRESS["queued"],
         chunks_count=0, entities_count=0, relations_count=0,
         uploaded_at=now, indexed_at=None, error_message=None,
+        folder=payload.folder,
         stages=[DocStageInfo(**s) for s in compute_stages("queued")],
         config=IndexConfigSchema(**custom_config) if custom_config else None,
     )
@@ -1560,26 +1611,32 @@ async def _finalize_created(
             await scheduler.enqueue(task)
 
 
-async def _taken_names(db: AsyncSession, kb_id: str) -> set[str]:
-    """本库已有的文档名（一次性取回，供同名区分用）。
+async def _taken_names(db: AsyncSession, kb_id: str) -> set[tuple[str | None, str]]:
+    """本库已有的 ``(目录, 文档名)`` 对（一次性取回，供同名区分用）。
 
-    取全量名字而不是逐个 ``LIKE`` 查询：一次请求最多几十个文件，几十次查询换来的
+    取全量而不是逐个 ``LIKE`` 查询：一次请求最多几十个文件，几十次查询换来的
     节省不值得；而这个集合在批内还要接收新落盘的名字。
+
+    键里带**目录**：``a/报告.md`` 与 ``b/报告.md`` 是两个不同的文件，各在自己的
+    目录里就该叫这个名字；只有同一目录内的重名才需要加序号区分。
     """
     rows = await db.execute(
-        select(KnowledgeBaseDocument.name).where(KnowledgeBaseDocument.kb_id == kb_id)
+        select(KnowledgeBaseDocument.folder, KnowledgeBaseDocument.name).where(
+            KnowledgeBaseDocument.kb_id == kb_id
+        )
     )
-    return {row[0] for row in rows}
+    return {(row[0], row[1]) for row in rows}
 
 
-def _disambiguate_name(name: str, taken: set[str]) -> str:
-    """同名时加序号：``报告.md`` → ``报告(2).md``。
+def _disambiguate_name(name: str, folder: str | None, taken: set[tuple[str | None, str]]) -> str:
+    """同目录内同名时加序号：``报告.md`` → ``报告(2).md``。
 
-    库里**没有**文档名唯一约束（同名不同内容是合法的），但界面上两行同名会让用户
-    分不清、删起来容易删错。目录上传（不同子目录里的同名文件）会让这件事从"偶尔"
-    变成"必然"，所以在这里兜住。
+    库里**没有**文档名唯一约束（同名不同内容是合法的），但同一目录下两行同名会让
+    用户分不清、删起来容易删错（这正是当初加它的原因）。目录浏览之后，判定范围收窄
+    到**同一目录**——否则不同子目录的同名文件会被名字上的序号区别开，而它们本来
+    就靠目录区分，加了序号反而让"按原始目录结构展示"失真。
     """
-    if name not in taken:
+    if (folder, name) not in taken:
         return name
     stem, dot, ext = name.rpartition(".")
     if not dot:
@@ -1588,7 +1645,7 @@ def _disambiguate_name(name: str, taken: set[str]) -> str:
     while True:
         index += 1
         candidate = f"{stem}({index}).{ext}" if ext else f"{stem}({index})"
-        if candidate not in taken:
+        if (folder, candidate) not in taken:
             return candidate
 
 
@@ -1629,6 +1686,7 @@ async def _create_documents(
                     existing_doc_id=existing[0],
                     existing_doc_name=existing[1],
                     existing_doc_status=existing[2],
+                    existing_doc_folder=existing[3],
                 ))
                 continue
 
@@ -1636,14 +1694,13 @@ async def _create_documents(
                 db, kb_id, user_id, len(payload.content), incoming_count=1,
             )
 
-            # 同名（不同内容）加序号区分：目录上传里不同子目录的同名文件是常态
-            final_name = _disambiguate_name(payload.name, taken_names)
+            # 同一目录内同名（不同内容）加序号区分。用 replace 而不是逐字段重建：
+            # 后者每加一个字段就要记得同步一次，漏掉的那次只在"重名"这条罕见路径上
+            # 发作（比如把 folder 丢成根目录），测试很难覆盖到。
+            final_name = _disambiguate_name(payload.name, payload.folder, taken_names)
             if final_name != payload.name:
-                payload = DocPayload(
-                    name=final_name, file_type=payload.file_type,
-                    content=payload.content, source_url=payload.source_url,
-                )
-            taken_names.add(final_name)
+                payload = replace(payload, name=final_name)
+            taken_names.add((payload.folder, final_name))
 
             item = await _persist_payload(
                 db, kb_id, payload, upload_dir=upload_dir, custom_config=custom_config,
@@ -1673,10 +1730,15 @@ async def upload_documents(
     files: list[UploadFile],
     scheduler: IndexingScheduler | None = None,
     custom_config: dict[str, Any] | None = None,
+    folder: str | None = None,
 ) -> UploadOutcome:
-    """上传文档并触发索引流水线；**内容重复的文件被跳过**（逐文件报告）。"""
+    """上传文档并触发索引流水线；**内容重复的文件被跳过**（逐文件报告）。
+
+    ``folder`` 是本次请求的落点目录（前端一次只传一个文件，目录结构由它逐文件给出）。
+    """
     kb = await _get_owned_kb(db, kb_id, user_id)
     validate_doc_config(custom_config, dict(kb.config or {}))
+    target_folder = normalize_folder(folder)
 
     # 第一段：整体预校验（文件名/类型/已知大小）——此时还没有任何落盘，
     # 第 N 个文件不合格时不会留下孤儿
@@ -1704,7 +1766,9 @@ async def upload_documents(
                 status_code=413,
                 detail=f"文件 {filename} 超过最大大小 {max_bytes // (1024 * 1024)}MB",
             )
-        payloads.append(DocPayload(name=filename, file_type=file_type, content=content))
+        payloads.append(DocPayload(
+            name=filename, file_type=file_type, content=content, folder=target_folder,
+        ))
 
     return await _create_documents(
         db, kb, user_id, payloads,
@@ -1735,6 +1799,7 @@ async def create_text_document(
     content: str,
     custom_config: dict[str, Any] | None = None,
     scheduler: IndexingScheduler | None = None,
+    folder: str | None = None,
 ) -> UploadOutcome:
     """把一段粘贴的文本建成文档。
 
@@ -1762,6 +1827,7 @@ async def create_text_document(
 
     payload = DocPayload(
         name=_paste_filename(name), file_type="md", content=data,
+        folder=normalize_folder(folder),
     )
     return await _create_documents(
         db, kb, user_id, [payload],
@@ -1778,6 +1844,7 @@ async def import_document_from_url(
     custom_config: dict[str, Any] | None = None,
     scheduler: IndexingScheduler | None = None,
     fetcher: Any = None,
+    folder: str | None = None,
 ) -> UploadOutcome:
     """从 URL / 网页导入一篇文档。
 
@@ -1807,6 +1874,7 @@ async def import_document_from_url(
         file_type="html",
         content=page.content,
         source_url=page.final_url,
+        folder=normalize_folder(folder),
     )
     return await _create_documents(
         db, kb, user_id, [payload],
@@ -1905,8 +1973,14 @@ async def list_documents(
     page_size: int = 20,
     search: str | None = None,
     status: str | None = None,
+    folder: str | None = None,
 ) -> dict:
-    """获取文档列表（分页 + 筛选）。可读即可浏览。"""
+    """获取文档列表（分页 + 筛选）。可读即可浏览。
+
+    ``folder`` 三态：**不传 = 全库**（搜索、以及"最近文档"这类跨目录用途）；
+    **空串 = 根目录**；其余 = 该目录的直属文档。前端"文档"页签的目录浏览正是靠
+    "空串 vs 不传"的区分工作的（已实测 FastAPI：``?folder=`` 得到 ``''``）。
+    """
     from api.knowledge_base.service import require_kb_readable
     await require_kb_readable(db, kb_id, user_id)
 
@@ -1919,6 +1993,17 @@ async def list_documents(
         conditions.append(KnowledgeBaseDocument.name.ilike(f"%{search}%"))
     if status:
         conditions.append(KnowledgeBaseDocument.status == status)
+    if folder is not None:
+        target = normalize_folder(folder)
+        if target is None:
+            # 根目录：存量行（迁移前落库）是 NULL，新写的也是 NULL，但把 '' 一并认下
+            # 更稳妥——两种写法都表示"根"
+            conditions.append(
+                (KnowledgeBaseDocument.folder.is_(None))
+                | (KnowledgeBaseDocument.folder == "")
+            )
+        else:
+            conditions.append(KnowledgeBaseDocument.folder == target)
 
     total = (
         await db.execute(
@@ -1930,7 +2015,12 @@ async def list_documents(
         await db.execute(
             select(KnowledgeBaseDocument)
             .where(*conditions)
-            .order_by(KnowledgeBaseDocument.uploaded_at.desc())
+            # 二级键 id 不能省：整目录上传的一批行 uploaded_at 几乎相同（服务器默认值
+            # 精度有限），只按时间排序时翻页会重复或漏行——而目录浏览正是一屏一屏翻
+            .order_by(
+                KnowledgeBaseDocument.uploaded_at.desc(),
+                KnowledgeBaseDocument.id.asc(),
+            )
             .offset(offset)
             .limit(page_size)
         )
@@ -1950,6 +2040,7 @@ async def list_documents(
             error_message=r.error_message,
             graph_error=r.graph_error,
             parse_warning=r.parse_warning,
+            folder=r.folder,
             stages=[
                 DocStageInfo(**s)
                 for s in compute_stages(
@@ -1965,6 +2056,75 @@ async def list_documents(
         "page": page,
         "page_size": page_size,
     }
+
+
+async def list_folders(
+    db: AsyncSession, kb_id: str, user_id: str,
+) -> dict:
+    """列出该知识库的所有目录（按 folder 聚合）。
+
+    一次把整棵目录树的"节点 + 直属文档数"取回来，而不是按层查询：目录数远小于
+    文档数，一条 ``GROUP BY`` 就够，前端按路径前缀求递归计数即可——按层查会让
+    "进入目录"变成一次额外往返，且面包屑的每一跳都要等。
+
+    空目录不占节点：目录由文档的 folder 派生，没有文档就没有目录（本次不做
+    "新建空文件夹"）。可读即可浏览，权限与文档列表一致。
+    """
+    from api.knowledge_base.service import require_kb_readable
+    await require_kb_readable(db, kb_id, user_id)
+
+    rows = (
+        await db.execute(
+            select(
+                KnowledgeBaseDocument.folder,
+                func.count(KnowledgeBaseDocument.id),
+            )
+            .where(KnowledgeBaseDocument.kb_id == kb_id)
+            .group_by(KnowledgeBaseDocument.folder)
+        )
+    ).all()
+
+    counts: dict[str, int] = {}
+    root_count = 0
+    total = 0
+    for raw_folder, count in rows:
+        total += count
+        path = normalize_folder(raw_folder)
+        if path is None:
+            root_count += count
+            continue
+        counts[path] = counts.get(path, 0) + count
+
+    nodes: dict[str, KBFolderInfo] = {}
+    for path, count in counts.items():
+        # 逐级补齐中间节点：库里可能只有 a/b/c 里的文件（a、a/b 自身没有直属文档），
+        # 但这两个节点必须存在，否则 a/b/c 在界面上走不到
+        for ancestor in _ancestor_paths(path):
+            nodes.setdefault(ancestor, KBFolderInfo(
+                path=ancestor,
+                name=ancestor.rsplit("/", 1)[-1],
+                parent=_parent_of(ancestor),
+                doc_count=0,
+            ))
+        nodes[path] = nodes[path].model_copy(update={"doc_count": count})
+
+    folders = sorted(nodes.values(), key=lambda f: f.path)
+    return {
+        "folders": [f.model_dump() for f in folders],
+        "root_count": root_count,
+        "total": total,
+    }
+
+
+def _ancestor_paths(path: str) -> list[str]:
+    """``a/b/c`` → ``['a', 'a/b', 'a/b/c']``（含自身，便于"补齐节点"一处写完）。"""
+    parts = path.split("/")
+    return ["/".join(parts[: i + 1]) for i in range(len(parts))]
+
+
+def _parent_of(path: str) -> str:
+    """上一级目录（``a`` → ``''``，即根）。"""
+    return path.rsplit("/", 1)[0] if "/" in path else ""
 
 
 async def get_document(
@@ -1997,6 +2157,7 @@ async def get_document(
         error_message=doc.error_message,
         graph_error=doc.graph_error,
         parse_warning=doc.parse_warning,
+        folder=doc.folder,
         stages=[
             DocStageInfo(**s)
             for s in compute_stages(doc.status or "queued", doc.error_message, doc.progress)
@@ -2183,6 +2344,7 @@ async def retry_document(
         error_message=doc.error_message,
         graph_error=doc.graph_error,
         parse_warning=doc.parse_warning,
+        folder=doc.folder,
         stages=[DocStageInfo(**s) for s in compute_stages("queued")],
         config=cast(IndexConfigSchema | None, doc.config),
     )
@@ -2300,6 +2462,7 @@ async def cancel_document(
         error_message=refreshed.error_message,
         graph_error=refreshed.graph_error,
         parse_warning=refreshed.parse_warning,
+        folder=refreshed.folder,
         stages=[
             DocStageInfo(**s)
             for s in compute_stages(

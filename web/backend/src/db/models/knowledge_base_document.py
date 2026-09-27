@@ -44,3 +44,8 @@ class KnowledgeBaseDocument(Base):
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: 来源 URL（URL/网页导入的文档才有）
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: 文档在知识库里的目录归属（'/'-分隔的相对路径，无首尾斜杠），NULL = 根目录。
+    #: 只用于展示与按目录过滤（"文档"页签的目录浏览）——**不参与落盘**，文件仍在
+    #: <upload_dir>/<kb_id>/<doc_id>/<name>。索引的事实来源是迁移文件（0007），
+    #: 与 content_hash 同理，这里不写 index=True。
+    folder: Mapped[str | None] = mapped_column(String(512), nullable=True)

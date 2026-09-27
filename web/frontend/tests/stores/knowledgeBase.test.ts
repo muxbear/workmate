@@ -13,6 +13,7 @@ vi.mock('@/services/knowledgeBaseApi', () => ({
   deleteKnowledgeBase: vi.fn(),
   fetchStats: vi.fn(),
   fetchDocuments: vi.fn(),
+  fetchKbFolders: vi.fn(),
   fetchGraphData: vi.fn(),
   searchKnowledgeBase: vi.fn(),
   fetchKbShares: vi.fn(),
@@ -475,6 +476,69 @@ describe('知识库 store —— 概览', () => {
       expect(store.docQuery.page).toBe(1)
       expect(store.docQuery.search).toBe('')
     })
+
+    it('无参 loadDocs 仍带着当前目录（兜底刷新不会把用户踢回根目录）', async () => {
+      // 与上面那条同源：SSE 终止态刷新与 30s 兜底调的都是无参 loadDocs，
+      // 目录状态只存在于组件里的话，用户会莫名其妙"跳回根目录"
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+      await store.loadDocs('kb-1', { folder: 'a/b' })
+      mocked.fetchDocuments.mockClear()
+
+      await store.loadDocs('kb-1')
+
+      expect(mocked.fetchDocuments).toHaveBeenLastCalledWith(
+        'kb-1', expect.objectContaining({ folder: 'a/b' }),
+      )
+    })
+
+    it('根目录要显式下发空串，不能被当成"不传"', async () => {
+      // 写成 `folder || undefined` 就会把根目录（''）当成"没传"——后端按"全库"理解，
+      // 根视图立刻混进所有目录的文档，而且看起来像在工作
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+      mocked.fetchDocuments.mockClear()
+
+      await store.loadDocs('kb-1', { folder: '' })
+
+      expect(mocked.fetchDocuments).toHaveBeenLastCalledWith(
+        'kb-1', expect.objectContaining({ folder: '' }),
+      )
+    })
+
+    it('搜索态不带 folder——搜索是跨目录的', async () => {
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+      await store.loadDocs('kb-1', { folder: 'a/b' })
+      mocked.fetchDocuments.mockClear()
+
+      await store.loadDocs('kb-1', { search: '架构', page: 1 })
+
+      const [, params] = mocked.fetchDocuments.mock.calls.at(-1)!
+      // 必须是 undefined：axios 只丢弃 undefined/null，空串会照发成 ?folder=，
+      // 那样又变回"只看根目录"了
+      expect(params.folder).toBeUndefined()
+    })
+
+    it('selectKb 重置目录并取回目录树', async () => {
+      mocked.fetchDocuments.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+      mocked.fetchKbFolders.mockResolvedValue({
+        folders: [{ path: 'a', name: 'a', parent: '', docCount: 2 }],
+        rootCount: 1,
+        total: 3,
+      })
+      const store = useKnowledgeBaseStore()
+      await store.selectKb('kb-1')
+      await store.loadDocs('kb-1', { folder: 'a' })
+
+      await store.selectKb('kb-1')
+
+      expect(store.docQuery.folder).toBe('')
+      expect(store.folders.map((f) => f.path)).toEqual(['a'])
+    })
   })
 
   it('分页参数随页大小一起传给服务端', async () => {
@@ -495,6 +559,7 @@ describe('知识库 store —— 逐文件上传（迭代 6 T6.1）', () => {
     return {
       id: `doc-${name}`, name, type: 'md', size: '1 KB', status: 'queued',
       progress: 0, chunks: 0, entities: 0, relations: 0, uploadedAt: '2026-09-26',
+      folder: null,
     }
   }
 

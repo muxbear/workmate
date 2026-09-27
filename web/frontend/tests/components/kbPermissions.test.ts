@@ -78,8 +78,12 @@ vi.mock('@/stores/knowledgeBase', async () => {
       stats: { totalKbs: 1, totalDocs: 1, totalChunks: 10, totalEntities: 0, indexingCount: 0 },
       viewMode: 'grid',
   // 文档表的分页/搜索状态（迭代 6 T6.6）——组件读它，桩里缺了就渲染期抛错
-  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
+  // folder：文档页签的目录浏览（'' = 根目录）
+  docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false, folder: '' },
   loadDocs: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20 })),
+  // 目录树：KbDocsTab 在渲染期就 filter 它，缺了会整片挂掉
+  folders: [],
+  loadFolders: vi.fn(async () => null),
       filteredKbs: [],
       activeNav: 'overview',
     }),

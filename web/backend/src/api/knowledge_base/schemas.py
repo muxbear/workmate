@@ -235,10 +235,33 @@ class KBDocResponse(BaseModel):
     #: 300 页因超出本次时间预算被跳过"。**不能**塞进 graph_error：那一栏在界面上
     #: 渲染成「图谱未生成：…」，会给出错误解释。
     parse_warning: str | None = None
+    #: 文档所在的目录（'/'-分隔相对路径），``None`` = 根目录。
+    #: **刻意不给默认值**：5 处构造点漏传时 mypy strict 会直接报错；给了默认值就会
+    #: 静默变成 None——文档"掉回根目录"却不报错，正是最难查的那类缺陷。
+    folder: str | None
     stages: list[DocStageInfo] = []
     config: IndexConfigSchema | None = None
 
     model_config = {"from_attributes": True}
+
+
+class KBFolderInfo(BaseModel):
+    """一个目录节点（由该库所有文档的 folder 聚合而来）。"""
+    path: str
+    name: str
+    #: 上一级目录（'' = 根）；根下的一级目录即 parent=''
+    parent: str
+    #: **直属**文档数（不含子目录；递归计数由前端按路径前缀求和）
+    doc_count: int
+
+
+class KBFolderListResponse(BaseModel):
+    """知识库的目录清单（文档页签的目录浏览用）。"""
+    folders: list[KBFolderInfo]
+    #: 根目录下的直属文档数
+    root_count: int
+    #: 全库文档总数（含所有目录）
+    total: int
 
 
 class KBDocListResponse(BaseModel):
@@ -463,12 +486,17 @@ class TextDocRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     content: str = Field(..., min_length=1)
     config: IndexConfigSchema | None = None
+    #: 目标目录（'' 或空 = 根目录）。用户在子目录里粘贴时必须落在**当前目录**，
+    #: 否则"已创建文档"的提示会与纹丝不动的列表互相矛盾。
+    folder: str | None = Field(default=None, max_length=512)
 
 
 class UrlImportRequest(BaseModel):
     """URL / 网页导入请求。"""
     url: str = Field(..., min_length=8, max_length=2048)
     config: IndexConfigSchema | None = None
+    #: 目标目录（语义同 TextDocRequest.folder）
+    folder: str | None = Field(default=None, max_length=512)
 
 
 # ─── Share ──────────────────────────────────────────────────────────────────

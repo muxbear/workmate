@@ -7,6 +7,10 @@
  * 个人知识库上另有「新建知识库」（概览页不再内嵌建库入口）。
  *
  * 分组名本身也是「查看更多」入口；折叠/展开只由右侧箭头触发。
+ *
+ * **知识库行同样有三点菜单**（悬停该行时淡入），至少含「查看详情」——详情页的
+ * "概览"页签已经去掉，这里是看统计/标签/索引方案的入口，因此**每个分组**都要有，
+ * 不能只给个人知识库（否则公共库与分享来的库就没有概览可看了）。
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -25,6 +29,7 @@ const emit = defineEmits<{
   (e: 'share-manage', kbId: string): void
   (e: 'cancel-share', kbId: string): void
   (e: 'create'): void
+  (e: 'view-detail', kbId: string): void
 }>()
 
 // 建库入口按角色权限显隐：没有 knowledge:create 时连菜单项都不出现（后端也会 403）
@@ -111,6 +116,21 @@ function selectGroup(group: KbGroupDef) {
 async function respond(shareId: string, accept: boolean) {
   await store.respondInvitation(shareId, accept)
 }
+
+/**
+ * 知识库行的三点菜单。
+ *
+ * 「查看详情」在**所有**分组里都有；「我的共享知识」额外保留分享相关的两项
+ * （那里原本就有菜单，不能因为加了一项就把旧入口挤掉）。
+ */
+function handleKbCommand(cmd: string, kbId: string) {
+  if (cmd === 'detail') {
+    emit('view-detail', kbId)
+    return
+  }
+  if (cmd === 'manage') emit('share-manage', kbId)
+  else emit('cancel-share', kbId)
+}
 </script>
 
 <template>
@@ -195,7 +215,29 @@ async function respond(shareId: string, accept: boolean) {
                   {{ t('knowledge.sidebar.reject') }}
                 </button>
               </div>
+              <!-- 已接受的分享：保留「已接受」标记，同时给出查看详情入口 -->
               <span v-else class="kb-lib-status" :title="t('knowledge.sidebar.accepted')">{{ t('knowledge.sidebar.accepted') }}</span>
+              <el-dropdown
+                v-if="entry.accepted"
+                trigger="hover"
+                placement="bottom-end"
+                @command="(cmd: string) => handleKbCommand(cmd, entry.kbId)"
+              >
+                <button
+                  class="kb-lib-more"
+                  :title="t('knowledge.sidebar.kbActions', { name: entry.name })"
+                  :aria-label="t('knowledge.sidebar.kbActions', { name: entry.name })"
+                >
+                  <MoreVertical :size="15" />
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="detail">
+                      {{ t('knowledge.sidebar.viewDetail') }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
             <p v-if="!sharedWithMeEntries.length" class="kb-group-empty">{{ t('knowledge.sidebar.empty') }}</p>
           </template>
@@ -217,22 +259,28 @@ async function respond(shareId: string, accept: boolean) {
                 <span class="kb-lib-name">{{ kb.name }}</span>
               </button>
 
-              <!-- 我的共享知识：管理该库的分享 -->
+              <!-- 每个知识库都有三点菜单：「查看详情」；我的共享知识上再挂分享两项 -->
               <el-dropdown
-                v-if="group.id === 'sharedByMe'"
                 trigger="hover"
                 placement="bottom-end"
-                @command="(cmd: string) => cmd === 'manage'
-                  ? emit('share-manage', kb.id)
-                  : emit('cancel-share', kb.id)"
+                @command="(cmd: string) => handleKbCommand(cmd, kb.id)"
               >
-                <button class="kb-lib-more" :title="`「${kb.name}」操作`" :aria-label="`「${kb.name}」操作`">
+                <button
+                  class="kb-lib-more"
+                  :title="t('knowledge.sidebar.kbActions', { name: kb.name })"
+                  :aria-label="t('knowledge.sidebar.kbActions', { name: kb.name })"
+                >
                   <MoreVertical :size="15" />
                 </button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="manage">{{ t('knowledge.sidebar.viewShared') }}</el-dropdown-item>
-                    <el-dropdown-item command="cancel">{{ t('knowledge.sidebar.cancelShare') }}</el-dropdown-item>
+                    <el-dropdown-item command="detail">
+                      {{ t('knowledge.sidebar.viewDetail') }}
+                    </el-dropdown-item>
+                    <template v-if="group.id === 'sharedByMe'">
+                      <el-dropdown-item command="manage">{{ t('knowledge.sidebar.viewShared') }}</el-dropdown-item>
+                      <el-dropdown-item command="cancel">{{ t('knowledge.sidebar.cancelShare') }}</el-dropdown-item>
+                    </template>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>

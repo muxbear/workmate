@@ -10,6 +10,8 @@ const props = defineProps<{
   visible: boolean
   defaultConfig: IndexConfig
   kbId: string
+  /** 当前浏览的目录（'' = 根目录）：单文件落在它下面，整目录上传的结构也挂在它下面 */
+  folder?: string
 }>()
 
 const emit = defineEmits<{
@@ -105,7 +107,8 @@ function addFiles(list: FileList | null) {
     const tooLarge = file.size > MAX_FILE_MB * 1024 * 1024
     entries.value.push({
       file,
-      // 目录上传时保留相对路径做展示（后端只存基名，重名由后端加序号区分）
+      // 目录上传时保留相对路径：它既是这里的展示名，也是落库的目录归属
+      // （见 utils/kbPath.folderForFile）。单文件选择时浏览器不给这个字段，退回文件名
       display: file.webkitRelativePath || file.name,
       tooLarge,
       state: {
@@ -150,6 +153,9 @@ async function runUpload(files: File[]) {
   finished.value = false
   try {
     await store.uploadDocs(props.kbId, files, indexMode.value === 'custom' ? { ...customConfig } : undefined, {
+      // 落点目录由 store 交给上传接口，再按每个文件自己的相对路径细分
+      // （见 utils/kbPath.folderForFile：单文件 → 当前目录；整目录 → 保留结构）
+      folder: props.folder ?? '',
       onFileState: (state) => {
         // 回调里只有名字，按名字找条目回填进度
         for (const entry of entries.value) {
