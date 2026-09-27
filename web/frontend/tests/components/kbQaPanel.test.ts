@@ -48,6 +48,15 @@ function factory() {
   })
 }
 
+/**
+ * 面板默认是**收起**的（进知识库页只有内容区），所以"要看标签行"的用例都得先展开。
+ * 走真实的展开按钮而不是改 store 字段：顺便把展开这条路也跑一遍。
+ */
+async function expand(wrapper: ReturnType<typeof factory>) {
+  await wrapper.find('.panel-icon-btn').trigger('click')
+  await nextTick()
+}
+
 /** 给标签可视区伪造一个"内容比容器宽"的尺寸（jsdom 里两者恒为 0） */
 function makeOverflowing(wrapper: ReturnType<typeof factory>) {
   const viewport = wrapper.find('.tabs-viewport').element
@@ -60,9 +69,32 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('KbQaPanel · 标签行', () => {
-  it('首标签是「问答」，没有关闭按钮', () => {
+describe('KbQaPanel · 默认态', () => {
+  it('默认收起：只有一条轨道与展开按钮，没有标签行', () => {
     const wrapper = factory()
+    expect(useKbQaStore().collapsed).toBe(true)
+    expect(wrapper.find('.tabs-viewport').exists()).toBe(false)
+    expect(wrapper.find('.panel-icon-btn').attributes('aria-label')).toBe('展开问答区')
+  })
+
+  it('在文档列表里点开一篇文档会自动展开（不用先手动展开一次）', async () => {
+    const store = useKbQaStore()
+    const wrapper = factory()
+    expect(wrapper.find('.tabs-viewport').exists()).toBe(false)
+
+    store.openDocTab('kb-1', doc())
+    await nextTick()
+
+    expect(store.collapsed).toBe(false)
+    expect(wrapper.find('.tabs-viewport').exists()).toBe(true)
+    expect(wrapper.find('.panel-tab.is-active').text()).toContain('报告.md')
+  })
+})
+
+describe('KbQaPanel · 标签行', () => {
+  it('首标签是「问答」，没有关闭按钮', async () => {
+    const wrapper = factory()
+    await expand(wrapper)
     const tabs = wrapper.findAll('.panel-tab')
     expect(tabs).toHaveLength(1)
     expect(tabs[0].text()).toContain('问答')
@@ -119,13 +151,15 @@ describe('KbQaPanel · 标签行', () => {
   it('放不下时出现左右移动按钮，标签变多也仍然只有一个左移一个右移', async () => {
     const store = useKbQaStore()
     const wrapper = factory()
+    store.openDocTab('kb-1', doc())   // 开文档会顺带展开面板
+    await nextTick()
     makeOverflowing(wrapper)
     // 尺寸变了要触发一次 syncOverflow：滚一下即可（组件监听 @scroll）
     await wrapper.find('.tabs-viewport').trigger('scroll')
 
     expect(wrapper.findAll('.tab-scroll')).toHaveLength(2)
 
-    store.openDocTab('kb-1', doc())
+    store.openDocTab('kb-1', doc({ id: 'doc-2', name: '乙.md' }))
     await nextTick()
     expect(wrapper.findAll('.tab-scroll')).toHaveLength(2)
   })
@@ -133,9 +167,9 @@ describe('KbQaPanel · 标签行', () => {
   it('已经在最左边时左移按钮禁用', async () => {
     const store = useKbQaStore()
     const wrapper = factory()
-    makeOverflowing(wrapper)
     store.openDocTab('kb-1', doc())
     await nextTick()
+    makeOverflowing(wrapper)
     await wrapper.find('.tabs-viewport').trigger('scroll')
 
     const [left, right] = wrapper.findAll('.tab-scroll')
@@ -148,6 +182,7 @@ describe('KbQaPanel · 全屏', () => {
   it('标签行右侧有全屏按钮，点一下进入全屏并换成「还原」', async () => {
     const store = useKbQaStore()
     const wrapper = factory()
+    await expand(wrapper)
 
     const btn = wrapper.find('.fullscreen-btn')
     expect(btn.attributes('title')).toBe('全屏')
@@ -163,7 +198,7 @@ describe('KbQaPanel · 全屏', () => {
     store.syncShellWidth(1600)
     store.setPanelWidth(440)
     const wrapper = factory()
-    await nextTick()
+    await expand(wrapper)
 
     expect(wrapper.find('.qa-panel').attributes('style')).toContain('width: 440px')
     await wrapper.find('.fullscreen-btn').trigger('click')
@@ -173,9 +208,10 @@ describe('KbQaPanel · 全屏', () => {
 })
 
 describe('KbQaPanel · 折叠', () => {
-  it('折叠后只剩展开按钮，且不再有标签行', async () => {
+  it('收起后只剩展开按钮，且不再有标签行', async () => {
     const store = useKbQaStore()
     const wrapper = factory()
+    await expand(wrapper)
 
     await wrapper.find('.panel-icon-btn').trigger('click')
     expect(store.collapsed).toBe(true)
@@ -183,14 +219,15 @@ describe('KbQaPanel · 折叠', () => {
     expect(wrapper.find('.panel-icon-btn').attributes('aria-label')).toBe('展开问答区')
   })
 
-  it('再点一次展开，宽度还原成折叠前的值', async () => {
+  it('收起再展开，宽度还原成收起前的值', async () => {
     const store = useKbQaStore()
     store.syncShellWidth(1600)
     store.setPanelWidth(520)
     const wrapper = factory()
 
-    await wrapper.find('.panel-icon-btn').trigger('click')
-    await wrapper.find('.panel-icon-btn').trigger('click')
+    await expand(wrapper)
+    await wrapper.find('.panel-icon-btn').trigger('click')   // 收起
+    await wrapper.find('.panel-icon-btn').trigger('click')   // 再展开
     expect(store.collapsed).toBe(false)
     expect(store.panelWidth).toBe(520)
     expect(wrapper.find('.tabs-viewport').exists()).toBe(true)

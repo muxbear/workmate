@@ -96,12 +96,15 @@ describe('kbQa · 标签页', () => {
     expect(store.currentDocTab()).toBeNull()
   })
 
-  it('开一个文档预览标签并激活它', () => {
+  it('开一个文档预览标签并激活它，同时把收起的问答区展开', () => {
     const store = useKbQaStore()
+    expect(store.collapsed).toBe(true)
+
     store.openDocTab('kb-1', doc())
     expect(store.docTabs.map((t) => t.title)).toEqual(['报告.md'])
     expect(store.activeKey).toBe('doc:kb-1:doc-1')
     expect(store.currentDocTab()?.doc?.id).toBe('doc-1')
+    expect(store.collapsed).toBe(false)
   })
 
   it('同一篇文档重复打开只占一个标签，并刷新快照', () => {
@@ -161,11 +164,12 @@ describe('kbQa · 面板宽度', () => {
     expect(store.panelWidth).toBe(MIN_KB_QA_WIDTH)
   })
 
+  it('默认是收起的（进页面先只有知识库内容区）', () => {
+    expect(useKbQaStore().collapsed).toBe(true)
+  })
+
   it('全屏与折叠互斥：进全屏要先从收起态出来，收起时要退出全屏', () => {
     const store = useKbQaStore()
-    store.toggleCollapsed()
-    expect(store.collapsed).toBe(true)
-
     store.toggleFullscreen()
     expect(store.fullscreen).toBe(true)
     expect(store.collapsed).toBe(false)   // 收着还全屏等于什么都没显示
@@ -175,12 +179,12 @@ describe('kbQa · 面板宽度', () => {
     expect(store.fullscreen).toBe(false)  // 不然下次展开直接铺满整页
   })
 
-  it('折叠只改标志位，宽度留着以便展开还原', () => {
+  it('展开只改标志位，宽度原样留着（收起再展开能还原）', () => {
     const store = useKbQaStore()
     store.syncShellWidth(1600)
     store.setPanelWidth(500)
     store.toggleCollapsed()
-    expect(store.collapsed).toBe(true)
+    expect(store.collapsed).toBe(false)
     expect(store.panelWidth).toBe(500)
     expect(KB_QA_COLLAPSED_WIDTH).toBeLessThan(MIN_KB_QA_WIDTH)
   })

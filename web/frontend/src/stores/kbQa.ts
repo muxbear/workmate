@@ -112,7 +112,13 @@ export const useKbQaStore = defineStore('kbQa', () => {
   // ─── 面板布局 ──────────────────────────────────────────────────────────
   /** 面板宽度（px）；折叠时保留该值，再次展开可还原 */
   const panelWidth = ref(DEFAULT_KB_QA_WIDTH)
-  const collapsed = ref(false)
+  /**
+   * 默认收起：进知识库页先只有内容区，问答区留一条 40px 的轨道。
+   *
+   * 与对话页右栏一致（那边的默认也是收起）。要看问答或看点开的文档时再展开——
+   * 点文档开预览标签会自动展开（见 openDocTab），不必先手动点一次。
+   */
+  const collapsed = ref(true)
   /** 是否全屏：占满主体宽度、隐藏知识库内容区（读长文档时用） */
   const fullscreen = ref(false)
   /** 主体容器实测宽度（由知识库页上报），用于把宽度收敛到合法区间 */
@@ -186,6 +192,10 @@ export const useKbQaStore = defineStore('kbQa', () => {
    * 打开（或聚焦）一个文档预览标签。
    *
    * 同一个文档只占一个标签：再次打开时复用已有标签并刷新快照，而不是堆出一排同名标签。
+   *
+   * **会展开面板**：在文档列表里点一篇文档，期待的是"看到它的内容"，而此时面板
+   * 多半是收起的（默认态）——不展开的话用户点完像是什么都没发生，还得自己去找
+   * 那个展开按钮。
    */
   function openDocTab(kbIdValue: string, doc: KBDoc) {
     const key = `doc:${kbIdValue}:${doc.id}`
@@ -197,6 +207,7 @@ export const useKbQaStore = defineStore('kbQa', () => {
       docTabs.value = [...docTabs.value, { key, title: doc.name, kbId: kbIdValue, doc }]
     }
     activeKey.value = key
+    collapsed.value = false
   }
 
   /** 关闭一个文档标签；关掉当前激活的那个时回落到「问答」 */

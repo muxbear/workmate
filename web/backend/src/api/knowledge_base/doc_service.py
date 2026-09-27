@@ -169,17 +169,25 @@ def normalize_folder(raw: str | None) -> str | None:
 
 
 def _ensure_within(path: str, base_dir: str) -> str:
-    """断言写入路径落在基目录内，返回规范化后的绝对路径。
+    """断言路径落在基目录内，返回规范化后的绝对路径。
 
     与 :func:`_sanitize_filename` 构成双保险：即便将来有人在净化逻辑上引入
     疏漏，越界的落盘也会在这里被拦下。
+
+    报错文案**不能说成"文件名不合法"**：这条断言拦下的是"路径不在基目录内"，
+    而最常见的原因不是文件名有问题，是**记录里的绝对路径来自别的工作目录**
+    （仓库搬迁后，搬迁前上传的文档仍存着旧仓库下的路径）。把它写成文件名问题，
+    排查时会一路往文件名上找，实测就这么绕过一次弯路。
     """
     real = os.path.realpath(path)
     base = os.path.realpath(base_dir)
     if os.path.normcase(real) != os.path.normcase(base) and not os.path.normcase(
         real
     ).startswith(os.path.normcase(base) + os.sep):
-        raise HTTPException(status_code=400, detail="文件名不合法")
+        raise HTTPException(
+            status_code=400,
+            detail="文件路径不在上传目录内（历史文档可能是工作目录变更后失效的旧路径）",
+        )
     return real
 
 

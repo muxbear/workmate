@@ -82,6 +82,18 @@ class TestFilenameSanitization:
         with pytest.raises(HTTPException):
             _ensure_within(str(tmp_path / "kb" / ".." / "outside.md"), str(tmp_path / "kb"))
 
+    def test_within_error_text_points_at_the_path_not_the_filename(self, tmp_path: Path):
+        """报错文案要说"路径不在上传目录内"，不能说"文件名不合法"。
+
+        实测教训：仓库搬迁后，搬迁前上传的文档仍存着旧仓库下的绝对路径，读原文时
+        被这条断言拦下、却报成"文件名不合法"，排查时一路往文件名上找。
+        """
+        with pytest.raises(HTTPException) as exc:
+            _ensure_within(str(tmp_path / "old-root" / "kb" / "a.md"), str(tmp_path / "kb"))
+        detail = str(exc.value.detail)
+        assert "文件名" not in detail
+        assert "上传目录" in detail
+
 
 @pytest.fixture
 async def sessionmaker():
