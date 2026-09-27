@@ -3,7 +3,10 @@
  * 知识库左栏——概览入口 + 四个栏目的树形列表。
  *
  * 交互对齐桌面版 KnowledgePage.vue 的分组侧栏：分组行默认只显示图标与名称，
- * 鼠标移入时右侧淡入「三点」与「折叠/展开」按钮；三点悬停弹出「查看更多」。
+ * 鼠标移入时右侧淡入「三点」与「折叠/展开」按钮；三点悬停弹出「查看更多」，
+ * 个人知识库上另有「新建知识库」（概览页不再内嵌建库入口）。
+ *
+ * 分组名本身也是「查看更多」入口；折叠/展开只由右侧箭头触发。
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -14,13 +17,18 @@ import {
 import { useKnowledgeBaseStore, KB_GROUPS } from '@/stores/knowledgeBase'
 import type { KbGroupDef } from '@/stores/knowledgeBase'
 import type { KB, KBShare, KbScope } from '@/types/knowledgeBase'
+import { useKbPermissions } from '@/composables/useKbPermissions'
 
 const store = useKnowledgeBaseStore()
 const { t } = useI18n()
 const emit = defineEmits<{
   (e: 'share-manage', kbId: string): void
   (e: 'cancel-share', kbId: string): void
+  (e: 'create'): void
 }>()
+
+// 建库入口按角色权限显隐：没有 knowledge:create 时连菜单项都不出现（后端也会 403）
+const { canCreate } = useKbPermissions()
 
 const GROUP_ICONS: Record<string, typeof Database> = {
   public: Globe,
@@ -74,6 +82,28 @@ function showMore(group: KbGroupDef) {
   store.setActiveNav(group.id)
 }
 
+/**
+ * 分组名 = 进入该栏目的「查看更多」页，不再折叠/展开。
+ *
+ * 点分组名时用户想要的是"进去看看这个栏目里有什么"，而不是"把树收起来"；
+ * 折叠/展开交给右侧那个箭头按钮（它本来就是干这个的）。
+ */
+function openGroup(group: KbGroupDef) {
+  showMore(group)
+}
+
+/**
+ * 分组三点菜单：默认只有「查看更多」，个人知识库上多一项「新建知识库」
+ * （建库入口从概览页移到这里，见 KnowledgeBaseView）。
+ */
+function handleGroupCommand(cmd: string, group: KbGroupDef) {
+  if (cmd === 'create') {
+    emit('create')
+    return
+  }
+  showMore(group)
+}
+
 function selectGroup(group: KbGroupDef) {
   store.toggleGroup(group.id)
 }
@@ -102,7 +132,7 @@ async function respond(shareId: string, accept: boolean) {
       >
         <!-- 分组头：名称 + 悬浮操作 -->
         <div class="kb-group-head" :class="{ active: isGroupActive(group.id) }">
-          <button class="kb-group-label" @click="selectGroup(group)">
+          <button class="kb-group-label" @click="openGroup(group)">
             <component :is="GROUP_ICONS[group.id]" :size="14" class="kb-group-icon" />
             <span class="kb-group-text">{{ group.label }}</span>
             <span
@@ -112,13 +142,20 @@ async function respond(shareId: string, accept: boolean) {
             >{{ store.pendingInvitationCount }}</span>
           </button>
 
-          <el-dropdown trigger="hover" placement="bottom-end" @command="showMore(group)">
+          <el-dropdown
+            trigger="hover"
+            placement="bottom-end"
+            @command="(cmd: string) => handleGroupCommand(cmd, group)"
+          >
             <button class="kb-group-more" :title="`${group.label}操作`" :aria-label="`${group.label}操作`">
               <MoreVertical :size="15" />
             </button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="more">{{ t('knowledge.sidebar.more') }}</el-dropdown-item>
+                <el-dropdown-item v-if="group.id === 'personal' && canCreate" command="create">
+                  {{ t('knowledge.list.create') }}
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>

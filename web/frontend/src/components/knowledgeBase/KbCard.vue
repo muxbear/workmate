@@ -6,17 +6,25 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Database, CheckCircle2, Loader2, CircleAlert, Pause,
   Sparkle, Scissors, Hash, Network,
-  MoreVertical, Pin, PinOff, ArrowUp, ArrowDown, Pencil, Copy, Download, FolderInput,
+  MoreVertical, Pin, PinOff, Pencil, Copy, Download, SquarePen,
 } from 'lucide-vue-next'
 import type { KB } from '@/types/knowledgeBase'
 import { KB_STATUS_CONFIG, CHUNK_STRATEGY_OPTIONS } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { readApiError } from '@/services/knowledgeBaseApi'
+import KbEditDialog from './KbEditDialog.vue'
 
 const props = defineProps<{
   kb: KB
   /** 只读态（公共库 / 他人分享）：不展示组织操作 */
   readonly?: boolean
+  /**
+   * 不渲染右上角的三点菜单。
+   *
+   * 概览页（知识库概览）是"看一眼有哪些库"的地方，整顿操作统一在「查看更多」里做
+   * ——两处都能改，改完看不出是哪儿改的。
+   */
+  hideMenu?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -25,7 +33,7 @@ const emit = defineEmits<{
 
 const store = useKnowledgeBaseStore()
 const { t } = useI18n()
-const groupDialogVisible = ref(false)
+const editVisible = ref(false)
 const busy = ref(false)
 
 /** 只有库主能整理自己的列表（置顶/排序是"我的视图偏好"） */
@@ -49,14 +57,11 @@ function handleCommand(command: string) {
       void run(props.kb.isPinned ? t('knowledge.card.unpin') : t('knowledge.card.pin'), () =>
         store.togglePin(props.kb.id, !props.kb.isPinned))
       break
-    case 'up':
-      void run('上移', () => store.moveKb(props.kb.id, 'up'))
-      break
-    case 'down':
-      void run('下移', () => store.moveKb(props.kb.id, 'down'))
-      break
     case 'rename':
       void handleRename()
+      break
+    case 'edit':
+      editVisible.value = true
       break
     case 'copy':
       void run('复制', async () => {
@@ -70,9 +75,6 @@ function handleCommand(command: string) {
         ElMessage.success(t('knowledge.card.exportedToast'))
       })
       break
-    case 'group':
-      groupDialogVisible.value = true
-      break
   }
 }
 
@@ -80,7 +82,7 @@ async function handleRename() {
   try {
     const { value } = await ElMessageBox.prompt(t('knowledge.card.renamePlaceholder'), t('knowledge.card.pinPromptTitle'), {
       inputValue: props.kb.name,
-      inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空'),
+      inputValidator: (v: string) => (v && v.trim() ? true : t('knowledge.card.nameRequired')),
       confirmButtonText: '保存',
       cancelButtonText: '取消',
     })
@@ -88,11 +90,6 @@ async function handleRename() {
   } catch {
     // 用户取消
   }
-}
-
-async function handleAssignGroup(groupId: string | null) {
-  groupDialogVisible.value = false
-  await run('归组', () => store.assignGroup(props.kb.id, groupId))
 }
 
 const statusCfg = computed(() => KB_STATUS_CONFIG[props.kb.status])
@@ -149,7 +146,7 @@ function metricFormat(val: number): string {
           />
           {{ statusCfg.label }}
         </el-tag>
-        <el-dropdown v-if="canOrganize()" trigger="click" @command="handleCommand">
+        <el-dropdown v-if="canOrganize() && !hideMenu" trigger="click" @command="handleCommand">
           <button class="card-menu-btn" :disabled="busy" :title="t('knowledge.common.moreActions')" :aria-label="t('knowledge.common.moreActions')">
             <MoreVertical :size="16" />
           </button>
@@ -159,12 +156,10 @@ function metricFormat(val: number): string {
                 <PinOff v-if="kb.isPinned" :size="14" /><Pin v-else :size="14" />
                 {{ kb.isPinned ? t('knowledge.card.unpin') : t('knowledge.card.pin') }}
               </el-dropdown-item>
-              <el-dropdown-item command="up"><ArrowUp :size="14" />{{ t('knowledge.card.moveUp') }}</el-dropdown-item>
-              <el-dropdown-item command="down"><ArrowDown :size="14" />{{ t('knowledge.card.moveDown') }}</el-dropdown-item>
               <el-dropdown-item command="rename" divided><Pencil :size="14" />{{ t('knowledge.card.rename') }}</el-dropdown-item>
+              <el-dropdown-item command="edit"><SquarePen :size="14" />{{ t('knowledge.card.edit') }}</el-dropdown-item>
               <el-dropdown-item command="copy"><Copy :size="14" />{{ t('knowledge.card.copyWithConfig') }}</el-dropdown-item>
               <el-dropdown-item command="export"><Download :size="14" />{{ t('knowledge.card.exportConfig') }}</el-dropdown-item>
-              <el-dropdown-item command="group"><FolderInput :size="14" />{{ t('knowledge.card.moveToGroup') }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -223,33 +218,12 @@ function metricFormat(val: number): string {
         <Network :size="10" class="config-icon" />{{ t('knowledge.card.knowledgeGraph') }}
       </el-tag>
     </div>
-    <!-- 归入分组：列出本人在册的分组 + "移出分组" -->
-    <el-dialog
-      v-model="groupDialogVisible"
-      title="归入分组"
-      width="360px"
-      append-to-body
-      @click.stop
-    >
-      <div class="group-picker">
-        <button class="group-pick-item" @click="handleAssignGroup(null)">
-          {{ t('knowledge.card.noGroup') }}
-          <span v-if="!kb.groupId" class="group-pick-current">{{ t('knowledge.card.current') }}</span>
-        </button>
-        <button
-          v-for="g in store.kbGroups"
-          :key="g.id"
-          class="group-pick-item"
-          @click="handleAssignGroup(g.id)"
-        >
-          {{ g.name }}
-          <span v-if="kb.groupId === g.id" class="group-pick-current">{{ t('knowledge.card.current') }}</span>
-        </button>
-        <div v-if="store.kbGroups.length === 0" class="group-pick-empty">
-          {{ t('knowledge.card.noGroupsYet') }}
-        </div>
-      </div>
-    </el-dialog>
+    <!-- 编辑：名称 / 描述 / 标签 / 分组（原「重命名」与「归入分组」并到这里） -->
+    <KbEditDialog
+      :visible="editVisible"
+      :kb="kb"
+      @close="editVisible = false"
+    />
   </div>
 </template>
 
@@ -273,37 +247,6 @@ function metricFormat(val: number): string {
   background: transparent;
   color: var(--foreground-secondary);
   cursor: pointer;
-}
-
-.group-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.group-pick-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  border: 1px solid var(--border-subtle, #e5e7eb);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--foreground-primary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  text-align: left;
-}
-
-.group-pick-current {
-  font-size: var(--font-size-xs, 12px);
-  color: var(--el-color-primary, #409eff);
-}
-
-.group-pick-empty {
-  font-size: var(--font-size-sm);
-  color: var(--foreground-secondary);
-  padding: 8px 0;
 }
 
 .kb-card {

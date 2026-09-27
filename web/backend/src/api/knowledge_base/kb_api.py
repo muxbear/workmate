@@ -11,6 +11,7 @@ from api.knowledge_base.schemas import (
     KBCreateRequest,
     KBMoveRequest,
     KBPinRequest,
+    KBReorderRequest,
     KBUpdateRequest,
 )
 from api.knowledge_base.service import (
@@ -28,6 +29,7 @@ from api.knowledge_base.service import (
     move_kb,
     purge_kb,
     reindex_kb,
+    reorder_kbs,
     restore_kb,
     set_kb_pinned,
     update_kb,
@@ -267,6 +269,22 @@ async def move_knowledge_base(
         await db.commit()
         entry.detail["direction"] = body.direction
     return ok(result)
+
+
+@router.post("/reorder")
+@handle_errors
+async def reorder_knowledge_bases(
+    body: KBReorderRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(RequirePermission("knowledge:edit")),
+):
+    """拖拽排序：一次提交同一置顶分组内连续一段的新顺序。"""
+    async with audit_scope("knowledge.reorder", user_id, request) as entry:
+        count = await reorder_kbs(db, user_id, body.ids)
+        await db.commit()
+        entry.detail["count"] = count
+    return ok({"reordered": count})
 
 
 @router.post("/{kb_id}/copy", status_code=201)

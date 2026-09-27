@@ -178,6 +178,12 @@ class KBMoveRequest(BaseModel):
     direction: Literal["up", "down"]
 
 
+class KBReorderRequest(BaseModel):
+    """拖拽排序：同一置顶分组内连续一段的新顺序（见 ``reorder_kbs``）。"""
+
+    ids: list[str] = Field(..., min_length=1, max_length=500)
+
+
 class KBAssignGroupRequest(BaseModel):
     """把知识库归入分组；``group_id`` 传 null 表示移出分组。"""
     group_id: str | None = None

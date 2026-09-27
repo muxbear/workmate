@@ -1187,6 +1187,50 @@ async def move_kb(
     return _kb_to_response(kb)
 
 
+async def reorder_kbs(
+    db: AsyncSession, user_id: str, ids: list[str],
+) -> int:
+    """拖拽排序：把列表里连续的一段按给定顺序摆好，返回该置顶分组重排后的条数。
+
+    客户端提交的是**当前页被拖动的那一段**——同一 ``is_pinned`` 值、在列表里位置
+    连续。服务端只重排这一段占用的槽位，再把这个置顶分组重新编号成 0..n-1（与
+    :func:`move_kb` 一致，顺手把 0/0/0 之类的并列值消掉：并列时"谁在谁前面"完全
+    取决于 ``updated_at``，用户拖出来的顺序会被更新时间悄悄推翻）。
+
+    三条硬约束，越界一律拒：
+    - **只能排本人的库**——别人的 id 按不存在处理（404，不泄漏"这个 id 存在"）；
+    - **不能有重复 id**——重复时"谁在谁前面"没有意义；
+    - **必须是同一置顶分组里连续的一段**——跨过置顶边界会让一项"跳一大截"
+      （``move_kb`` 也不做），而跳页提交会连带改掉中间那些库的顺序。
+    """
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=400, detail="排序列表里有重复的知识库")
+
+    rows = await _owned_kb_rows(db, user_id)
+    index_of = {row.id: i for i, row in enumerate(rows)}
+    if any(i not in index_of for i in ids):
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    slots = sorted(index_of[i] for i in ids)
+    if slots != list(range(slots[0], slots[0] + len(slots))):
+        raise HTTPException(status_code=400, detail="只能重排列表里连续的一段")
+    if len({bool(rows[i].is_pinned) for i in slots}) > 1:
+        raise HTTPException(status_code=400, detail="置顶与未置顶的知识库不能互相穿插")
+
+    merged = (
+        rows[: slots[0]]
+        + [rows[index_of[i]] for i in ids]
+        + rows[slots[-1] + 1 :]
+    )
+    # 重编号只做本置顶分组：另一组的 sort_order 与它无关，动它没有意义
+    pinned = bool(rows[slots[0]].is_pinned)
+    block = [r for r in merged if bool(r.is_pinned) == pinned]
+    # 每行的新值不同，只能逐行写；条数就是"本人的知识库数"，量级很小
+    for order, row in enumerate(block):
+        await _update_view_preference(db, [row.id], {"sort_order": order})
+    return len(block)
+
+
 async def copy_kb(
     db: AsyncSession, kb_id: str, user_id: str, name: str | None = None,
 ) -> KBResponse:

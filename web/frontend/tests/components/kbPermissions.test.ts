@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { defineComponent, ref } from 'vue'
 import KbDetail from '@/components/knowledgeBase/KbDetail.vue'
+import KbCreateDialog from '@/components/knowledgeBase/KbCreateDialog.vue'
+import KbSidebar from '@/components/knowledgeBase/KbSidebar.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import type { KB } from '@/types/knowledgeBase'
 
@@ -38,6 +40,17 @@ const storeMock = vi.hoisted(() => ({
   createGroup: vi.fn(),
   selectedKb: null as unknown,
   groupKbs: [] as unknown[],
+  // 左栏（KbSidebar）挂载时读这些
+  setActiveNav: vi.fn(),
+  clearSelection: vi.fn(),
+  toggleGroup: vi.fn(),
+  groupPreview: vi.fn(() => [] as unknown[]),
+  groupHasMore: vi.fn(() => false),
+  groupExpanded: {} as Record<string, boolean>,
+  invitations: [] as unknown[],
+  pendingInvitationCount: 0,
+  respondInvitation: vi.fn(),
+  groups: { sharedByMe: { items: [], total: 0 } },
   loading: false,
   selectKb: vi.fn(),
   createKb: vi.fn(),
@@ -73,7 +86,14 @@ vi.mock('@/stores/knowledgeBase', async () => {
   }
 })
 
-const kbApi = vi.hoisted(() => ({ uploadDocuments: vi.fn(), deleteKb: vi.fn() }))
+const kbApi = vi.hoisted(() => ({
+  uploadDocuments: vi.fn(),
+  deleteKb: vi.fn(),
+  // 建库弹窗一打开就去拉提供商 / 模型：不打桩就会真的发 XHR，
+  // jsdom 抛 AggregateError 污染输出（用例本身还是绿的，噪音很迷惑人）
+  fetchAvailableProviders: vi.fn(async () => []),
+  fetchAvailableModels: vi.fn(async () => []),
+}))
 vi.mock('@/services/knowledgeBaseApi', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@/services/knowledgeBaseApi')
   return { ...actual, ...kbApi }
@@ -174,34 +194,151 @@ describe('KbDetail · 头部写操作按角色权限显隐', () => {
   })
 })
 
-describe('KnowledgeBaseView · 建库入口按权限显隐', () => {
+/**
+ * el-dropdown 的弹层在 jsdom 下会触发递归更新（见 kbCard.test.ts），这里换成
+ * 只渲染插槽的桩：默认插槽（触发器）与 dropdown 插槽（菜单项）都要渲染，否则
+ * 菜单项根本进不了 DOM，显隐也就断言不到。
+ */
+const DropdownStub = defineComponent({
+  name: 'ElDropdown',
+  emits: ['command'],
+  template: '<div class="dd-stub"><slot /><slot name="dropdown" /></div>',
+})
+
+const DropdownItemStub = defineComponent({
+  name: 'ElDropdownItem',
+  props: { command: { type: String, default: '' } },
+  template: '<div class="dd-item"><slot /></div>',
+})
+
+const DropdownMenuStub = defineComponent({
+  name: 'ElDropdownMenu',
+  template: '<div class="dd-menu"><slot /></div>',
+})
+
+/** KbSidebar 的替身：视图用例只关心"左栏抛出 create 后弹窗开没开" */
+const KbSidebarStub = defineComponent({
+  name: 'KbSidebar',
+  emits: ['create', 'share-manage', 'cancel-share'],
+  template: '<div class="kb-sidebar-stub" />',
+})
+
+async function mountView() {
+  const wrapper = mount(KnowledgeBaseView, {
+    global: { stubs: { RouterLink: true, KbSidebar: KbSidebarStub, KbDetail: true } },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+async function mountSidebar() {
+  const wrapper = mount(KbSidebar, {
+    global: {
+      stubs: {
+        teleport: true,
+        'el-dropdown': DropdownStub,
+        'el-dropdown-menu': DropdownMenuStub,
+        'el-dropdown-item': DropdownItemStub,
+      },
+    },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+/** 分组三点菜单——KB_GROUPS 的顺序是 公共 / 个人 / 我的共享 / 共享给我 */
+function groupMenu(wrapper: ReturnType<typeof mount>, index: number) {
+  return wrapper.findAllComponents(DropdownStub)[index]
+}
+
+describe('KnowledgeBaseView · 建库入口只在左栏', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     granted.value = new Set()
     storeMock.selectedKb = null
   })
 
-  async function mountView() {
-    const wrapper = mount(KnowledgeBaseView, {
-      global: { stubs: { RouterLink: true, KbSidebar: true, KbDetail: true } },
-    })
-    await flushPromises()
-    return wrapper
-  }
-
-  it('无 knowledge:create 时不显示新建入口', async () => {
-    const wrapper = await mountView()
-
-    expect(wrapper.find('.btn-create').exists()).toBe(false)
-    expect(wrapper.find('.create-card').exists()).toBe(false)
-  })
-
-  it('有 knowledge:create 时显示新建入口', async () => {
+  it('概览页不再内嵌建库入口（右上角按钮与卡片位都已撤掉）', async () => {
     granted.value = new Set(['knowledge:create'])
 
     const wrapper = await mountView()
 
-    expect(wrapper.find('.btn-create').exists()).toBe(true)
+    // 按文案断而不是按类名：类名会随重构改，用户看到的是"页面上还有没有建库入口"
+    expect(wrapper.text()).not.toContain('新建知识库')
+  })
+
+  it('左栏抛出 create 时打开新建弹窗', async () => {
+    granted.value = new Set(['knowledge:create'])
+    const wrapper = await mountView()
+
+    expect(wrapper.findComponent(KbCreateDialog).props('visible')).toBe(false)
+
+    wrapper.findComponent(KbSidebarStub).vm.$emit('create')
+    await flushPromises()
+
+    expect(wrapper.findComponent(KbCreateDialog).props('visible')).toBe(true)
+  })
+})
+
+describe('KbSidebar · 建库入口移入「个人知识库」的三点菜单', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    granted.value = new Set()
+    storeMock.selectedKb = null
+    vi.clearAllMocks()
+  })
+
+  it('有 knowledge:create 时个人分组菜单里有「新建知识库」', async () => {
+    granted.value = new Set(['knowledge:create'])
+
+    const wrapper = await mountSidebar()
+
+    expect(groupMenu(wrapper, 1).text()).toContain('新建知识库')
+  })
+
+  it('无 knowledge:create 时不出现该菜单项', async () => {
+    const wrapper = await mountSidebar()
+
+    expect(groupMenu(wrapper, 1).text()).not.toContain('新建知识库')
+  })
+
+  it('只有个人分组有建库入口（公共 / 共享分组不出现）', async () => {
+    granted.value = new Set(['knowledge:create'])
+
+    const wrapper = await mountSidebar()
+
+    expect(groupMenu(wrapper, 0).text()).not.toContain('新建知识库')
+    expect(groupMenu(wrapper, 2).text()).not.toContain('新建知识库')
+    expect(groupMenu(wrapper, 3).text()).not.toContain('新建知识库')
+  })
+
+  it('点分组名进入「查看更多」，折叠/展开只由箭头触发', async () => {
+    const wrapper = await mountSidebar()
+    const head = wrapper.findAll('.kb-group-head')[1]   // KB_GROUPS 顺序：公共 / 个人 / …
+
+    await head.find('.kb-group-label').trigger('click')
+
+    expect(storeMock.setActiveNav).toHaveBeenCalledWith('personal')
+    expect(storeMock.toggleGroup).not.toHaveBeenCalled()
+
+    await head.find('.kb-group-chevron').trigger('click')
+    expect(storeMock.toggleGroup).toHaveBeenCalledWith('personal')
+  })
+
+  it('选中「新建知识库」抛出 create，不影响「查看更多」', async () => {
+    granted.value = new Set(['knowledge:create'])
+    const wrapper = await mountSidebar()
+
+    groupMenu(wrapper, 1).vm.$emit('command', 'create')
+    await flushPromises()
+
+    expect(wrapper.emitted('create')).toHaveLength(1)
+    expect(storeMock.setActiveNav).not.toHaveBeenCalled()
+
+    groupMenu(wrapper, 1).vm.$emit('command', 'more')
+    await flushPromises()
+
+    expect(storeMock.setActiveNav).toHaveBeenCalledWith('personal')
   })
 })
 

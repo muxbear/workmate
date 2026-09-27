@@ -28,6 +28,7 @@ vi.mock('@/services/knowledgeBaseApi', () => ({
   // 组织（迭代 6 T6.2）
   pinKnowledgeBase: vi.fn(),
   moveKnowledgeBase: vi.fn(),
+  reorderKnowledgeBases: vi.fn(),
   copyKnowledgeBase: vi.fn(),
   assignKbGroup: vi.fn(),
   fetchKbGroups: vi.fn(),
@@ -611,6 +612,18 @@ describe('知识库 store —— 组织动作（迭代 6 T6.2）', () => {
     await store.moveKb('kb-1', 'up')
 
     expect(mocked.moveKnowledgeBase).toHaveBeenCalledWith('kb-1', 'up')
+  })
+
+  it('批量重排提交整段 id，并重取列表', async () => {
+    // 顺序由服务端算：只改本地数组的话，下次刷新会看到另一套顺序
+    mocked.reorderKnowledgeBases.mockResolvedValue(true)
+    mocked.fetchKBPage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 })
+    const store = useKnowledgeBaseStore()
+
+    await store.reorderKbs(['kb-3', 'kb-1', 'kb-2'])
+
+    expect(mocked.reorderKnowledgeBases).toHaveBeenCalledWith(['kb-3', 'kb-1', 'kb-2'])
+    expect(mocked.fetchKBPage).toHaveBeenCalled()
   })
 
   it('复制后回到第一页', async () => {

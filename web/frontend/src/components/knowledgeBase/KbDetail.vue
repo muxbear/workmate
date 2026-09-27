@@ -3,10 +3,9 @@ import { useI18n } from 'vue-i18n'
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Database, ChevronRight, RefreshCw, Trash2, Globe, Lock, Share2,
+  Database, RefreshCw, Trash2, Globe, Lock, Share2,
   Activity, FileText, Network, FileSearch, Settings2,
 } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
 import type { KB } from '@/types/knowledgeBase'
 import { KB_STATUS_CONFIG } from '@/types/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
@@ -25,7 +24,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  back: []
   delete: []
   update: [patch: Partial<KB>]
   changed: []
@@ -33,7 +31,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const store = useKnowledgeBaseStore()
-const router = useRouter()
 const activeTab = ref('overview')
 const reindexing = ref(false)
 const shareVisible = ref(false)
@@ -56,15 +53,6 @@ const sourceLabel = computed(() => {
   if (readonly.value) return props.kb.ownerName ? `由 ${props.kb.ownerName} 分享` : '他人分享'
   return ''
 })
-
-function handleGoHome() {
-  store.clearSelection()
-  router.push({ name: 'overview' })
-}
-
-function handleBackList() {
-  emit('back')
-}
 
 async function handleToggleVisibility() {
   publishing.value = true
@@ -148,13 +136,6 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
     <div class="detail-header">
       <div class="detail-header-inner">
         <div class="header-left">
-          <nav class="detail-crumbs" aria-label="breadcrumb">
-            <button class="crumb-link" @click="handleGoHome">{{ t('knowledge.detail.crumbHome') }}</button>
-            <ChevronRight :size="12" class="crumb-sep" />
-            <button class="crumb-link" @click="handleBackList">{{ t('knowledge.detail.crumbKb') }}</button>
-            <ChevronRight :size="12" class="crumb-sep" />
-            <span class="crumb-current">{{ kb.name }}</span>
-          </nav>
           <div class="kb-icon-box">
             <Database :size="20" />
           </div>
@@ -303,41 +284,6 @@ async function handleSaveAndReindex(config: typeof props.kb.config) {
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.detail-crumbs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-sm);
-  white-space: nowrap;
-}
-
-.crumb-link {
-  padding: 0;
-  border: none;
-  background: none;
-  font: inherit;
-  color: var(--foreground-secondary);
-  cursor: pointer;
-  transition: color 0.15s;
-}
-
-.crumb-link:hover {
-  color: var(--accent-primary);
-}
-
-.crumb-sep {
-  color: var(--foreground-muted);
-  flex-shrink: 0;
-}
-
-.crumb-current {
-  color: var(--foreground-primary);
-  font-weight: var(--font-weight-medium);
-  max-width: 360px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .kb-icon-box {

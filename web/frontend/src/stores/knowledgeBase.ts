@@ -265,6 +265,19 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     await fetchKbs(kbPage.value)
   }
 
+  /**
+   * 批量重排（拖拽排序）：`ids` 是**同一置顶分组内连续一段**的新顺序。
+   *
+   * 顺序由服务端算（它才知道整段在列表里的位置），所以重排后要重取列表——
+   * 只改本地数组的话，下次刷新会看到另一套顺序。
+   */
+  async function reorderKbs(ids: string[]) {
+    await kbApi.reorderKnowledgeBases(ids)
+    await fetchKbs(kbPage.value)
+    const group = groups.value.personal
+    if (group?.loaded) await loadGroup('personal', group.page)
+  }
+
   /** 复制（只复制定义与配置），成功后回到第一页让用户看到新库 */
   async function copyKb(kbId: string, name?: string): Promise<KB> {
     const created = await kbApi.copyKnowledgeBase(kbId, name)
@@ -924,6 +937,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     setGroupFilter,
     togglePin,
     moveKb,
+    reorderKbs,
     copyKb,
     exportKb,
     loadKbGroups,

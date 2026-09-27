@@ -16,11 +16,11 @@ import KbDetail from '@/components/knowledgeBase/KbDetail.vue'
 import KbSidebar from '@/components/knowledgeBase/KbSidebar.vue'
 import KbGroupList from '@/components/knowledgeBase/KbGroupList.vue'
 import KbShareManageDialog from '@/components/knowledgeBase/KbShareManageDialog.vue'
-import { useKbPermissions } from '@/composables/useKbPermissions'
 
 const store = useKnowledgeBaseStore()
 const { t } = useI18n()
 
+/** 建库弹窗：入口在左栏「个人知识库」的分组菜单（角色无 knowledge:create 时不出现） */
 const createVisible = ref(false)
 
 // ─── 检索与筛选（迭代 6 T6.2）────────────────────────────────────────────
@@ -56,8 +56,6 @@ async function handleCreateGroup() {
   }
 }
 
-// 角色无 knowledge:create 时不显示任何建库入口（后端也会 403）
-const { canCreate } = useKbPermissions()
 const confirmDeleteId = ref<string | null>(null)
 const shareManageKbId = ref<string | null>(null)
 
@@ -100,10 +98,6 @@ async function handleCreate(data: CreateKBRequest) {
 
 function handleSelectKb(kb: KB) {
   void store.selectKb(kb.id)
-}
-
-function handleBack() {
-  store.clearSelection()
 }
 
 async function handleUpdateKb(patch: Partial<KB>) {
@@ -155,7 +149,9 @@ async function handleCancelShare(kbId: string) {
   <div class="kb-page panels">
     <!-- ── 左栏：概览 + 四个栏目 ── -->
     <div class="panel-left">
+      <!-- 建库入口在「个人知识库」的三点菜单里，概览页不再内嵌 -->
       <KbSidebar
+        @create="createVisible = true"
         @share-manage="openShareManage"
         @cancel-share="handleCancelShare"
       />
@@ -167,7 +163,6 @@ async function handleCancelShare(kbId: string) {
       <KbDetail
         v-if="store.selectedKb"
         :kb="store.selectedKb"
-        @back="handleBack"
         @delete="handleDeleteConfirm(store.selectedKb!)"
         @update="handleUpdateKb"
         @changed="() => store.loadGroup('sharedByMe', 1)"
@@ -195,9 +190,6 @@ async function handleCancelShare(kbId: string) {
                 </div>
               </div>
             </div>
-            <el-button v-if="canCreate" type="primary" size="large" @click="createVisible = true" class="btn-create">
-              <Plus :size="16" class="btn-icon" />{{ t('knowledge.list.create') }}
-            </el-button>
           </div>
 
           <!-- 统计卡片 -->
@@ -291,13 +283,9 @@ async function handleCancelShare(kbId: string) {
                 :key="kb.id"
                 :kb="kb"
                 :readonly="!kb.isOwner"
+                hide-menu
                 @click="handleSelectKb(kb)"
               />
-              <div v-if="canCreate" class="create-card" @click="createVisible = true">
-                <div class="create-icon-box"><Plus :size="24" /></div>
-                <div class="create-text">{{ t('knowledge.list.create') }}</div>
-                <div class="create-sub">{{ t('knowledge.list.schemeHint') }}</div>
-              </div>
               <el-empty
                 v-if="store.filteredKbs.length === 0"
                 :description="t('knowledge.list.empty')"
@@ -525,15 +513,6 @@ async function handleCancelShare(kbId: string) {
   margin: 2px 0 0;
 }
 
-.btn-create {
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-  border: none;
-}
-
-.btn-create:hover {
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
-}
-
 /* Stats */
 .stats-row {
   display: grid;
@@ -646,45 +625,6 @@ async function handleCancelShare(kbId: string) {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
-}
-
-.create-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 280px;
-  border: 2px dashed var(--border-subtle);
-  border-radius: var(--radius-card);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.create-card:hover {
-  border-color: rgba(59, 130, 246, 0.4);
-}
-
-.create-icon-box {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #93c5fd;
-}
-
-.create-text {
-  font-size: var(--font-size-base);
-  color: var(--foreground-primary);
-}
-
-.create-sub {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
 }
 
 /* Table */
@@ -932,10 +872,6 @@ async function handleCancelShare(kbId: string) {
   font-size: var(--font-size-sm);
   color: var(--foreground-secondary);
   margin: 0;
-}
-
-.btn-icon {
-  margin-right: 4px;
 }
 
 /*

@@ -1,18 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import KbCard from '@/components/knowledgeBase/KbCard.vue'
+import KbEditDialog from '@/components/knowledgeBase/KbEditDialog.vue'
 import type { KB } from '@/types/knowledgeBase'
 
 /**
  * 知识库卡片的组织操作入口（迭代 6 T6.2）。
  *
- * 关键不变式：**只有库主能整理自己的列表**——置顶/排序/归组表达的是"我的视图
+ * 关键不变式：**只有库主能整理自己的列表**——置顶/编辑/复制表达的是"我的视图
  * 偏好"，公共库与他人分享的库上不该出现这些入口（后端也会拒）。
  *
  * 菜单里的各个动作由 store 用例覆盖（见 tests/stores/knowledgeBase.test.ts）；
- * 这里不展开 el-dropdown 的弹层——它在 jsdom 下会触发递归更新，且弹层内容是
- * Element Plus 自己的渲染，断言它只是在测第三方组件。
+ * 这里不挂真实的 el-dropdown 弹层——它在 jsdom 下会触发递归更新，且弹层定位是
+ * Element Plus 自己的渲染。改用只渲染插槽的桩：不测第三方组件，但**菜单项本身
+ * 进得了 DOM**，这样"哪些项在、哪些项不在"才断言得到。
  */
+
+const DropdownStub = defineComponent({
+  name: 'ElDropdown',
+  emits: ['command'],
+  template: '<div class="stub-dropdown"><slot /><slot name="dropdown" /></div>',
+})
+
+const DropdownMenuStub = defineComponent({
+  name: 'ElDropdownMenu',
+  template: '<div class="stub-menu"><slot /></div>',
+})
+
+const DropdownItemStub = defineComponent({
+  name: 'ElDropdownItem',
+  props: { command: { type: String, default: '' } },
+  template: '<div class="stub-item"><slot /></div>',
+})
 
 const store = vi.hoisted(() => ({
   docQuery: { page: 1, pageSize: 20, total: 0, search: '', loading: false },
@@ -60,14 +80,19 @@ function mountCard(overrides: Partial<KB> = {}, readonly = false) {
       // 污染整轮测试）。这里只断言"入口按钮在不在"，弹层用 stub 隔离。
       stubs: {
         teleport: true,
-        // 渲染默认插槽（按钮在插槽里），但不挂载弹层
-        'el-dropdown': { template: '<div class="stub-dropdown"><slot /></div>' },
-        'el-dropdown-menu': true,
-        'el-dropdown-item': true,
+        // 两个插槽都渲染：触发器（默认插槽）与菜单项（dropdown 插槽）
+        'el-dropdown': DropdownStub,
+        'el-dropdown-menu': DropdownMenuStub,
+        'el-dropdown-item': DropdownItemStub,
         'el-dialog': true,
       },
     },
   })
+}
+
+/** 卡片的操作菜单（命令靠 el-dropdown 的 command 事件回抛） */
+function cardMenu(wrapper: ReturnType<typeof mountCard>) {
+  return wrapper.findAllComponents(DropdownStub)[0]
 }
 
 beforeEach(() => {
@@ -88,6 +113,15 @@ describe('KbCard · 组织操作入口', () => {
     expect(wrapper.find('.card-menu-btn').exists()).toBe(false)
   })
 
+  it('概览页（hideMenu）不显示操作菜单，整顿操作只在「查看更多」里做', () => {
+    const wrapper = mount(KbCard, {
+      props: { kb: makeKb(), hideMenu: true },
+      global: { stubs: { teleport: true, 'el-dialog': true } },
+    })
+
+    expect(wrapper.find('.card-menu-btn').exists()).toBe(false)
+  })
+
   it('他人的库（非库主）即使非只读也不显示', () => {
     const wrapper = mountCard({ isOwner: false })
 
@@ -100,6 +134,35 @@ describe('KbCard · 组织操作入口', () => {
     expect(wrapper.text()).toContain('置顶')
   })
 
+  it('菜单项：置顶 / 重命名 / 编辑 / 复制 / 导出配置', () => {
+    const menu = cardMenu(mountCard()).text()
+
+    expect(menu).toContain('置顶')
+    expect(menu).toContain('重命名')
+    expect(menu).toContain('编辑')
+    expect(menu).toContain('复制（含配置）')
+    expect(menu).toContain('导出配置')
+  })
+
+  it('菜单项里不再有上移 / 下移 / 归入分组', () => {
+    // 排序改成「查看更多」页长按拖动；分组归属并入「编辑」弹窗
+    const menu = cardMenu(mountCard()).text()
+
+    expect(menu).not.toContain('上移')
+    expect(menu).not.toContain('下移')
+    expect(menu).not.toContain('归入分组')
+  })
+
+  it('选中「编辑」打开编辑弹窗', async () => {
+    const wrapper = mountCard()
+
+    expect(wrapper.findComponent(KbEditDialog).props('visible')).toBe(false)
+
+    cardMenu(wrapper).vm.$emit('command', 'edit')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findComponent(KbEditDialog).props('visible')).toBe(true)
+  })
 
   it('切到英文后渲染英文文案（真双语的端到端验证）', async () => {
     // 前面都是断言中文——那些断言能过是因为 zh-CN 仍是默认语言、渲染结果逐字未变。

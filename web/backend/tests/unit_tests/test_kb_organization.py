@@ -25,6 +25,7 @@ from api.knowledge_base.service import (
     list_kbs,
     move_kb,
     rename_group,
+    reorder_kbs,
     set_kb_pinned,
 )
 from db.models.knowledge_base import KnowledgeBase
@@ -138,6 +139,90 @@ class TestPinningAndOrder:
                 await move_kb(db, "a", USER_A, "left")
 
         assert exc.value.status_code == 400
+
+
+class TestReorder:
+    """拖拽排序（一次提交一段的新顺序）。"""
+
+    async def test_reorders_a_contiguous_run(self, sessionmaker):
+        for i, kb_id in enumerate(("a", "b", "c")):
+            await seed_kb(sessionmaker, kb_id, f"库{i}")
+
+        async with sessionmaker() as db:
+            count = await reorder_kbs(db, USER_A, ["c", "a", "b"])
+            await db.commit()
+
+        assert count == 3
+        assert await ordered_names(sessionmaker) == ["库2", "库0", "库1"]
+
+    async def test_reorders_only_the_submitted_run(self, sessionmaker):
+        """只提交连续的一段时，段外的库顺序不受影响。"""
+        for i, kb_id in enumerate(("a", "b", "c", "d")):
+            await seed_kb(sessionmaker, kb_id, f"库{i}")
+
+        async with sessionmaker() as db:
+            await reorder_kbs(db, USER_A, ["c", "b"])
+            await db.commit()
+
+        assert await ordered_names(sessionmaker) == ["库0", "库2", "库1", "库3"]
+
+    async def test_ties_are_normalized(self, sessionmaker):
+        """新建的库 sort_order 全是 0（并列）：重排后必须落成互不相同的值。
+
+        并列时"谁在谁前面"完全取决于 updated_at，用户拖出来的顺序会被更新时间推翻。
+        """
+        for i, kb_id in enumerate(("a", "b", "c")):
+            await seed_kb(sessionmaker, kb_id, f"库{i}")
+
+        async with sessionmaker() as db:
+            await reorder_kbs(db, USER_A, ["c", "b", "a"])
+            await db.commit()
+
+        async with sessionmaker() as db:
+            rows = await db.execute(
+                select(KnowledgeBase.sort_order).where(KnowledgeBase.user_id == USER_A)
+            )
+        assert sorted(r for (r,) in rows.all()) == [0, 1, 2]
+
+    async def test_does_not_cross_the_pin_boundary(self, sessionmaker):
+        """置顶项与未置顶项不能互相穿插——插进去的项会在刷新后"跳"回自己那一段。"""
+        for i, kb_id in enumerate(("a", "b", "c")):
+            await seed_kb(sessionmaker, kb_id, f"库{i}")
+        async with sessionmaker() as db:
+            await set_kb_pinned(db, "c", USER_A, True)
+            await db.commit()
+
+        async with sessionmaker() as db:
+            with pytest.raises(HTTPException) as exc:
+                await reorder_kbs(db, USER_A, ["a", "c"])
+        assert exc.value.status_code == 400
+
+    async def test_non_contiguous_run_is_rejected(self, sessionmaker):
+        """跳段提交会连带改掉中间那些库的顺序——只接受连续的一段。"""
+        for i, kb_id in enumerate(("a", "b", "c")):
+            await seed_kb(sessionmaker, kb_id, f"库{i}")
+
+        async with sessionmaker() as db:
+            with pytest.raises(HTTPException) as exc:
+                await reorder_kbs(db, USER_A, ["a", "c"])
+        assert exc.value.status_code == 400
+
+    async def test_duplicate_ids_are_rejected(self, sessionmaker):
+        await seed_kb(sessionmaker, "a", "库0")
+
+        async with sessionmaker() as db:
+            with pytest.raises(HTTPException) as exc:
+                await reorder_kbs(db, USER_A, ["a", "a"])
+        assert exc.value.status_code == 400
+
+    async def test_another_users_kb_is_not_sortable(self, sessionmaker):
+        await seed_kb(sessionmaker, "a", "库0")
+        await seed_kb(sessionmaker, "b", "别人的库", user_id=USER_B)
+
+        async with sessionmaker() as db:
+            with pytest.raises(HTTPException) as exc:
+                await reorder_kbs(db, USER_A, ["b"])
+        assert exc.value.status_code == 404
 
     async def test_ordering_only_applies_to_personal_scope(self, sessionmaker):
         """排序只在 scope=personal 生效。

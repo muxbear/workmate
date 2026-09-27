@@ -241,6 +241,12 @@ export async function moveKnowledgeBase(id: string, direction: 'up' | 'down'): P
   return mapKB(res.data.data as RawKB)
 }
 
+/** 批量重排（拖拽排序）：`ids` 是同一置顶分组内连续一段的新顺序 */
+export async function reorderKnowledgeBases(ids: string[]): Promise<boolean> {
+  const res = await instance.post('/knowledge-bases/reorder', { ids })
+  return res.data.code === 0
+}
+
 /** 复制知识库（只复制定义与配置，不复制文档与向量） */
 export async function copyKnowledgeBase(id: string, name?: string): Promise<KB> {
   const res = await instance.post(`/knowledge-bases/${id}/copy`, { name })
