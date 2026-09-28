@@ -74,6 +74,17 @@ SCOPE_CATALOG: dict[str, ScopeMeta] = {
         description="关闭后设置中的模型无法从 Web 端同步",
         group="模型",
     ),
+    "knowledge:read": ScopeMeta(
+        label="读取并检索知识库",
+        description="关闭后客户端无法列出、检索与查看知识库内容（含云知识库检索专家）",
+        group="知识库",
+    ),
+    "knowledge:write": ScopeMeta(
+        label="创建、修改、删除知识库内容",
+        description="关闭后客户端只能读知识库，不能在云端建库、传文档或改动内容",
+        group="知识库",
+        default_granted=False,
+    ),
 }
 
 # 兼容旧调用：scope -> 展示名称

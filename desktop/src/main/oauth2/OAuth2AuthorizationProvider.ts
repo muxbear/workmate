@@ -151,6 +151,28 @@ export class OAuth2AuthorizationProvider {
   }
 
   /**
+   * **非交互**取 token：只在本地已授权时取，绝不打开浏览器。
+   *
+   * 与 `ensureAccessToken` 的区别是失败时不补救授权：后者在 refresh 失效时会
+   * `clear` + `ensureAuthorization`（见上），也就是**弹浏览器**。凡是在页面挂载、
+   * 智能体构建这类后台路径上取 token，都必须用这个版本——用户没点任何东西却
+   * 蹦出授权窗口是不可接受的；取不到就返回 null，由调用方给出可读提示。
+   */
+  async tryEnsureAccessToken(
+    localUserId: string,
+    required: readonly string[]
+  ): Promise<string | null> {
+    if (!this.hasScopes(localUserId, required)) return null
+    try {
+      return await this.oauth2Client.ensureValidAccessToken(oauth2SessionTokenKey(localUserId))
+    } catch (err) {
+      // refresh token 失效（撤销、过期、换绑）——只记日志，不触发授权
+      console.warn('[oauth2] 静默取 token 失败（不触发授权）:', err)
+      return null
+    }
+  }
+
+  /**
    * 收缩本地 token 的 scope（授权管理中关闭某项权限后立即生效，决策 D3）。
    * 返回收缩后的 scope 列表。
    */

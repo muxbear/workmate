@@ -56,6 +56,27 @@ def mcp_request():
         request_ctx.reset(token)  # type: ignore[arg-type]
 
 
+def _no_runtime_context(monkeypatch) -> None:
+    """让身份解析走 MCP 请求头那条路（MCP 服务进程里没有 LangGraph 运行时上下文）。"""
+
+    def _raise() -> None:
+        raise RuntimeError("no runtime")
+
+    monkeypatch.setattr("langgraph.runtime.get_runtime", _raise)
+
+
+def _bearer_in_request_header(monkeypatch, token: str) -> None:
+    """等价于"请求头里带着这枚 token"，且可在异步用例中使用。
+
+    ``mcp_request`` fixture 装的是 ``request_ctx``（contextvar），只在同步用例里安全：
+    异步用例的 setup/teardown 跨 Context，set/reset 会抛
+    "was created in a different Context"。这里直接替掉读取请求头的那一步。
+    """
+    monkeypatch.setattr(
+        request_auth, "authorization_header", lambda: f"Bearer {token}"
+    )
+
+
 def test_no_request_context_means_no_identity():
     """进程内内存传输（自托管服务）没有 HTTP 请求，不得凭空造出身份。"""
     assert request_auth.authorization_header() == ""
@@ -63,7 +84,7 @@ def test_no_request_context_means_no_identity():
 
 
 def test_missing_authorization_header_is_not_identity(mcp_request):
-    """带请求头但没有 Authorization（如桌面端当前实现）→ 无身份。"""
+    """带请求头但没有 Authorization → 无身份（服务端绝不放行无凭据的调用）。"""
     mcp_request({"accept": "application/json"})
     assert request_auth.user_id_from_mcp_request() == ""
 
@@ -116,6 +137,108 @@ def test_token_signed_with_other_secret_is_rejected(mcp_request, monkeypatch):
     )
     mcp_request({"authorization": f"Bearer {forged}"})
     assert request_auth.user_id_from_mcp_request() == ""
+
+
+# ─── OAuth2 scope 门禁：客户端 token 必须被授予 knowledge:read ────────────────
+#
+# 身份有效 ≠ 有权用知识库：OAuth2 客户端（token 带 client_id）还必须在授权页
+# 被授予 knowledge:read。这里逐项锁住判定矩阵，避免"用户在授权页关掉了知识库，
+# 客户端却照样搜得到"。
+
+
+def test_no_request_context_passes_scope_check():
+    """进程内调用（Web 智能体对话）没有请求头，不适用 scope 门禁。"""
+    assert request_auth.missing_scope_from_mcp_request("knowledge:read") is None
+
+
+def test_first_party_token_passes_scope_check(mcp_request):
+    """Web 第一方 token（无 client_id claim）放行——与 REST 的 require_scope 同口径。"""
+    mcp_request({"authorization": f"Bearer {create_token_pair(USER_A).accessToken}"})
+    assert request_auth.missing_scope_from_mcp_request("knowledge:read") is None
+
+
+@pytest.mark.parametrize(
+    "scope",
+    ["", "skill:read", "skill:read expert:read model:read", "knowledge:write"],
+)
+def test_client_token_without_read_scope_is_flagged(mcp_request, scope):
+    """客户端 token 缺 knowledge:read → 返回缺失项（调用方据此拒绝）。
+
+    ``knowledge:write`` 不算数：读写两枚 scope 各自独立，写权限不隐含读权限。
+    """
+    token = create_token_pair(
+        USER_A, {"client_id": "ke-work-desktop", "scope": scope}
+    ).accessToken
+    mcp_request({"authorization": f"Bearer {token}"})
+    assert request_auth.missing_scope_from_mcp_request("knowledge:read") == "knowledge:read"
+
+
+def test_client_token_with_read_scope_passes(mcp_request):
+    """被授予 knowledge:read 的客户端 token 通过门禁。"""
+    token = create_token_pair(
+        USER_A, {"client_id": "ke-work-desktop", "scope": "skill:read knowledge:read"}
+    ).accessToken
+    mcp_request({"authorization": f"Bearer {token}"})
+    assert request_auth.missing_scope_from_mcp_request("knowledge:read") is None
+
+
+def test_invalid_token_defers_to_identity_check(mcp_request):
+    """无效 token 不在这一层报 scope 问题：由身份解析给出统一的"缺少身份"口径。"""
+    mcp_request({"authorization": "Bearer not-a-jwt"})
+    assert request_auth.missing_scope_from_mcp_request("knowledge:read") is None
+
+
+async def test_tools_refuse_client_token_without_read_scope(
+    patched_env, sessionmaker, monkeypatch
+):
+    """客户端 token 缺 knowledge:read：身份有效也拒绝，并给出可操作提示。"""
+    from mcp_servers.kb_server import list_knowledge_bases
+
+    token = create_token_pair(
+        USER_A, {"client_id": "ke-work-desktop", "scope": "skill:read"}
+    ).accessToken
+    # 异步用例不装 request_ctx（contextvar 跨上下文 set/reset 会失败），直接替掉"读请求头"这一步
+    _bearer_in_request_header(monkeypatch, token)
+    _no_runtime_context(monkeypatch)
+    await seed_kb(sessionmaker, "kb-a", USER_A)
+
+    result = await list_knowledge_bases()
+
+    assert "error" in result
+    assert "knowledge:read" in result["error"]
+    assert "授权" in result["hint"], "提示要告诉用户去哪儿开权限，而不是只报错"
+    assert not result.get("knowledge_bases"), "被拒绝时不得带出任何库"
+
+
+async def test_tools_allow_client_token_with_read_scope(
+    patched_env, sessionmaker, monkeypatch
+):
+    """被授予 knowledge:read 的客户端 token：正常拿到自己的库。"""
+    from mcp_servers.kb_server import list_knowledge_bases
+
+    token = create_token_pair(
+        USER_A, {"client_id": "ke-work-desktop", "scope": "knowledge:read"}
+    ).accessToken
+    _bearer_in_request_header(monkeypatch, token)
+    _no_runtime_context(monkeypatch)
+    await seed_kb(sessionmaker, "kb-a", USER_A)
+
+    result = await list_knowledge_bases()
+
+    assert "error" not in result, result
+    assert [kb["kb_id"] for kb in result["knowledge_bases"]] == ["kb-a"]
+
+
+def test_tools_allow_first_party_token_without_scope(mcp_request, monkeypatch):
+    """第一方 Web token 不受 scope 约束（Web 登录本来就不走 OAuth2 授权页）。
+
+    只断言门禁放行，不落到数据库：本用例的意图就是"这一层不拦"。
+    """
+    token = create_token_pair(USER_A, {"role": "user"}).accessToken
+    mcp_request({"authorization": f"Bearer {token}"})
+    _no_runtime_context(monkeypatch)
+
+    assert request_auth.missing_scope_from_mcp_request("knowledge:read") is None
 
 
 # ─── kb_search 的身份分层：运行时上下文优先，其次请求头 ─────────────────────

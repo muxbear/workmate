@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db, get_vector_store
+from api.deps import get_db, get_vector_store, require_scope
 from api.knowledge_base.graph_service import (
     get_entity_detail,
     get_graph_data,
@@ -23,7 +23,7 @@ async def get_graph(
     kb_id: str,
     entity_type: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取知识图谱数据（实体 + 关系）。可读即可查看。"""
     await require_kb_readable(db, kb_id, user_id)
@@ -36,7 +36,7 @@ async def get_entity(
     kb_id: str,
     entity_key: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取实体详情。
 
@@ -60,6 +60,7 @@ async def re_extract_graph(
     db: AsyncSession = Depends(get_db),
     # 重抽图谱会清掉该库现有实体与关系并用 LLM 重建：属于库级写操作
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """重新抽取知识图谱——遍历所有已索引文档，从**已存切片**重建实体和关系。"""
     kb = await _get_kb_or_404(db, kb_id, user_id)

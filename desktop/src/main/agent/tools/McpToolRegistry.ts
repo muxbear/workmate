@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMcpTools } from '@langchain/mcp-adapters'
 import type { DynamicStructuredTool } from '@langchain/core/tools'
 import type { DesktopMcpConfig } from '../../../preload/index.d'
+import type { McpAuthBinding, McpAuthFailure } from '../../oauth2/mcpAuth'
 
 /** MCP 连接超时（毫秒） */
 const CONNECT_TIMEOUT_MS = 8_000
@@ -59,7 +60,7 @@ function resolveEndpoint(
   return null
 }
 
-async function getMcpClient(cfg: DesktopMcpConfig): Promise<Client> {
+async function getMcpClient(cfg: DesktopMcpConfig, mcpAuth?: McpAuthBinding): Promise<Client> {
   const endpoint = resolveEndpoint(cfg)
   if (!endpoint) {
     throw new Error(`MCP 工具「${cfg.mcpToolName || cfg.mcpToolId}」缺少连接地址`)
@@ -67,15 +68,35 @@ async function getMcpClient(cfg: DesktopMcpConfig): Promise<Client> {
   const cached = mcpClients.get(endpoint.key)
   if (cached) return cached
 
+  // 凭据按请求现取（自定义 fetch），不写进 requestInit：后者在构造 transport 时就固化了，
+  // 而客户端是按 URL 长期缓存的——写死必然在 access token 过期后变成坏连接。
+  const authedFetch = mcpAuth?.fetchFor(endpoint.url) ?? null
+  const transportOptions = authedFetch ? { fetch: authedFetch } : undefined
+
   const client = new Client({ name: 'ke-work-desktop', version: '1.0.0' }, { capabilities: {} })
   const transport =
     endpoint.kind === 'http'
-      ? new StreamableHTTPClientTransport(new URL(endpoint.url))
-      : new SSEClientTransport(new URL(endpoint.url))
+      ? new StreamableHTTPClientTransport(new URL(endpoint.url), transportOptions)
+      : new SSEClientTransport(new URL(endpoint.url), transportOptions)
 
   await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, endpoint.url)
   mcpClients.set(endpoint.key, client)
   return client
+}
+
+/**
+ * 关闭并清空缓存的 MCP 客户端。
+ *
+ * 缓存按地址复用（跨智能体构建），但**身份是按人变化的**：登出或撤销授权后
+ * 必须丢弃，否则下一个用户会复用到上一个用户建立的会话。
+ */
+export function resetMcpClients(): void {
+  for (const client of mcpClients.values()) {
+    client.close().catch((error) => {
+      console.warn('[mcp-tools] 关闭缓存的 MCP 客户端失败（忽略）：', error)
+    })
+  }
+  mcpClients.clear()
 }
 
 /** Resolve per-tool timeout (ms): explicit config > env var > service default. */
@@ -124,11 +145,42 @@ export interface McpLoadFailure {
   url: string
   /** 失败原因 */
   message: string
+  /**
+   * 失败类别：缺授权时上层要给出"去开启权限"的动作，而不是笼统的连不上。
+   * 缺省视为 `connect-failed`（历史调用方只需读 message）。
+   */
+  code?: 'connect-failed' | 'auth-required' | 'auth-failed'
 }
 
 export interface BuildExpertMcpToolsOptions {
   /** 单个 MCP 服务加载失败时回调（上层汇总后提示用户） */
   onError?: (failure: McpLoadFailure) => void
+  /**
+   * OAuth2 凭据绑定（见 ``main/oauth2/mcpAuth``）。
+   * 只有本平台后端的 MCP 端点会被注入凭据；缺省时不注入，行为与历史版本一致。
+   */
+  mcpAuth?: McpAuthBinding
+}
+
+/**
+ * 平台内 MCP 端点缺凭据时返回失败信息；不需要凭据或凭据可用时返回 null。
+ *
+ * 注意：这类服务的连接**本身会成功**（拒绝发生在工具调用层，由服务端返回结构化错误），
+ * 所以不能靠"连不上"来发现问题——必须在建连前显式探测一次凭据。
+ */
+async function probeAuthFailure(
+  endpoint: { url: string } | null,
+  mcpAuth?: McpAuthBinding
+): Promise<McpAuthFailure | null> {
+  if (!mcpAuth || !endpoint || !mcpAuth.applies(endpoint.url)) return null
+  const token = await mcpAuth.probe()
+  if (token) return null
+  return (
+    mcpAuth.getLastFailure() ?? {
+      code: 'auth-required',
+      message: '需要先登录并授权本平台账号后才能使用该服务'
+    }
+  )
 }
 
 /**
@@ -150,8 +202,25 @@ export async function buildExpertMcpTools(
   for (const raw of mcpConfigs) {
     const cfg = normalizeMcpConfig(raw)
     if (!cfg || !cfg.enabled) continue
+
+    // 平台内 MCP 端点缺凭据时**不注册**它的工具：这些工具每次调用都会被服务端按
+    // "缺少身份"拒绝，挂给智能体只会制造"看起来有、用起来报错"的假能力。
+    // 拒绝原因经 onError 上报，由上层提示用户去开启授权。
+    const endpoint = resolveEndpoint(cfg)
+    const authFailure = await probeAuthFailure(endpoint, options.mcpAuth)
+    if (authFailure) {
+      console.warn(`[mcp-tools] 专家 MCP 工具「${cfg.mcpToolName}」未加载：${authFailure.message}`)
+      options.onError?.({
+        toolName: cfg.mcpToolName || cfg.mcpToolId || 'MCP 服务',
+        url: endpoint?.url ?? '',
+        code: authFailure.code,
+        message: authFailure.message
+      })
+      continue
+    }
+
     try {
-      const client = await getMcpClient(cfg)
+      const client = await getMcpClient(cfg, options.mcpAuth)
       const loaded = await loadMcpTools(cfg.mcpToolName || 'mcp', client, {
         defaultToolTimeout: resolveToolTimeoutMs(cfg)
       })

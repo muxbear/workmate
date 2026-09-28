@@ -1,6 +1,8 @@
 """OAuth2 授权记忆（consent）、scope 收窄与增量授权的单元测试."""
 
+import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -23,7 +25,7 @@ from api.oauth2.oauth2_service import (
     refresh_token_exchange,
     revoke_consent,
 )
-from api.oauth2.scope_service import REQUIRED_SCOPES
+from api.oauth2.scope_service import REQUIRED_SCOPES, SCOPE_CATALOG
 from core.cache import MemoryCache
 from db.base import Base
 from db.models import Account, OAuth2Client, OAuth2RefreshToken
@@ -31,7 +33,13 @@ from db.models import Account, OAuth2Client, OAuth2RefreshToken
 pytestmark = pytest.mark.anyio
 
 ALLOWED_SCOPES = ["user:read", "conversation:write", "skill:read", "expert:read"]
+#: 知识库 scope 单列：写权限默认关闭，混进 ALLOWED_SCOPES 会让"默认全开"的既有断言失真
+KNOWLEDGE_SCOPES = ["knowledge:read", "knowledge:write"]
 REDIRECT_URI = "http://127.0.0.1:54821/callback"
+
+_SEED_PATH = (
+    Path(__file__).resolve().parents[2] / "src" / "db" / "seeds" / "oauth2_clients_seed.json"
+)
 
 
 @pytest.fixture
@@ -277,3 +285,163 @@ async def test_revoke_all_removes_consent(db_session: AsyncSession) -> None:
     next_state = await _create_state(db_session, cache, ALLOWED_SCOPES)
     context = await get_authorize_context(next_state, user.id, db_session, cache)
     assert context.autoApprove is False
+
+
+class TestScopeCatalog:
+    """scope 目录与客户端白名单的一致性（含本次新增的知识库 scope）。"""
+
+    def test_knowledge_scopes_are_registered(self) -> None:
+        """知识库读写两个 scope 都已登记，且默认开关符合预期。"""
+        read = SCOPE_CATALOG["knowledge:read"]
+        write = SCOPE_CATALOG["knowledge:write"]
+
+        assert read.group == write.group == "知识库"
+        assert not read.required and not write.required, "两项都该允许用户逐项关闭"
+        assert read.default_granted is True, "读权限默认开，否则客户端登录后立刻用不了知识库"
+        assert write.default_granted is False, "写权限必须由用户显式开启"
+
+    def test_seed_clients_only_use_registered_scopes(self) -> None:
+        """种子客户端声明的每个 scope 都必须在目录里登记。
+
+        两种错配都靠人工核对不住：漏登记会让客户端的授权请求被
+        ``validate_scope_subset`` 直接 400；登记了但不在白名单里则永远申请不到。
+        """
+        payload = json.loads(_SEED_PATH.read_text(encoding="utf-8"))
+        unknown = {
+            (client["client_id"], scope)
+            for client in payload["clients"]
+            for scope in client["allowed_scopes"]
+            if scope not in SCOPE_CATALOG
+        }
+        assert not unknown, f"种子里有未登记的 scope：{sorted(unknown)}"
+
+    def test_desktop_client_may_request_knowledge_scopes(self) -> None:
+        """桌面端必须在白名单里有知识库 scope——否则整个云知识库能力申请不到。"""
+        payload = json.loads(_SEED_PATH.read_text(encoding="utf-8"))
+        desktop = next(
+            client for client in payload["clients"] if client["client_id"] == "ke-work-desktop"
+        )
+        assert set(KNOWLEDGE_SCOPES) <= set(desktop["allowed_scopes"])
+
+
+async def test_knowledge_scopes_on_consent_page(db_session: AsyncSession) -> None:
+    """知识库 scope 走到授权页：读默认开、写默认关。"""
+    user = Account(username="oauth-kb-test", nickname="Tester")
+    db_session.add(
+        OAuth2Client(
+            client_id="ke-work-desktop",
+            client_name="KE-WORK 桌面版",
+            client_type="public",
+            redirect_uris=["http://127.0.0.1:{port}/callback"],
+            allowed_scopes=[*ALLOWED_SCOPES, *KNOWLEDGE_SCOPES],
+            grant_types=["authorization_code"],
+            enabled=True,
+        )
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    cache = MemoryCache()
+    state = await _create_state(db_session, cache, [*ALLOWED_SCOPES, *KNOWLEDGE_SCOPES])
+    context = await get_authorize_context(state, user.id, db_session, cache)
+
+    infos = {info.key: info for info in context.scopes}
+    assert infos["knowledge:read"].defaultGranted is True
+    assert infos["knowledge:write"].defaultGranted is False
+    assert all(info.group == "知识库" for info in (infos["knowledge:read"], infos["knowledge:write"]))
+    assert all(info.description for info in (infos["knowledge:read"], infos["knowledge:write"])), (
+        "授权页要说明关掉之后会怎样，否则用户没法做决定"
+    )
+
+
+async def test_narrowing_knowledge_write_keeps_read(db_session: AsyncSession) -> None:
+    """用户显式关掉写权限：token 里只保留读，且写被记入 denied。"""
+    user = Account(username="oauth-kb-narrow", nickname="Tester")
+    db_session.add(
+        OAuth2Client(
+            client_id="ke-work-desktop",
+            client_name="KE-WORK 桌面版",
+            client_type="public",
+            redirect_uris=["http://127.0.0.1:{port}/callback"],
+            allowed_scopes=["knowledge:read", "knowledge:write"],
+            grant_types=["authorization_code"],
+            enabled=True,
+        )
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    cache = MemoryCache()
+    state = await _create_state(db_session, cache, ["knowledge:read", "knowledge:write"])
+    result = await approve_authorization(
+        state, user.id, ["knowledge:read"], db_session, cache
+    )
+
+    assert set(result.grantedScopes) == {"knowledge:read"}
+    _consent, granted, denied = await get_consent_state(
+        db_session, "ke-work-desktop", user.id
+    )
+    assert set(granted) == {"knowledge:read"}
+    assert set(denied) == {"knowledge:write"}
+
+
+async def test_write_scope_alone_does_not_grant_read(db_session: AsyncSession) -> None:
+    """读写两项各自独立：只给写权限时，token 里没有读。"""
+    user = Account(username="oauth-kb-write-only", nickname="Tester")
+    db_session.add(
+        OAuth2Client(
+            client_id="ke-work-desktop",
+            client_name="KE-WORK 桌面版",
+            client_type="public",
+            redirect_uris=["http://127.0.0.1:{port}/callback"],
+            allowed_scopes=["knowledge:read", "knowledge:write"],
+            grant_types=["authorization_code"],
+            enabled=True,
+        )
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    cache = MemoryCache()
+    state = await _create_state(db_session, cache, ["knowledge:read", "knowledge:write"])
+    result = await approve_authorization(
+        state, user.id, ["knowledge:write"], db_session, cache
+    )
+
+    assert set(result.grantedScopes) == {"knowledge:write"}
+
+
+async def test_seed_upsert_grants_knowledge_scopes_to_desktop_client(
+    db_session: AsyncSession,
+) -> None:
+    """重启时的种子补齐：老客户端行（白名单里还没有知识库）会被补上两枚 scope。
+
+    桌面端能申请这两枚 scope 靠的就是这一步——种子只写新行的话，升级上来的实例
+    仍会在 ``validate_scope_subset`` 处 400，用户侧表现为"申请授权失败"。
+    """
+    from sqlalchemy import select
+
+    from api.oauth2.client_service import seed_oauth2_clients
+
+    db_session.add(
+        OAuth2Client(
+            client_id="ke-work-desktop",
+            client_name="KE-WORK 桌面版（旧）",
+            client_type="public",
+            redirect_uris=["http://127.0.0.1:{port}/callback"],
+            allowed_scopes=["skill:read"],
+            grant_types=["authorization_code"],
+            enabled=True,
+        )
+    )
+    await db_session.commit()
+
+    await seed_oauth2_clients(db_session)
+    await db_session.commit()
+
+    client = (
+        await db_session.execute(
+            select(OAuth2Client).where(OAuth2Client.client_id == "ke-work-desktop")
+        )
+    ).scalar_one()
+    assert set(KNOWLEDGE_SCOPES) <= set(client.allowed_scopes)

@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_db, require_scope
 from api.knowledge_base.schemas import SearchRequest, SearchResponse
 from api.knowledge_base.service import require_kb_readable
 from core.decorators import rate_limit
@@ -25,7 +25,8 @@ async def search_knowledge_base(
     req_body: SearchRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    # 检索是只读操作（POST 只为带请求体），范围仍由逐库可读判定收敛
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """在知识库中检索内容。
 

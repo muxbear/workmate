@@ -23,6 +23,8 @@ export const SCOPE_AGENT_READ = 'agent:read'
 export const SCOPE_CONVERSATION_READ = 'conversation:read'
 /** 云端工作：读取工作区 */
 export const SCOPE_WORKSPACE_READ = 'workspace:read'
+/** 云知识库：读取并检索（云知识库检索专家走 MCP，建连时要带这枚 scope 的 token） */
+export const SCOPE_KNOWLEDGE_READ = 'knowledge:read'
 
 /** 桌面端可见的 scope 元数据（授权管理界面用） */
 export interface DesktopScopeMeta {
@@ -90,6 +92,13 @@ export const DESKTOP_SCOPE_CATALOG: readonly DesktopScopeMeta[] = [
     label: '读取并同步模型提供商和模型',
     description: '关闭后设置中的模型无法从 Web 端同步',
     group: '模型',
+    required: false
+  },
+  {
+    key: SCOPE_KNOWLEDGE_READ,
+    label: '读取并检索知识库',
+    description: '关闭后云端知识库检索（含知识库检索专家）不可用',
+    group: '知识库',
     required: false
   }
 ]

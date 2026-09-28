@@ -78,6 +78,11 @@ export class OAuth2ClientService {
       })
   }
 
+  /** 后端 API 基址（已归一化去掉尾斜杠）——MCP 端点同源判定用 */
+  getApiBaseUrl(): string {
+    return this.apiBaseUrl
+  }
+
   /** 执行完整授权流程（浏览器授权 → 回跳 → 换 token），返回 token */
   async authorize(scope: string): Promise<OAuth2Token> {
     const verifier = base64Url(randomBytes(48))

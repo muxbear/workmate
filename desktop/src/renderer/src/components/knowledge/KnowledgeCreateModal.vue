@@ -9,7 +9,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
  */
 const props = defineProps<{
   open: boolean
-  /** 目标分组：local / shared / cloud */
+  /** 目标分组对应的本地 kind：local / shared（云端建库不在桌面端提供） */
   kind?: 'local' | 'shared' | 'cloud'
 }>()
 
@@ -24,7 +24,8 @@ const DESC_MAX = 120
 const KIND_LABEL: Record<string, string> = {
   local: '本地知识库',
   shared: '我的共享知识',
-  cloud: '云端知识库'
+  // 历史 kind：老数据里可能还有 kind='cloud' 的本地库（已由主进程一次性归一为 local）
+  cloud: '本地知识库'
 }
 
 const visible = ref(props.open)
@@ -86,7 +87,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <p class="kc-subtitle">将创建到「{{ KIND_LABEL[kind ?? 'local'] }}」</p>
           </div>
           <button class="kc-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>

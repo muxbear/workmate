@@ -60,6 +60,8 @@ import { AutomationScheduler } from './automation/AutomationScheduler'
 import { KnowledgeStore } from './knowledge/KnowledgeStore'
 import { KnowledgeFileService } from './knowledge/KnowledgeFileService'
 import { KnowledgeService } from './knowledge/KnowledgeService'
+import { CloudKnowledgeService } from './knowledge/CloudKnowledgeService'
+import { registerCloudKnowledgeHandlers } from './ipc/knowledge-cloud-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
 import { registerSkillSyncHandlers } from './ipc/skill-sync-handlers'
 import { registerExpertSyncHandlers } from './ipc/expert-sync-handlers'
@@ -81,6 +83,8 @@ import { ExpertSyncService } from './experts/ExpertSyncService'
 import { ModelSyncService } from './models/ModelSyncService'
 import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
 import { OAuth2AuthorizationProvider } from './oauth2/OAuth2AuthorizationProvider'
+import { buildPlatformMcpPolicy, createMcpAuthBinding, McpTokenProvider } from './oauth2/mcpAuth'
+import { resetMcpClients } from './agent/tools/McpToolRegistry'
 
 import icon from '../../resources/icon.png?asset'
 
@@ -282,24 +286,7 @@ app.whenReady().then(() => {
   const binaryManager = new BinaryManager(dataDir.getDir('binaries'), settingsStore)
   binaryManager.init()
 
-  // ── 初始化智能体（AgentManager）──
-  // checkpoint（短期记忆）与 store（长期记忆）与业务表共用 ke-work.db（SqliteSaver/SqliteStore 自建表）
-  const appDbPath = join(dataDir.getBaseDir(), 'ke-work.db')
-  /** 技能安装服务引用（AgentManager 的技能 id 解析依赖它，创建顺序在后） */
-  let skillInstallServiceRef: SkillInstallService | null = null
-  const agentManager = new AgentManager(
-    dataDir.getDir('workspace'),
-    appDbPath,
-    appDbPath,
-    modelService,
-    {
-      skillsDir: dataDir.getDir('skills'),
-      resolveSkillDirs: async (ids) =>
-        skillInstallServiceRef ? await skillInstallServiceRef.resolveDirNames(ids) : []
-    }
-  )
-  agentManager.init(mode).catch((err) => console.error('[main] agent init failed:', err))
-
+  // ── 初始化 OAuth2（登录 / 专家 / 技能 / 模型 / 云知识库共用一份会话 token）──
   const oauth2Client = new OAuth2ClientService({
     secureStorage,
     openExternal: (url) =>
@@ -316,6 +303,35 @@ app.whenReady().then(() => {
     oauth2Client,
     secureStorage
   })
+  // MCP 凭据：专家同步下来的平台内 MCP 服务（云知识库检索）建连时按请求带上 access token。
+  // 只对本平台端点注入（见 mcpAuth 的同源判定），第三方 MCP 一律不带凭据。
+  const mcpAuth = createMcpAuthBinding({
+    auth: new McpTokenProvider({ authorization, session }),
+    policy: buildPlatformMcpPolicy({
+      apiBaseUrl: oauth2Client.getApiBaseUrl(),
+      mcpPublicBaseUrl: process.env.WORKMATE_MCP_PUBLIC_BASE_URL ?? ''
+    })
+  })
+
+  // ── 初始化智能体（AgentManager）──
+  // checkpoint（短期记忆）与 store（长期记忆）与业务表共用 ke-work.db（SqliteSaver/SqliteStore 自建表）
+  const appDbPath = join(dataDir.getBaseDir(), 'ke-work.db')
+  /** 技能安装服务引用（AgentManager 的技能 id 解析依赖它，创建顺序在后） */
+  let skillInstallServiceRef: SkillInstallService | null = null
+  const agentManager = new AgentManager(
+    dataDir.getDir('workspace'),
+    appDbPath,
+    appDbPath,
+    modelService,
+    {
+      skillsDir: dataDir.getDir('skills'),
+      resolveSkillDirs: async (ids) =>
+        skillInstallServiceRef ? await skillInstallServiceRef.resolveDirNames(ids) : [],
+      mcpAuth
+    }
+  )
+  agentManager.init(mode).catch((err) => console.error('[main] agent init failed:', err))
+
   registerOAuth2Handlers(ipcMain, {
     authService,
     oauth2Client,
@@ -367,12 +383,17 @@ app.whenReady().then(() => {
       manager.resetForLogout()
     }
     void browserPreviewServer?.revokeAll()
+    // 登出即丢弃 MCP 连接与凭据缓存：客户端按地址复用，留着会被下一个登录用户继承
+    resetMcpClients()
+    mcpAuth.invalidate()
     const localUserId = session.getCurrentUserId()
     if (localUserId) {
       void skillSyncService.disconnect(localUserId)
       void expertSyncService.disconnect(localUserId)
       void modelSyncService.disconnect(localUserId)
     }
+    // 云知识库的内存缓存（文档列表）随登出丢弃；磁盘缓存按 kbId/docId 保留
+    cloudKnowledgeService.disconnect()
   }
 
   // ── 注册认证 IPC ──
@@ -453,6 +474,15 @@ app.whenReady().then(() => {
   /** 导出完成后在资源管理器中定位文件 */
   const revealFile = async (absPath: string): Promise<void> => {
     shell.showItemInFolder(absPath)
+  }
+  /** 通用「另存为」：默认落在系统下载目录，用户取消返回 null（不限定扩展名） */
+  const chooseSaveFilePath = async (defaultName: string): Promise<string | null> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const options = { defaultPath: join(app.getPath('downloads'), defaultName) }
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
+    return result.canceled || !result.filePath ? null : result.filePath
   }
 
   // eslint-disable-next-line prefer-const
@@ -571,6 +601,21 @@ app.whenReady().then(() => {
     }
   })
 
+  // ── 云知识库 IPC（只读；Web 版的个人库 / 公共库 / 共享给我的）──
+  // 原文缓存放在 cache/ 而不是知识库目录：知识库目录是用户可配置的（可能指向网盘/外置盘），
+  // 缓存是派生物，跟应用数据目录走（与 remote-images 缓存同一约定）
+  const cloudKnowledgeService = new CloudKnowledgeService({
+    authorization,
+    apiBaseUrl: webApiBaseUrl,
+    cacheDir: join(dataDir.getDir('cache'), 'cloud-kb')
+  })
+  registerCloudKnowledgeHandlers(ipcMain, {
+    cloudKnowledgeService,
+    session,
+    // 另存为：默认落在系统下载目录，用户取消返回 null
+    chooseSavePath: chooseSaveFilePath
+  })
+
   // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
   registerRuntimeHandlers(ipcMain, { binaryManager })
 
@@ -629,7 +674,9 @@ app.whenReady().then(() => {
     dataDir.getDir('workspace'),
     appDbPath,
     appDbPath,
-    modelService
+    modelService,
+    // 自动化任务在后台运行：只复用已授予的凭据，绝不触发交互式授权（McpTokenProvider 不弹窗）
+    { mcpAuth }
   )
   void automationAgentManager.init(mode)
   const automationRunner = new AutomationRunner({

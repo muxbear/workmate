@@ -8,6 +8,25 @@
 
 export type GroupIcon = 'hard-drive' | 'users' | 'cloud'
 
+/** 条目/分组的来源：本地 index.db 或云端接口 */
+export type KnowledgeSource = 'local' | 'cloud'
+/** 云端范围：与后端 `GET /api/knowledge-bases?scope=` 及「共享给我的」邀请接口一一对应 */
+export type CloudKbScope = 'personal' | 'public' | 'shared_with_me'
+/** 本地分组的 kind（与主进程 knowledge_bases.kind 对齐） */
+export type KnowledgeKindLike = 'local' | 'shared' | 'cloud'
+
+/** 云条目附带的展示信息（本地条目省略） */
+export interface CloudFolderMeta {
+  scope: CloudKbScope
+  visibility: string
+  ownerName: string | null
+  /** 分享记录 id（「共享给我的」专用） */
+  shareId?: string
+  /** 邀请状态：pending 时行内给「接受 / 拒绝」 */
+  shareStatus?: string
+  permission?: string
+}
+
 export interface KnowledgeFolder {
   id: string
   name: string
@@ -17,13 +36,117 @@ export interface KnowledgeFolder {
   tone: string
   /** 是否置顶（置顶项由服务端排序到最前，列表里也用于显示标记） */
   pinned?: boolean
+  /**
+   * 条目来源：本地条目进工作台详情，云条目进只读详情。
+   * 必填——它是行为分叉点，可选字段会让「忘了赋值」静默走本地分支。
+   */
+  source: KnowledgeSource
+  cloud?: CloudFolderMeta
 }
 
 export interface KnowledgeGroup {
   id: string
   label: string
   icon: GroupIcon
+  source: KnowledgeSource
+  /** source === 'cloud'：后端 scope */
+  scope?: CloudKbScope
+  /** source === 'local'：本地 index.db 的 kind */
+  kind?: KnowledgeKindLike
   items: KnowledgeFolder[]
+}
+
+/** 分组三点菜单的项（按来源区分：本地能新建，云端只能刷新） */
+export type GroupMenuItem = 'more' | 'create' | 'refresh'
+
+/**
+ * 分组菜单项集合。
+ *
+ * 本地分组：查看更多 + 新建知识库；云分组：查看更多 + 刷新
+ * （云端建库涉及配置口径差异，本轮不做——见 `desktop/docs/桌面版知识库实现方案.md` 5.3）。
+ */
+export function groupMenuItemsOf(group: Pick<KnowledgeGroup, 'source'>): GroupMenuItem[] {
+  return group.source === 'cloud' ? ['more', 'refresh'] : ['more', 'create']
+}
+
+export function isCloudGroup(group: Pick<KnowledgeGroup, 'source'>): boolean {
+  return group.source === 'cloud'
+}
+
+/**
+ * 云端 ISO 时间 → 展示用日期。
+ *
+ * 只取日期部分：后端 datetime 是朴素 UTC，直接 `Date.parse` 会被当成本地时间、
+ * 整体偏 8 小时（与 Web 版 `updated_at?.split('T')[0]` 同一口径）。
+ */
+export function cloudDateOf(iso: string): string {
+  const value = (iso ?? '').trim()
+  if (!value) return '—'
+  return value.split('T')[0] || '—'
+}
+
+/** 云端知识库 → 列表条目（tone 由调用方注入，保持本模块零依赖） */
+export function toCloudFolder(
+  item: {
+    id: string
+    name: string
+    description: string
+    docsCount: number
+    updatedAt: string
+    visibility: string
+    ownerName: string | null
+  },
+  scope: CloudKbScope,
+  tone: string
+): KnowledgeFolder {
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    files: item.docsCount,
+    updated: cloudDateOf(item.updatedAt),
+    tone,
+    pinned: false,
+    source: 'cloud',
+    cloud: {
+      scope,
+      visibility: item.visibility,
+      ownerName: item.ownerName
+    }
+  }
+}
+
+/** 「共享给我的」邀请记录 → 列表条目（待接受项在侧栏行内给接受/拒绝） */
+export function toInvitationFolder(
+  entry: {
+    shareId: string
+    kbId: string
+    kbName: string
+    ownerName: string
+    status: string
+    permission: string
+    createdAt: string
+  },
+  tone: string
+): KnowledgeFolder {
+  return {
+    id: entry.kbId,
+    name: entry.kbName,
+    description: entry.ownerName ? `来自 ${entry.ownerName}` : '',
+    files: 0,
+    updated: cloudDateOf(entry.createdAt),
+    tone,
+    pinned: false,
+    source: 'cloud',
+    cloud: {
+      scope: 'shared_with_me',
+      visibility: '',
+      ownerName: entry.ownerName || null,
+      shareId: entry.shareId,
+      shareStatus: entry.status,
+      permission: entry.permission
+    }
+  }
 }
 
 /** 扁平化所有分组下的知识库 */

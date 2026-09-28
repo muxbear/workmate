@@ -11,7 +11,7 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db
+from api.deps import get_db, require_scope
 from api.knowledge_base.schemas import (
     KBGroupCreateRequest,
     KBGroupResponse,
@@ -33,6 +33,8 @@ router = APIRouter(prefix="/api/knowledge-base-groups", tags=["知识库-分组"
 async def list_kb_groups(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    # 只读接口（不改数据）→ scope 归读
+    _scope: str = Depends(require_scope("knowledge:read")),
 ):
     """本人的分组列表（含每组的知识库数量）。"""
     groups = await list_groups(db, user_id)
@@ -49,6 +51,7 @@ async def create_kb_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """新建分组（同一用户下重名 → 409）。"""
     async with audit_scope("knowledge.group.create", user_id, request) as entry:
@@ -66,6 +69,7 @@ async def rename_kb_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """重命名分组。"""
     async with audit_scope("knowledge.group.rename", user_id, request, target=group_id) as entry:
@@ -81,6 +85,7 @@ async def delete_kb_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """删除分组——**只解除归属，不删知识库**。"""
     async with audit_scope("knowledge.group.delete", user_id, request, target=group_id):

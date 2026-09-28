@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_db, require_scope
 from api.knowledge_base.schemas import (
     IndexConfigSchema,
     KBAssignGroupRequest,
@@ -65,7 +65,7 @@ async def list_knowledge_bases(
         description="personal 我创建的 | public 公共库 | shared_with_me 分享给我 | all 全部可见",
     ),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取知识库列表（分页 + 模糊搜索 + 可见范围过滤）。"""
     result = await list_kbs(
@@ -83,7 +83,7 @@ async def get_stats(
         description="personal 仅本人 | all 全部可见（概览用）",
     ),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取知识库统计信息。"""
     result = await get_kb_stats(db, user_id, scope=scope)
@@ -96,7 +96,7 @@ async def get_available_models(
     model_type: str = "llm",
     provider_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    _user_id: str = Depends(get_current_user_id),
+    _user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取可用于知识库的模型列表，可按 provider 筛选。
 
@@ -135,7 +135,7 @@ async def get_available_models(
 async def get_available_providers(
     model_type: str = Query(default="llm"),
     db: AsyncSession = Depends(get_db),
-    _user_id: str = Depends(get_current_user_id),
+    _user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取拥有指定类型模型的提供商列表。
 
@@ -198,6 +198,7 @@ async def create_knowledge_base(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:create")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """创建知识库。"""
     vector_store = _get_vector_store(request)
@@ -215,7 +216,7 @@ async def create_knowledge_base(
 async def get_knowledge_base(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取知识库详情。"""
     result = await get_kb(db, kb_id, user_id)
@@ -229,6 +230,7 @@ async def update_knowledge_base(
     body: KBUpdateRequest,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """更新知识库。"""
     async with audit_scope("knowledge.update", user_id, None, target=kb_id):
@@ -245,6 +247,7 @@ async def pin_knowledge_base(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """置顶 / 取消置顶（只影响本人的列表顺序）。"""
     async with audit_scope("knowledge.pin", user_id, request, target=kb_id) as entry:
@@ -262,6 +265,7 @@ async def move_knowledge_base(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """在列表里上移 / 下移一位（只在同一置顶分组内交换）。"""
     async with audit_scope("knowledge.move", user_id, request, target=kb_id) as entry:
@@ -278,6 +282,7 @@ async def reorder_knowledge_bases(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """拖拽排序：一次提交同一置顶分组内连续一段的新顺序。"""
     async with audit_scope("knowledge.reorder", user_id, request) as entry:
@@ -296,6 +301,7 @@ async def copy_knowledge_base(
     db: AsyncSession = Depends(get_db),
     # 复制会**新建**一个知识库，用建库权限
     user_id: str = Depends(RequirePermission("knowledge:create")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """复制知识库（只复制定义与配置，不复制文档与向量）。"""
     async with audit_scope("knowledge.copy", user_id, request, target=kb_id) as entry:
@@ -314,6 +320,7 @@ async def assign_knowledge_base_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """把知识库归入分组（``group_id=null`` 表示移出分组）。"""
     async with audit_scope("knowledge.assign_group", user_id, request, target=kb_id) as entry:
@@ -330,7 +337,7 @@ async def export_knowledge_base(
     db: AsyncSession = Depends(get_db),
     # 导出的是配置与元信息（**不含文档内容**），给读权限就够——能看这个库的人
     # 本来就看得见这些字段
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """导出知识库的定义与配置（JSON）。
 
@@ -347,6 +354,7 @@ async def delete_knowledge_base(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:delete")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """删除知识库（同时取消在跑的索引任务、清理磁盘文件与分享记录）。"""
     from api.knowledge_base.doc_service import IndexingScheduler
@@ -372,6 +380,7 @@ async def restore_knowledge_base(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:delete")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """恢复被删除的知识库（软删除后的反悔入口）。"""
     async with audit_scope("knowledge.restore", user_id, request, target=kb_id):
@@ -387,6 +396,7 @@ async def purge_knowledge_base(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:delete")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """**彻底删除**知识库（清向量与磁盘，不可恢复）。
 
@@ -407,7 +417,7 @@ async def get_index_activity(
     kb_id: str,
     limit: int = Query(default=5, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取最近索引活动。"""
     result = await get_indexing_activity(db, kb_id, user_id, limit)
@@ -423,6 +433,7 @@ async def reindex_knowledge_base(
     db: AsyncSession = Depends(get_db),
     # 重建会按新配置重切全部切片：属于"改库"而不是"改某篇文档"
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """保存索引配置并重新索引知识库中的所有文档。
 

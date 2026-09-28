@@ -65,4 +65,37 @@ def user_id_from_mcp_request() -> str:
     return str(payload.get("sub") or "")
 
 
-__all__ = ["authorization_header", "user_id_from_mcp_request"]
+def missing_scope_from_mcp_request(required: str) -> str | None:
+    """本次 MCP 调用的 token 是否缺少 ``required`` scope；不缺返回 ``None``.
+
+    判定复用 ``api.deps.scope_missing``——与 REST 的 ``require_scope`` 是同一份口径：
+    **第一方 Web token 放行，OAuth2 客户端 token 必须显式携带该 scope**
+    （否则客户端只要用户角色允许就能绕过授权页读写知识库）。
+
+    无 Authorization 头（含进程内自托管调用）时返回 ``None``：前者由身份解析拒绝，
+    后者是 Web 智能体在对话中的调用，身份来自 LangGraph 运行时上下文，属第一方。
+    """
+    auth = authorization_header().strip()
+    if not auth.lower().startswith(_BEARER_PREFIX):
+        return None
+    token = auth[len(_BEARER_PREFIX) :].strip()
+    if not token:
+        return None
+
+    from core.security import decode_token
+
+    try:
+        payload = decode_token(token, "access")
+    except Exception:  # noqa: BLE001 - 无效 token 由身份解析给出统一的拒绝口径
+        return None
+
+    from api.deps import scope_missing
+
+    return required if scope_missing(payload, required) else None
+
+
+__all__ = [
+    "authorization_header",
+    "missing_scope_from_mcp_request",
+    "user_id_from_mcp_request",
+]

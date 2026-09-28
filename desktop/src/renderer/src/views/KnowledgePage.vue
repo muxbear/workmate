@@ -9,7 +9,11 @@ import KnowledgeShareModal from '../components/knowledge/KnowledgeShareModal.vue
 import KnowledgeUploadModal from '../components/knowledge/KnowledgeUploadModal.vue'
 import {
   clampDropIndex,
+  groupMenuItemsOf,
+  isCloudGroup,
   moveLibrary,
+  toCloudFolder,
+  toInvitationFolder,
   type KnowledgeFolder,
   type KnowledgeGroup
 } from '../components/knowledge/knowledgeList'
@@ -29,11 +33,16 @@ import {
 import type { KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
 import KnowledgeCreateModal from '../components/knowledge/KnowledgeCreateModal.vue'
 import FilePreviewPane from '../components/file-preview/FilePreviewPane.vue'
-import { createKnowledgeFileSource } from '../components/file-preview/sources'
+import {
+  createCloudKnowledgeFileSource,
+  createKnowledgeFileSource
+} from '../components/file-preview/sources'
 import KnowledgeOverviewModal from '../components/knowledge/KnowledgeOverviewModal.vue'
 import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
+import { useCloudKnowledgeStore } from '../store/cloudKnowledge'
 import { useKnowledgeStore } from '../store/knowledge'
 import type {
+  CloudDocMeta,
   KnowledgeBaseSummary,
   KnowledgeDocumentMeta,
   KnowledgeKind
@@ -47,12 +56,55 @@ type SortKey = KnowledgeSortKey
 /** 创建共享的对象类型 */
 type ShareKind = 'library' | 'folder' | 'file'
 
-// ── 知识库分组（本地 / 共享 / 云端）──
-/** 三个固定分组：条目来自主进程（knowledge:list-kbs），分组只决定展示位置 */
-const KNOWLEDGE_GROUPS: Array<Pick<KnowledgeGroup, 'id' | 'label' | 'icon'>> = [
-  { id: 'local', label: '本地知识库', icon: 'hard-drive' },
-  { id: 'shared', label: '我的共享知识', icon: 'users' },
-  { id: 'cloud', label: '云端知识库', icon: 'cloud' }
+// ── 知识库分组（本地两组 + 云端三组）──
+/**
+ * 五个固定分组：前两个来源是本地 index.db（按 kind 过滤），后三个来源是云端接口
+ * （按 scope 拉取），分组只决定展示位置。
+ *
+ * id 刻意与 kind 区分开（`cloud-personal` 而非 `personal`）：分组 id 一旦与
+ * `KnowledgeKind` 同名，就又会有人把它当 kind 传给主进程。
+ */
+const KNOWLEDGE_GROUPS: KnowledgeGroup[] = [
+  {
+    id: 'local',
+    label: '本地知识库',
+    icon: 'hard-drive',
+    source: 'local',
+    kind: 'local',
+    items: []
+  },
+  {
+    id: 'cloud-personal',
+    label: '云个人知识库',
+    icon: 'cloud',
+    source: 'cloud',
+    scope: 'personal',
+    items: []
+  },
+  {
+    id: 'cloud-public',
+    label: '云公共知识库',
+    icon: 'cloud',
+    source: 'cloud',
+    scope: 'public',
+    items: []
+  },
+  {
+    id: 'shared',
+    label: '我的共享知识',
+    icon: 'users',
+    source: 'local',
+    kind: 'shared',
+    items: []
+  },
+  {
+    id: 'cloud-shared',
+    label: '共享给我的',
+    icon: 'users',
+    source: 'cloud',
+    scope: 'shared_with_me',
+    items: []
+  }
 ]
 
 /** 知识库徽标配色：按 id 稳定取色，避免列表刷新时颜色跳动 */
@@ -79,9 +131,13 @@ const FILE_TINTS: Record<string, string> = {
 
 // ── 侧栏分组与选中知识库（数据来自 store；渲染层只持 ID 与相对路径）──
 const kbStore = useKnowledgeStore()
-const expanded = ref<Record<string, boolean>>({ local: true, shared: true, cloud: true })
+const cloudKbStore = useCloudKnowledgeStore()
+/** 折叠状态：缺省展开（新分组不必再去初值里补一笔） */
+const expanded = ref<Record<string, boolean>>({})
 const moreGroupId = ref<string | null>(null)
 const openGroupMenu = ref<string | null>(null)
+/** 当前打开的云知识库（非空时工作台的文件区改渲染云端文档，外壳与本地一致） */
+const cloudKb = ref<KnowledgeFolder | null>(null)
 /** 新建知识库弹窗：目标分组 */
 const createOpen = ref(false)
 const createKind = ref<KnowledgeKind>('local')
@@ -96,7 +152,8 @@ const EMPTY_LIBRARY: KnowledgeFolder = {
   files: 0,
   updated: '—',
   tone: '#168b7a',
-  pinned: false
+  pinned: false,
+  source: 'local'
 }
 
 /** 主进程知识库 → 侧栏条目 */
@@ -108,15 +165,29 @@ function toFolder(base: KnowledgeBaseSummary): KnowledgeFolder {
     files: base.docsCount,
     updated: formatTimestamp(base.updatedAt),
     tone: toneOf(base.id),
-    pinned: base.pinned === true
+    pinned: base.pinned === true,
+    source: 'local'
   }
 }
 
-/** 按 kind 聚合的三个分组（空分组保留，便于「新建知识库」入口） */
+/** 云分组 → 条目（个人/公共按 scope 取；「共享给我的」用邀请记录，含待接受项） */
+function cloudItemsOf(group: KnowledgeGroup): KnowledgeFolder[] {
+  if (group.scope === 'personal') {
+    return cloudKbStore.personal.map((item) => toCloudFolder(item, 'personal', toneOf(item.id)))
+  }
+  if (group.scope === 'public') {
+    return cloudKbStore.publicKbs.map((item) => toCloudFolder(item, 'public', toneOf(item.id)))
+  }
+  return cloudKbStore.invitations.map((entry) => toInvitationFolder(entry, toneOf(entry.kbId)))
+}
+
+/** 五个分组：本地按 kind 过滤，云端按 scope 取（空分组保留，用于显示空态与入口） */
 const knowledgeGroups = computed<KnowledgeGroup[]>(() =>
   KNOWLEDGE_GROUPS.map((group) => ({
     ...group,
-    items: kbStore.bases.filter((base) => base.kind === group.id).map(toFolder)
+    items: isCloudGroup(group)
+      ? cloudItemsOf(group)
+      : kbStore.bases.filter((base) => base.kind === group.kind).map(toFolder)
   }))
 )
 
@@ -186,6 +257,144 @@ const folderExpanded = ref<Record<string, boolean>>({})
 function isFolderExpanded(key: string): boolean {
   return folderExpanded.value[key] === true
 }
+
+// ── 云知识库：在同一套工作台里渲染（数据源换成云端文档，模板与本地完全共用）──
+/** 后端文档列表分页大小（服务端上限 100） */
+const CLOUD_DOC_PAGE_SIZE = 100
+
+const cloudDocs = ref<CloudDocMeta[]>([])
+const cloudDocsTotal = ref(0)
+const cloudDocsLoading = ref(false)
+/** 云库的加载提示（未授权 / 拉取失败 / 已加载数不足） */
+const cloudDocsMessage = ref('')
+/** 相对路径 → 云端文档 id（预览与下载按 id 请求） */
+const cloudDocIds = ref<Record<string, string>>({})
+
+/** 当前是否在浏览云知识库 */
+const isCloudView = computed(() => cloudKb.value !== null)
+
+/** 头部与子标题展示的库：云库与本地库共用同一套模板 */
+const displayLibrary = computed(() => cloudKb.value ?? selectedLibrary.value)
+
+/**
+ * 云端时间（后端朴素 UTC ISO）→ 时间戳。
+ *
+ * 补 `Z` 按 UTC 解析后再交给 `formatTimestamp`，与本地行得到同一种展示
+ * （今天 HH:mm / 昨天 HH:mm / M 月 D 日）。
+ */
+function cloudTimestamp(iso: string): number {
+  if (!iso) return 0
+  const hasZone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso)
+  const ms = Date.parse(hasZone ? iso : `${iso}Z`)
+  return Number.isNaN(ms) ? 0 : ms
+}
+
+/** 云端文档的相对路径（folder + name，与服务端 folder 语义一致） */
+function cloudRelPath(doc: CloudDocMeta): string {
+  const folder = (doc.folder ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  return folder ? `${folder}/${doc.name}` : doc.name
+}
+
+/** 云端文档 → 列表条目（图标/配色/大小/时间与本地行同一套规则） */
+function cloudMetaOf(doc: CloudDocMeta): KnowledgeFileMeta {
+  const ext = doc.name.split('.').pop()?.toLowerCase() ?? ''
+  return {
+    name: doc.name,
+    type: doc.type,
+    size: doc.sizeDisplay || '—',
+    updated: formatTimestamp(cloudTimestamp(doc.uploadedAt)),
+    icon: pickFileIcon(ext),
+    tint: FILE_TINTS[ext] ?? '#64748b',
+    // 云端文档没有「自定义索引」这回事：已索引 / 未索引两态
+    indexState: doc.status === 'indexed' ? 'default' : 'none'
+  }
+}
+
+/** 云文档树（复用 mergeUploads：文件夹层级来自文档的 folder 字段） */
+const cloudTree = computed<KnowledgeTreeNode[]>(() => {
+  if (!cloudKb.value) return []
+  const entries = cloudDocs.value.map((doc) => ({
+    dirs: cloudRelPath(doc).split('/').slice(0, -1),
+    file: cloudMetaOf(doc)
+  }))
+  return mergeUploads([], entries)
+})
+
+/** 当前渲染的树：本地或云端（下游 computed 与模板只看它） */
+const activeTree = computed(() => (isCloudView.value ? cloudTree.value : fileTree.value))
+
+/** 拉取云库文档；append = true 时接着下一页加载 */
+async function loadCloudDocs(append = false): Promise<void> {
+  const kb = cloudKb.value
+  if (!kb) return
+  const page = append ? Math.floor(cloudDocs.value.length / CLOUD_DOC_PAGE_SIZE) + 1 : 1
+  cloudDocsLoading.value = true
+  cloudDocsMessage.value = ''
+  try {
+    const result = await window.api.knowledgeCloud.listDocuments({
+      kbId: kb.id,
+      page,
+      pageSize: CLOUD_DOC_PAGE_SIZE
+    })
+    if (!result.success || !result.data) {
+      cloudDocsMessage.value = result.error || '读取云端文档失败'
+      return
+    }
+    const data = result.data
+    if (data.state !== 'ok') {
+      cloudDocsMessage.value = data.message
+      return
+    }
+    cloudDocs.value = append ? [...cloudDocs.value, ...data.items] : data.items
+    cloudDocsTotal.value = data.total
+    const ids = { ...cloudDocIds.value }
+    for (const doc of data.items) ids[cloudRelPath(doc)] = doc.id
+    cloudDocIds.value = ids
+  } finally {
+    cloudDocsLoading.value = false
+  }
+}
+
+/** 刷新云库文档（头部 ⋯ 菜单与工具栏按钮共用） */
+async function refreshCloudDocs(): Promise<void> {
+  await loadCloudDocs(false)
+  notify(cloudDocsMessage.value || '已刷新云端文档')
+}
+
+/** 云文档「下载」= 另存为（文件名只作对话框默认值，主进程会自行净化） */
+async function downloadCloudDoc(node: KnowledgeTreeNode): Promise<void> {
+  const kb = cloudKb.value
+  const docId = cloudDocIds.value[node.key]
+  fileMenuKey.value = null
+  if (!kb || !docId) return
+  const result = await cloudKbStore.downloadDocument(kb.id, docId, node.name)
+  if (!result) {
+    notify(cloudKbStore.message || '下载失败')
+    return
+  }
+  if (result.saved) notify(`已保存到 ${result.path}`)
+}
+
+/** 切换云库：清空并按需拉取；回到本地库时恢复常驻「问答」标签 */
+watch(
+  () => cloudKb.value?.id,
+  async (id) => {
+    if (!id) {
+      if (!openTabs.value.includes('问答')) openTabs.value = ['问答', ...openTabs.value]
+      activeTab.value = '问答'
+      return
+    }
+    cloudDocs.value = []
+    cloudDocsTotal.value = 0
+    cloudDocIds.value = {}
+    cloudDocsMessage.value = ''
+    folderExpanded.value = {}
+    // 云库是只读浏览：没有问答标签，标签从零开始（点文档再生成）
+    openTabs.value = []
+    activeTab.value = ''
+    await loadCloudDocs(false)
+  }
+)
 const sortKey = ref<SortKey>('updated')
 const ascending = ref(false)
 /** 标签页以文件 key 标识（'问答' 是常驻标签） */
@@ -237,20 +446,110 @@ const moreGroup = computed(
   () => knowledgeGroups.value.find((group) => group.id === moreGroupId.value) ?? null
 )
 
+/** 「查看更多」页当前是否为云分组：云分组没有拖拽排序 / 置顶 / 新建 */
+const isCloudMore = computed(() => (moreGroup.value ? isCloudGroup(moreGroup.value) : false))
+
+/** 云分组的刷新：重新拉取该 scope（本地分组无此入口） */
+async function refreshMoreGroup(): Promise<void> {
+  const scope = moreGroup.value?.scope
+  if (!scope || scope === 'shared_with_me') {
+    await cloudKbStore.loadInvitations()
+  } else {
+    await cloudKbStore.loadScope(scope)
+  }
+  notify(cloudKbStore.state === 'ok' ? '已同步云端知识库' : cloudKbStore.message || '同步失败')
+}
+
+/** 侧栏云分组的空态 / 提示：加载中、未授权、失败、空都有明确去处 */
+function cloudGroupHint(
+  group: KnowledgeGroup
+): { text: string; action: string; run: () => void } | null {
+  if (!isCloudGroup(group)) return null
+  if (cloudKbStore.loading) return { text: '正在同步云端知识库…', action: '', run: () => {} }
+  if (!cloudKbStore.linked) {
+    // 没绑 Web 账号时给「去授权」是误导：该做的是先登录（设置 - 账号）
+    return { text: cloudKbStore.message || '尚未绑定 Web 账号', action: '', run: () => {} }
+  }
+  if (cloudKbStore.state === 'auth-required') {
+    return {
+      text: cloudKbStore.message || '需要授权后才能查看云端知识库',
+      action: '去授权',
+      run: () => void authorizeCloud()
+    }
+  }
+  if (cloudKbStore.state === 'error') {
+    return {
+      text: cloudKbStore.message || '同步失败',
+      action: '重试',
+      run: () => void refreshMoreGroupFrom(group)
+    }
+  }
+  if (group.items.length === 0) {
+    return {
+      text: group.scope === 'shared_with_me' ? '暂无共享给你的知识库' : '暂无知识库',
+      action: '刷新',
+      run: () => void refreshMoreGroupFrom(group)
+    }
+  }
+  return null
+}
+
+/** 侧栏单个云分组刷新（不依赖「查看更多」页） */
+async function refreshMoreGroupFrom(group: KnowledgeGroup): Promise<void> {
+  if (group.scope === 'shared_with_me') await cloudKbStore.loadInvitations()
+  else if (group.scope) await cloudKbStore.loadScope(group.scope)
+}
+
+/** 侧栏条目是否选中（云库按 kbId + 分享记录区分；打开云库时不点亮本地条目） */
+function isActiveLibrary(library: KnowledgeFolder): boolean {
+  if (library.source === 'cloud') {
+    return (
+      cloudKb.value?.id === library.id && cloudKb.value?.cloud?.shareId === library.cloud?.shareId
+    )
+  }
+  return cloudKb.value === null && selectedLibrary.value.id === library.id
+}
+
+/** 侧栏条目点击：待接受的邀请还读不到内容，交给行内「接受」按钮处理 */
+function onSidebarLibraryClick(library: KnowledgeFolder): void {
+  if (library.cloud?.shareStatus === 'pending') return
+  selectLibrary(library)
+}
+
+/** 用户主动授权（唯一允许打开浏览器的入口），成功后自动重拉 */
+async function authorizeCloud(): Promise<void> {
+  const ok = await cloudKbStore.authorize()
+  notify(ok ? '已授权，正在同步云端知识库' : cloudKbStore.message || '授权失败')
+}
+
+/** 「共享给我的」：接受 / 拒绝邀请 */
+async function respondInvitation(library: KnowledgeFolder, accept: boolean): Promise<void> {
+  const shareId = library.cloud?.shareId
+  if (!shareId) return
+  const ok = await cloudKbStore.respondInvitation(shareId, accept)
+  notify(
+    ok
+      ? accept
+        ? `已接受「${library.name}」`
+        : '已拒绝该分享'
+      : cloudKbStore.message || '操作失败'
+  )
+}
+
 /** 排序后的文件树（文件夹恒排在文件前） */
-const sortedTree = computed(() => sortTree(fileTree.value, sortKey.value, ascending.value))
+const sortedTree = computed(() => sortTree(activeTree.value, sortKey.value, ascending.value))
 
 /** 展开可见行：文件夹折叠时跳过其子节点 */
 const rows = computed(() => flattenVisible(sortedTree.value, isFolderExpanded))
 
 /** 全部文件节点（不含文件夹） */
-const allFiles = computed(() => collectFileNodes(fileTree.value))
+const allFiles = computed(() => collectFileNodes(activeTree.value))
 
 /** 当前标签对应的节点（'问答' 不是节点，返回 null） */
-const activeNode = computed(() => findNode(fileTree.value, activeTab.value))
+const activeNode = computed(() => findNode(activeTree.value, activeTab.value))
 
 /** 标签页显示名：文件重命名后跟着更新 */
-const tabLabel = (tab: string): string => findNode(fileTree.value, tab)?.name ?? tab
+const tabLabel = (tab: string): string => findNode(activeTree.value, tab)?.name ?? tab
 
 /** 已建立索引的文件数（「只上传文件」的条目不计数） */
 const indexedCount = computed(
@@ -261,8 +560,11 @@ const indexedCount = computed(
 const fileSummary = computed(() => {
   const total = allFiles.value.length
   if (!total) return '暂无文件'
-  if (indexedCount.value === 0) return `${total} 份文件 · 索引功能开发中`
   if (indexedCount.value === total) return `${total} 份文件已建立索引`
+  if (indexedCount.value === 0) {
+    // 本地库是"索引功能还没开放"，云库则是"服务端尚未索引"——同一列，说法不同
+    return isCloudView.value ? `${total} 份文件 · 云端只读` : `${total} 份文件 · 索引功能开发中`
+  }
   return `${total} 份文件 · ${indexedCount.value} 份已建立索引`
 })
 
@@ -334,6 +636,8 @@ function onLibraryDragOver(library: KnowledgeFolder, event: DragEvent): void {
 
 /** 落下：把可视顺序换算成新顺序并写库（置顶区不可跨越，落点先夹取） */
 async function onLibraryDrop(): Promise<void> {
+  // 云分组不参与本地排序（拖拽在模板上已禁用，这里是双保险：避免云端库 id 被当成本地 kind 传给主进程）
+  if (isCloudMore.value) return
   const source = draggingLibraryId.value
   const target = dropTargetId.value
   const after = dropAfterTarget.value
@@ -359,6 +663,7 @@ async function onLibraryDrop(): Promise<void> {
 
 /** 置顶 / 取消置顶：置顶项固定排在最前，顺序以主进程返回为准 */
 async function toggleLibraryPin(library: KnowledgeFolder): Promise<void> {
+  if (library.source === 'cloud') return // 云库排序由服务端决定，本地不改
   const pinned = library.pinned === true
   const ok = await kbStore.setPinned(library.id, !pinned)
   if (!ok) {
@@ -383,13 +688,30 @@ onBeforeUnmount(() => {
 })
 
 // ── 分组操作 ──
+/** 分组是否展开：缺省展开（新增分组不必再去初值里补一笔） */
+const isGroupExpanded = (groupId: string): boolean => expanded.value[groupId] !== false
+
+/** 折叠/展开只由右侧箭头负责（分组行本身改成了「查看更多」入口） */
 const toggleGroup = (groupId: string): void => {
-  expanded.value = { ...expanded.value, [groupId]: !expanded.value[groupId] }
+  expanded.value = { ...expanded.value, [groupId]: !isGroupExpanded(groupId) }
+}
+
+/**
+ * 点分组行 = 打开该分组的「查看更多」。
+ *
+ * **不弹下拉菜单**：菜单只在悬浮/点击右侧三点按钮时出现，点行直接进列表页
+ * （与菜单里的「查看更多」走同一个 `openMoreGroup`，结果一致）。
+ */
+const onGroupRowClick = (group: KnowledgeGroup): void => {
+  openLibMenu.value = null
+  openMoreGroup(group.id)
 }
 
 /** 新建知识库：打开弹窗（分组决定 kind），提交后由主进程落库 */
 const addKnowledgeLibrary = (groupId: string): void => {
-  createKind.value = groupId === 'shared' || groupId === 'cloud' ? groupId : 'local'
+  // kind 由分组定义给出：分组 id 与 kind 已解耦，不能再拿 groupId 当 kind 用
+  const group = KNOWLEDGE_GROUPS.find((item) => item.id === groupId)
+  createKind.value = (group?.kind ?? 'local') as KnowledgeKind
   createOpen.value = true
   openGroupMenu.value = null
 }
@@ -415,6 +737,13 @@ const toggleGroupOpen = (groupId: string, open: boolean): void => {
 
 const selectLibrary = (library: KnowledgeFolder): void => {
   if (!library.id) return
+  if (library.source === 'cloud') {
+    // 云库：只读详情（云端数据不进本地库，也不动本地选中态）
+    cloudKb.value = library
+    moreGroupId.value = null
+    return
+  }
+  cloudKb.value = null
   void kbStore.selectBase(library.id)
   activeTab.value = '问答'
 }
@@ -502,6 +831,8 @@ const onDocumentMousedown = (event: MouseEvent): void => {
   if (libraryMenuOpen.value && !element?.closest('.kb-library-menu-wrap')) {
     libraryMenuOpen.value = false
   }
+  // 分组菜单现在也能由「点行」打开，因此点空白处同样要关掉它
+  if (openGroupMenu.value && !element?.closest('.kb-group')) openGroupMenu.value = null
 }
 
 const onDocumentKeydown = (event: KeyboardEvent): void => {
@@ -509,6 +840,7 @@ const onDocumentKeydown = (event: KeyboardEvent): void => {
   openLibMenu.value = null
   fileMenuKey.value = null
   libraryMenuOpen.value = false
+  openGroupMenu.value = null
   // 问答区域全屏时按 Esc = 退出全屏，回到展开的分栏宽度
   if (panelFullscreen.value) {
     panelFullscreen.value = false
@@ -532,11 +864,20 @@ const openFile = (node: KnowledgeTreeNode): void => {
 }
 
 // ── 文件预览（复用共享组件 FilePreviewPane；知识库侧为自加载模式）──
-/** 当前文件标签对应的预览来源（null = 未选中文件） */
+/** 当前文件标签对应的预览来源（null = 未选中文件）；本地与云端各一套自加载来源 */
 const previewSource = computed(() => {
   const node = activeNode.value
+  if (!node || node.kind !== 'file') return null
+
+  if (isCloudView.value) {
+    const kb = cloudKb.value
+    const docId = cloudDocIds.value[node.key]
+    if (!kb || !docId) return null
+    return createCloudKnowledgeFileSource(kb.id, { id: docId, name: node.name, relPath: node.key })
+  }
+
   const kbId = selectedKbId.value
-  if (!node || node.kind !== 'file' || !kbId) return null
+  if (!kbId) return null
   return createKnowledgeFileSource(kbId, { name: node.name, relPath: node.key })
 })
 
@@ -971,6 +1312,8 @@ onMounted(async () => {
   // 首屏拉取知识库列表，并加载当前选中库的文件列表
   await kbStore.loadBases()
   if (selectedKbId.value) await kbStore.loadDocuments(selectedKbId.value)
+  // 云分组并行拉取：未授权只会得到 auth-required 状态（不弹浏览器），渲染层给「去授权」入口
+  void cloudKbStore.loadAll()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateTabScroll)
@@ -986,18 +1329,10 @@ watch(openTabs, () => {
 <template>
   <div class="kb-page">
     <!-- ════════════════ 分组全部知识库（查看更多） ════════════════ -->
-    <div
-      v-if="moreGroup"
-      class="kb-more"
-    >
+    <div v-if="moreGroup" class="kb-more">
       <div class="kb-more-inner">
         <div class="kb-breadcrumb">
-          <button
-            class="kb-breadcrumb-link"
-            @click="moreGroupId = null"
-          >
-            知识库
-          </button>
+          <button class="kb-breadcrumb-link" @click="moreGroupId = null">知识库</button>
           <svg
             class="kb-breadcrumb-sep"
             width="13"
@@ -1018,9 +1353,39 @@ watch(openTabs, () => {
           <div>
             <p class="kb-more-eyebrow">Knowledge spaces</p>
             <h1 class="kb-more-title">{{ moreGroup.label }}</h1>
-            <p class="kb-more-desc">浏览、整理并调用这个分类下的全部知识库。</p>
+            <p class="kb-more-desc">
+              {{
+                isCloudMore
+                  ? '这些知识库来自云端账号，仅支持浏览与只读查看。'
+                  : '浏览、整理并调用这个分类下的全部知识库。'
+              }}
+            </p>
           </div>
           <div class="kb-more-actions">
+            <!-- 云分组：重新拉取该 scope（本地分组没有"同步"这回事） -->
+            <button
+              v-if="isCloudMore"
+              class="kb-more-view-toggle"
+              type="button"
+              title="重新同步云端知识库"
+              aria-label="重新同步云端知识库"
+              :disabled="cloudKbStore.loading"
+              @click="refreshMoreGroup"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                <path d="M21 3v5h-5" />
+              </svg>
+            </button>
             <!-- 视图切换：一个图标按钮在卡片 / 表格之间切换（图标表示将切换到的视图） -->
             <button
               class="kb-more-view-toggle"
@@ -1040,13 +1405,7 @@ watch(openTabs, () => {
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <rect
-                  x="3"
-                  y="3"
-                  width="18"
-                  height="18"
-                  rx="2"
-                />
+                <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M3 9h18" />
                 <path d="M3 15h18" />
                 <path d="M9 3v18" />
@@ -1062,37 +1421,14 @@ watch(openTabs, () => {
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <rect
-                  width="7"
-                  height="7"
-                  x="3"
-                  y="3"
-                  rx="1"
-                />
-                <rect
-                  width="7"
-                  height="7"
-                  x="14"
-                  y="3"
-                  rx="1"
-                />
-                <rect
-                  width="7"
-                  height="7"
-                  x="14"
-                  y="14"
-                  rx="1"
-                />
-                <rect
-                  width="7"
-                  height="7"
-                  x="3"
-                  y="14"
-                  rx="1"
-                />
+                <rect width="7" height="7" x="3" y="3" rx="1" />
+                <rect width="7" height="7" x="14" y="3" rx="1" />
+                <rect width="7" height="7" x="14" y="14" rx="1" />
+                <rect width="7" height="7" x="3" y="14" rx="1" />
               </svg>
             </button>
             <button
+              v-if="!isCloudMore"
               class="kb-more-create"
               @click="addKnowledgeLibrary(moreGroup?.id ?? 'local')"
             >
@@ -1114,15 +1450,9 @@ watch(openTabs, () => {
           </div>
         </div>
 
-        <div
-          v-if="moreLibraries.length"
-          class="kb-more-body"
-        >
+        <div v-if="moreLibraries.length" class="kb-more-body">
           <!-- 卡片视图：整张卡片可拖拽排序，右上角置顶 -->
-          <div
-            v-if="moreViewMode === 'card'"
-            class="kb-more-grid"
-          >
+          <div v-if="moreViewMode === 'card'" class="kb-more-grid">
             <div
               v-for="library in moreLibraries"
               :key="library.id"
@@ -1135,7 +1465,7 @@ watch(openTabs, () => {
               }"
               role="button"
               tabindex="0"
-              draggable="true"
+              :draggable="!isCloudMore"
               @click="selectFromMore(library)"
               @keydown.enter.prevent="selectFromMore(library)"
               @dragstart="onLibraryDragStart(library, $event)"
@@ -1165,13 +1495,9 @@ watch(openTabs, () => {
                   </svg>
                 </span>
                 <div class="kb-lib-card-ops">
-                  <span
-                    v-if="library.pinned === true"
-                    class="kb-pin-flag"
-                  >
-                    置顶
-                  </span>
+                  <span v-if="library.pinned === true" class="kb-pin-flag"> 置顶 </span>
                   <button
+                    v-if="!isCloudMore"
                     class="kb-pin-btn"
                     type="button"
                     :class="{ 'kb-pin-btn--on': library.pinned === true }"
@@ -1197,46 +1523,18 @@ watch(openTabs, () => {
                     </svg>
                   </button>
                   <span
+                    v-if="!isCloudMore"
                     class="kb-drag-handle"
                     title="拖拽排序"
                     aria-hidden="true"
                   >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <circle
-                        cx="9"
-                        cy="6"
-                        r="1.6"
-                      />
-                      <circle
-                        cx="15"
-                        cy="6"
-                        r="1.6"
-                      />
-                      <circle
-                        cx="9"
-                        cy="12"
-                        r="1.6"
-                      />
-                      <circle
-                        cx="15"
-                        cy="12"
-                        r="1.6"
-                      />
-                      <circle
-                        cx="9"
-                        cy="18"
-                        r="1.6"
-                      />
-                      <circle
-                        cx="15"
-                        cy="18"
-                        r="1.6"
-                      />
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="9" cy="6" r="1.6" />
+                      <circle cx="15" cy="6" r="1.6" />
+                      <circle cx="9" cy="12" r="1.6" />
+                      <circle cx="15" cy="12" r="1.6" />
+                      <circle cx="9" cy="18" r="1.6" />
+                      <circle cx="15" cy="18" r="1.6" />
                     </svg>
                   </span>
                 </div>
@@ -1251,46 +1549,13 @@ watch(openTabs, () => {
           </div>
 
           <!-- 表格视图：同样的拖拽 / 置顶能力，按行列对齐 -->
-          <div
-            v-else
-            class="kb-more-table"
-            role="table"
-            aria-label="知识库列表"
-          >
-            <div
-              class="kb-more-table-head"
-              role="row"
-            >
-              <span
-                class="kb-more-col kb-more-col--name"
-                role="columnheader"
-              >
-                名称
-              </span>
-              <span
-                class="kb-more-col kb-more-col--desc"
-                role="columnheader"
-              >
-                描述
-              </span>
-              <span
-                class="kb-more-col kb-more-col--files"
-                role="columnheader"
-              >
-                文件
-              </span>
-              <span
-                class="kb-more-col kb-more-col--time"
-                role="columnheader"
-              >
-                更新于
-              </span>
-              <span
-                class="kb-more-col kb-more-col--ops"
-                role="columnheader"
-              >
-                操作
-              </span>
+          <div v-else class="kb-more-table" role="table" aria-label="知识库列表">
+            <div class="kb-more-table-head" role="row">
+              <span class="kb-more-col kb-more-col--name" role="columnheader"> 名称 </span>
+              <span class="kb-more-col kb-more-col--desc" role="columnheader"> 描述 </span>
+              <span class="kb-more-col kb-more-col--files" role="columnheader"> 文件 </span>
+              <span class="kb-more-col kb-more-col--time" role="columnheader"> 更新于 </span>
+              <span class="kb-more-col kb-more-col--ops" role="columnheader"> 操作 </span>
             </div>
             <div
               v-for="library in moreLibraries"
@@ -1304,7 +1569,7 @@ watch(openTabs, () => {
               }"
               role="row"
               tabindex="0"
-              draggable="true"
+              :draggable="!isCloudMore"
               @click="selectFromMore(library)"
               @keydown.enter.prevent="selectFromMore(library)"
               @dragstart="onLibraryDragStart(library, $event)"
@@ -1313,66 +1578,26 @@ watch(openTabs, () => {
               @dragend="resetLibraryDrag"
             >
               <span class="kb-more-col kb-more-col--name">
-                <span
-                  class="kb-drag-handle"
-                  title="拖拽排序"
-                  aria-hidden="true"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <circle
-                      cx="9"
-                      cy="6"
-                      r="1.6"
-                    />
-                    <circle
-                      cx="15"
-                      cy="6"
-                      r="1.6"
-                    />
-                    <circle
-                      cx="9"
-                      cy="12"
-                      r="1.6"
-                    />
-                    <circle
-                      cx="15"
-                      cy="12"
-                      r="1.6"
-                    />
-                    <circle
-                      cx="9"
-                      cy="18"
-                      r="1.6"
-                    />
-                    <circle
-                      cx="15"
-                      cy="18"
-                      r="1.6"
-                    />
+                <span class="kb-drag-handle" title="拖拽排序" aria-hidden="true">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="9" cy="6" r="1.6" />
+                    <circle cx="15" cy="6" r="1.6" />
+                    <circle cx="9" cy="12" r="1.6" />
+                    <circle cx="15" cy="12" r="1.6" />
+                    <circle cx="9" cy="18" r="1.6" />
+                    <circle cx="15" cy="18" r="1.6" />
                   </svg>
                 </span>
-                <span
-                  class="kb-more-dot"
-                  :style="{ background: library.tone }"
-                />
+                <span class="kb-more-dot" :style="{ background: library.tone }" />
                 <span class="kb-more-name">{{ library.name }}</span>
-                <span
-                  v-if="library.pinned === true"
-                  class="kb-pin-flag"
-                >
-                  置顶
-                </span>
+                <span v-if="library.pinned === true" class="kb-pin-flag"> 置顶 </span>
               </span>
               <span class="kb-more-col kb-more-col--desc">{{ library.description }}</span>
               <span class="kb-more-col kb-more-col--files">{{ library.files }}</span>
               <span class="kb-more-col kb-more-col--time">{{ library.updated }}</span>
               <span class="kb-more-col kb-more-col--ops">
                 <button
+                  v-if="!isCloudMore"
                   class="kb-pin-btn"
                   type="button"
                   :class="{ 'kb-pin-btn--on': library.pinned === true }"
@@ -1402,12 +1627,25 @@ watch(openTabs, () => {
           </div>
         </div>
 
-        <p
-          v-else
-          class="kb-more-empty"
-        >
-          这个分类下还没有知识库，点右上角「新建知识库」创建。
-        </p>
+        <!-- 空态：云分组要区分「未授权 / 同步失败 / 真的为空」——失败只留 toast 会让人不知道怎么办 -->
+        <div v-else class="kb-more-empty">
+          <template v-if="isCloudMore">
+            <p class="kb-more-empty-text">
+              {{ cloudGroupHint(moreGroup)?.text ?? '暂无知识库' }}
+            </p>
+            <button
+              v-if="cloudGroupHint(moreGroup)?.action"
+              class="kb-more-empty-btn"
+              type="button"
+              @click="cloudGroupHint(moreGroup)?.run()"
+            >
+              {{ cloudGroupHint(moreGroup)?.action }}
+            </button>
+          </template>
+          <template v-else>
+            <p class="kb-more-empty-text">这个分类下还没有知识库，点右上角「新建知识库」创建。</p>
+          </template>
+        </div>
       </div>
     </div>
     <!-- ════════════════ 知识库工作台 ════════════════ -->
@@ -1448,7 +1686,7 @@ watch(openTabs, () => {
             @mouseleave="openGroupMenu = null"
           >
             <div class="kb-group-head">
-              <button class="kb-group-toggle" @click="toggleGroup(group.id)">
+              <button class="kb-group-toggle" @click="onGroupRowClick(group)">
                 <span class="kb-group-icon">
                   <svg
                     v-if="group.icon === 'hard-drive'"
@@ -1525,7 +1763,8 @@ watch(openTabs, () => {
 
               <button
                 class="kb-group-chevron"
-                :class="{ 'kb-group-chevron--collapsed': !expanded[group.id] }"
+                :class="{ 'kb-group-chevron--collapsed': !isGroupExpanded(group.id) }"
+                :title="isGroupExpanded(group.id) ? '折叠' : '展开'"
                 @click="toggleGroup(group.id)"
               >
                 <svg
@@ -1567,7 +1806,32 @@ watch(openTabs, () => {
                 </svg>
                 查看更多
               </button>
-              <button class="kb-group-menu-item" @click="addKnowledgeLibrary(group.id)">
+              <!-- 云分组只能刷新（云端建库涉及配置口径差异，本轮不做） -->
+              <button
+                v-if="groupMenuItemsOf(group).includes('refresh')"
+                class="kb-group-menu-item"
+                @click="refreshMoreGroupFrom(group)"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                  <path d="M21 3v5h-5" />
+                </svg>
+                刷新
+              </button>
+              <button
+                v-if="groupMenuItemsOf(group).includes('create')"
+                class="kb-group-menu-item"
+                @click="addKnowledgeLibrary(group.id)"
+              >
                 <svg
                   width="13"
                   height="13"
@@ -1586,17 +1850,17 @@ watch(openTabs, () => {
             </div>
 
             <!-- 分组下的知识库列表 -->
-            <div v-if="expanded[group.id]" class="kb-group-items">
+            <div v-if="isGroupExpanded(group.id)" class="kb-group-items">
               <div
                 v-for="library in group.items"
-                :key="library.id"
+                :key="`${group.id}:${library.cloud?.shareId ?? library.id}`"
                 class="kb-lib-row"
                 @mouseleave="openLibMenu = null"
               >
                 <button
                   class="kb-lib-item"
-                  :class="{ 'kb-lib-item--active': selectedLibrary.id === library.id }"
-                  @click="selectLibrary(library)"
+                  :class="{ 'kb-lib-item--active': isActiveLibrary(library) }"
+                  @click="onSidebarLibraryClick(library)"
                 >
                   <svg
                     width="13"
@@ -1618,8 +1882,17 @@ watch(openTabs, () => {
                   <span class="kb-lib-name">{{ library.name }}</span>
                 </button>
 
-                <!-- 三点操作按钮：悬浮条目时淡入，点击展开菜单 -->
+                <!-- 待接受的邀请：行内给接受/拒绝（与 Web 版侧栏一致） -->
+                <span v-if="library.cloud?.shareStatus === 'pending'" class="kb-lib-actions">
+                  <button type="button" @click.stop="respondInvitation(library, true)">接受</button>
+                  <button type="button" @click.stop="respondInvitation(library, false)">
+                    拒绝
+                  </button>
+                </span>
+
+                <!-- 三点操作按钮：悬浮条目时淡入，点击展开菜单（云库没有本地编辑/删除操作） -->
                 <button
+                  v-if="library.source === 'local'"
                   class="kb-lib-more"
                   type="button"
                   :title="`「${library.name}」操作`"
@@ -1643,7 +1916,10 @@ watch(openTabs, () => {
                 </button>
 
                 <!-- 条目操作菜单：编辑 / 设置 / 删除 -->
-                <div v-if="openLibMenu === library.id" class="kb-lib-menu">
+                <div
+                  v-if="openLibMenu === library.id && library.source === 'local'"
+                  class="kb-lib-menu"
+                >
                   <button class="kb-lib-menu-item" @click="openEditLibrary(library)">
                     <svg
                       width="13"
@@ -1704,6 +1980,24 @@ watch(openTabs, () => {
                   </button>
                 </div>
               </div>
+
+              <!-- 空态 / 未授权 / 加载中：侧栏内联提示（失败不能只靠 1.8s 的 toast） -->
+              <p
+                v-if="
+                  group.items.length === 0 && (cloudGroupHint(group) || group.source === 'local')
+                "
+                class="kb-group-hint"
+              >
+                <span>{{ cloudGroupHint(group)?.text ?? '暂无知识库，可从分组菜单新建' }}</span>
+                <button
+                  v-if="cloudGroupHint(group)?.action"
+                  class="kb-group-hint-btn"
+                  type="button"
+                  @click="cloudGroupHint(group)?.run()"
+                >
+                  {{ cloudGroupHint(group)?.action }}
+                </button>
+              </p>
             </div>
           </div>
         </div>
@@ -1729,8 +2023,8 @@ watch(openTabs, () => {
                 <span
                   class="kb-lib-badge"
                   :style="{
-                    color: selectedLibrary.tone,
-                    background: selectedLibrary.tone + '14'
+                    color: displayLibrary.tone,
+                    background: displayLibrary.tone + '14'
                   }"
                 >
                   <svg
@@ -1749,8 +2043,8 @@ watch(openTabs, () => {
                     />
                   </svg>
                 </span>
-                <h1 class="kb-files-title">{{ selectedLibrary.name }}</h1>
-                <!-- 知识库操作：重命名 / 创建共享 / 索引设置 / 删除 -->
+                <h1 class="kb-files-title">{{ displayLibrary.name }}</h1>
+                <!-- 知识库操作：本地 = 重命名/创建共享/索引设置/删除；云端只读 = 刷新 -->
                 <div class="kb-library-menu-wrap">
                   <button
                     class="kb-library-more"
@@ -1777,7 +2071,24 @@ watch(openTabs, () => {
                   </button>
 
                   <div v-if="libraryMenuOpen" class="kb-library-menu">
-                    <button class="kb-lib-menu-item" @click="openLibraryRename">
+                    <!-- 云库只读：重命名/共享/索引/删除都在 Web 版做，这里只有刷新 -->
+                    <button v-if="isCloudView" class="kb-lib-menu-item" @click="refreshCloudDocs">
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                        <path d="M21 3v5h-5" />
+                      </svg>
+                      刷新
+                    </button>
+                    <button v-if="!isCloudView" class="kb-lib-menu-item" @click="openLibraryRename">
                       <svg
                         width="13"
                         height="13"
@@ -1795,7 +2106,7 @@ watch(openTabs, () => {
                       </svg>
                       重命名
                     </button>
-                    <button class="kb-lib-menu-item" @click="openLibraryDir">
+                    <button v-if="!isCloudView" class="kb-lib-menu-item" @click="openLibraryDir">
                       <svg
                         width="13"
                         height="13"
@@ -1813,6 +2124,7 @@ watch(openTabs, () => {
                       打开文件夹
                     </button>
                     <button
+                      v-if="!isCloudView"
                       class="kb-lib-menu-item"
                       @click="openShare(selectedLibrary.name, 'library')"
                     >
@@ -1834,7 +2146,11 @@ watch(openTabs, () => {
                       </svg>
                       创建共享
                     </button>
-                    <button class="kb-lib-menu-item" @click="openLibrarySettingsFromHeader">
+                    <button
+                      v-if="!isCloudView"
+                      class="kb-lib-menu-item"
+                      @click="openLibrarySettingsFromHeader"
+                    >
                       <svg
                         width="13"
                         height="13"
@@ -1853,6 +2169,7 @@ watch(openTabs, () => {
                       索引设置
                     </button>
                     <button
+                      v-if="!isCloudView"
                       class="kb-lib-menu-item kb-lib-menu-item--danger"
                       @click="deleteLibraryFromHeader"
                     >
@@ -1877,20 +2194,12 @@ watch(openTabs, () => {
                   </div>
                 </div>
               </div>
-              <p class="kb-files-sub">{{ selectedLibrary.description }} · {{ fileSummary }}</p>
+              <p class="kb-files-sub">{{ displayLibrary.description }} · {{ fileSummary }}</p>
             </div>
 
             <div class="kb-files-actions">
-              <!-- 上传文件夹：webkitdirectory 让系统选择器只能选目录 -->
-              <input
-                ref="folderUploadRef"
-                type="file"
-                multiple
-                webkitdirectory
-                class="kb-file-input"
-                @change="onFolderChange"
-              />
-              <button class="kb-btn-ghost" @click="openUploadModal">
+              <!-- 云库只读：没有上传，只提供刷新（与本地"上传"同一位置） -->
+              <button v-if="isCloudView" class="kb-btn-ghost" @click="refreshCloudDocs">
                 <svg
                   width="14"
                   height="14"
@@ -1901,29 +2210,56 @@ watch(openTabs, () => {
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" x2="12" y1="3" y2="15" />
+                  <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                  <path d="M21 3v5h-5" />
                 </svg>
-                上传文件
+                {{ cloudDocsLoading ? '同步中…' : '刷新' }}
               </button>
-              <button class="kb-btn-ghost" @click="uploadFolder">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
-                  />
-                </svg>
-                上传文件夹
-              </button>
+              <template v-if="!isCloudView">
+                <!-- 上传文件夹：webkitdirectory 让系统选择器只能选目录 -->
+                <input
+                  ref="folderUploadRef"
+                  type="file"
+                  multiple
+                  webkitdirectory
+                  class="kb-file-input"
+                  @change="onFolderChange"
+                />
+                <button class="kb-btn-ghost" @click="openUploadModal">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" x2="12" y1="3" y2="15" />
+                  </svg>
+                  上传文件
+                </button>
+                <button class="kb-btn-ghost" @click="uploadFolder">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+                    />
+                  </svg>
+                  上传文件夹
+                </button>
+              </template>
             </div>
           </div>
 
@@ -2136,7 +2472,18 @@ watch(openTabs, () => {
                 </button>
 
                 <div v-if="fileMenuKey === row.node.key" class="kb-row-menu">
-                  <button class="kb-lib-menu-item" @click="openFileDetail(row.node)">
+                  <!-- 云文档只读：只有预览与下载（重命名/重建索引/共享/删除都在 Web 版） -->
+                  <template v-if="isCloudView">
+                    <button class="kb-lib-menu-item" @click="openFile(row.node)">预览</button>
+                    <button class="kb-lib-menu-item" @click="downloadCloudDoc(row.node)">
+                      下载
+                    </button>
+                  </template>
+                  <button
+                    v-if="!isCloudView"
+                    class="kb-lib-menu-item"
+                    @click="openFileDetail(row.node)"
+                  >
                     <svg
                       width="13"
                       height="13"
@@ -2154,7 +2501,11 @@ watch(openTabs, () => {
                     </svg>
                     查看详情
                   </button>
-                  <button class="kb-lib-menu-item" @click="openFileRename(row.node)">
+                  <button
+                    v-if="!isCloudView"
+                    class="kb-lib-menu-item"
+                    @click="openFileRename(row.node)"
+                  >
                     <svg
                       width="13"
                       height="13"
@@ -2172,7 +2523,11 @@ watch(openTabs, () => {
                     </svg>
                     重新命名
                   </button>
-                  <button class="kb-lib-menu-item" @click="openFileDir(row.node)">
+                  <button
+                    v-if="!isCloudView"
+                    class="kb-lib-menu-item"
+                    @click="openFileDir(row.node)"
+                  >
                     <svg
                       width="13"
                       height="13"
@@ -2190,7 +2545,7 @@ watch(openTabs, () => {
                     打开文件夹
                   </button>
                   <button
-                    v-if="row.node.kind === 'file'"
+                    v-if="!isCloudView && row.node.kind === 'file'"
                     class="kb-lib-menu-item"
                     @click="rebuildIndex(row.node)"
                   >
@@ -2212,6 +2567,7 @@ watch(openTabs, () => {
                     重建索引
                   </button>
                   <button
+                    v-if="!isCloudView"
                     class="kb-lib-menu-item"
                     @click="
                       openShare(
@@ -2240,6 +2596,7 @@ watch(openTabs, () => {
                     创建共享
                   </button>
                   <button
+                    v-if="!isCloudView"
                     class="kb-lib-menu-item kb-lib-menu-item--danger"
                     @click="askDeleteFile(row.node)"
                   >
@@ -2263,6 +2620,18 @@ watch(openTabs, () => {
                   </button>
                 </div>
               </div>
+            </div>
+            <!-- 云端：分页与状态（本地库没有分页概念，这里只在云端出现） -->
+            <div v-if="isCloudView" class="kb-cloud-foot">
+              <p v-if="cloudDocsMessage" class="kb-cloud-note">{{ cloudDocsMessage }}</p>
+              <p v-else-if="cloudDocsLoading" class="kb-cloud-note">正在同步云端文档…</p>
+              <button
+                v-if="!cloudDocsLoading && cloudDocs.length < cloudDocsTotal"
+                class="kb-btn-ghost"
+                @click="loadCloudDocs(true)"
+              >
+                加载更多（已显示 {{ cloudDocs.length }}/{{ cloudDocsTotal }}）
+              </button>
             </div>
           </div>
         </section>
@@ -2821,6 +3190,43 @@ watch(openTabs, () => {
   padding-left: 8px;
 }
 
+/* 侧栏内的空态 / 未授权 / 失败提示（失败不能只靠 1.8s 的 toast） */
+.kb-group-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 2px 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a969a;
+}
+
+.kb-group-hint-btn,
+.kb-lib-actions button {
+  border: 1px solid #cfe3dd;
+  background: #f4faf8;
+  border-radius: 5px;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: #168b7a;
+  cursor: pointer;
+}
+
+.kb-group-hint-btn:hover,
+.kb-lib-actions button:hover {
+  background: #e6f4f1;
+}
+
+/* 待接受的分享邀请：行内「接受 / 拒绝」 */
+.kb-lib-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
 /* 条目行：选择按钮 + 悬浮出现的操作按钮（同级按钮，避免 button 嵌套） */
 .kb-lib-row {
   position: relative;
@@ -3008,6 +3414,21 @@ watch(openTabs, () => {
   border: 1px solid #e1ebe7;
   background: #ffffff;
 }
+/* 云端文档区页脚：状态提示与「加载更多」（本地库没有分页，只在云端出现） */
+.kb-cloud-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0 4px;
+}
+
+.kb-cloud-note {
+  margin: 0;
+  font-size: 12px;
+  color: #8a969a;
+}
+
 .kb-table-head {
   border-radius: 16px 16px 0 0;
   display: grid;
@@ -3903,7 +4324,29 @@ watch(openTabs, () => {
   padding: 28px;
   text-align: center;
   font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   color: #8a969a;
+}
+
+.kb-more-empty-text {
+  margin: 0;
+}
+
+.kb-more-empty-btn {
+  border: 1px solid #cfe3dd;
+  background: #f4faf8;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  color: #168b7a;
+  cursor: pointer;
+}
+
+.kb-more-empty-btn:hover {
+  background: #e6f4f1;
 }
 @media (max-width: 767px) {
   .kb-more-table-head,

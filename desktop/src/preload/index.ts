@@ -594,6 +594,47 @@ const api = {
       return ipcRenderer.invoke('model-sync:disconnect')
     }
   },
+  // 云知识库（只读）：列表类接口返回 { state, message, ... }，未授权时 state='auth-required'
+  knowledgeCloud: {
+    getStatus() {
+      return ipcRenderer.invoke('knowledge-cloud:status')
+    },
+    list(params: {
+      scope: 'personal' | 'public'
+      page?: number
+      pageSize?: number
+      search?: string
+    }) {
+      return ipcRenderer.invoke('knowledge-cloud:list', params)
+    },
+    listInvitations() {
+      return ipcRenderer.invoke('knowledge-cloud:invitations')
+    },
+    getKb(kbId: string) {
+      return ipcRenderer.invoke('knowledge-cloud:get-kb', kbId)
+    },
+    listDocuments(params: {
+      kbId: string
+      page?: number
+      pageSize?: number
+      search?: string
+      folder?: string
+    }) {
+      return ipcRenderer.invoke('knowledge-cloud:list-docs', params)
+    },
+    respondInvitation(shareId: string, accept: boolean) {
+      return ipcRenderer.invoke('knowledge-cloud:respond-invitation', shareId, accept)
+    },
+    readFile(kbId: string, docId: string, as: 'text' | 'bytes', cursor?: number) {
+      return ipcRenderer.invoke('knowledge-cloud:read-file', kbId, docId, as, cursor)
+    },
+    downloadDocument(kbId: string, docId: string, suggestedName?: string) {
+      return ipcRenderer.invoke('knowledge-cloud:download-doc', kbId, docId, suggestedName)
+    },
+    disconnect() {
+      return ipcRenderer.invoke('knowledge-cloud:disconnect')
+    }
+  },
   automation: {
     listTasks() {
       return ipcRenderer.invoke('automation:list-tasks')

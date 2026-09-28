@@ -11,6 +11,9 @@
 ∪ 已接受的分享 ∪ 授权），与网页检索共用 ``api.knowledge_base.service._readable_condition``
 与 ``agent.tools.kb_search`` 的同一条判定——本模块只做身份解析与结果整形，
 **不自己拼权限条件**，否则就会出现"网页里搜不到、MCP 里却搜得到"的越权。
+在此之上还有一层 OAuth2 **scope** 门禁（``REQUIRED_SCOPE``）：OAuth2 客户端 token
+必须先在授权页被授予 ``knowledge:read``，否则即使身份有效也拒绝——
+客户端有没有被授权用知识库，与用户能读哪些库是两件事。
 
 **身份**：调用方身份由 ``agent.tools.kb_search._current_user_id`` 统一解析
 （Agent 运行时上下文，或 MCP 请求头里的 access token）；解析不出来即拒绝，
@@ -34,20 +37,40 @@ SERVER_NAME = "云知识库检索"
 #: ``kb_get_chunk_context`` 单侧最多取几片——窗口再大就不如直接读文档了
 _MAX_CONTEXT_WINDOW = 5
 
+#: 本服务全部工具都是只读检索，统一要求读 scope（与 REST 侧 ``require_scope("knowledge:read")`` 同口径）
+REQUIRED_SCOPE = "knowledge:read"
+
 mcp = FastMCP("ke-hermes-kb", transport_security=transport_security_settings())
 
 
 def _require_user_id() -> tuple[str, dict[str, Any] | None]:
-    """解析调用方用户 ID。
+    """解析调用方用户 ID，并校验其 OAuth2 scope。
+
+    4 个工具都是只读检索，统一要求 ``knowledge:read``；判定复用 REST 侧同一份口径
+    （``api.deps.scope_missing``）：OAuth2 客户端 token 必须显式携带该 scope，
+    第一方 Web token 与 Web 智能体的进程内调用放行。
 
     Returns:
-        ``(user_id, error_payload)``；身份不可确定时 user_id 为空串，error_payload 为提示。
+        ``(user_id, error_payload)``；身份或权限不满足时 user_id 为空串，error_payload 为提示。
     """
     from agent.tools.kb_search import _current_user_id
+    from mcp_servers.request_auth import missing_scope_from_mcp_request
 
     user_id = _current_user_id()
     if user_id:
-        return user_id, None
+        missing = missing_scope_from_mcp_request(REQUIRED_SCOPE)
+        if missing is None:
+            return user_id, None
+        logger.warning("知识库 MCP 工具调用方缺少 scope %s，已拒绝调用", missing)
+        return "", {
+            "error": f"当前客户端未被授予「{missing}」权限，无法访问知识库。",
+            "total": 0,
+            "results": [],
+            "hint": (
+                "请在桌面端「设置 - 账号 - 授权管理」中开启「读取并检索知识库」，"
+                "或在授权页重新授权本客户端后重试。"
+            ),
+        }
     logger.warning("知识库 MCP 工具缺少身份信息，已拒绝调用")
     return "", {
         "error": "缺少身份信息，无法确定知识库访问权限。",

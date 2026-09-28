@@ -21,7 +21,8 @@ export const INDEX_DB_FILE = 'index.db'
  * 本阶段只建「知识库 / 文档 / 共享」三张表；切片、向量、图谱与 FTS5 表
  * 随索引能力一并加入（见 docs/桌面版知识库实现方案.md 第九章）。
  */
-const MIGRATIONS: Array<{ version: number; name: string; sql: string }> = [
+/** 版本化迁移表（导出供测试直接驱动；与 `SqlMigrationRunner` 导出 `MIGRATIONS_DIR` 同一做法） */
+export const MIGRATIONS: Array<{ version: number; name: string; sql: string }> = [
   {
     version: 1,
     name: 'kb_baseline',
@@ -85,6 +86,18 @@ CREATE INDEX IF NOT EXISTS idx_ks_user ON knowledge_shares(user_id, created_at D
 ALTER TABLE knowledge_bases ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE knowledge_bases ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_kb_user_pin_order ON knowledge_bases(user_id, pinned DESC, sort_order ASC);
+`
+  },
+  {
+    version: 3,
+    name: 'kb_retire_cloud_kind',
+    // 侧栏的「云端知识库」分组已删除（云端库改为从 Web 后端同步、不落本地库）。
+    // 老数据里由那个分组创建出来的行 kind='cloud'，若原样留着会从侧栏彻底消失——
+    // 用户看到的是"知识库丢了"。它们本来就是本地库，这里一次性归一为 local：
+    // 渲染层不做兜底（本地组的拖拽排序要求"传入 id 集合 == 该 kind 全量"，
+    // 把两批 kind 混进同一个列表会让刷新后顺序弹回）。
+    sql: `
+UPDATE knowledge_bases SET kind = 'local' WHERE kind = 'cloud';
 `
   }
 ]

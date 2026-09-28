@@ -8,6 +8,7 @@ import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
 import { createModelFromCredential, resolveDefaultModel, type ChatModel } from './ModelFactory'
 import { buildExpertTools, buildExpertSkills } from './tools/DesktopToolRegistry'
 import { buildExpertMcpTools, type McpLoadFailure } from './tools/McpToolRegistry'
+import type { McpAuthBinding } from '../oauth2/mcpAuth'
 
 /** 智能体生命周期管理（单例由调用方持有） */
 /** 将桌面版专家数据转换为 DeepAgents SubAgent 配置。 */
@@ -45,7 +46,8 @@ async function resolveExpertModel(
 async function expertToSubAgent(
   expert: DesktopExpert,
   modelService?: ModelService,
-  onMcpError?: (failure: McpLoadFailure) => void
+  onMcpError?: (failure: McpLoadFailure) => void,
+  mcpAuth?: McpAuthBinding
 ): Promise<SubAgent> {
   return {
     name: expert.name,
@@ -54,7 +56,7 @@ async function expertToSubAgent(
     model: await resolveExpertModel(expert, modelService),
     tools: [
       ...buildExpertTools(expert.tools, modelService, expert.modelName, expert.capabilities ?? []),
-      ...(await buildExpertMcpTools(expert.mcpConfigs, { onError: onMcpError }))
+      ...(await buildExpertMcpTools(expert.mcpConfigs, { onError: onMcpError, mcpAuth }))
     ],
     skills: buildExpertSkills(expert.skills)
   }
@@ -66,12 +68,14 @@ function normalizeSkillPath(value: string): string {
   return `/skills/${value}/`
 }
 
-/** AgentManager 可选扩展（技能挂载与技能 id 解析） */
+/** AgentManager 可选扩展（技能挂载、技能 id 解析与 MCP 凭据） */
 export interface AgentManagerOptions {
   /** 本地技能根目录（~/.ke-work/skills）；提供后本地模式挂载 /skills/ 路由 */
   skillsDir?: string
   /** 技能 id → 本地目录名解析器（自动化任务按 id 引用技能时使用） */
   resolveSkillDirs?: (ids: string[]) => Promise<string[]>
+  /** MCP 凭据绑定：专家同步下来的平台内 MCP 服务需要它才能带上 OAuth2 token */
+  mcpAuth?: McpAuthBinding
 }
 
 export class AgentManager {
@@ -130,9 +134,14 @@ export class AgentManager {
       const failures: McpLoadFailure[] = []
       const subagents = await Promise.all(
         this.experts.map((expert) =>
-          expertToSubAgent(expert, this.modelService, (failure) => {
-            failures.push({ ...failure, toolName: `${expert.name} · ${failure.toolName}` })
-          })
+          expertToSubAgent(
+            expert,
+            this.modelService,
+            (failure) => {
+              failures.push({ ...failure, toolName: `${expert.name} · ${failure.toolName}` })
+            },
+            this.options.mcpAuth
+          )
         )
       )
       this.mcpWarnings = failures

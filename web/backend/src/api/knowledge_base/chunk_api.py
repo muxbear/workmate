@@ -10,7 +10,7 @@ embedding 模型重新向量化。
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_db, require_scope
 from api.knowledge_base.chunk_service import (
     batch_operation,
     delete_chunk,
@@ -64,6 +64,8 @@ async def api_list_chunks(
     db: AsyncSession = Depends(get_db),
     # 切片是文档正文的一部分，改切片等同改库内容
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    # 只读接口：RBAC 键沿用现状（口径问题另行处理），这里只补 OAuth2 scope 维度
+    _scope: str = Depends(require_scope("knowledge:read")),
 ):
     """列出文档所有切片。可读即可浏览。"""
     await require_kb_readable(db, kb_id, user_id)
@@ -85,6 +87,8 @@ async def api_get_chunk_detail(
     db: AsyncSession = Depends(get_db),
     # 切片是文档正文的一部分，改切片等同改库内容
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    # 只读接口：RBAC 键沿用现状（口径问题另行处理），这里只补 OAuth2 scope 维度
+    _scope: str = Depends(require_scope("knowledge:read")),
 ):
     """获取切片详情（含上下文）。可读即可查看。"""
     await require_kb_readable(db, kb_id, user_id)
@@ -110,6 +114,7 @@ async def api_update_chunk(
     db: AsyncSession = Depends(get_db),
     # 切片是文档正文的一部分，改切片等同改库内容
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """更新切片内容（重新向量化）。"""
     await require_kb_writable(db, kb_id, user_id)
@@ -150,6 +155,7 @@ async def api_delete_chunk(
     db: AsyncSession = Depends(get_db),
     # 切片是文档正文的一部分，改切片等同改库内容
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """删除单个切片。"""
     await require_kb_writable(db, kb_id, user_id)
@@ -179,6 +185,7 @@ async def api_batch_chunk_operation(
     db: AsyncSession = Depends(get_db),
     # 切片是文档正文的一部分，改切片等同改库内容
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """批量操作：保存或删除切片。"""
     await require_kb_writable(db, kb_id, user_id)

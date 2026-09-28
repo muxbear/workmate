@@ -13,7 +13,7 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_db, require_scope
 from api.knowledge_base.schemas import (
     KBShareCreateRequest,
     KBShareLinkCreateRequest,
@@ -61,7 +61,7 @@ async def get_share_candidates(
     search: str = Query(default="", description="按用户名 / 昵称模糊匹配"),
     limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ) -> object:
     """搜索可分享的用户（仅返回展示所需的最小字段）。"""
     return ok(await search_share_candidates(db, user_id, search, limit))
@@ -71,7 +71,7 @@ async def get_share_candidates(
 @handle_errors
 async def get_invitations(
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ) -> object:
     """获取「共享给我的」邀请与已授权记录。"""
     return ok(await list_invitations(db, user_id))
@@ -81,7 +81,7 @@ async def get_invitations(
 @handle_errors
 async def get_shares_by_me(
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ) -> object:
     """获取「我分享出去的」全部记录（跨知识库，供左栏栏目使用）。"""
     return ok(await list_shares_by_owner(db, user_id))
@@ -92,7 +92,7 @@ async def get_shares_by_me(
 async def accept_share(
     share_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ) -> object:
     """接受分享邀请。"""
     return ok(await respond_share(db, share_id, user_id, accept=True))
@@ -103,7 +103,7 @@ async def accept_share(
 async def reject_share(
     share_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ) -> object:
     """拒绝分享邀请。"""
     return ok(await respond_share(db, share_id, user_id, accept=False))
@@ -116,7 +116,7 @@ async def reject_share(
 async def get_shares(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ) -> object:
     """列出某知识库的分享记录（仅所有者）。"""
     return ok(await list_shares(db, kb_id, user_id))
@@ -131,6 +131,7 @@ async def create_shares(
     # 分享范围是库级配置，属于"编辑知识库"（被邀请人的接受/拒绝不在此列——
     # 那是"我的收件箱"操作，按参与者身份鉴权，与库的编辑权无关）
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ) -> object:
     """邀请用户浏览知识库（仅所有者，只读授权）。"""
     async with audit_scope(
@@ -152,6 +153,7 @@ async def cancel_all_shares(
     # 分享范围是库级配置，属于"编辑知识库"（被邀请人的接受/拒绝不在此列——
     # 那是"我的收件箱"操作，按参与者身份鉴权，与库的编辑权无关）
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ) -> object:
     """取消该知识库的全部分享（仅所有者）。"""
     async with audit_scope("knowledge.share.cancel_all", user_id, None, target=kb_id):
@@ -168,6 +170,7 @@ async def remove_share(
     # 分享范围是库级配置，属于"编辑知识库"（被邀请人的接受/拒绝不在此列——
     # 那是"我的收件箱"操作，按参与者身份鉴权，与库的编辑权无关）
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ) -> object:
     """删除某个被分享用户（仅所有者）。"""
     async with audit_scope("knowledge.share.revoke", user_id, None, target=kb_id):
@@ -189,6 +192,7 @@ async def create_share_link(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """创建一条链接分享。**明文 token 只在这里出现一次**（库里只存 sha256 摘要）。"""
     async with audit_scope("knowledge.share.link_create", user_id, request, target=kb_id) as entry:
@@ -207,6 +211,8 @@ async def list_share_links(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    # 只读接口（不改数据）→ scope 归读；RBAC 仍按所有者管理口径
+    _scope: str = Depends(require_scope("knowledge:read")),
 ):
     """列出该库的链接（**不含 token 与摘要**——丢了明文只能重建）。"""
     return {
@@ -223,6 +229,7 @@ async def revoke_share_link(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """撤销一条链接——**只关闭"再拉新人"的入口**，已接受的人保留访问权。"""
     async with audit_scope("knowledge.share.link_revoke", user_id, request, target=kb_id):
@@ -257,7 +264,7 @@ async def accept_share_link(
     token: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """登录后接受链接（幂等）：落成一条普通的已接受分享行，于是读路径零改动。
 
@@ -279,6 +286,7 @@ async def update_visibility(
     db: AsyncSession = Depends(get_db),
     # 分享范围与公开可见性是库级配置，属于"编辑知识库"
     user_id: str = Depends(RequirePermission("knowledge:edit")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ) -> object:
     """发布 / 取消发布公共知识库（仅所有者）。"""
     async with audit_scope(

@@ -8,7 +8,6 @@ from fastapi import (
     Depends,
     File,
     Form,
-    HTTPException,
     Query,
     Request,
     UploadFile,
@@ -16,7 +15,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user_id, get_db
+from api.deps import get_db, require_scope, require_scope_from_query
 from api.knowledge_base.doc_service import (
     batch_documents,
     cancel_document,
@@ -77,6 +76,7 @@ async def upload_docs(
     # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
     # 权限树里没有单独的"删文档"键
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """向指定知识库批量上传文档（最多 20 个），落盘、写库，并异步触发索引流水线。"""
     if not files:
@@ -117,6 +117,7 @@ async def create_text_doc(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """把一段粘贴的文本建成文档（落成 `.md` 文件后走同一条索引流水线）。"""
     scheduler = _get_scheduler(request)
@@ -143,6 +144,7 @@ async def import_doc_from_url(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """从 URL / 网页导入文档（抓取自带 SSRF 防护，见 core.storage.safe_fetch）。"""
     from urllib.parse import urlsplit
@@ -181,6 +183,7 @@ async def batch_docs(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """批量删除或重试文档。
 
@@ -227,7 +230,7 @@ async def download_doc(
     doc_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """下载文档原文。
 
@@ -256,7 +259,7 @@ async def list_docs(
     # **必须是 default=None**：写成 default="" 就再也区分不出"全库"。
     folder: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取文档列表。"""
     result = await list_documents(
@@ -271,7 +274,7 @@ async def list_docs(
 async def list_doc_folders(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取文档的目录清单（文档页签的目录浏览用）。可读即可浏览。"""
     result = await list_folders(db, kb_id, user_id)
@@ -283,7 +286,7 @@ async def get_doc(
     kb_id: str,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(require_scope("knowledge:read")),
 ):
     """获取文档详情（含索引流水线状态）。"""
     result = await get_document(db, kb_id, doc_id, user_id)
@@ -299,6 +302,7 @@ async def delete_doc(
     # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
     # 权限树里没有单独的"删文档"键
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """删除文档（先取消在跑的索引任务，再清理向量/文件/图谱）。"""
     vector_store = _get_vector_store(request)
@@ -324,6 +328,7 @@ async def retry_doc(
     # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
     # 权限树里没有单独的"删文档"键
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """重试索引（失败 / 已取消 / 卡在中间态的文档均可）。"""
     scheduler = _get_scheduler(request)
@@ -344,6 +349,7 @@ async def cancel_doc(
     # 文档级写操作（上传/删除/重试/取消）都属于"往库里写内容"，
     # 权限树里没有单独的"删文档"键
     user_id: str = Depends(RequirePermission("knowledge:upload")),
+    _scope: str = Depends(require_scope("knowledge:write")),
 ):
     """取消文档的索引任务（排队中或执行中均可）。"""
     scheduler = _get_scheduler(request)
@@ -361,21 +367,14 @@ async def stream_indexing(
     request: Request,
     token: str | None = None,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_scope_from_query("knowledge:read")),
 ):
     """知识库索引进度事件流（SSE）。
 
-    EventSource 无法自定义请求头，因此 token 走查询参数（与通知流一致）。
+    EventSource 无法自定义请求头，因此 token 走查询参数（与通知流一致）：
+    身份与 scope 由 ``require_scope_from_query`` 一并校验，与其余知识库接口同一口径。
     前端订阅后只需增量更新收到的文档状态，不必再每 5 秒轮询整张列表。
     """
-    from core.security import decode_token
-
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = decode_token(token, "access")
-    except Exception as exc:  # noqa: BLE001 - 令牌无效一律按未认证处理
-        raise HTTPException(status_code=401, detail="Invalid token") from exc
-    user_id = str(payload["sub"])
     await require_kb_readable(db, kb_id, user_id)
 
     queue = IndexingEventBus.subscribe(kb_id)

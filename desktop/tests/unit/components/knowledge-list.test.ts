@@ -3,6 +3,11 @@ import {
   allLibraries,
   clampDropIndex,
   findGroupIdOf,
+  groupMenuItemsOf,
+  isCloudGroup,
+  toCloudFolder,
+  toInvitationFolder,
+  cloudDateOf,
   moveLibrary,
   pickSelectionAfterRemoval,
   removeLibrary,
@@ -18,6 +23,7 @@ function createGroups(): KnowledgeGroup[] {
       id: 'local',
       label: '本地知识库',
       icon: 'hard-drive',
+      source: 'local',
       items: [
         {
           id: 'product',
@@ -25,7 +31,8 @@ function createGroups(): KnowledgeGroup[] {
           description: '产品规划',
           files: 28,
           updated: '今天',
-          tone: '#168b7a'
+          tone: '#168b7a',
+          source: 'local'
         },
         {
           id: 'design',
@@ -33,7 +40,8 @@ function createGroups(): KnowledgeGroup[] {
           description: '界面规范',
           files: 16,
           updated: '昨天',
-          tone: '#3b82f6'
+          tone: '#3b82f6',
+          source: 'local'
         }
       ]
     },
@@ -41,6 +49,7 @@ function createGroups(): KnowledgeGroup[] {
       id: 'shared',
       label: '我的共享知识',
       icon: 'users',
+      source: 'local',
       items: [
         {
           id: 'team',
@@ -48,7 +57,8 @@ function createGroups(): KnowledgeGroup[] {
           description: '协作资料',
           files: 9,
           updated: '9 月 2 日',
-          tone: '#64748b'
+          tone: '#64748b',
+          source: 'local'
         }
       ]
     }
@@ -125,10 +135,28 @@ describe('knowledgeList 列表变换', () => {
 
   it('clampDropIndex 未置顶项拖不进置顶区，置顶项拖不出置顶区', () => {
     const items: KnowledgeFolder[] = [
-      { id: 'a', name: 'A', description: '', files: 0, updated: '', tone: '#000', pinned: true },
-      { id: 'b', name: 'B', description: '', files: 0, updated: '', tone: '#000', pinned: true },
-      { id: 'c', name: 'C', description: '', files: 0, updated: '', tone: '#000' },
-      { id: 'd', name: 'D', description: '', files: 0, updated: '', tone: '#000' }
+      {
+        id: 'a',
+        name: 'A',
+        description: '',
+        files: 0,
+        updated: '',
+        tone: '#000',
+        pinned: true,
+        source: 'local'
+      },
+      {
+        id: 'b',
+        name: 'B',
+        description: '',
+        files: 0,
+        updated: '',
+        tone: '#000',
+        pinned: true,
+        source: 'local'
+      },
+      { id: 'c', name: 'C', description: '', files: 0, updated: '', tone: '#000', source: 'local' },
+      { id: 'd', name: 'D', description: '', files: 0, updated: '', tone: '#000', source: 'local' }
     ]
     // 未置顶项（from=2）落点被抬到未置顶区首位
     expect(clampDropIndex(items, 2, 0)).toBe(2)
@@ -150,7 +178,76 @@ describe('knowledgeList 列表变换', () => {
 
   it('pickSelectionAfterRemoval 全部为空返回 null', () => {
     expect(pickSelectionAfterRemoval([], null)).toBeNull()
-    const empty: KnowledgeGroup[] = [{ id: 'local', label: '本地', icon: 'hard-drive', items: [] }]
+    const empty: KnowledgeGroup[] = [
+      { id: 'local', label: '本地', icon: 'hard-drive', source: 'local', items: [] }
+    ]
     expect(pickSelectionAfterRemoval(empty, 'local')).toBeNull()
+  })
+})
+
+describe('云分组与云端条目', () => {
+  it('云分组菜单只有「查看更多 + 刷新」，本地分组是「查看更多 + 新建」', () => {
+    expect(groupMenuItemsOf({ source: 'cloud' })).toEqual(['more', 'refresh'])
+    expect(groupMenuItemsOf({ source: 'local' })).toEqual(['more', 'create'])
+  })
+
+  it('isCloudGroup 只看 source', () => {
+    expect(isCloudGroup({ source: 'cloud' })).toBe(true)
+    expect(isCloudGroup({ source: 'local' })).toBe(false)
+  })
+
+  it('cloudDateOf 只取日期部分（朴素 UTC 不按本地时区解析）', () => {
+    // 后端返回朴素 UTC：按本地时间解析会整体偏 8 小时，因此与 Web 版一致只取日期
+    expect(cloudDateOf('2026-09-28T12:34:56')).toBe('2026-09-28')
+    expect(cloudDateOf('')).toBe('—')
+  })
+
+  it('toCloudFolder 映射后端字段并按 scope 标注来源', () => {
+    const folder = toCloudFolder(
+      {
+        id: 'kb-cloud-1',
+        name: '公共资料',
+        description: '全站可见',
+        docsCount: 12,
+        updatedAt: '2026-09-27T01:02:03',
+        visibility: 'public',
+        ownerName: '张三'
+      },
+      'public',
+      '#168b7a'
+    )
+
+    expect(folder).toMatchObject({
+      id: 'kb-cloud-1',
+      name: '公共资料',
+      files: 12,
+      updated: '2026-09-27',
+      source: 'cloud',
+      cloud: { scope: 'public', visibility: 'public', ownerName: '张三' }
+    })
+    expect(folder.pinned).toBe(false)
+  })
+
+  it('toInvitationFolder 带出 shareId 与状态（待接受项行内要放按钮）', () => {
+    const folder = toInvitationFolder(
+      {
+        shareId: 'share-1',
+        kbId: 'kb-2',
+        kbName: '被分享的库',
+        ownerName: '李四',
+        status: 'pending',
+        permission: 'read',
+        createdAt: '2026-09-20T08:00:00'
+      },
+      '#3b82f6'
+    )
+
+    expect(folder).toMatchObject({
+      id: 'kb-2',
+      name: '被分享的库',
+      description: '来自 李四',
+      source: 'cloud',
+      cloud: { scope: 'shared_with_me', shareId: 'share-1', shareStatus: 'pending' }
+    })
   })
 })

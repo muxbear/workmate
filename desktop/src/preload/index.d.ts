@@ -16,6 +16,8 @@ export interface McpLoadFailure {
   url: string
   /** 失败原因 */
   message: string
+  /** 失败类别：缺授权应引导用户去「授权管理」开启，而不是笼统的连不上 */
+  code?: 'connect-failed' | 'auth-required' | 'auth-failed'
 }
 
 /** 输入消息部件：纯文本段或文件引用（路径；文件内容由主进程权威读取） */
@@ -963,6 +965,131 @@ export interface ModelSyncAPI {
   disconnect(): Promise<IpcResult<null>>
 }
 
+// ── 云知识库（只读；Web 版的个人库 / 公共库 / 共享给我的）──
+
+/** 云分组范围（与后端 GET /api/knowledge-bases?scope= 对齐） */
+export type CloudKbScope = 'personal' | 'public'
+
+/** 云端加载状态：未授权时不是错误，渲染层据此给「去授权」入口 */
+export type CloudLoadState = 'ok' | 'auth-required' | 'error'
+
+export interface CloudKbSummary {
+  id: string
+  name: string
+  description: string
+  docsCount: number
+  chunksCount: number
+  sizeDisplay: string
+  visibility: 'private' | 'public'
+  isOwner: boolean
+  ownerName: string | null
+  access?: 'owner' | 'write' | 'read'
+  updatedAt: string
+}
+
+export interface CloudShareEntry {
+  shareId: string
+  kbId: string
+  kbName: string
+  ownerName: string
+  permission: 'read' | 'write'
+  status: string
+  expiresAt: string | null
+  createdAt: string
+}
+
+export interface CloudDocMeta {
+  id: string
+  name: string
+  type: string
+  sizeDisplay: string
+  status: string
+  chunksCount: number
+  folder: string | null
+  uploadedAt: string
+  indexedAt: string | null
+  errorMessage: string | null
+}
+
+export interface CloudKnowledgeStatus {
+  /** 是否已绑定 Web 账号 */
+  linked: boolean
+  /** 是否已授予 knowledge:read */
+  hasScope: boolean
+}
+
+export interface CloudKbListResult {
+  state: CloudLoadState
+  message: string
+  items: CloudKbSummary[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface CloudInvitationsResult {
+  state: CloudLoadState
+  message: string
+  items: CloudShareEntry[]
+}
+
+export interface CloudKbDetailResult {
+  state: CloudLoadState
+  message: string
+  kb: CloudKbSummary | null
+}
+
+export interface CloudDocListResult {
+  state: CloudLoadState
+  message: string
+  items: CloudDocMeta[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface CloudKnowledgeAPI {
+  getStatus(): Promise<IpcResult<CloudKnowledgeStatus>>
+  list(params: {
+    scope: CloudKbScope
+    page?: number
+    pageSize?: number
+    search?: string
+  }): Promise<IpcResult<CloudKbListResult>>
+  listInvitations(): Promise<IpcResult<CloudInvitationsResult>>
+  getKb(kbId: string): Promise<IpcResult<CloudKbDetailResult>>
+  listDocuments(params: {
+    kbId: string
+    page?: number
+    pageSize?: number
+    search?: string
+    folder?: string
+  }): Promise<IpcResult<CloudDocListResult>>
+  respondInvitation(shareId: string, accept: boolean): Promise<IpcResult<null>>
+  readFile(
+    kbId: string,
+    docId: string,
+    as: 'text' | 'bytes',
+    cursor?: number
+  ): Promise<
+    IpcResult<{
+      content?: string
+      truncated?: boolean
+      cursor?: number
+      totalChars?: number
+      bytes?: Uint8Array
+      ext: string
+      name: string
+    }>
+  >
+  downloadDocument(
+    kbId: string,
+    docId: string,
+    suggestedName?: string
+  ): Promise<IpcResult<{ saved: boolean; path?: string }>>
+  disconnect(): Promise<IpcResult<null>>
+}
+
 /** 渲染层可见的完整 API 形状 */
 /** 自动化：频率与有效期配置（与前端 AutomationPage 的 TaskSchedule 一致） */
 export interface AutomationSchedule {
@@ -1130,6 +1257,7 @@ export interface KeWorkWindowApi
   skillSync: SkillSyncAPI
   expert: ExpertSyncAPI
   modelSync: ModelSyncAPI
+  knowledgeCloud: CloudKnowledgeAPI
   automation: AutomationAPI
 }
 
