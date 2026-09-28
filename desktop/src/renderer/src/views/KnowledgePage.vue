@@ -737,10 +737,11 @@ const toggleGroupOpen = (groupId: string, open: boolean): void => {
 
 const selectLibrary = (library: KnowledgeFolder): void => {
   if (!library.id) return
+  // 侧栏点选一律回到知识库内容（「查看更多」在同一内容区里，不关掉会看不见切换结果）
+  moreGroupId.value = null
   if (library.source === 'cloud') {
-    // 云库：只读详情（云端数据不进本地库，也不动本地选中态）
+    // 云库：只读浏览（云端数据不进本地库，也不动本地选中态）
     cloudKb.value = library
-    moreGroupId.value = null
     return
   }
   cloudKb.value = null
@@ -1329,328 +1330,7 @@ watch(openTabs, () => {
 <template>
   <div class="kb-page">
     <!-- ════════════════ 分组全部知识库（查看更多） ════════════════ -->
-    <div v-if="moreGroup" class="kb-more">
-      <div class="kb-more-inner">
-        <div class="kb-breadcrumb">
-          <button class="kb-breadcrumb-link" @click="moreGroupId = null">知识库</button>
-          <svg
-            class="kb-breadcrumb-sep"
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="m9 18 6-6-6-6" />
-          </svg>
-          <span>{{ moreGroup.label }}</span>
-        </div>
-
-        <div class="kb-more-header">
-          <div>
-            <p class="kb-more-eyebrow">Knowledge spaces</p>
-            <h1 class="kb-more-title">{{ moreGroup.label }}</h1>
-            <p class="kb-more-desc">
-              {{
-                isCloudMore
-                  ? '这些知识库来自云端账号，仅支持浏览与只读查看。'
-                  : '浏览、整理并调用这个分类下的全部知识库。'
-              }}
-            </p>
-          </div>
-          <div class="kb-more-actions">
-            <!-- 云分组：重新拉取该 scope（本地分组没有"同步"这回事） -->
-            <button
-              v-if="isCloudMore"
-              class="kb-more-view-toggle"
-              type="button"
-              title="重新同步云端知识库"
-              aria-label="重新同步云端知识库"
-              :disabled="cloudKbStore.loading"
-              @click="refreshMoreGroup"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
-                <path d="M21 3v5h-5" />
-              </svg>
-            </button>
-            <!-- 视图切换：一个图标按钮在卡片 / 表格之间切换（图标表示将切换到的视图） -->
-            <button
-              class="kb-more-view-toggle"
-              type="button"
-              :title="moreViewMode === 'card' ? '切换为表格视图' : '切换为卡片视图'"
-              :aria-label="moreViewMode === 'card' ? '切换为表格视图' : '切换为卡片视图'"
-              @click="toggleMoreView"
-            >
-              <svg
-                v-if="moreViewMode === 'card'"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M3 9h18" />
-                <path d="M3 15h18" />
-                <path d="M9 3v18" />
-              </svg>
-              <svg
-                v-else
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect width="7" height="7" x="3" y="3" rx="1" />
-                <rect width="7" height="7" x="14" y="3" rx="1" />
-                <rect width="7" height="7" x="14" y="14" rx="1" />
-                <rect width="7" height="7" x="3" y="14" rx="1" />
-              </svg>
-            </button>
-            <button
-              v-if="!isCloudMore"
-              class="kb-more-create"
-              @click="addKnowledgeLibrary(moreGroup?.id ?? 'local')"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M5 12h14" />
-                <path d="M12 5v14" />
-              </svg>
-              新建知识库
-            </button>
-          </div>
-        </div>
-
-        <div v-if="moreLibraries.length" class="kb-more-body">
-          <!-- 卡片视图：整张卡片可拖拽排序，右上角置顶 -->
-          <div v-if="moreViewMode === 'card'" class="kb-more-grid">
-            <div
-              v-for="library in moreLibraries"
-              :key="library.id"
-              class="kb-lib-card"
-              :class="{
-                'kb-lib-card--pinned': library.pinned === true,
-                'kb-lib-card--dragging': draggingLibraryId === library.id,
-                'kb-lib-card--drop-before': dropTargetId === library.id && !dropAfterTarget,
-                'kb-lib-card--drop-after': dropTargetId === library.id && dropAfterTarget
-              }"
-              role="button"
-              tabindex="0"
-              :draggable="!isCloudMore"
-              @click="selectFromMore(library)"
-              @keydown.enter.prevent="selectFromMore(library)"
-              @dragstart="onLibraryDragStart(library, $event)"
-              @dragover="onLibraryDragOver(library, $event)"
-              @drop.prevent="onLibraryDrop"
-              @dragend="resetLibraryDrag"
-            >
-              <div class="kb-lib-card-head">
-                <span
-                  class="kb-lib-card-badge"
-                  :style="{ color: library.tone, background: library.tone + '14' }"
-                >
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M12 7v14" />
-                    <path
-                      d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
-                    />
-                  </svg>
-                </span>
-                <div class="kb-lib-card-ops">
-                  <span v-if="library.pinned === true" class="kb-pin-flag"> 置顶 </span>
-                  <button
-                    v-if="!isCloudMore"
-                    class="kb-pin-btn"
-                    type="button"
-                    :class="{ 'kb-pin-btn--on': library.pinned === true }"
-                    :title="library.pinned === true ? '取消置顶' : '置顶'"
-                    :aria-label="library.pinned === true ? '取消置顶' : '置顶'"
-                    :aria-pressed="library.pinned === true"
-                    @click.stop="toggleLibraryPin(library)"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M12 17v5" />
-                      <path
-                        d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
-                      />
-                    </svg>
-                  </button>
-                  <span
-                    v-if="!isCloudMore"
-                    class="kb-drag-handle"
-                    title="拖拽排序"
-                    aria-hidden="true"
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                      <circle cx="9" cy="6" r="1.6" />
-                      <circle cx="15" cy="6" r="1.6" />
-                      <circle cx="9" cy="12" r="1.6" />
-                      <circle cx="15" cy="12" r="1.6" />
-                      <circle cx="9" cy="18" r="1.6" />
-                      <circle cx="15" cy="18" r="1.6" />
-                    </svg>
-                  </span>
-                </div>
-              </div>
-              <h2 class="kb-lib-card-title">{{ library.name }}</h2>
-              <p class="kb-lib-card-desc">{{ library.description }}</p>
-              <div class="kb-lib-card-foot">
-                <span>{{ library.files }} 个文件</span>
-                <span>更新于 {{ library.updated }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 表格视图：同样的拖拽 / 置顶能力，按行列对齐 -->
-          <div v-else class="kb-more-table" role="table" aria-label="知识库列表">
-            <div class="kb-more-table-head" role="row">
-              <span class="kb-more-col kb-more-col--name" role="columnheader"> 名称 </span>
-              <span class="kb-more-col kb-more-col--desc" role="columnheader"> 描述 </span>
-              <span class="kb-more-col kb-more-col--files" role="columnheader"> 文件 </span>
-              <span class="kb-more-col kb-more-col--time" role="columnheader"> 更新于 </span>
-              <span class="kb-more-col kb-more-col--ops" role="columnheader"> 操作 </span>
-            </div>
-            <div
-              v-for="library in moreLibraries"
-              :key="library.id"
-              class="kb-more-table-row"
-              :class="{
-                'kb-more-table-row--pinned': library.pinned === true,
-                'kb-more-table-row--dragging': draggingLibraryId === library.id,
-                'kb-more-table-row--drop-before': dropTargetId === library.id && !dropAfterTarget,
-                'kb-more-table-row--drop-after': dropTargetId === library.id && dropAfterTarget
-              }"
-              role="row"
-              tabindex="0"
-              :draggable="!isCloudMore"
-              @click="selectFromMore(library)"
-              @keydown.enter.prevent="selectFromMore(library)"
-              @dragstart="onLibraryDragStart(library, $event)"
-              @dragover="onLibraryDragOver(library, $event)"
-              @drop.prevent="onLibraryDrop"
-              @dragend="resetLibraryDrag"
-            >
-              <span class="kb-more-col kb-more-col--name">
-                <span class="kb-drag-handle" title="拖拽排序" aria-hidden="true">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="9" cy="6" r="1.6" />
-                    <circle cx="15" cy="6" r="1.6" />
-                    <circle cx="9" cy="12" r="1.6" />
-                    <circle cx="15" cy="12" r="1.6" />
-                    <circle cx="9" cy="18" r="1.6" />
-                    <circle cx="15" cy="18" r="1.6" />
-                  </svg>
-                </span>
-                <span class="kb-more-dot" :style="{ background: library.tone }" />
-                <span class="kb-more-name">{{ library.name }}</span>
-                <span v-if="library.pinned === true" class="kb-pin-flag"> 置顶 </span>
-              </span>
-              <span class="kb-more-col kb-more-col--desc">{{ library.description }}</span>
-              <span class="kb-more-col kb-more-col--files">{{ library.files }}</span>
-              <span class="kb-more-col kb-more-col--time">{{ library.updated }}</span>
-              <span class="kb-more-col kb-more-col--ops">
-                <button
-                  v-if="!isCloudMore"
-                  class="kb-pin-btn"
-                  type="button"
-                  :class="{ 'kb-pin-btn--on': library.pinned === true }"
-                  :title="library.pinned === true ? '取消置顶' : '置顶'"
-                  :aria-label="library.pinned === true ? '取消置顶' : '置顶'"
-                  :aria-pressed="library.pinned === true"
-                  @click.stop="toggleLibraryPin(library)"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M12 17v5" />
-                    <path
-                      d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
-                    />
-                  </svg>
-                </button>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 空态：云分组要区分「未授权 / 同步失败 / 真的为空」——失败只留 toast 会让人不知道怎么办 -->
-        <div v-else class="kb-more-empty">
-          <template v-if="isCloudMore">
-            <p class="kb-more-empty-text">
-              {{ cloudGroupHint(moreGroup)?.text ?? '暂无知识库' }}
-            </p>
-            <button
-              v-if="cloudGroupHint(moreGroup)?.action"
-              class="kb-more-empty-btn"
-              type="button"
-              @click="cloudGroupHint(moreGroup)?.run()"
-            >
-              {{ cloudGroupHint(moreGroup)?.action }}
-            </button>
-          </template>
-          <template v-else>
-            <p class="kb-more-empty-text">这个分类下还没有知识库，点右上角「新建知识库」创建。</p>
-          </template>
-        </div>
-      </div>
-    </div>
-    <!-- ════════════════ 知识库工作台 ════════════════ -->
     <div
-      v-else
       class="kb-workbench"
       :class="{
         'kb-workbench--panel-collapsed': panelCollapsed,
@@ -2015,21 +1695,52 @@ watch(openTabs, () => {
       </div>
 
       <div ref="detailRef" class="kb-detail">
-        <!-- 文件区 -->
-        <section class="kb-files" :style="filePanelStyle">
-          <div class="kb-files-header">
-            <div>
-              <div class="kb-files-title-row">
-                <span
-                  class="kb-lib-badge"
-                  :style="{
-                    color: displayLibrary.tone,
-                    background: displayLibrary.tone + '14'
-                  }"
+        <div v-if="moreGroup" class="kb-more">
+          <div class="kb-more-inner">
+            <div class="kb-breadcrumb">
+              <button class="kb-breadcrumb-link" @click="moreGroupId = null">知识库</button>
+              <svg
+                class="kb-breadcrumb-sep"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+              <span>{{ moreGroup.label }}</span>
+            </div>
+
+            <div class="kb-more-header">
+              <div>
+                <p class="kb-more-eyebrow">Knowledge spaces</p>
+                <h1 class="kb-more-title">{{ moreGroup.label }}</h1>
+                <p class="kb-more-desc">
+                  {{
+                    isCloudMore
+                      ? '这些知识库来自云端账号，仅支持浏览与只读查看。'
+                      : '浏览、整理并调用这个分类下的全部知识库。'
+                  }}
+                </p>
+              </div>
+              <div class="kb-more-actions">
+                <!-- 云分组：重新拉取该 scope（本地分组没有"同步"这回事） -->
+                <button
+                  v-if="isCloudMore"
+                  class="kb-more-view-toggle"
+                  type="button"
+                  title="重新同步云端知识库"
+                  aria-label="重新同步云端知识库"
+                  :disabled="cloudKbStore.loading"
+                  @click="refreshMoreGroup"
                 >
                   <svg
-                    width="17"
-                    height="17"
+                    width="16"
+                    height="16"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -2037,26 +1748,724 @@ watch(openTabs, () => {
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <path d="M12 7v14" />
-                    <path
-                      d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
-                    />
+                    <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                    <path d="M21 3v5h-5" />
                   </svg>
-                </span>
-                <h1 class="kb-files-title">{{ displayLibrary.name }}</h1>
-                <!-- 知识库操作：本地 = 重命名/创建共享/索引设置/删除；云端只读 = 刷新 -->
-                <div class="kb-library-menu-wrap">
-                  <button
-                    class="kb-library-more"
-                    type="button"
-                    title="知识库操作"
-                    aria-label="知识库操作"
-                    :aria-expanded="libraryMenuOpen"
-                    @click="toggleLibraryMenu"
+                </button>
+                <!-- 视图切换：一个图标按钮在卡片 / 表格之间切换（图标表示将切换到的视图） -->
+                <button
+                  class="kb-more-view-toggle"
+                  type="button"
+                  :title="moreViewMode === 'card' ? '切换为表格视图' : '切换为卡片视图'"
+                  :aria-label="moreViewMode === 'card' ? '切换为表格视图' : '切换为卡片视图'"
+                  @click="toggleMoreView"
+                >
+                  <svg
+                    v-if="moreViewMode === 'card'"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
                   >
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M3 9h18" />
+                    <path d="M3 15h18" />
+                    <path d="M9 3v18" />
+                  </svg>
+                  <svg
+                    v-else
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect width="7" height="7" x="3" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="14" rx="1" />
+                    <rect width="7" height="7" x="3" y="14" rx="1" />
+                  </svg>
+                </button>
+                <button
+                  v-if="!isCloudMore"
+                  class="kb-more-create"
+                  @click="addKnowledgeLibrary(moreGroup?.id ?? 'local')"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M5 12h14" />
+                    <path d="M12 5v14" />
+                  </svg>
+                  新建知识库
+                </button>
+              </div>
+            </div>
+
+            <div v-if="moreLibraries.length" class="kb-more-body">
+              <!-- 卡片视图：整张卡片可拖拽排序，右上角置顶 -->
+              <div v-if="moreViewMode === 'card'" class="kb-more-grid">
+                <div
+                  v-for="library in moreLibraries"
+                  :key="library.id"
+                  class="kb-lib-card"
+                  :class="{
+                    'kb-lib-card--pinned': library.pinned === true,
+                    'kb-lib-card--dragging': draggingLibraryId === library.id,
+                    'kb-lib-card--drop-before': dropTargetId === library.id && !dropAfterTarget,
+                    'kb-lib-card--drop-after': dropTargetId === library.id && dropAfterTarget
+                  }"
+                  role="button"
+                  tabindex="0"
+                  :draggable="!isCloudMore"
+                  @click="selectFromMore(library)"
+                  @keydown.enter.prevent="selectFromMore(library)"
+                  @dragstart="onLibraryDragStart(library, $event)"
+                  @dragover="onLibraryDragOver(library, $event)"
+                  @drop.prevent="onLibraryDrop"
+                  @dragend="resetLibraryDrag"
+                >
+                  <div class="kb-lib-card-head">
+                    <span
+                      class="kb-lib-card-badge"
+                      :style="{ color: library.tone, background: library.tone + '14' }"
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M12 7v14" />
+                        <path
+                          d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
+                        />
+                      </svg>
+                    </span>
+                    <div class="kb-lib-card-ops">
+                      <span v-if="library.pinned === true" class="kb-pin-flag"> 置顶 </span>
+                      <button
+                        v-if="!isCloudMore"
+                        class="kb-pin-btn"
+                        type="button"
+                        :class="{ 'kb-pin-btn--on': library.pinned === true }"
+                        :title="library.pinned === true ? '取消置顶' : '置顶'"
+                        :aria-label="library.pinned === true ? '取消置顶' : '置顶'"
+                        :aria-pressed="library.pinned === true"
+                        @click.stop="toggleLibraryPin(library)"
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M12 17v5" />
+                          <path
+                            d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
+                          />
+                        </svg>
+                      </button>
+                      <span
+                        v-if="!isCloudMore"
+                        class="kb-drag-handle"
+                        title="拖拽排序"
+                        aria-hidden="true"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="9" cy="6" r="1.6" />
+                          <circle cx="15" cy="6" r="1.6" />
+                          <circle cx="9" cy="12" r="1.6" />
+                          <circle cx="15" cy="12" r="1.6" />
+                          <circle cx="9" cy="18" r="1.6" />
+                          <circle cx="15" cy="18" r="1.6" />
+                        </svg>
+                      </span>
+                    </div>
+                  </div>
+                  <h2 class="kb-lib-card-title">{{ library.name }}</h2>
+                  <p class="kb-lib-card-desc">{{ library.description }}</p>
+                  <div class="kb-lib-card-foot">
+                    <span>{{ library.files }} 个文件</span>
+                    <span>更新于 {{ library.updated }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 表格视图：同样的拖拽 / 置顶能力，按行列对齐 -->
+              <div v-else class="kb-more-table" role="table" aria-label="知识库列表">
+                <div class="kb-more-table-head" role="row">
+                  <span class="kb-more-col kb-more-col--name" role="columnheader"> 名称 </span>
+                  <span class="kb-more-col kb-more-col--desc" role="columnheader"> 描述 </span>
+                  <span class="kb-more-col kb-more-col--files" role="columnheader"> 文件 </span>
+                  <span class="kb-more-col kb-more-col--time" role="columnheader"> 更新于 </span>
+                  <span class="kb-more-col kb-more-col--ops" role="columnheader"> 操作 </span>
+                </div>
+                <div
+                  v-for="library in moreLibraries"
+                  :key="library.id"
+                  class="kb-more-table-row"
+                  :class="{
+                    'kb-more-table-row--pinned': library.pinned === true,
+                    'kb-more-table-row--dragging': draggingLibraryId === library.id,
+                    'kb-more-table-row--drop-before':
+                      dropTargetId === library.id && !dropAfterTarget,
+                    'kb-more-table-row--drop-after': dropTargetId === library.id && dropAfterTarget
+                  }"
+                  role="row"
+                  tabindex="0"
+                  :draggable="!isCloudMore"
+                  @click="selectFromMore(library)"
+                  @keydown.enter.prevent="selectFromMore(library)"
+                  @dragstart="onLibraryDragStart(library, $event)"
+                  @dragover="onLibraryDragOver(library, $event)"
+                  @drop.prevent="onLibraryDrop"
+                  @dragend="resetLibraryDrag"
+                >
+                  <span class="kb-more-col kb-more-col--name">
+                    <span class="kb-drag-handle" title="拖拽排序" aria-hidden="true">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="9" cy="6" r="1.6" />
+                        <circle cx="15" cy="6" r="1.6" />
+                        <circle cx="9" cy="12" r="1.6" />
+                        <circle cx="15" cy="12" r="1.6" />
+                        <circle cx="9" cy="18" r="1.6" />
+                        <circle cx="15" cy="18" r="1.6" />
+                      </svg>
+                    </span>
+                    <span class="kb-more-dot" :style="{ background: library.tone }" />
+                    <span class="kb-more-name">{{ library.name }}</span>
+                    <span v-if="library.pinned === true" class="kb-pin-flag"> 置顶 </span>
+                  </span>
+                  <span class="kb-more-col kb-more-col--desc">{{ library.description }}</span>
+                  <span class="kb-more-col kb-more-col--files">{{ library.files }}</span>
+                  <span class="kb-more-col kb-more-col--time">{{ library.updated }}</span>
+                  <span class="kb-more-col kb-more-col--ops">
+                    <button
+                      v-if="!isCloudMore"
+                      class="kb-pin-btn"
+                      type="button"
+                      :class="{ 'kb-pin-btn--on': library.pinned === true }"
+                      :title="library.pinned === true ? '取消置顶' : '置顶'"
+                      :aria-label="library.pinned === true ? '取消置顶' : '置顶'"
+                      :aria-pressed="library.pinned === true"
+                      @click.stop="toggleLibraryPin(library)"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M12 17v5" />
+                        <path
+                          d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
+                        />
+                      </svg>
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 空态：云分组要区分「未授权 / 同步失败 / 真的为空」——失败只留 toast 会让人不知道怎么办 -->
+            <div v-else class="kb-more-empty">
+              <template v-if="isCloudMore">
+                <p class="kb-more-empty-text">
+                  {{ cloudGroupHint(moreGroup)?.text ?? '暂无知识库' }}
+                </p>
+                <button
+                  v-if="cloudGroupHint(moreGroup)?.action"
+                  class="kb-more-empty-btn"
+                  type="button"
+                  @click="cloudGroupHint(moreGroup)?.run()"
+                >
+                  {{ cloudGroupHint(moreGroup)?.action }}
+                </button>
+              </template>
+              <template v-else>
+                <p class="kb-more-empty-text">
+                  这个分类下还没有知识库，点右上角「新建知识库」创建。
+                </p>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <template v-else>
+          <!-- 文件区 -->
+          <section class="kb-files" :style="filePanelStyle">
+            <div class="kb-files-header">
+              <div>
+                <div class="kb-files-title-row">
+                  <span
+                    class="kb-lib-badge"
+                    :style="{
+                      color: displayLibrary.tone,
+                      background: displayLibrary.tone + '14'
+                    }"
+                  >
+                    <svg
+                      width="17"
+                      height="17"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M12 7v14" />
+                      <path
+                        d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
+                      />
+                    </svg>
+                  </span>
+                  <h1 class="kb-files-title">{{ displayLibrary.name }}</h1>
+                  <!-- 知识库操作：本地 = 重命名/创建共享/索引设置/删除；云端只读 = 刷新 -->
+                  <div class="kb-library-menu-wrap">
+                    <button
+                      class="kb-library-more"
+                      type="button"
+                      title="知识库操作"
+                      aria-label="知识库操作"
+                      :aria-expanded="libraryMenuOpen"
+                      @click="toggleLibraryMenu"
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="1" />
+                        <circle cx="19" cy="12" r="1" />
+                        <circle cx="5" cy="12" r="1" />
+                      </svg>
+                    </button>
+
+                    <div v-if="libraryMenuOpen" class="kb-library-menu">
+                      <!-- 云库只读：重命名/共享/索引/删除都在 Web 版做，这里只有刷新 -->
+                      <button v-if="isCloudView" class="kb-lib-menu-item" @click="refreshCloudDocs">
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                          <path d="M21 3v5h-5" />
+                        </svg>
+                        刷新
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item"
+                        @click="openLibraryRename"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                          />
+                          <path d="m15 5 4 4" />
+                        </svg>
+                        重命名
+                      </button>
+                      <button v-if="!isCloudView" class="kb-lib-menu-item" @click="openLibraryDir">
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+                          />
+                        </svg>
+                        打开文件夹
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item"
+                        @click="openShare(selectedLibrary.name, 'library')"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="18" cy="5" r="3" />
+                          <circle cx="6" cy="12" r="3" />
+                          <circle cx="18" cy="19" r="3" />
+                          <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+                          <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+                        </svg>
+                        创建共享
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item"
+                        @click="openLibrarySettingsFromHeader"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="3" />
+                          <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                          />
+                        </svg>
+                        索引设置
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item kb-lib-menu-item--danger"
+                        @click="deleteLibraryFromHeader"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          <line x1="10" x2="10" y1="11" y2="17" />
+                          <line x1="14" x2="14" y1="11" y2="17" />
+                        </svg>
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p class="kb-files-sub">{{ displayLibrary.description }} · {{ fileSummary }}</p>
+              </div>
+
+              <div class="kb-files-actions">
+                <!-- 云库只读：没有上传，只提供刷新（与本地"上传"同一位置） -->
+                <button v-if="isCloudView" class="kb-btn-ghost" @click="refreshCloudDocs">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                    <path d="M21 3v5h-5" />
+                  </svg>
+                  {{ cloudDocsLoading ? '同步中…' : '刷新' }}
+                </button>
+                <template v-if="!isCloudView">
+                  <!-- 上传文件夹：webkitdirectory 让系统选择器只能选目录 -->
+                  <input
+                    ref="folderUploadRef"
+                    type="file"
+                    multiple
+                    webkitdirectory
+                    class="kb-file-input"
+                    @change="onFolderChange"
+                  />
+                  <button class="kb-btn-ghost" @click="openUploadModal">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" x2="12" y1="3" y2="15" />
+                    </svg>
+                    上传文件
+                  </button>
+                  <button class="kb-btn-ghost" @click="uploadFolder">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+                      />
+                    </svg>
+                    上传文件夹
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <div class="kb-table">
+              <div class="kb-table-head">
+                <button class="kb-sort-btn" @click="changeSort('name')">
+                  名称
+                  <svg
+                    v-if="sortKey === 'name'"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
+                  </svg>
+                </button>
+                <button class="kb-sort-btn" @click="changeSort('size')">
+                  大小
+                  <svg
+                    v-if="sortKey === 'size'"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
+                  </svg>
+                </button>
+                <button class="kb-sort-btn" @click="changeSort('updated')">
+                  更新时间
+                  <svg
+                    v-if="sortKey === 'updated'"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
+                  </svg>
+                </button>
+                <span class="kb-table-head-ops">操作</span>
+              </div>
+
+              <div
+                v-for="row in rows"
+                :key="row.node.key"
+                class="kb-table-row"
+                :class="{ 'kb-table-row--menu': fileMenuKey === row.node.key }"
+              >
+                <!-- 文件夹：点击展开 / 折叠；文件：点击在最右侧以标签页打开 -->
+                <button
+                  v-if="row.node.kind === 'folder'"
+                  class="kb-file-btn kb-file-btn--folder"
+                  :style="{ paddingLeft: `${row.depth * 16}px` }"
+                  @click="toggleFolder(row.node.key)"
+                >
+                  <svg
+                    class="kb-file-chevron"
+                    :class="{ 'kb-file-chevron--open': isFolderExpanded(row.node.key) }"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                  <span class="kb-file-icon kb-file-icon--folder">
                     <svg
                       width="16"
                       height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"
+                      />
+                    </svg>
+                  </span>
+                  <span class="kb-file-name">{{ row.node.name }}</span>
+                  <span class="kb-file-tag kb-file-tag--folder">
+                    {{ collectFileNodes(row.node.children ?? []).length }} 项
+                  </span>
+                </button>
+                <button
+                  v-else
+                  class="kb-file-btn"
+                  :style="{ paddingLeft: `${row.depth * 16}px` }"
+                  @click="openFile(row.node)"
+                >
+                  <span
+                    class="kb-file-icon"
+                    :style="{
+                      color: row.node.file?.tint,
+                      background: (row.node.file?.tint || '#168b7a') + '12'
+                    }"
+                  >
+                    <svg
+                      v-if="row.node.file?.icon === 'file-text'"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                      <path d="M10 9H8" />
+                      <path d="M16 13H8" />
+                      <path d="M16 17H8" />
+                    </svg>
+                    <svg
+                      v-else-if="row.node.file?.icon === 'file-type-2'"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4" />
+                      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                      <path d="M2 13v-1h6v1" />
+                      <path d="M5 12v6" />
+                      <path d="M4 18h2" />
+                    </svg>
+                    <svg
+                      v-else
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                      <path d="M8 13h2" />
+                      <path d="M14 13h2" />
+                      <path d="M8 17h2" />
+                      <path d="M14 17h2" />
+                    </svg>
+                  </span>
+                  <span class="kb-file-name">{{ row.node.name }}</span>
+                  <span
+                    v-if="indexTagText(row.node)"
+                    class="kb-file-tag"
+                    :class="{ 'kb-file-tag--none': row.node.file?.indexState === 'none' }"
+                  >
+                    {{ indexTagText(row.node) }}
+                  </span>
+                </button>
+                <span class="kb-file-meta">{{ row.node.file?.size ?? '—' }}</span>
+                <span class="kb-file-meta">{{ row.node.file?.updated ?? '—' }}</span>
+
+                <!-- 操作列：三个点，鼠标移上去滑出下拉菜单 -->
+                <div
+                  class="kb-row-more"
+                  @mouseenter="openFileMenu(row.node.key)"
+                  @mouseleave="leaveFileMenu(row.node.key)"
+                >
+                  <button
+                    class="kb-row-more-btn"
+                    type="button"
+                    :title="`「${row.node.name}」操作`"
+                    :aria-label="`「${row.node.name}」操作`"
+                    @click="openFileMenu(row.node.key)"
+                  >
+                    <svg
+                      width="15"
+                      height="15"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -2070,9 +2479,19 @@ watch(openTabs, () => {
                     </svg>
                   </button>
 
-                  <div v-if="libraryMenuOpen" class="kb-library-menu">
-                    <!-- 云库只读：重命名/共享/索引/删除都在 Web 版做，这里只有刷新 -->
-                    <button v-if="isCloudView" class="kb-lib-menu-item" @click="refreshCloudDocs">
+                  <div v-if="fileMenuKey === row.node.key" class="kb-row-menu">
+                    <!-- 云文档只读：只有预览与下载（重命名/重建索引/共享/删除都在 Web 版） -->
+                    <template v-if="isCloudView">
+                      <button class="kb-lib-menu-item" @click="openFile(row.node)">预览</button>
+                      <button class="kb-lib-menu-item" @click="downloadCloudDoc(row.node)">
+                        下载
+                      </button>
+                    </template>
+                    <button
+                      v-if="!isCloudView"
+                      class="kb-lib-menu-item"
+                      @click="openFileDetail(row.node)"
+                    >
                       <svg
                         width="13"
                         height="13"
@@ -2083,12 +2502,18 @@ watch(openTabs, () => {
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       >
-                        <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
-                        <path d="M21 3v5h-5" />
+                        <path
+                          d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+                        />
+                        <circle cx="12" cy="12" r="3" />
                       </svg>
-                      刷新
+                      查看详情
                     </button>
-                    <button v-if="!isCloudView" class="kb-lib-menu-item" @click="openLibraryRename">
+                    <button
+                      v-if="!isCloudView"
+                      class="kb-lib-menu-item"
+                      @click="openFileRename(row.node)"
+                    >
                       <svg
                         width="13"
                         height="13"
@@ -2104,9 +2529,13 @@ watch(openTabs, () => {
                         />
                         <path d="m15 5 4 4" />
                       </svg>
-                      重命名
+                      重新命名
                     </button>
-                    <button v-if="!isCloudView" class="kb-lib-menu-item" @click="openLibraryDir">
+                    <button
+                      v-if="!isCloudView"
+                      class="kb-lib-menu-item"
+                      @click="openFileDir(row.node)"
+                    >
                       <svg
                         width="13"
                         height="13"
@@ -2124,9 +2553,37 @@ watch(openTabs, () => {
                       打开文件夹
                     </button>
                     <button
+                      v-if="!isCloudView && row.node.kind === 'file'"
+                      class="kb-lib-menu-item"
+                      @click="rebuildIndex(row.node)"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                        <path d="M21 3v5h-5" />
+                        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                        <path d="M8 16H3v5" />
+                      </svg>
+                      重建索引
+                    </button>
+                    <button
                       v-if="!isCloudView"
                       class="kb-lib-menu-item"
-                      @click="openShare(selectedLibrary.name, 'library')"
+                      @click="
+                        openShare(
+                          row.node.name,
+                          row.node.kind === 'folder' ? 'folder' : 'file',
+                          row.node.key
+                        )
+                      "
                     >
                       <svg
                         width="13"
@@ -2148,30 +2605,8 @@ watch(openTabs, () => {
                     </button>
                     <button
                       v-if="!isCloudView"
-                      class="kb-lib-menu-item"
-                      @click="openLibrarySettingsFromHeader"
-                    >
-                      <svg
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <circle cx="12" cy="12" r="3" />
-                        <path
-                          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                        />
-                      </svg>
-                      索引设置
-                    </button>
-                    <button
-                      v-if="!isCloudView"
                       class="kb-lib-menu-item kb-lib-menu-item--danger"
-                      @click="deleteLibraryFromHeader"
+                      @click="askDeleteFile(row.node)"
                     >
                       <svg
                         width="13"
@@ -2194,146 +2629,43 @@ watch(openTabs, () => {
                   </div>
                 </div>
               </div>
-              <p class="kb-files-sub">{{ displayLibrary.description }} · {{ fileSummary }}</p>
-            </div>
-
-            <div class="kb-files-actions">
-              <!-- 云库只读：没有上传，只提供刷新（与本地"上传"同一位置） -->
-              <button v-if="isCloudView" class="kb-btn-ghost" @click="refreshCloudDocs">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+              <!-- 云端：分页与状态（本地库没有分页概念，这里只在云端出现） -->
+              <div v-if="isCloudView" class="kb-cloud-foot">
+                <p v-if="cloudDocsMessage" class="kb-cloud-note">{{ cloudDocsMessage }}</p>
+                <p v-else-if="cloudDocsLoading" class="kb-cloud-note">正在同步云端文档…</p>
+                <button
+                  v-if="!cloudDocsLoading && cloudDocs.length < cloudDocsTotal"
+                  class="kb-btn-ghost"
+                  @click="loadCloudDocs(true)"
                 >
-                  <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
-                  <path d="M21 3v5h-5" />
-                </svg>
-                {{ cloudDocsLoading ? '同步中…' : '刷新' }}
-              </button>
-              <template v-if="!isCloudView">
-                <!-- 上传文件夹：webkitdirectory 让系统选择器只能选目录 -->
-                <input
-                  ref="folderUploadRef"
-                  type="file"
-                  multiple
-                  webkitdirectory
-                  class="kb-file-input"
-                  @change="onFolderChange"
-                />
-                <button class="kb-btn-ghost" @click="openUploadModal">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="17 8 12 3 7 8" />
-                    <line x1="12" x2="12" y1="3" y2="15" />
-                  </svg>
-                  上传文件
+                  加载更多（已显示 {{ cloudDocs.length }}/{{ cloudDocsTotal }}）
                 </button>
-                <button class="kb-btn-ghost" @click="uploadFolder">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path
-                      d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
-                    />
-                  </svg>
-                  上传文件夹
-                </button>
-              </template>
+              </div>
             </div>
+          </section>
+
+          <!-- 分栏拖拽手柄（问答区域收起时用不到） -->
+          <div
+            v-if="!panelCollapsed"
+            class="kb-resizer"
+            title="拖动调整区域宽度"
+            @mousedown="resizePanels"
+          >
+            <span class="kb-resizer-bar"></span>
           </div>
 
-          <div class="kb-table">
-            <div class="kb-table-head">
-              <button class="kb-sort-btn" @click="changeSort('name')">
-                名称
-                <svg
-                  v-if="sortKey === 'name'"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
-                </svg>
-              </button>
-              <button class="kb-sort-btn" @click="changeSort('size')">
-                大小
-                <svg
-                  v-if="sortKey === 'size'"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
-                </svg>
-              </button>
-              <button class="kb-sort-btn" @click="changeSort('updated')">
-                更新时间
-                <svg
-                  v-if="sortKey === 'updated'"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
-                </svg>
-              </button>
-              <span class="kb-table-head-ops">操作</span>
-            </div>
-
-            <div
-              v-for="row in rows"
-              :key="row.node.key"
-              class="kb-table-row"
-              :class="{ 'kb-table-row--menu': fileMenuKey === row.node.key }"
-            >
-              <!-- 文件夹：点击展开 / 折叠；文件：点击在最右侧以标签页打开 -->
+          <!-- 问答 / 文件预览区：折叠时整块收起，只留右侧一条展开入口 -->
+          <aside v-if="!panelCollapsed" class="kb-panel">
+            <div class="kb-tabs">
               <button
-                v-if="row.node.kind === 'folder'"
-                class="kb-file-btn kb-file-btn--folder"
-                :style="{ paddingLeft: `${row.depth * 16}px` }"
-                @click="toggleFolder(row.node.key)"
+                class="kb-tab-scroll"
+                :class="{ 'kb-tab-scroll--hidden': !tabScroll.left }"
+                aria-label="向左滚动标签"
+                @click="moveTabs(-1)"
               >
                 <svg
-                  class="kb-file-chevron"
-                  :class="{ 'kb-file-chevron--open': isFolderExpanded(row.node.key) }"
-                  width="12"
-                  height="12"
+                  width="15"
+                  height="15"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -2341,10 +2673,92 @@ watch(openTabs, () => {
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 >
-                  <polyline points="6 9 12 15 18 9" />
+                  <path d="m15 18-6-6 6-6" />
                 </svg>
-                <span class="kb-file-icon kb-file-icon--folder">
+              </button>
+
+              <div ref="tabBarRef" class="kb-tabbar" @scroll="updateTabScroll">
+                <div
+                  v-for="tab in openTabs"
+                  :key="tab"
+                  class="kb-tab"
+                  :class="{ 'kb-tab--active': activeTab === tab }"
+                >
+                  <button class="kb-tab-name" @click="activeTab = tab">{{ tabLabel(tab) }}</button>
+                  <button v-if="tab !== '问答'" class="kb-tab-close" @click="closeTab(tab)">
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M18 6 6 18" />
+                      <path d="m6 6 12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                class="kb-tab-scroll"
+                :class="{ 'kb-tab-scroll--hidden': !tabScroll.right }"
+                aria-label="向右滚动标签"
+                @click="moveTabs(1)"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+
+              <!-- 问答区域（最右侧）右上角：展开 / 折叠 + 全屏 / 还原（默认折叠） -->
+              <div class="kb-panel-actions">
+                <!-- 折叠：整个问答区域收起，用指向右侧的单箭头（与右栏「收起右栏」一致） -->
+                <button
+                  class="kb-panel-btn kb-panel-btn--active"
+                  type="button"
+                  title="折叠"
+                  aria-label="折叠问答区域"
+                  :aria-expanded="true"
+                  @click="togglePanelCollapsed"
+                >
                   <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
+                <button
+                  class="kb-panel-btn"
+                  :class="{ 'kb-panel-btn--active': panelFullscreen }"
+                  type="button"
+                  :title="panelFullscreen ? '还原' : '全屏'"
+                  :aria-label="panelFullscreen ? '还原问答区域' : '全屏显示问答区域'"
+                  :aria-pressed="panelFullscreen"
+                  @click="togglePanelFullscreen"
+                >
+                  <!-- 还原：四角向内（退出全屏） -->
+                  <svg
+                    v-if="panelFullscreen"
                     width="16"
                     height="16"
                     viewBox="0 0 24 24"
@@ -2355,62 +2769,10 @@ watch(openTabs, () => {
                     stroke-linejoin="round"
                   >
                     <path
-                      d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"
+                      d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"
                     />
                   </svg>
-                </span>
-                <span class="kb-file-name">{{ row.node.name }}</span>
-                <span class="kb-file-tag kb-file-tag--folder">
-                  {{ collectFileNodes(row.node.children ?? []).length }} 项
-                </span>
-              </button>
-              <button
-                v-else
-                class="kb-file-btn"
-                :style="{ paddingLeft: `${row.depth * 16}px` }"
-                @click="openFile(row.node)"
-              >
-                <span
-                  class="kb-file-icon"
-                  :style="{
-                    color: row.node.file?.tint,
-                    background: (row.node.file?.tint || '#168b7a') + '12'
-                  }"
-                >
-                  <svg
-                    v-if="row.node.file?.icon === 'file-text'"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-                    <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-                    <path d="M10 9H8" />
-                    <path d="M16 13H8" />
-                    <path d="M16 17H8" />
-                  </svg>
-                  <svg
-                    v-else-if="row.node.file?.icon === 'file-type-2'"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4" />
-                    <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-                    <path d="M2 13v-1h6v1" />
-                    <path d="M5 12v6" />
-                    <path d="M4 18h2" />
-                  </svg>
+                  <!-- 全屏：四角向外 -->
                   <svg
                     v-else
                     width="16"
@@ -2422,409 +2784,40 @@ watch(openTabs, () => {
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-                    <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-                    <path d="M8 13h2" />
-                    <path d="M14 13h2" />
-                    <path d="M8 17h2" />
-                    <path d="M14 17h2" />
-                  </svg>
-                </span>
-                <span class="kb-file-name">{{ row.node.name }}</span>
-                <span
-                  v-if="indexTagText(row.node)"
-                  class="kb-file-tag"
-                  :class="{ 'kb-file-tag--none': row.node.file?.indexState === 'none' }"
-                >
-                  {{ indexTagText(row.node) }}
-                </span>
-              </button>
-              <span class="kb-file-meta">{{ row.node.file?.size ?? '—' }}</span>
-              <span class="kb-file-meta">{{ row.node.file?.updated ?? '—' }}</span>
-
-              <!-- 操作列：三个点，鼠标移上去滑出下拉菜单 -->
-              <div
-                class="kb-row-more"
-                @mouseenter="openFileMenu(row.node.key)"
-                @mouseleave="leaveFileMenu(row.node.key)"
-              >
-                <button
-                  class="kb-row-more-btn"
-                  type="button"
-                  :title="`「${row.node.name}」操作`"
-                  :aria-label="`「${row.node.name}」操作`"
-                  @click="openFileMenu(row.node.key)"
-                >
-                  <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="1" />
-                    <circle cx="19" cy="12" r="1" />
-                    <circle cx="5" cy="12" r="1" />
-                  </svg>
-                </button>
-
-                <div v-if="fileMenuKey === row.node.key" class="kb-row-menu">
-                  <!-- 云文档只读：只有预览与下载（重命名/重建索引/共享/删除都在 Web 版） -->
-                  <template v-if="isCloudView">
-                    <button class="kb-lib-menu-item" @click="openFile(row.node)">预览</button>
-                    <button class="kb-lib-menu-item" @click="downloadCloudDoc(row.node)">
-                      下载
-                    </button>
-                  </template>
-                  <button
-                    v-if="!isCloudView"
-                    class="kb-lib-menu-item"
-                    @click="openFileDetail(row.node)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path
-                        d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
-                      />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                    查看详情
-                  </button>
-                  <button
-                    v-if="!isCloudView"
-                    class="kb-lib-menu-item"
-                    @click="openFileRename(row.node)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path
-                        d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
-                      />
-                      <path d="m15 5 4 4" />
-                    </svg>
-                    重新命名
-                  </button>
-                  <button
-                    v-if="!isCloudView"
-                    class="kb-lib-menu-item"
-                    @click="openFileDir(row.node)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path
-                        d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
-                      />
-                    </svg>
-                    打开文件夹
-                  </button>
-                  <button
-                    v-if="!isCloudView && row.node.kind === 'file'"
-                    class="kb-lib-menu-item"
-                    @click="rebuildIndex(row.node)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                      <path d="M21 3v5h-5" />
-                      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                      <path d="M8 16H3v5" />
-                    </svg>
-                    重建索引
-                  </button>
-                  <button
-                    v-if="!isCloudView"
-                    class="kb-lib-menu-item"
-                    @click="
-                      openShare(
-                        row.node.name,
-                        row.node.kind === 'folder' ? 'folder' : 'file',
-                        row.node.key
-                      )
-                    "
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <circle cx="18" cy="5" r="3" />
-                      <circle cx="6" cy="12" r="3" />
-                      <circle cx="18" cy="19" r="3" />
-                      <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
-                      <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
-                    </svg>
-                    创建共享
-                  </button>
-                  <button
-                    v-if="!isCloudView"
-                    class="kb-lib-menu-item kb-lib-menu-item--danger"
-                    @click="askDeleteFile(row.node)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M3 6h18" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      <line x1="10" x2="10" y1="11" y2="17" />
-                      <line x1="14" x2="14" y1="11" y2="17" />
-                    </svg>
-                    删除
-                  </button>
-                </div>
-              </div>
-            </div>
-            <!-- 云端：分页与状态（本地库没有分页概念，这里只在云端出现） -->
-            <div v-if="isCloudView" class="kb-cloud-foot">
-              <p v-if="cloudDocsMessage" class="kb-cloud-note">{{ cloudDocsMessage }}</p>
-              <p v-else-if="cloudDocsLoading" class="kb-cloud-note">正在同步云端文档…</p>
-              <button
-                v-if="!cloudDocsLoading && cloudDocs.length < cloudDocsTotal"
-                class="kb-btn-ghost"
-                @click="loadCloudDocs(true)"
-              >
-                加载更多（已显示 {{ cloudDocs.length }}/{{ cloudDocsTotal }}）
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <!-- 分栏拖拽手柄（问答区域收起时用不到） -->
-        <div
-          v-if="!panelCollapsed"
-          class="kb-resizer"
-          title="拖动调整区域宽度"
-          @mousedown="resizePanels"
-        >
-          <span class="kb-resizer-bar"></span>
-        </div>
-
-        <!-- 问答 / 文件预览区：折叠时整块收起，只留右侧一条展开入口 -->
-        <aside v-if="!panelCollapsed" class="kb-panel">
-          <div class="kb-tabs">
-            <button
-              class="kb-tab-scroll"
-              :class="{ 'kb-tab-scroll--hidden': !tabScroll.left }"
-              aria-label="向左滚动标签"
-              @click="moveTabs(-1)"
-            >
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-            </button>
-
-            <div ref="tabBarRef" class="kb-tabbar" @scroll="updateTabScroll">
-              <div
-                v-for="tab in openTabs"
-                :key="tab"
-                class="kb-tab"
-                :class="{ 'kb-tab--active': activeTab === tab }"
-              >
-                <button class="kb-tab-name" @click="activeTab = tab">{{ tabLabel(tab) }}</button>
-                <button v-if="tab !== '问答'" class="kb-tab-close" @click="closeTab(tab)">
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M18 6 6 18" />
-                    <path d="m6 6 12 12" />
+                    <path
+                      d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
+                    />
                   </svg>
                 </button>
               </div>
             </div>
 
-            <button
-              class="kb-tab-scroll"
-              :class="{ 'kb-tab-scroll--hidden': !tabScroll.right }"
-              aria-label="向右滚动标签"
-              @click="moveTabs(1)"
-            >
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            </button>
+            <!-- 问答 -->
+            <div v-if="activeTab === '问答'" class="kb-tab-content">
+              <div class="kb-qa-banner">
+                <p class="kb-qa-eyebrow">KNOWLEDGE Q&amp;A</p>
+                <h2 class="kb-qa-title">向 {{ selectedLibrary.name }} 提问</h2>
+                <p class="kb-qa-desc">检索与问答功能开发中，将在索引能力完成后开放。</p>
+              </div>
 
-            <!-- 问答区域（最右侧）右上角：展开 / 折叠 + 全屏 / 还原（默认折叠） -->
-            <div class="kb-panel-actions">
-              <!-- 折叠：整个问答区域收起，用指向右侧的单箭头（与右栏「收起右栏」一致） -->
-              <button
-                class="kb-panel-btn kb-panel-btn--active"
-                type="button"
-                title="折叠"
-                aria-label="折叠问答区域"
-                :aria-expanded="true"
-                @click="togglePanelCollapsed"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
-              <button
-                class="kb-panel-btn"
-                :class="{ 'kb-panel-btn--active': panelFullscreen }"
-                type="button"
-                :title="panelFullscreen ? '还原' : '全屏'"
-                :aria-label="panelFullscreen ? '还原问答区域' : '全屏显示问答区域'"
-                :aria-pressed="panelFullscreen"
-                @click="togglePanelFullscreen"
-              >
-                <!-- 还原：四角向内（退出全屏） -->
-                <svg
-                  v-if="panelFullscreen"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"
-                  />
-                </svg>
-                <!-- 全屏：四角向外 -->
-                <svg
-                  v-else
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
-                  />
-                </svg>
-              </button>
-            </div>
-          </div>
+              <div v-if="answer" class="kb-answer">{{ answer }}</div>
 
-          <!-- 问答 -->
-          <div v-if="activeTab === '问答'" class="kb-tab-content">
-            <div class="kb-qa-banner">
-              <p class="kb-qa-eyebrow">KNOWLEDGE Q&amp;A</p>
-              <h2 class="kb-qa-title">向 {{ selectedLibrary.name }} 提问</h2>
-              <p class="kb-qa-desc">检索与问答功能开发中，将在索引能力完成后开放。</p>
-            </div>
-
-            <div v-if="answer" class="kb-answer">{{ answer }}</div>
-
-            <div class="kb-question-wrap">
-              <div class="kb-qinput">
-                <textarea
-                  v-model="question"
-                  rows="2"
-                  class="kb-qinput-textarea"
-                  placeholder="基于知识库提问"
-                  @keydown.enter.exact.prevent="ask"
-                ></textarea>
-                <div class="kb-qinput-foot">
-                  <button class="kb-model-btn">
-                    DS 快速
-                    <svg
-                      class="kb-model-caret"
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="m6 9 6 6 6-6" />
-                    </svg>
-                  </button>
-                  <div class="kb-qinput-actions">
-                    <button class="kb-icon-btn" title="添加附件">
+              <div class="kb-question-wrap">
+                <div class="kb-qinput">
+                  <textarea
+                    v-model="question"
+                    rows="2"
+                    class="kb-qinput-textarea"
+                    placeholder="基于知识库提问"
+                    @keydown.enter.exact.prevent="ask"
+                  ></textarea>
+                  <div class="kb-qinput-foot">
+                    <button class="kb-model-btn">
+                      DS 快速
                       <svg
-                        width="18"
-                        height="18"
+                        class="kb-model-caret"
+                        width="13"
+                        height="13"
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -2832,89 +2825,105 @@ watch(openTabs, () => {
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       >
-                        <path d="M13.234 20.252 21 12.3" />
-                        <path
-                          d="m16 6-8.414 8.586a2 2 0 0 0 0 2.828 2 2 0 0 0 2.828 0l8.414-8.586a4 4 0 0 0 0-5.656 4 4 0 0 0-5.656 0l-8.415 8.585a6 6 0 1 0 8.486 8.486"
-                        />
+                        <path d="m6 9 6 6 6-6" />
                       </svg>
                     </button>
-                    <button class="kb-icon-btn" title="快捷剪裁">
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
+                    <div class="kb-qinput-actions">
+                      <button class="kb-icon-btn" title="添加附件">
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M13.234 20.252 21 12.3" />
+                          <path
+                            d="m16 6-8.414 8.586a2 2 0 0 0 0 2.828 2 2 0 0 0 2.828 0l8.414-8.586a4 4 0 0 0 0-5.656 4 4 0 0 0-5.656 0l-8.415 8.585a6 6 0 1 0 8.486 8.486"
+                          />
+                        </svg>
+                      </button>
+                      <button class="kb-icon-btn" title="快捷剪裁">
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="6" cy="6" r="3" />
+                          <path d="M8.12 8.12 12 12" />
+                          <path d="M20 4 8.12 15.88" />
+                          <circle cx="6" cy="18" r="3" />
+                          <path d="M14.8 14.8 20 20" />
+                        </svg>
+                      </button>
+                      <button
+                        class="kb-send-btn"
+                        title="发送问题"
+                        :disabled="!question.trim()"
+                        @click="ask"
                       >
-                        <circle cx="6" cy="6" r="3" />
-                        <path d="M8.12 8.12 12 12" />
-                        <path d="M20 4 8.12 15.88" />
-                        <circle cx="6" cy="18" r="3" />
-                        <path d="M14.8 14.8 20 20" />
-                      </svg>
-                    </button>
-                    <button
-                      class="kb-send-btn"
-                      title="发送问题"
-                      :disabled="!question.trim()"
-                      @click="ask"
-                    >
-                      <svg
-                        width="17"
-                        height="17"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"
-                        />
-                        <path d="m21.854 2.147-10.94 10.939" />
-                      </svg>
-                    </button>
+                        <svg
+                          width="17"
+                          height="17"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"
+                          />
+                          <path d="m21.854 2.147-10.94 10.939" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- 文件预览标签：只渲染文件内容本身（文件名/图标/元信息不在此处重复展示） -->
-          <div v-else class="kb-file-tab">
-            <FilePreviewPane v-if="previewSource" :source="previewSource" />
-            <p v-else class="kb-preview-notice">在左侧文件列表中点击文件即可预览内容。</p>
-          </div>
-        </aside>
-        <aside v-else class="kb-panel-strip">
-          <button
-            class="kb-panel-btn kb-panel-strip-btn"
-            type="button"
-            title="展开"
-            aria-label="展开问答区域"
-            :aria-expanded="false"
-            @click="togglePanelCollapsed"
-          >
-            <!-- 展开：把问答区域从左拉出显示，用单箭头指向左侧 -->
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+            <!-- 文件预览标签：只渲染文件内容本身（文件名/图标/元信息不在此处重复展示） -->
+            <div v-else class="kb-file-tab">
+              <FilePreviewPane v-if="previewSource" :source="previewSource" />
+              <p v-else class="kb-preview-notice">在左侧文件列表中点击文件即可预览内容。</p>
+            </div>
+          </aside>
+          <aside v-else class="kb-panel-strip">
+            <button
+              class="kb-panel-btn kb-panel-strip-btn"
+              type="button"
+              title="展开"
+              aria-label="展开问答区域"
+              :aria-expanded="false"
+              @click="togglePanelCollapsed"
             >
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          </button>
-          <span class="kb-panel-strip-label">问答</span>
-        </aside>
+              <!-- 展开：把问答区域从左拉出显示，用单箭头指向左侧 -->
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <span class="kb-panel-strip-label">问答</span>
+          </aside>
+        </template>
       </div>
     </div>
 

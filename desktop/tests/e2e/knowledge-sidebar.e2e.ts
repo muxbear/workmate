@@ -67,21 +67,24 @@ describe('E2E 知识库侧栏', () => {
     expect(labels).not.toContain('云端知识库')
   }, 90_000)
 
-  it('KS-02: 点分组行直接进入「查看更多」，不弹下拉菜单', async () => {
+  it('KS-02: 点分组行直接进入「查看更多」，不弹下拉菜单、且不离开工作台', async () => {
     // 点「本地知识库」整行（不是箭头）
     await page.locator('.kb-group').first().locator('.kb-group-toggle').click()
 
     // 关键：点行不弹菜单（菜单只由右侧三点按钮触发）
     expect(await page.locator('.kb-group-menu').count()).toBe(0)
 
-    // 与菜单里的「查看更多」同一个去向：该分组的全量列表页
+    // 与菜单里的「查看更多」同一个去向：该分组的全量列表展示在**右侧内容区**
     const more = page.locator('.kb-more')
     await more.waitFor({ state: 'visible', timeout: 10_000 })
     expect(await more.locator('.kb-more-title').textContent()).toBe('本地知识库')
+    // 左栏分组栏必须仍在（不是整页跳转）
+    expect(await page.locator('.kb-groups').isVisible()).toBe(true)
 
-    // 返回工作台
+    // 面包屑返回：内容区换回文件区
     await page.locator('.kb-breadcrumb-link').click()
-    await page.locator('.kb-workbench').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.locator('.kb-files').waitFor({ state: 'visible', timeout: 10_000 })
+    expect(await page.locator('.kb-more').count()).toBe(0)
   }, 90_000)
 
   it('KS-02b: 右侧三点按钮仍能打开菜单（本地分组：查看更多 + 新建）', async () => {
@@ -114,16 +117,19 @@ describe('E2E 知识库侧栏', () => {
     expect(await hint.locator('.kb-group-hint-btn').count()).toBe(0)
   }, 90_000)
 
-  it('KS-05: 截图存档（人工核对视觉）', async () => {
-    // 先关掉可能残留的菜单（KS-02b 悬浮展开过），截图要的是干净侧栏
+  it('KS-05: 截图存档（查看更多在右侧内容区，左栏保持可见）', async () => {
     await page.keyboard.press('Escape')
     await page.mouse.move(600, 400)
     await page.waitForTimeout(200)
 
+    // 打开「本地知识库」的查看更多后截图：这是本轮改动的关键视觉
+    await page.locator('.kb-group').first().locator('.kb-group-toggle').click()
+    await page.locator('.kb-more').waitFor({ state: 'visible', timeout: 10_000 })
+
     // 存到临时目录（dataHome 会在 afterAll 被清掉），便于人工核对
-    const shot = join(tmpdir(), 'kw-knowledge-sidebar.png')
+    const shot = join(tmpdir(), 'kw-knowledge-more-view.png')
     await page.screenshot({ path: shot, fullPage: false })
-    console.log('[e2e] 侧栏截图:', shot)
-    expect(await page.locator('.kb-group-menu').count()).toBe(0)
+    console.log('[e2e] 查看更多截图:', shot)
+    expect(await page.locator('.kb-groups').isVisible()).toBe(true)
   }, 90_000)
 })
