@@ -29,6 +29,8 @@ from urllib.parse import quote, urlparse
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from mcp_servers.transport_security import transport_security_settings
+
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = "wan3.0-video"
@@ -64,7 +66,7 @@ TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"}
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_GEN_TIMEOUT_SECONDS", "300"))
 DEFAULT_POLL_INTERVAL_SECONDS = 8.0
 
-mcp = FastMCP("ke-hermes-video-gen")
+mcp = FastMCP("ke-hermes-video-gen", transport_security=transport_security_settings())
 
 
 @dataclass(frozen=True)

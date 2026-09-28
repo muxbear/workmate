@@ -450,6 +450,31 @@ BUILTIN_TOOLS: list[dict] = [
             {"key": "rel_path", "label": "相对交付目录的保存路径", "required": True, "type": "string"},
         ],
     },
+    {
+        "name": "kb_search",
+        "display_name": "知识库检索",
+        "description": "在用户可读的知识库中检索内容，支持混合 / 向量 / BM25 三种模式，"
+        "支持跨库联合检索与多轮查询改写；返回带文档名、章节与页码的可溯源片段。",
+        "category": "ai",
+        "version": "2.0.0",
+        "tags": ["knowledge", "rag", "search"],
+        "params": [
+            {"key": "query", "label": "检索查询", "required": True, "type": "string"},
+            {"key": "kb_id", "label": "知识库 ID", "required": False, "type": "string"},
+            {"key": "mode", "label": "检索模式", "required": False, "type": "string"},
+            {"key": "top_k", "label": "返回条数", "required": False, "type": "number"},
+        ],
+    },
+    {
+        "name": "list_knowledge_bases",
+        "display_name": "知识库列表",
+        "description": "列出当前用户可读的知识库及其 ID、文档数与切片数，"
+        "供检索前判断该查哪一个或哪几个库。",
+        "category": "ai",
+        "version": "1.0.0",
+        "tags": ["knowledge", "rag", "list"],
+        "params": [],
+    },
 ]
 
 # ── 内置工具实现路径映射 ──────────────────────────────────────────────────

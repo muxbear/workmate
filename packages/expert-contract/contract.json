@@ -2,7 +2,13 @@
   "version": 1,
   "description": "WorkMate 专家能力契约：专家只声明能力，各端按平台映射实现；三处镜像（本文件 / desktop/src/main/experts/expertContract.ts / web/backend/src/agent/experts/capabilities.py）由两侧契约测试保持一致。",
   "platforms": ["desktop", "web", "mobile"],
-  "capabilities": ["image.generate", "document.assemble", "web.search", "video.generate"],
+  "capabilities": [
+    "image.generate",
+    "document.assemble",
+    "web.search",
+    "video.generate",
+    "knowledge.search"
+  ],
   "promptVariables": ["delivery_dir", "asset_tool", "platform_notes"],
   "assetTool": "download_asset",
   "deliverable": {
@@ -17,6 +23,7 @@
   "notes": [
     "能力标识变更必须同步三处镜像，否则两侧契约测试会失败。",
     "交付物统一形态：文档 <title>.md + 与文档同名的资源目录 <title>/；目录内按资源类别命名（图片 figure-N、成片 成片-N）。该命名是约定而非运行时校验项，各端提示词与测试据此对齐。",
-    "新增平台（如 mobile 接入完成后）在 platforms 中登记，并在各端实现 WorkspacePort / DeliverablePort。"
+    "新增平台（如 mobile 接入完成后）在 platforms 中登记，并在各端实现 WorkspacePort / DeliverablePort。",
+    "knowledge.search 与 image/video.generate 不同：它没有各端本地实现，三端统一走服务端「云知识库检索」MCP 服务（专家用 mcp_configs 关联）。因此声明该能力的专家天然跨端一致，各端无需再实现一份检索。"
   ]
 }

@@ -35,6 +35,8 @@ from core.cache import create_cache
 from core.config import get_settings
 from db.engine import init_db
 from mcp_servers.image_gen_server import mcp as image_gen_mcp
+from mcp_servers.kb_server import SERVER_NAME as KB_MCP_SERVER_NAME
+from mcp_servers.kb_server import mcp as kb_mcp
 from mcp_servers.video_gen_server import mcp as video_gen_mcp
 from mcp_servers.web_search_server import mcp as web_search_mcp
 
@@ -42,10 +44,13 @@ from mcp_servers.web_search_server import mcp as web_search_mcp
 register_local_mcp_server('联网搜索', web_search_mcp)
 register_local_mcp_server('AI 图像生成', image_gen_mcp)
 register_local_mcp_server('AI 视频生成', video_gen_mcp)
+# 注册名必须与 MCP 广场种子卡片的 name 一致——加载配置按名称匹配库内记录
+register_local_mcp_server(KB_MCP_SERVER_NAME, kb_mcp)
 
 streamable_http_subapp = web_search_mcp.streamable_http_app()
 image_gen_streamable_http_subapp = image_gen_mcp.streamable_http_app()
 video_gen_streamable_http_subapp = video_gen_mcp.streamable_http_app()
+kb_streamable_http_subapp = kb_mcp.streamable_http_app()
 
 
 async def _init_knowledge_base(app: FastAPI) -> None:
@@ -127,7 +132,8 @@ async def lifespan(app: FastAPI):
         async with web_search_mcp.session_manager.run():
             async with image_gen_mcp.session_manager.run():
                 async with video_gen_mcp.session_manager.run():
-                    yield
+                    async with kb_mcp.session_manager.run():
+                        yield
     finally:
         # 收尾必须放在 finally：任一 session_manager 抛异常时，此前这些 stop()
         # 会被整体跳过，留下未收尾的任务行与后台循环。
@@ -225,3 +231,5 @@ app.mount('/mcp/image-gen', image_gen_mcp.sse_app())
 app.mount('/mcp/image-gen-http', image_gen_streamable_http_subapp)
 app.mount('/mcp/video-gen', video_gen_mcp.sse_app())
 app.mount('/mcp/video-gen-http', video_gen_streamable_http_subapp)
+app.mount('/mcp/kb', kb_mcp.sse_app())
+app.mount('/mcp/kb-http', kb_streamable_http_subapp)

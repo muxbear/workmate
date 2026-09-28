@@ -24,6 +24,8 @@ from typing import Any, cast
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from mcp_servers.transport_security import transport_security_settings
+
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = "wan2.7-image-pro"
@@ -39,7 +41,7 @@ DASH_SCOPE_GENERATION_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc
 _SIZE_PATTERN = re.compile(r"^\d{2,4}x\d{2,4}$")
 _MAX_BASE64_LENGTH = 15 * 1024 * 1024
 
-mcp = FastMCP("ke-hermes-image-gen")
+mcp = FastMCP("ke-hermes-image-gen", transport_security=transport_security_settings())
 
 
 @dataclass(frozen=True)

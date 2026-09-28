@@ -11,13 +11,15 @@ export const CAPABILITY_IMAGE_GENERATE = 'image.generate'
 export const CAPABILITY_DOCUMENT_ASSEMBLE = 'document.assemble'
 export const CAPABILITY_WEB_SEARCH = 'web.search'
 export const CAPABILITY_VIDEO_GENERATE = 'video.generate'
+export const CAPABILITY_KNOWLEDGE_SEARCH = 'knowledge.search'
 
 /** 全部能力（顺序即展示顺序） */
 export const ALL_CAPABILITIES = [
   CAPABILITY_IMAGE_GENERATE,
   CAPABILITY_DOCUMENT_ASSEMBLE,
   CAPABILITY_WEB_SEARCH,
-  CAPABILITY_VIDEO_GENERATE
+  CAPABILITY_VIDEO_GENERATE,
+  CAPABILITY_KNOWLEDGE_SEARCH
 ] as const
 
 /** 支持的平台（新增移动端时在此追加） */

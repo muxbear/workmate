@@ -25,9 +25,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.experts.capabilities import (
-    capability_builtin_tools,
     capabilities_for_mcp_services,
     capabilities_for_tools,
+    capability_builtin_tools,
 )
 from agent.graph import invalidate_graph
 from api.experts.prompt_render import render_expert_prompt
@@ -922,6 +922,16 @@ BUILTIN_DELEGATION_TEMPLATE = (
     "不要只写摘要，不要改写这些标签，也不要把正文包进代码块。"
 )
 
+BUILTIN_KB_DELEGATION_TEMPLATE = (
+    "请先分析任务并拆分为子任务；对于需要查阅知识库资料才能回答的子任务，"
+    "请调用【{name}·{title}】处理。委派时必须把用户的**原始问题**连同已知背景"
+    "（涉及的业务/产品、可能相关的资料范围、时间范围等线索）完整交代清楚——"
+    "专家要靠这些线索判断该查哪个知识库、用哪种检索方式。"
+    "最后基于专家的产出给出最终回复：必须**原样保留**专家给出的事实结论与引用标注"
+    "（文档名、章节、页码、知识库名），不要改写成无法核对的概括，也不要去掉引用；"
+    "专家明确说知识库里没有时，如实转达，不要用通用常识补一个答案。"
+)
+
 BUILTIN_EXPERTS: list[dict[str, Any]] = [
     {
         "name": "文档写作专家",
@@ -1052,6 +1062,74 @@ BUILTIN_EXPERTS: list[dict[str, Any]] = [
 - 用户提供的参考素材若无法访问，应明确说明，不强行提交。
 - 如需提醒用户临时链接有效期，可在正文之外的说明中告知 video_url 通常 24 小时内有效。""",
     },
+    {
+        "name": "云知识库检索专家",
+        "title": "云知识库检索专家",
+        "category": "ai_tools",
+        "description": "面向企业知识库的检索问答：自主判断该查哪一个或哪几个知识库，按问题特征选用关键词/语义/混合检索，给出带文档名、章节与页码的可溯源回答。",
+        "tags": ["知识库检索", "RAG", "企业知识", "语义检索", "混合检索"],
+        "icon": "📚",
+        "color": "linear-gradient(135deg,#3b82f6,#1d4ed8)",
+        "initials": "知",
+        "featured": False,
+        "scene": None,
+        "sort_order": 0,
+        "is_published": True,
+        "model_name": "deepseek-v4-pro",
+        "mcp_tool_name": "云知识库检索",
+        "capabilities": ["knowledge.search"],
+        "prompt_template": BUILTIN_KB_DELEGATION_TEMPLATE,
+        "system_prompt": r"""你是 WorkMate 的「云知识库检索专家」。你的任务是：针对用户的问题，在企业知识库中找到最相关的资料，并给出**可溯源**的回答。
+
+## 运行环境
+{{platform_notes}}
+
+## 可用工具
+你通过 MCP 服务「云知识库检索」访问知识库。工具名可能带 mcp__…__ 前缀，按后缀识别：
+- list_knowledge_bases：列出当前用户可读的知识库（含 id、名称、文档数、切片数）
+- kb_search：检索知识库（参数：query / kb_id / kb_name / mode / top_k / kb_ids / use_rewrite / history）
+- kb_get_chunk_context：按命中位置取回前后文，用于核对原文
+- kb_graph_lookup：知识图谱的实体与关系查询
+
+能不能查到、查得准不准，取决于你有没有先看清"有哪些库、该用哪种检索"。
+
+## 第一步：判断查哪个库
+1. **先调用 list_knowledge_bases** 拿到可读知识库清单，不要凭猜测构造 kb_id。
+2. 把问题主题与库的**名称、文档数**对上号：
+   - 只有一个库明显匹配 → 查它（传 kb_id）。
+   - 有 2～5 个都可能相关，或问题横跨多个主题 → **一次跨库检索**（kb_ids 传这几个库），结果会按排名融合后再取舍。这比逐库串行查更快，召回也更全。
+   - 一个都对不上 → 如实说明知识库里没有相关的库，并列出可用的库名请用户确认，不要硬挑一个去查。
+   - 可读库超过 5 个时，先按名称与主题筛掉明显无关的，再用最相关的前几个做跨库检索。
+3. 用户自己指定了库（名称或 id）时，以用户指定的为准。
+
+## 第二步：选检索方式
+三种模式各有适用面，**不要一律用 hybrid**：
+- **bm25（关键词，最快最省）**：问题里含**精确字符串**时首选——产品名、型号、错误码、接口名、函数名、配置项、人名、编号、专有缩写。这类查询关键词命中即准，且不调向量与精排，耗时最低。
+- **vector（语义）**：问法**口语化、或与文档用词不一致**时首选——近义改写、跨语言提问、概念性与总结性问题（"为什么…""…的原理是什么"）。它按语义匹配，不受字面差异影响。
+- **hybrid（融合，最稳）**：把握不准、问题里既有术语又有描述、或需要兼顾召回率与准确率时用。它是默认值，但代价最高（向量 + 关键词，可能还叠加精排与改写）。
+- 拿不准就先 hybrid；若前两种模式召回为空或明显不相关，换另一种再试一次。
+
+选择依据是**问题本身的形态**（有没有精确串、是不是口语化），不是习惯。
+
+## 第三步：调参与多轮
+- top_k 不传即用知识库自身配置，**通常不传**；需要广撒网（问题很宽、可能要对比多处）时再显式提高（上限 50）。
+- 用户这次的问题里有"它""这个""上面说的"等指代时必须传 use_rewrite=true，并把最近 1～3 轮用户提问按从旧到新放进 history；否则指代对象会丢，几乎必然召回失败。
+- 检索为空（no_relevant_result=true）**不等于检索失败**。按顺序再试：换模式 → 换更贴近文档用词的关键词 → 放宽 top_k → 换一个库。都试过仍为空，就如实告诉用户"知识库里没有这方面资料"，**绝不编造答案**。
+
+## 引用与核对
+- 每条事实都要能对上出处：引用时带上**文档名**，并尽量带上章节（section）与页码（page）；跨库检索时还要说明来自哪个知识库。
+- 命中切片的正文可能被截断。要判断"这段话到底在讲什么"，或在拿它支撑结论之前，先用 kb_get_chunk_context（传 kb_id、doc_id、chunk_index）取回前后文核对，不要凭半句话下结论。
+- 多个来源互相矛盾时，把分歧如实说明，不要只挑一个当成唯一答案。
+
+## 图谱查询
+问题问的是**实体与关系**（"X 和 Y 是什么关系""有哪些相关的 Z""谁负责…"）时用 kb_graph_lookup：不传 entity_key 看实体与关系概览，传 entity_key 看该实体的类型、出现次数、来源文档与关联关系。图谱是抽取产物，库没开启图谱抽取时会返回空列表并附提示——这属正常情况，改回 kb_search 检索正文即可。
+
+## 输出要求
+- 先给结论，再给依据；依据要能追到具体文档与位置。
+- 明确区分"知识库里的原文"与"你的推断"，凡是推断都要标注出来。
+- 知识库里确实没有时直接说没有，可以建议换关键词、换库或补充文档；**不要用通用常识冒充知识库内容**。
+- 只使用工具实际返回的内容，不虚构文档名、章节、页码或链接。""",
+    },
 ]
 def _declared_tool_names(item: dict[str, Any]) -> list[str]:
     """内置专家声明的内置工具名：显式 tool_names 优先，否则由 capabilities 推导。"""
@@ -1083,6 +1161,57 @@ async def _ensure_expert_tool_links(
         if linked is None:
             db.add(ExpertTool(expert_id=expert.id, tool_id=tool.id))
             logger.info("为专家 '%s' 补充工具关联 '%s'", expert.name, name)
+    await db.flush()
+
+
+async def _ensure_expert_mcp_link(
+    db: AsyncSession, expert: Expert, mcp_tool_name: str | None
+) -> None:
+    """确保专家与指定 MCP 服务的关联存在（幂等）。
+
+    与 ``_ensure_expert_tool_links`` 同样在**每次启动**都补：MCP 关联此前只在
+    创建分支里写一次，用户在界面上删掉关联、或换过 MCP 服务名之后，重启不会自愈——
+    专家表面上还在，实际一个知识库工具都调不到（只有一条 warning 日志）。
+    """
+    if not mcp_tool_name:
+        return
+    mcp_tool = (
+        await db.execute(select(McpTool).where(McpTool.name == mcp_tool_name))
+    ).scalar_one_or_none()
+    if mcp_tool is None:
+        logger.warning("内置专家关联的 MCP 服务 '%s' 未找到，跳过", mcp_tool_name)
+        return
+
+    linked = (
+        await db.execute(
+            select(ExpertMcpConfig).where(
+                ExpertMcpConfig.expert_id == expert.id,
+                ExpertMcpConfig.mcp_tool_id == mcp_tool.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if linked is not None:
+        # 已有关联：补上被清空的启用位，但不覆盖用户自定义的连接参数
+        if not linked.enabled:
+            linked.enabled = True
+            logger.info("为专家 '%s' 重新启用 MCP 服务 '%s'", expert.name, mcp_tool_name)
+        return
+
+    db.add(
+        ExpertMcpConfig(
+            expert_id=expert.id,
+            mcp_tool_id=mcp_tool.id,
+            config={
+                "transport": mcp_tool.transport or "streamable_http",
+                "url": mcp_tool.streamable_http_url or mcp_tool.url or "",
+                "command": "",
+                "args": [],
+                "env": {},
+            },
+            enabled=True,
+        )
+    )
+    logger.info("为内置专家 '%s' 关联 MCP 服务 '%s'", expert.name, mcp_tool_name)
     await db.flush()
 
 
@@ -1128,6 +1257,7 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             else:
                 logger.info(f'内置专家 {existing.name} 已是最新，跳过')
             await _ensure_expert_tool_links(db, existing, _declared_tool_names(item))
+            await _ensure_expert_mcp_link(db, existing, item.get("mcp_tool_name"))
             continue
 
         agent_existing = (
@@ -1177,37 +1307,7 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
         await db.flush()
 
         await _ensure_expert_tool_links(db, expert, _declared_tool_names(item))
-
-        mcp_tool_name = item.get("mcp_tool_name")
-        if mcp_tool_name:
-            mcp_tool = (
-                await db.execute(select(McpTool).where(McpTool.name == mcp_tool_name))
-            ).scalar_one_or_none()
-            if mcp_tool is not None:
-                db.add(
-                    ExpertMcpConfig(
-                        expert_id=expert.id,
-                        mcp_tool_id=mcp_tool.id,
-                        config={
-                            "transport": mcp_tool.transport or "streamable_http",
-                            "url": mcp_tool.streamable_http_url or mcp_tool.url or "",
-                            "command": "",
-                            "args": [],
-                            "env": {},
-                        },
-                        enabled=True,
-                    )
-                )
-                logger.info(
-                    "为内置专家 '%s' 关联 MCP 服务 '%s'",
-                    item["name"],
-                    mcp_tool_name,
-                )
-            else:
-                logger.warning(
-                    "内置专家关联的 MCP 服务 '%s' 未找到，跳过",
-                    mcp_tool_name,
-                )
+        await _ensure_expert_mcp_link(db, expert, item.get("mcp_tool_name"))
 
         await _create_expert_version_snapshot(
             db,

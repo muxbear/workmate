@@ -17,18 +17,26 @@ CAPABILITY_IMAGE_GENERATE = "image.generate"
 CAPABILITY_DOCUMENT_ASSEMBLE = "document.assemble"
 CAPABILITY_WEB_SEARCH = "web.search"
 CAPABILITY_VIDEO_GENERATE = "video.generate"
+CAPABILITY_KNOWLEDGE_SEARCH = "knowledge.search"
 
 ALL_CAPABILITIES: tuple[str, ...] = (
     CAPABILITY_IMAGE_GENERATE,
     CAPABILITY_DOCUMENT_ASSEMBLE,
     CAPABILITY_WEB_SEARCH,
     CAPABILITY_VIDEO_GENERATE,
+    CAPABILITY_KNOWLEDGE_SEARCH,
 )
 
 # 能力 → 内置工具名（可写入 expert_tools 关联的工具）
 CAPABILITY_BUILTIN_TOOLS: dict[str, tuple[str, ...]] = {
     # 后端图像生成由 MCP（text_to_image 等）提供；桌面端另有本地 image_generate 实现
     CAPABILITY_IMAGE_GENERATE: (),
+    # 知识库检索**必须**用后端内置工具，不能走 MCP：专家子代理的工具在构图时
+    # 一次性构建、跨用户共用（_load_expert_subagent_defs 拿不到 user_id），而 MCP
+    # 工具跑在独立的 MCP 会话任务里，拿不到 LangGraph 运行时上下文，也就无从得知
+    # 调用方身份——实测会稳定返回"缺少身份信息"。内置工具在**调用时**从运行时
+    # 上下文取 user_id，是进程内唯一能带上身份的路径。
+    CAPABILITY_KNOWLEDGE_SEARCH: ("kb_search", "list_knowledge_bases"),
     CAPABILITY_DOCUMENT_ASSEMBLE: ("download_asset",),
     CAPABILITY_WEB_SEARCH: ("tavily_search",),
 }
@@ -40,6 +48,12 @@ CAPABILITY_MCP_TOOLS: dict[str, tuple[str, ...]] = {
         "text_to_image_batch",
         "image_to_image_batch",
     ),
+    CAPABILITY_KNOWLEDGE_SEARCH: (
+        "list_knowledge_bases",
+        "kb_search",
+        "kb_get_chunk_context",
+        "kb_graph_lookup",
+    ),
     CAPABILITY_VIDEO_GENERATE: ("generate_video", "query_video_generation"),
     CAPABILITY_WEB_SEARCH: ("web_search",),
 }
@@ -49,6 +63,7 @@ MCP_SERVICE_CAPABILITIES: dict[str, str] = {
     "AI 图像生成": CAPABILITY_IMAGE_GENERATE,
     "AI 视频生成": CAPABILITY_VIDEO_GENERATE,
     "联网搜索": CAPABILITY_WEB_SEARCH,
+    "云知识库检索": CAPABILITY_KNOWLEDGE_SEARCH,
 }
 
 
@@ -116,6 +131,7 @@ __all__ = [
     "CAPABILITY_BUILTIN_TOOLS",
     "CAPABILITY_DOCUMENT_ASSEMBLE",
     "CAPABILITY_IMAGE_GENERATE",
+    "CAPABILITY_KNOWLEDGE_SEARCH",
     "CAPABILITY_MCP_TOOLS",
     "CAPABILITY_VIDEO_GENERATE",
     "CAPABILITY_WEB_SEARCH",

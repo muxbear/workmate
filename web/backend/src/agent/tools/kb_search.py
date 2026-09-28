@@ -6,9 +6,14 @@
 权限口径漂移。即使模型自行编造或猜中了他人的 ``kb_id``，也会被拒绝——此前该
 工具只按 ``kb_id`` 查询，且缺省时会「自动取第一个 ready 的知识库」，等于把
 其他用户的知识库暴露给任意会话。
+
+**这两个工具必须是 ``async def``**：检索要调嵌入模型与向量库，它们用的是绑定在
+事件循环上的异步客户端。早先的实现是同步函数 + ``asyncio.run()``——LangChain 会把
+同步工具丢进线程池执行，于是在工作线程里新开一个事件循环去用主循环的客户端，
+实测报 ``RuntimeError: Event loop is closed``，向量/混合检索随之中断
+（关键词检索不走嵌入模型，所以只有它一直正常）。
 """
 
-import asyncio
 import logging
 from typing import Any
 
@@ -16,19 +21,36 @@ logger = logging.getLogger(__name__)
 
 
 def _current_user_id() -> str:
-    """从 LangGraph 运行时上下文读取当前用户 ID；不可用时返回空串。"""
+    """解析当前调用方的用户 ID；无法确定身份时返回空串（调用方据此拒绝）。
+
+    两个来源，按优先级：
+
+    1. **LangGraph 运行时上下文**——Web 版智能体在对话中调用本工具；
+    2. **MCP 请求头 Authorization**——外部 MCP 客户端直连知识库 MCP 服务
+       （``mcp_servers/kb_server.py`` 复用本模块的工具实现）。这条路没有运行时
+       上下文，只能靠调用方自带的 access token，校验口径与 REST 接口一致。
+
+    两处都取不到时返回空串，**绝不放行**——返回空串等于"身份未知"，
+    调用方据此拒绝检索，避免无身份的请求读到任何人的知识库。
+    """
     try:
         from langgraph.runtime import get_runtime
 
         runtime = get_runtime()
         context = getattr(runtime, "context", None) if runtime is not None else None
-        return str(getattr(context, "user_id", "") or "")
+        user_id = str(getattr(context, "user_id", "") or "")
+        if user_id:
+            return user_id
     except Exception:
         logger.debug("读取运行时上下文失败", exc_info=True)
-        return ""
+
+    # 运行在 MCP 服务里（外部客户端调用）时没有 LangGraph 上下文
+    from mcp_servers.request_auth import user_id_from_mcp_request
+
+    return user_id_from_mcp_request()
 
 
-def kb_search(
+async def kb_search(
     query: str,
     kb_id: str = "",
     kb_name: str = "",
@@ -72,9 +94,9 @@ def kb_search(
         - 多个候选知识库 → 附 candidates；
         - mode 非法 → 附 available_modes。
     """
-    return asyncio.run(_kb_search_async(
+    return await _kb_search_async(
         query, kb_id, kb_name, mode, top_k, kb_ids, use_rewrite, history,
-    ))
+    )
 
 
 async def _load_readable_kbs(user_id: str) -> list[Any]:
@@ -357,6 +379,9 @@ async def _kb_search_async(
             "results": [
                 {
                     "doc": r.doc_name,
+                    # kb_id 用于跨库检索时定位出处，也是后续 kb_get_chunk_context
+                    # 的必填参数——只给 kb_name 的话模型无法据此回查上下文
+                    "kb_id": r.kb_id,
                     "kb_name": r.kb_name or None,
                     "content": r.content,
                     "score": r.score,
@@ -378,13 +403,13 @@ async def _kb_search_async(
         }
 
 
-def list_knowledge_bases() -> dict[str, Any]:
+async def list_knowledge_bases() -> dict[str, Any]:
     """列出当前用户可用的知识库及其 ID（含公共库与已接受的分享）。
 
     Returns:
         {"total": int, "knowledge_bases": [{"kb_id": str, "name": str, "docs": int, "chunks": int}]}
     """
-    return asyncio.run(_list_kb_async())
+    return await _list_kb_async()
 
 
 async def _list_kb_async() -> dict[str, Any]:

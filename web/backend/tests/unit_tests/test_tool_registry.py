@@ -19,7 +19,7 @@ async def test_resolve_agent_tools_includes_configured_mcp_tools(monkeypatch):
     async def fake_get_registry(db):
         return {"http_request": "http_fn"}
 
-    async def fake_load_mcp_tools(db, agent_id):
+    async def fake_load_mcp_tools(db, agent_id, **_kw):
         return [_FakeTool("mcp__AI 图像生成__text_to_image")]
 
     monkeypatch.setattr(
@@ -42,7 +42,7 @@ async def test_resolve_agent_tools_dedupes_mcp_tools(monkeypatch):
     async def fake_get_registry(db):
         return {}
 
-    async def fake_load_mcp_tools(db, agent_id):
+    async def fake_load_mcp_tools(db, agent_id, **_kw):
         return [_FakeTool("mcp__AI 图像生成__text_to_image")]
 
     monkeypatch.setattr(

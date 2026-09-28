@@ -15,6 +15,8 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from mcp_servers.transport_security import transport_security_settings
+
 logger = logging.getLogger(__name__)
 
 _SEARCH_URL = 'https://html.duckduckgo.com/html/'
@@ -26,7 +28,7 @@ _USER_AGENT = (
 _DEFAULT_MAX_RESULTS = 5
 _MAX_RESULTS_LIMIT = 20
 
-mcp = FastMCP('ke-hermes-web-search')
+mcp = FastMCP('ke-hermes-web-search', transport_security=transport_security_settings())
 
 
 def _extract_url(href: str) -> str:

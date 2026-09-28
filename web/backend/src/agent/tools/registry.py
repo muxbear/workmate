@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.experts.capabilities import capabilities_for_tools
 from db.models.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -124,10 +125,19 @@ async def _resolve_entity_tools(
     # 1. 加载内置工具注册表
     registry = await get_tool_registry(db)
 
-    # 2. 加载该实体通过 *_mcp_configs 配置的 MCP 工具
+    # 2. 加载该实体通过 *_mcp_configs 配置的 MCP 工具。
+    #    这里把「本端内置工具已满足的能力」传下去，让 MCP 侧跳过对应服务——
+    #    否则同一个能力会以两种形态同时挂给智能体。知识库检索正是这种情况：
+    #    内置 kb_search 在调用时能从运行时上下文取到 user_id，而 MCP 工具跑在
+    #    独立的 MCP 会话任务里取不到身份，只会多出一个必然失败的重复工具。
+    skip_capabilities = set(
+        capabilities_for_tools(list(tool_names))
+    )
     mcp_tools: list[Any] = []
     try:
-        mcp_tools = await mcp_loader(db, entity_id)
+        mcp_tools = await mcp_loader(
+            db, entity_id, skip_capabilities=skip_capabilities
+        )
         for mcp_tool in mcp_tools:
             registry[mcp_tool.name] = mcp_tool
     except ImportError:

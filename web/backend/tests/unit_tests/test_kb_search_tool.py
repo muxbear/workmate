@@ -345,7 +345,8 @@ class TestSearchBehaviour:
             "vec_score": 0.8, "bm25_score": None,
             # 引用定位：模型可据此给出可核查的出处
             "doc_id": "d1", "chunk_index": 0, "page": None, "section": "",
-            "score_kind": "", "kb_name": None,
+            # kb_id 供跨库检索定位出处，也是回查切片上下文的入参
+            "score_kind": "", "kb_name": None, "kb_id": "",
         }
         assert patched_env.calls[0][1].mode == "vector"
         assert patched_env.calls[0][1].top_k == 3

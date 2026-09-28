@@ -12,6 +12,22 @@ from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
+# 向量库单例引用。FastAPI 接口用 ``request.app.state.vector_store``（见 api/deps），
+# 但**没有 HTTP 请求的调用方**（自托管的 MCP 工具、Agent 工具）拿不到 Request，
+# 因此额外留一个模块级引用。与 search_service 的 set/get_search_orchestrator 同一套路。
+_vector_store: Any = None
+
+
+def set_vector_store(store: Any) -> None:
+    """登记向量库实例，供无请求上下文的调用方获取。"""
+    global _vector_store
+    _vector_store = store
+
+
+def get_vector_store() -> Any:
+    """取已登记的向量库实例；尚未初始化完成时返回 ``None``，由调用方给出可读错误。"""
+    return _vector_store
+
 
 def _vector_backend_kwargs(settings: Any) -> dict[str, Any]:
     """按 ``VECTOR_DB_BACKEND`` 组装向量库客户端参数。
@@ -113,6 +129,7 @@ class KnowledgeBaseFacade:
 
         self._vector_store = vector_store
         app.state.vector_store = vector_store
+        set_vector_store(vector_store)
         # 切片编辑（chunk_api）等接口需要默认 embedding 实例——此前从未挂载，
         # 导致 app.state.embedding_model 恒为 None，"保存切片"直接返回 500。
         app.state.embedding_model = embedding_model

@@ -144,7 +144,19 @@ async def _append_mcp_tools(
     all_tools: list[Any],
     mcp_name: str,
     config: dict[str, Any],
+    skip_capabilities: set[str] | None = None,
 ) -> None:
+    # 该服务对应的能力若已由本端内置工具满足，就不再挂 MCP 版本：
+    # 同一能力两种形态并存会让模型在「能用的」和「必然失败的」之间选错。
+    from agent.experts.capabilities import MCP_SERVICE_CAPABILITIES
+
+    capability = MCP_SERVICE_CAPABILITIES.get(mcp_name)
+    if capability and skip_capabilities and capability in skip_capabilities:
+        logger.info(
+            "MCP 服务 %s（能力 %s）已由内置工具满足，跳过加载", mcp_name, capability
+        )
+        return
+
     try:
         local_server = _LOCAL_MCP_SERVERS.get(mcp_name)
         if local_server is not None:
@@ -167,6 +179,7 @@ async def load_mcp_tools_for_agent(
     db: AsyncSession,
     agent_id: str,
     user_id: str | None = None,
+    skip_capabilities: set[str] | None = None,
 ) -> list[Any]:
     """加载 Agent 关联的 MCP 工具，返回适配后的 BaseTool 列表."""
     all_tools: list[Any] = []
@@ -186,7 +199,7 @@ async def load_mcp_tools_for_agent(
             continue
         loaded_names.add(mcp_name)
         config = await _get_mcp_config(db, mcp_name, agent_id=agent_id, user_id=user_id)
-        await _append_mcp_tools(all_tools, mcp_name, config)
+        await _append_mcp_tools(all_tools, mcp_name, config, skip_capabilities)
 
     legacy_stmt = (
         select(Tool)
@@ -200,7 +213,7 @@ async def load_mcp_tools_for_agent(
             continue
         loaded_names.add(mcp_name)
         config = await _get_mcp_config(db, mcp_name, agent_id=agent_id, user_id=user_id)
-        await _append_mcp_tools(all_tools, mcp_name, config)
+        await _append_mcp_tools(all_tools, mcp_name, config, skip_capabilities)
 
     logger.info('为 Agent %s 加载了 %d 个 MCP 工具', agent_id, len(all_tools))
     return all_tools
@@ -210,6 +223,7 @@ async def load_mcp_tools_for_expert(
     db: AsyncSession,
     expert_id: str,
     user_id: str | None = None,
+    skip_capabilities: set[str] | None = None,
 ) -> list[Any]:
     """加载专家关联的 MCP 工具，返回适配后的 BaseTool 列表."""
     all_tools: list[Any] = []
@@ -229,7 +243,7 @@ async def load_mcp_tools_for_expert(
             continue
         loaded_names.add(mcp_name)
         config = await _get_mcp_config(db, mcp_name, expert_id=expert_id, user_id=user_id)
-        await _append_mcp_tools(all_tools, mcp_name, config)
+        await _append_mcp_tools(all_tools, mcp_name, config, skip_capabilities)
 
     legacy_stmt = (
         select(Tool)
@@ -243,7 +257,7 @@ async def load_mcp_tools_for_expert(
             continue
         loaded_names.add(mcp_name)
         config = await _get_mcp_config(db, mcp_name, expert_id=expert_id, user_id=user_id)
-        await _append_mcp_tools(all_tools, mcp_name, config)
+        await _append_mcp_tools(all_tools, mcp_name, config, skip_capabilities)
 
     logger.info('为 Expert %s 加载了 %d 个 MCP 工具', expert_id, len(all_tools))
     return all_tools

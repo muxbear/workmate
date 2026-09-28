@@ -308,6 +308,27 @@ BUILTIN_MCP_TOOLS: list[dict] = [
         "transport": "streamable_http",
         "paths": {"sse": "/mcp/video-gen/sse", "streamable_http": "/mcp/video-gen-http/mcp"},
     },
+    {
+        "name": "云知识库检索",
+        "description": "对「知识库」页面配置的知识库提供检索服务：混合/向量/关键词检索、跨库联合检索、切片上下文回查与图谱实体查询。",
+        "icon": "📚",
+        "author": "ke-hermes",
+        "version": "1.0.0",
+        "license": "MIT",
+        "repository": "",
+        "rating": 5.0,
+        "category": "knowledge_base",
+        "tags": ["知识库", "RAG", "检索", "混合检索", "知识图谱"],
+        "features": [
+            "混合检索：向量 + BM25 融合，支持查询改写与多轮指代消解",
+            "跨库联合检索：一次在多个知识库中检索并按排名融合",
+            "切片上下文回查：按命中位置取回前后文，便于核对原文与引用",
+            "图谱查询：实体类型、出现次数、来源文档与关联关系",
+        ],
+        "official": True,
+        "transport": "streamable_http",
+        "paths": {"sse": "/mcp/kb/sse", "streamable_http": "/mcp/kb-http/mcp"},
+    },
 ]
 
 # 历史默认地址（旧版本把本机回环地址写死进库）：仅用于识别"可以安全迁移"的行

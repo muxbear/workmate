@@ -50,6 +50,7 @@ export interface McpConfigField {
 export const MCP_CATEGORY_LABELS: Record<string, string> = {
   code_execution: '代码执行',
   search: '搜索',
+  knowledge_base: '知识库',
   data_analysis: '数据分析',
   file_management: '文件管理',
   notification: '通知',
@@ -66,6 +67,7 @@ export const MCP_CATEGORY_FILTERS = [
   { key: '', label: '全部' },
   { key: 'code_execution', label: '代码执行' },
   { key: 'search', label: '搜索' },
+  { key: 'knowledge_base', label: '知识库' },
   { key: 'data_analysis', label: '数据分析' },
   { key: 'file_management', label: '文件管理' },
   { key: 'notification', label: '通知' },

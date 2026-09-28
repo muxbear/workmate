@@ -9,10 +9,10 @@ from agent.experts.capabilities import (
     CAPABILITY_VIDEO_GENERATE,
     CAPABILITY_WEB_SEARCH,
     MCP_SERVICE_CAPABILITIES,
-    capability_builtin_tools,
-    capability_mcp_tools,
     capabilities_for_mcp_services,
     capabilities_for_tools,
+    capability_builtin_tools,
+    capability_mcp_tools,
     normalize_capabilities,
 )
 
