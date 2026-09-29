@@ -2,8 +2,6 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../store/user'
-import AssistantPage from './AssistantPage.vue'
-import ProjectPage from './ProjectPage.vue'
 import ExpertPage from './ExpertPage.vue'
 import SkillPage from './SkillPage.vue'
 import ConnectorPage from './ConnectorPage.vue'
@@ -191,7 +189,7 @@ const handleAddSpaceItem = (spaceName: string): void => {
 }
 
 // ── Navigation ──
-type NavKey = '新建任务' | '助理' | '项目' | '知识库' | '自动化' | '更多'
+type NavKey = '新建任务' | '知识库' | '自动化' | '更多'
 type AgentNavKey = '专家' | '技能' | '连接器'
 type AppNav = NavKey | AgentNavKey
 const activeNav = ref<AppNav>('新建任务')
@@ -201,19 +199,18 @@ interface NavEntry {
   label: NavKey
   icon: NavIconName
   tag?: string
+  /** 该项之后插入「智能体」分组（专家/技能/连接器） */
+  agentGroupAfter?: boolean
 }
 
 const navItems: NavEntry[] = [
-  { label: '助理', icon: 'bot' },
-  { label: '项目', icon: 'folder' },
-  // 知识库位于「智能体」分组之后（分组由下方模板在「项目」后插入）
-  { label: '知识库', icon: 'book' },
+  { label: '知识库', icon: 'book', agentGroupAfter: true },
   { label: '自动化', icon: 'workflow' },
   { label: '更多', icon: 'more', tag: '资库·灵感' }
 ]
 
-/** 智能体子菜单（父菜单位于“项目”下方，可折叠展开） */
-const agentMenuOpen = ref(false)
+/** 智能体子菜单（父菜单紧跟在「知识库」之后，可折叠展开；默认展开） */
+const agentMenuOpen = ref(true)
 const agentSubItems: Array<{ label: AgentNavKey }> = [
   { label: '专家' },
   { label: '技能' },
@@ -490,7 +487,7 @@ const adjustMenuDirection = (): void => {
               <NavIcon :name="item.icon" />
             </span>
           </button>
-          <template v-if="item.label === '项目'">
+          <template v-if="item.agentGroupAfter">
             <button
               :class="['nav-item', 'nav-item--icon', { 'nav-item--active': isAgentSectionActive }]"
               title="智能体"
@@ -561,7 +558,7 @@ const adjustMenuDirection = (): void => {
             <span v-if="item.tag" class="nav-tag">{{ item.tag }}</span>
           </button>
 
-          <template v-if="item.label === '项目'">
+          <template v-if="item.agentGroupAfter">
             <button
               class="nav-item nav-item--group"
               :class="{ 'nav-item--active': isAgentSectionActive }"
@@ -1220,8 +1217,6 @@ const adjustMenuDirection = (): void => {
         <!-- ── New Task Page ── -->
         <NewTaskPage v-if="activeNav === '新建任务'" key="newtask" @navigate="activeNav = $event" />
         <!-- ── Page components ── -->
-        <AssistantPage v-else-if="activeNav === '助理'" key="assistant" />
-        <ProjectPage v-else-if="activeNav === '项目'" key="project" />
         <ExpertPage v-else-if="activeNav === '专家'" key="expert" @summon="switchNav('新建任务')" />
         <SkillPage v-else-if="activeNav === '技能'" key="skill" />
         <ConnectorPage v-else-if="activeNav === '连接器'" key="connector" />

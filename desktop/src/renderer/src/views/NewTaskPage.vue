@@ -7,6 +7,7 @@ import MessageContent from '@components/MessageContent.vue'
 import ChatSidePanel from '@components/ChatSidePanel.vue'
 import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
 import { useCatalogStore, type CatalogTab } from '@store/catalog'
+import { loadQuickChips, saveQuickChips } from '@store/quickChips'
 import { useSettingsStore } from '@store/settings'
 import BrandMark from '@components/brand/BrandMark.vue'
 
@@ -522,20 +523,30 @@ const CATEGORY_BACKEND: Record<string, 'filesystem' | 'shell'> = {
   code: 'shell'
 }
 
-const quickChips = [
-  { icon: 'doc', label: '文档处理' },
-  { icon: 'chart', label: '金融服务' },
-  { icon: 'chart', label: '数据分析及可视化' },
-  { icon: 'research', label: '深度研究' },
-  { icon: 'video', label: '视频生成' },
-  { icon: 'slides', label: '幻灯片' }
-]
-
 /** 场景快捷入口 → 对应专家名（未登记的场景暂无专家可召唤） */
 const QUICK_CHIP_EXPERTS: Record<string, string> = {
   视频生成: '视频创作专家',
   文档处理: '文档写作专家',
   深度研究: '互联网信息检索专家'
+}
+
+/** 场景 chip 清单：来自本地配置（默认清单见 store/quickChips），用户删掉的落盘后不再出现 */
+const quickChips = ref(loadQuickChips())
+
+/** chip 高亮 = 它对应的专家正是当前选中的那个（没选中任何专家时都不高亮） */
+function isChipSelected(label: string): boolean {
+  const expertName = QUICK_CHIP_EXPERTS[label]
+  if (!expertName) return false
+  const expert = catalog.experts.find((item) => item.name === expertName)
+  return !!expert && catalog.selectedExpertId === expert.id
+}
+
+/** 从本地配置里删掉一个 chip（落盘；删完不再显示） */
+function removeQuickChip(label: string): void {
+  quickChips.value = quickChips.value.filter((chip) => chip.label !== label)
+  saveQuickChips(quickChips.value)
+  showToast(`已移除「${label}」`)
+  nextTick(updateChipsScrollState)
 }
 
 /**
@@ -561,6 +572,34 @@ function applyQuickChip(label: string): void {
 
 /** 当前选中的自定义模型 id（发送/重新生成时随 customModelId 传主进程；内置模型为 null） */
 const selectedCustomId = ref<string | null>(null)
+
+// ── chip 行横向滚动状态（滚动箭头只在对应方向"看不全"时出现）──
+const chipsAtStart = ref(true)
+const chipsAtEnd = ref(true)
+
+/** 由容器 scroll / 尺寸变化驱动；1px 容差消化缩放取整 */
+const updateChipsScrollState = (): void => {
+  const el = chipsScrollRef.value
+  if (!el) return
+  chipsAtStart.value = el.scrollLeft <= 1
+  chipsAtEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1
+}
+
+/**
+ * 欢迎态/对话态互斥挂载：容器出现时接上 ResizeObserver（首帧布局、窗口缩放都会回调），
+ * 消失时断开——箭头不依赖 scroll 事件，没有滚动过也能算出正确可见性。
+ */
+let chipsResizeObserver: ResizeObserver | null = null
+watch(chipsScrollRef, (el) => {
+  chipsResizeObserver?.disconnect()
+  chipsResizeObserver = null
+  if (!el) return
+  chipsResizeObserver = new ResizeObserver(updateChipsScrollState)
+  chipsResizeObserver.observe(el)
+  nextTick(updateChipsScrollState)
+})
+
+onUnmounted(() => chipsResizeObserver?.disconnect())
 
 const scrollChips = (dir: 'left' | 'right'): void => {
   const el = chipsScrollRef.value
@@ -726,7 +765,12 @@ watch(
 
       <!-- Quick chips + mascot -->
       <div class="chips-row">
-        <button class="chips-scroll-btn chips-scroll-btn--left" @click="scrollChips('left')">
+        <button
+          v-if="!chipsAtStart"
+          class="chips-scroll-btn chips-scroll-btn--left"
+          title="向前查看"
+          @click="scrollChips('left')"
+        >
           <svg
             width="14"
             height="14"
@@ -738,82 +782,106 @@ watch(
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        <div ref="chipsScrollRef" class="chips-scroll">
-          <button
-            v-for="chip in quickChips"
-            :key="chip.label"
-            class="quick-chip"
-            :class="{ 'quick-chip--active': QUICK_CHIP_EXPERTS[chip.label] }"
-            @click="applyQuickChip(chip.label)"
-          >
-            <span class="chip-icon">
+        <div ref="chipsScrollRef" class="chips-scroll" @scroll="updateChipsScrollState">
+          <div v-for="chip in quickChips" :key="chip.label" class="quick-chip-wrap">
+            <button
+              class="quick-chip"
+              :class="{ 'quick-chip--active': isChipSelected(chip.label) }"
+              @click="applyQuickChip(chip.label)"
+            >
+              <span class="chip-icon">
+                <svg
+                  v-if="chip.icon === 'doc'"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <svg
+                  v-else-if="chip.icon === 'chart'"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <line x1="18" y1="20" x2="18" y2="10" />
+                  <line x1="12" y1="20" x2="12" y2="4" />
+                  <line x1="6" y1="20" x2="6" y2="14" />
+                </svg>
+                <svg
+                  v-else-if="chip.icon === 'research'"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                </svg>
+                <svg
+                  v-else-if="chip.icon === 'video'"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polygon points="23 7 16 12 23 17 23 7" />
+                  <rect x="1" y="5" width="15" height="14" rx="2" />
+                </svg>
+                <svg
+                  v-else-if="chip.icon === 'slides'"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+              </span>
+              {{ chip.label }}
+            </button>
+            <button
+              class="quick-chip-del"
+              :aria-label="`移除「${chip.label}」`"
+              :title="`移除「${chip.label}」`"
+              @click.stop="removeQuickChip(chip.label)"
+            >
               <svg
-                v-if="chip.icon === 'doc'"
-                width="13"
-                height="13"
+                width="11"
+                height="11"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="2"
+                stroke-width="2.5"
+                stroke-linecap="round"
               >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
-              <svg
-                v-else-if="chip.icon === 'chart'"
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <line x1="18" y1="20" x2="18" y2="10" />
-                <line x1="12" y1="20" x2="12" y2="4" />
-                <line x1="6" y1="20" x2="6" y2="14" />
-              </svg>
-              <svg
-                v-else-if="chip.icon === 'research'"
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-              </svg>
-              <svg
-                v-else-if="chip.icon === 'video'"
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polygon points="23 7 16 12 23 17 23 7" />
-                <rect x="1" y="5" width="15" height="14" rx="2" />
-              </svg>
-              <svg
-                v-else-if="chip.icon === 'slides'"
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="2" y="3" width="20" height="14" rx="2" />
-                <line x1="8" y1="21" x2="16" y2="21" />
-                <line x1="12" y1="17" x2="12" y2="21" />
-              </svg>
-            </span>
-            {{ chip.label }}
-          </button>
+            </button>
+          </div>
         </div>
-        <button class="chips-scroll-btn chips-scroll-btn--right" @click="scrollChips('right')">
+        <button
+          v-if="!chipsAtEnd"
+          class="chips-scroll-btn chips-scroll-btn--right"
+          title="向后查看"
+          @click="scrollChips('right')"
+        >
           <svg
             width="14"
             height="14"
@@ -1713,6 +1781,12 @@ watch(
   display: none;
 }
 
+.quick-chip-wrap {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+}
+
 .quick-chip {
   display: flex;
   align-items: center;
@@ -1738,7 +1812,7 @@ watch(
   color: var(--kw-color-brand);
 }
 
-/* 已配置对应专家的场景：高亮提示"点了有反应" */
+/* 已选中该场景对应专家：高亮（没选中任何专家时都不高亮） */
 .quick-chip--active {
   border-color: var(--kw-color-brand);
   color: var(--kw-color-brand);
@@ -1748,6 +1822,47 @@ watch(
   display: flex;
   align-items: center;
   color: var(--kw-color-brand);
+  transition: opacity 0.15s ease;
+}
+
+/* 移除入口：hover/focus 时 × 占用图标的位置（只淡入淡出、不改变 chip 尺寸与文字位置） */
+.quick-chip-del {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--kw-color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+
+.quick-chip-wrap:hover .quick-chip-del,
+.quick-chip-wrap:focus-within .quick-chip-del {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.quick-chip-del:hover {
+  color: var(--kw-color-brand);
+}
+
+/* 图标让位给 ×：只淡出、不脱离布局 */
+.quick-chip-wrap:hover .chip-icon,
+.quick-chip-wrap:focus-within .chip-icon {
+  opacity: 0;
 }
 
 .mascot {
