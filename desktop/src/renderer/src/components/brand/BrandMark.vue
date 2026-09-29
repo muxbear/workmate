@@ -15,6 +15,11 @@ const props = withDefaults(
     size?: number
     /** 兜底 LOGO 形态：full = 完整版，mark = 简化标记 */
     variant?: 'full' | 'mark'
+    /**
+     * 覆盖显示地址（「系统标识」页预览未保存的草稿用）：
+     * 不传 = 跟随系统设置；传空串 = 强制走内置兜底 LOGO。
+     */
+    src?: string
   }>(),
   { size: 28, variant: 'mark' }
 )
@@ -27,8 +32,8 @@ const markGradientId = 'brand-mark-' + uid
 const fullGradientId = 'brand-full-' + uid
 const fullAccentId = 'brand-full-accent-' + uid
 
-/** 自定义 LOGO 地址（空 = 走内置兜底） */
-const logoUrl = computed(() => settingsStore.brandLogoDataUrl)
+/** 自定义 LOGO 地址（显式传入的 src 优先；空 = 走内置兜底） */
+const logoUrl = computed(() => props.src ?? settingsStore.brandLogoDataUrl)
 const boxStyle = computed(() => ({ width: props.size + 'px', height: props.size + 'px' }))
 </script>
 

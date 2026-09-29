@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
 import BrandMark from '../../brand/BrandMark.vue'
-import { DEFAULT_SYSTEM_NAME, useSettingsStore, type SettingsKey } from '../../../store/settings'
+import {
+  buildSavePlan,
+  logoPreviewSrc,
+  showsResetLogo,
+  validateSystemNameDraft,
+  SYSTEM_NAME_MAX_LENGTH,
+  type LogoDraft
+} from '../brandIdentityDraft'
+import { useSettingsStore, type SettingsKey } from '../../../store/settings'
 import { formatBytes } from '../../../util/format'
 
 const settingsStore = useSettingsStore()
@@ -38,23 +46,56 @@ function onProxyUrlChange(): void {
   void settingsStore.set('network.proxyUrl', settingsStore.proxyUrl)
 }
 
-// ── 系统标识（LOGO + 系统名称）──
-/** 系统名称长度上限（与主进程 schema 的 SYSTEM_NAME_MAX_LENGTH 对齐） */
-const SYSTEM_NAME_MAX_LENGTH = 24
+// ── 系统标识（LOGO + 系统名称）：草稿 + 点「保存」后生效 ──
 /** LOGO 体积上限（与主进程 BrandLogoService 的 BRAND_LOGO_MAX_BYTES 对齐） */
 const LOGO_MAX_BYTES = 1024 * 1024
 
 const logoInputRef = ref<HTMLInputElement | null>(null)
-const logoPending = ref(false)
+/** LOGO 草稿：选中文件 / 恢复默认只改这里，点「保存」才写主进程 */
+const logoDraft = ref<LogoDraft>({ kind: 'keep' })
+/** 系统名称草稿：不再直接绑定 store，避免未保存就影响侧栏、登录页与窗口标题 */
+const nameDraft = ref(settingsStore.systemName)
+/** 用户是否动过名称输入框（主进程设置晚到时避免冲掉已输入内容） */
+const nameTouched = ref(false)
+const saving = ref(false)
 const logoError = ref('')
+const nameError = ref('')
+
+/** LOGO 预览地址（空串 = 走 BrandMark 的内置兜底 LOGO） */
+const logoPreview = computed(() => logoPreviewSrc(logoDraft.value, settingsStore.brandLogoDataUrl))
+/** 「恢复默认」可见性：还有已存自定义 LOGO，或刚选了新文件（可退回默认）时才显示 */
+const canResetLogo = computed(() => showsResetLogo(logoDraft.value, settingsStore.hasCustomLogo))
+
+/** 保存反馈 toast（设置窗口无全局 toast 组件，「知识库设置」页同款局部实现） */
+const toast = ref('')
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showToast(text: string): void {
+  toast.value = text
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    toast.value = ''
+  }, 1800)
+}
+
+/** 替换 LOGO 草稿：先释放上一个本地预览地址，避免 objectURL 泄漏 */
+function setLogoDraft(next: LogoDraft): void {
+  if (logoDraft.value.kind === 'file') URL.revokeObjectURL(logoDraft.value.url)
+  logoDraft.value = next
+}
+
+/** 名称草稿回填为已保存值（挂载 / 主进程设置加载完成 / 保存成功后调用） */
+function fillNameDraft(): void {
+  nameDraft.value = settingsStore.systemName
+  nameTouched.value = false
+}
 
 function onPickLogo(): void {
   logoError.value = ''
   logoInputRef.value?.click()
 }
 
-/** 上传 LOGO：渲染层先做体积快检（主进程仍会按魔数复检类型与体积） */
-async function onLogoChange(event: Event): Promise<void> {
+/** 选择 LOGO：体积快检后只更新草稿与本地预览（类型由主进程在保存时按魔数复检） */
+function onLogoChange(event: Event): void {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = '' // 复位：同一文件可以再次选择
@@ -64,40 +105,77 @@ async function onLogoChange(event: Event): Promise<void> {
     return
   }
   logoError.value = ''
-  logoPending.value = true
-  try {
-    await settingsStore.uploadBrandLogo(file)
-  } catch (err) {
-    logoError.value = err instanceof Error ? err.message : 'LOGO 上传失败'
-  } finally {
-    logoPending.value = false
-  }
+  setLogoDraft({ kind: 'file', file, url: URL.createObjectURL(file) })
 }
 
-async function onResetLogo(): Promise<void> {
+/** 恢复默认：只改草稿（预览回内置兜底），点「保存」才真正删除已存文件 */
+function onResetLogo(): void {
   logoError.value = ''
-  logoPending.value = true
-  try {
-    await settingsStore.resetBrandLogo()
-  } catch (err) {
-    logoError.value = err instanceof Error ? err.message : '恢复默认 LOGO 失败'
-  } finally {
-    logoPending.value = false
-  }
+  setLogoDraft({ kind: 'reset' })
 }
 
-/** 系统名称：输入即生效；空值先不落盘（主进程拒绝空名），交由失焦回退默认名 */
+/** 系统名称输入：只改草稿 */
 function onSystemNameInput(): void {
-  const name = settingsStore.systemName
-  if (!name.trim()) return
-  void settingsStore.set('ui.systemName', name)
+  nameTouched.value = true
+  nameError.value = ''
 }
 
-/** 失焦兜底：名称为空时回退默认名，避免出现「无系统名」状态 */
+/** 失焦兜底：名称为空时回退已保存的名称，避免出现「无系统名」状态 */
 function onSystemNameBlur(): void {
-  if (settingsStore.systemName.trim()) return
-  settingsStore.systemName = DEFAULT_SYSTEM_NAME
-  void settingsStore.set('ui.systemName', DEFAULT_SYSTEM_NAME)
+  if (!nameDraft.value.trim()) fillNameDraft()
+}
+
+/**
+ * 保存系统标识：先写名称（廉价且最可能校验失败），再按草稿落 LOGO。
+ * 任一失败即中止并如实提示（名称已写成功时明确告知），草稿保留供重试。
+ */
+async function onSaveBrandIdentity(): Promise<void> {
+  if (saving.value) return
+  const invalid = validateSystemNameDraft(nameDraft.value)
+  if (invalid) {
+    nameError.value = invalid
+    return
+  }
+  nameError.value = ''
+  logoError.value = ''
+  const plan = buildSavePlan(
+    logoDraft.value,
+    nameDraft.value,
+    settingsStore.systemName,
+    settingsStore.hasCustomLogo
+  )
+  if (plan.name === null && plan.logo === null) {
+    showToast('系统标识已是最新，无需保存')
+    return
+  }
+  saving.value = true
+  try {
+    if (plan.name !== null) {
+      const ok = await settingsStore.saveMany([['ui.systemName', plan.name]])
+      if (!ok) {
+        nameError.value = '系统名称保存失败：主进程校验未通过'
+        return
+      }
+      // 名称已落盘：立即脱脏，避免「看起来还没保存」的错觉
+      fillNameDraft()
+    }
+    try {
+      if (plan.logo === 'upload' && logoDraft.value.kind === 'file') {
+        await settingsStore.uploadBrandLogo(logoDraft.value.file)
+      } else if (plan.logo === 'reset') {
+        await settingsStore.resetBrandLogo()
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : '未知错误'
+      logoError.value = (plan.name !== null ? '系统名称已保存；' : '') + 'LOGO 保存失败：' + reason
+      return
+    }
+    setLogoDraft({ kind: 'keep' })
+    fillNameDraft()
+    showToast('系统标识已保存')
+  } finally {
+    saving.value = false
+  }
 }
 
 /** 存储区块：占比与文案由真实统计计算 */
@@ -130,19 +208,33 @@ async function onChangeWorkspaceDir(): Promise<void> {
 }
 
 onMounted(() => {
+  fillNameDraft()
   void settingsStore.refreshStorageStats()
+})
+
+// 主进程设置可能晚于本页挂载加载完成，加载后回填名称草稿（用户已动过输入框则不冲掉）
+watch(
+  () => settingsStore.loaded,
+  (ready) => {
+    if (ready && !nameTouched.value) fillNameDraft()
+  }
+)
+
+// 本页随设置窗口开关或切换 tab 销毁，销毁时释放本地预览地址
+onUnmounted(() => {
+  if (logoDraft.value.kind === 'file') URL.revokeObjectURL(logoDraft.value.url)
 })
 </script>
 
 <template>
   <div class="s-page">
-    <!-- 系统标识 -->
+    <!-- 系统标识（LOGO + 系统名称：两者都是草稿，点「保存」后生效） -->
     <section class="s-card">
       <h2 class="s-sec-title">
         系统标识
       </h2>
       <p class="s-desc s-desc--mt">
-        设置系统 LOGO 与系统名称；桌面端所有展示系统名称的位置都会跟随此处设置。
+        设置系统 LOGO 与系统名称；点「保存」后生效，桌面端所有展示系统名称的位置都会跟随此处设置。
       </p>
       <div class="s-hairline" />
       <div class="s-brand-row">
@@ -150,22 +242,23 @@ onMounted(() => {
           <BrandMark
             :size="52"
             variant="mark"
+            :src="logoPreview"
           />
         </div>
         <div class="s-brand-actions">
           <button
             class="s-btn"
             type="button"
-            :disabled="logoPending"
+            :disabled="saving"
             @click="onPickLogo"
           >
-            {{ logoPending ? '处理中…' : '上传图片' }}
+            选择图片
           </button>
           <button
-            v-if="settingsStore.hasCustomLogo"
+            v-if="canResetLogo"
             class="s-btn"
             type="button"
-            :disabled="logoPending"
+            :disabled="saving"
             @click="onResetLogo"
           >
             恢复默认
@@ -191,7 +284,8 @@ onMounted(() => {
       <div class="s-brand-name">
         <span class="s-brand-name-label">系统名称</span>
         <input
-          v-model="settingsStore.systemName"
+          v-model="nameDraft"
+          aria-label="系统名称"
           class="s-input s-input--flex"
           :maxlength="SYSTEM_NAME_MAX_LENGTH"
           placeholder="请输入系统名称"
@@ -199,9 +293,25 @@ onMounted(() => {
           @blur="onSystemNameBlur"
         >
       </div>
-      <p class="s-desc s-desc--mt">
-        修改后立即生效，并同步到登录页、侧边栏、设置窗口与窗口标题。
+      <p
+        v-if="nameError"
+        class="s-error"
+      >
+        {{ nameError }}
       </p>
+      <p class="s-desc s-desc--mt">
+        点击「保存」后生效，并同步到登录页、侧边栏、设置窗口与窗口标题。
+      </p>
+      <div class="s-brand-footer">
+        <button
+          class="s-btn s-btn--primary"
+          type="button"
+          :disabled="saving"
+          @click="onSaveBrandIdentity"
+        >
+          {{ saving ? '保存中…' : '保存' }}
+        </button>
+      </div>
     </section>
 
     <!-- 显示语言 -->
@@ -517,6 +627,16 @@ onMounted(() => {
         </div>
       </div>
     </section>
+
+    <!-- 保存反馈 -->
+    <Transition name="s-toast">
+      <div
+        v-if="toast"
+        class="s-toast"
+      >
+        {{ toast }}
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -578,6 +698,48 @@ onMounted(() => {
   margin-top: 8px;
   font-size: 12px;
   color: var(--kw-color-danger-strong);
+}
+
+/* 系统标识：草稿统一在本卡片内提交 */
+.s-brand-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* 禁用态（共享 .s-btn 未定义 :disabled 样式，否则保存中看不出来） */
+.s-brand-footer .s-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── 保存反馈 toast（与「知识库设置」页同款局部实现，设置窗口无全局 toast）── */
+.s-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2c3337;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 999px;
+  font-size: 14px;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.s-toast-enter-active,
+.s-toast-leave-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.s-toast-enter-from,
+.s-toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
 }
 
 .s-select--lang {
