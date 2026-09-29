@@ -17,6 +17,19 @@ export function bumpPatchVersion(version?: string | null): string {
   return `${major}.${minor}.${Number(patch) + 1}`
 }
 
+/**
+ * 递增语义化版本号的次版本号（minor）：1.2.3 -> 1.3.0。
+ *
+ * 次版本递增时修订号归零；预发布标识与构建元数据（`1.2.3-beta.1` / `1.2.3+build`）
+ * 在递增后丢弃；非法或缺失的输入回退到 `1.0.0`。
+ */
+export function bumpMinorVersion(version?: string | null): string {
+  const matched = SEMVER_PATTERN.exec(version ?? '')
+  if (!matched) return DEFAULT_VERSION
+  const [, major, minor] = matched
+  return `${major}.${Number(minor) + 1}.0`
+}
+
 /** 版本号是否合法（允许预发布标识与构建元数据） */
 export function isValidVersion(version: string): boolean {
   return /^\d+\.\d+\.\d+([-+].+)?$/.test(version)

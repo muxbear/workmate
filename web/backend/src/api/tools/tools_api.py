@@ -25,6 +25,23 @@ from core.response import ApiResponse, ok
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
 
+@router.get("/types", response_model=ApiResponse[list[dict[str, str]]])
+@handle_errors
+async def tool_type_options(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user_id),
+):
+    """获取可选的工具类型（供「工具」页面的筛选使用）。
+
+    取值来自「参数配置」页面的 `tool_type` 分组。这里只要求登录，不要求
+    `admin:params`——工具页面本身对所有登录用户开放，若沿用参数配置的权限，
+    非管理员会拿到空筛选。管理员改配置、普通用户读结果。
+    """
+    from api.params.service import TOOL_TYPE_PARENT_CODE, list_param_options
+
+    return ok(await list_param_options(db, TOOL_TYPE_PARENT_CODE))
+
+
 @router.get("/list", response_model=ApiResponse[ToolListResponse])
 @handle_errors
 async def tool_list(

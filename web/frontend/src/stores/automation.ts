@@ -21,12 +21,20 @@ export const useAutomationStore = defineStore('automation', () => {
   const loadingRuns = ref(false)
   const error = ref('')
 
+  /** 任务列表的展示形态：卡片 / 表格（放 store 里，切页签或来回导航不会丢） */
+  const viewMode = ref<'card' | 'table'>('card')
+
   /** 任务 id 到名称的映射，运行记录展示用 */
   const taskNameById = computed(() => {
     const map: Record<string, string> = {}
     for (const task of tasks.value) map[task.id] = task.title
     return map
   })
+
+  /** 已经用过哪些模板（按任务的 templateId 归集），模板页据此显示「已添加」 */
+  const usedTemplateIds = computed(
+    () => new Set(tasks.value.map((task) => task.templateId).filter(Boolean) as string[]),
+  )
 
   /** 任务统计：总数 / 运行中 / 已暂停 */
   const taskStats = computed(() => ({
@@ -147,7 +155,9 @@ export const useAutomationStore = defineStore('automation', () => {
     loadingTasks,
     loadingRuns,
     error,
+    viewMode,
     taskNameById,
+    usedTemplateIds,
     taskStats,
     nextTask,
     loadTasks,

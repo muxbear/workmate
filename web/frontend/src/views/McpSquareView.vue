@@ -3,12 +3,16 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, ArrowUpDown, Plus } from 'lucide-vue-next'
 import { useMcpStore } from '@/stores/mcp'
+import { fetchMcpTypes } from '@/services/mcpApi'
+import { useParamTypes } from '@/composables/useParamTypes'
 import type { McpTool } from '@/types/mcp'
-import { MCP_CATEGORY_FILTERS } from '@/types/mcp'
 import McpCard from '@/components/mcp/McpCard.vue'
 
 const router = useRouter()
 const mcpStore = useMcpStore()
+
+// 类型清单来自「参数配置」的 mcp_type 分组（未配置则筛选项为空）
+const { options: typeOptions, load: loadTypes } = useParamTypes(fetchMcpTypes)
 
 const searchQuery = ref('')
 const activeCategory = ref('')
@@ -44,6 +48,7 @@ function handleToolClick(tool: McpTool) {
 
 onMounted(() => {
   mcpStore.fetchTools()
+  void loadTypes()
 })
 
 function handleCreate() {
@@ -119,11 +124,18 @@ function handleCreate() {
     <!-- Category Filter -->
     <div class="category-filter">
       <button
-        v-for="cat in MCP_CATEGORY_FILTERS"
-        :key="cat.key"
         class="cat-btn"
-        :class="{ active: activeCategory === cat.key }"
-        @click="activeCategory = cat.key"
+        :class="{ active: activeCategory === '' }"
+        @click="activeCategory = ''"
+      >
+        全部
+      </button>
+      <button
+        v-for="cat in typeOptions"
+        :key="cat.value"
+        class="cat-btn"
+        :class="{ active: activeCategory === cat.value }"
+        @click="activeCategory = cat.value"
       >
         {{ cat.label }}
       </button>

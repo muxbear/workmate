@@ -17,6 +17,24 @@ from core.response import ApiResponse, ok
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
+@router.get("/types", response_model=ApiResponse[list[dict[str, str]]])
+@handle_errors
+async def mcp_type_options(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user_id),
+):
+    """获取可选的 MCP 服务类型（供「MCP 服务」页面的筛选使用）。
+
+    取值来自「参数配置」页面的 `mcp_type` 分组。这里只要求登录，不要求
+    `admin:params`——MCP 页面本身对所有登录用户开放，若沿用参数配置的权限，
+    非管理员会拿到空筛选。管理员改配置、普通用户读结果。
+    """
+    from api.params.service import MCP_TYPE_PARENT_CODE, list_param_options
+
+    return ok(await list_param_options(db, MCP_TYPE_PARENT_CODE))
+
+
+
 @router.get("/tools", response_model=ApiResponse[list[McpToolResponse]])
 @handle_errors
 async def mcp_tool_list(

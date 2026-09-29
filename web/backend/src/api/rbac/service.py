@@ -80,6 +80,16 @@ BUILTIN_PERMISSION_RESOURCES: list[dict[str, object]] = [
          "label": "创建任务", "perm_key": "control:task:create", "icon": "Plus", "sort": 1},
         {"id": "b-ctrl-task-run", "parent": "m-ctrl-scheduled", "type": "button",
          "label": "立即执行", "perm_key": "control:task:run", "icon": "Play", "sort": 2},
+        {"id": "m-ctrl-template", "parent": "g-ctrl", "type": "menu",
+         "label": "定时模板", "perm_key": "control:template",
+         "path": "/schedule-templates", "icon": "LayoutTemplate", "sort": 3},
+        {"id": "b-ctrl-template-create", "parent": "m-ctrl-template", "type": "button",
+         "label": "新增模板", "perm_key": "control:template:create", "icon": "Plus", "sort": 1},
+        {"id": "b-ctrl-template-edit", "parent": "m-ctrl-template", "type": "button",
+         "label": "编辑模板", "perm_key": "control:template:edit", "icon": "Edit2", "sort": 2},
+        {"id": "b-ctrl-template-delete", "parent": "m-ctrl-template", "type": "button",
+         "label": "删除模板", "perm_key": "control:template:delete", "icon": "Trash2",
+         "sort": 3, "danger": True},
 
         # Agent
         {"id": "g-agent", "parent": None, "type": "catalog",
@@ -170,7 +180,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
             "chat:conversation", "chat:send", "chat:create",
             # 知识库的写操作（改配置/重建/分享/发布/置顶…）以此键为门禁
             "knowledge:base", "knowledge:create", "knowledge:edit",
-            "control:overview", "control:scheduled",
+            "control:overview", "control:scheduled", "control:template",
             "agent:manage", "agent:tools", "agent:expert", "agent:skills",
             "mcp:square",
             "admin:users", "admin:user:create", "admin:user:edit",
@@ -727,6 +737,7 @@ class RbacService:
         await self._sync_expert_menu()
         await self._sync_announcement_menu()
         await self._sync_params_menu()
+        await self._sync_schedule_template_menu()
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -899,6 +910,95 @@ class RbacService:
 
         await self.db.flush()
         logger.info("Params menu synced successfully.")
+
+    async def _sync_schedule_template_menu(self) -> None:
+        """给既有库补上「定时模板」菜单、按钮权限与默认授予.
+
+        为什么需要这个方法：``seed_builtin_data`` 只在**首次运行**播种，存量库
+        不会重放 ``DEFAULT_ROLE_PERMISSIONS``（那里面的 ``super_admin``/``admin``
+        取的是 ``ALL_PERMISSION_KEYS`` 快照）。所以只把新键加进
+        ``BUILTIN_PERMISSION_RESOURCES`` 是不够的——存量库里连超管都拿不到，
+        必须在这里显式补菜单并授权。
+
+        授权范围取「已持有 ``control:scheduled`` 的角色」：首次播种时
+        super_admin / admin / manager 都拿到了 ``control:scheduled``，
+        而 member / guest 没有——与「定时模板是管理侧资源」的定位一致。
+        """
+        result = await self.db.execute(
+            select(PermissionResource).where(PermissionResource.id == "m-ctrl-template")
+        )
+        if result.scalar_one_or_none() is None:
+            self.db.add(
+                PermissionResource(
+                    id="m-ctrl-template",
+                    parent_id="g-ctrl",
+                    type="menu",
+                    label="定时模板",
+                    perm_key="control:template",
+                    path="/schedule-templates",
+                    icon="LayoutTemplate",
+                    sort_order=3,
+                    status="active",
+                    is_builtin=True,
+                    description="定时任务模板管理",
+                    btn_variant=None,
+                    danger=False,
+                )
+            )
+            await self.db.flush()
+
+        button_data: list[tuple[str, str, str, str, int]] = [
+            ("b-ctrl-template-create", "新增模板", "control:template:create", "Plus", 1),
+            ("b-ctrl-template-edit", "编辑模板", "control:template:edit", "Edit2", 2),
+            ("b-ctrl-template-delete", "删除模板", "control:template:delete", "Trash2", 3),
+        ]
+        for resource_id, label, perm_key, icon, sort_order in button_data:
+            result = await self.db.execute(
+                select(PermissionResource).where(PermissionResource.id == resource_id)
+            )
+            if result.scalar_one_or_none() is not None:
+                continue
+            self.db.add(
+                PermissionResource(
+                    id=resource_id,
+                    parent_id="m-ctrl-template",
+                    type="button",
+                    label=label,
+                    perm_key=perm_key,
+                    path=None,
+                    icon=icon,
+                    sort_order=sort_order,
+                    status="active",
+                    is_builtin=True,
+                    description="",
+                    btn_variant=None,
+                    danger=resource_id.endswith("delete"),
+                )
+            )
+            await self.db.flush()
+
+        grant_keys = [
+            "control:template",
+            "control:template:create",
+            "control:template:edit",
+            "control:template:delete",
+        ]
+        rp_result = await self.db.execute(
+            select(RolePermission).where(RolePermission.perm_key == "control:scheduled")
+        )
+        for rp in rp_result.scalars().all():
+            for perm_key in grant_keys:
+                dup_result = await self.db.execute(
+                    select(RolePermission).where(
+                        RolePermission.role_id == rp.role_id,
+                        RolePermission.perm_key == perm_key,
+                    )
+                )
+                if dup_result.scalar_one_or_none() is None:
+                    self.db.add(RolePermission(role_id=rp.role_id, perm_key=perm_key))
+
+        await self.db.flush()
+        logger.info("Schedule template menu synced successfully.")
 
     async def _sync_kb_edit_button(self) -> None:
         """给既有库补上「编辑知识库」按钮与默认授予。

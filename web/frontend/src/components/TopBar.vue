@@ -56,6 +56,7 @@ const breadcrumb = computed(() => {
     '/overview': { group: '首页', item: '概览' },
     '/models': { group: '首页', item: '模型' },
     '/scheduled-tasks': { group: '首页', item: '定时任务' },
+    '/schedule-templates': { group: '控制', item: '定时模板' },
     '/tools': { group: '智能体', item: '工具' },
     '/mcp': { group: 'MCP', item: 'MCP 广场' },
     '/knowledge-base': { group: '知识库', item: '知识库' },

@@ -10,6 +10,7 @@ import type {
   FeaturedScene,
 } from '@/types/expert'
 import * as expertApi from '@/services/expertApi'
+import { DEFAULT_PAGE_SIZE } from '@/types/pagination'
 import { DEFAULT_VERSION } from '@/utils/version'
 
 /* ------------------------------------------------------------------ */
@@ -343,7 +344,7 @@ export const useExpertStore = defineStore('expert', () => {
   const categoryFilter = ref<string>('')
   const sortBy = ref<'rating' | 'usage' | 'recent' | 'name'>('rating')
   const page = ref(1)
-  const pageSize = ref(20)
+  const pageSize = ref(DEFAULT_PAGE_SIZE)
 
   const featuredScenes = ref<FeaturedScene[]>([])
   const featuredExperts = ref<Expert[]>([])
@@ -586,6 +587,13 @@ export const useExpertStore = defineStore('expert', () => {
     page.value = 1
   }
 
+  /** 改每页条数：回到第一页重新拉——页码是按旧页长算的，留着会指向不存在的位置 */
+  async function setPageSize(size: number) {
+    pageSize.value = size
+    page.value = 1
+    await fetchExperts()
+  }
+
   return {
     experts,
     total,
@@ -596,6 +604,7 @@ export const useExpertStore = defineStore('expert', () => {
     sortBy,
     page,
     pageSize,
+    setPageSize,
     featuredScenes,
     featuredExperts,
     fetchExperts,

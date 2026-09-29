@@ -178,6 +178,10 @@ export const PERM_RESOURCES: PermResource[] = [
   { id: 'm-ctrl-scheduled', parentId: 'g-ctrl', type: 'menu', label: '定时任务', permKey: 'control:scheduled', path: '/scheduled-tasks', icon: 'Timer', sortOrder: 2, status: 'active', isBuiltin: true, description: '定时任务管理' },
   { id: 'b-ctrl-task-create', parentId: 'm-ctrl-scheduled', type: 'button', label: '新建任务', permKey: 'control:task:create', icon: 'Plus', sortOrder: 1, status: 'active', isBuiltin: true, btnVariant: 'primary' },
   { id: 'b-ctrl-task-run', parentId: 'm-ctrl-scheduled', type: 'button', label: '执行任务', permKey: 'control:task:run', icon: 'Play', sortOrder: 2, status: 'active', isBuiltin: true, btnVariant: 'primary' },
+  { id: 'm-ctrl-template', parentId: 'g-ctrl', type: 'menu', label: '定时模板', permKey: 'control:template', path: '/schedule-templates', icon: 'LayoutTemplate', sortOrder: 3, status: 'active', isBuiltin: true, description: '定时任务模板管理' },
+  { id: 'b-ctrl-template-create', parentId: 'm-ctrl-template', type: 'button', label: '新增模板', permKey: 'control:template:create', icon: 'Plus', sortOrder: 1, status: 'active', isBuiltin: true, btnVariant: 'primary' },
+  { id: 'b-ctrl-template-edit', parentId: 'm-ctrl-template', type: 'button', label: '编辑模板', permKey: 'control:template:edit', icon: 'Edit2', sortOrder: 2, status: 'active', isBuiltin: true, btnVariant: 'default' },
+  { id: 'b-ctrl-template-delete', parentId: 'm-ctrl-template', type: 'button', label: '删除模板', permKey: 'control:template:delete', icon: 'Trash2', sortOrder: 3, status: 'active', isBuiltin: true, btnVariant: 'danger', danger: true },
 
   { id: 'g-agent', parentId: null, type: 'catalog', label: '智能体', permKey: 'agent', icon: 'Bot', sortOrder: 4, status: 'active', isBuiltin: true, description: '智能体管理权限' },
   { id: 'm-agent', parentId: 'g-agent', type: 'menu', label: '智能体', permKey: 'agent:manage', path: '/agents', icon: 'Bot', sortOrder: 1, status: 'active', isBuiltin: true, description: '智能体管理' },

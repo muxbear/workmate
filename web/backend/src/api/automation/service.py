@@ -41,7 +41,7 @@ def week_start_ms(value: int | None = None) -> int:
     return int(start.timestamp() * 1000)
 
 
-def _dedupe(values: list[str], limit: int) -> list[str]:
+def dedupe(values: list[str], limit: int) -> list[str]:
     result: list[str] = []
     for value in values:
         text = str(value).strip()
@@ -52,7 +52,7 @@ def _dedupe(values: list[str], limit: int) -> list[str]:
     return result
 
 
-def _validate_schedule_bounds(schedule: AutomationSchedule) -> None:
+def validate_schedule_bounds(schedule: AutomationSchedule) -> None:
     """校验有效期与频率参数的真实日期范围."""
     if schedule.validity_mode != "range":
         return
@@ -88,7 +88,7 @@ def _validate_schedule_bounds(schedule: AutomationSchedule) -> None:
 
 def _normalize_draft(draft: AutomationTaskDraft) -> dict[str, Any]:
     """把请求草稿转换为可落库字段."""
-    _validate_schedule_bounds(draft.schedule)
+    validate_schedule_bounds(draft.schedule)
     prompt_text = (draft.prompt_text or "").strip()
     title = (draft.title or "").strip() or prompt_text[:18] or "未命名自动化任务"
     valid_from_ts, valid_to_ts = validity_bounds(draft.schedule)
@@ -114,8 +114,8 @@ def _normalize_draft(draft: AutomationTaskDraft) -> dict[str, Any]:
         "expert_id": draft.expert_id,
         "expert_name": draft.expert_name,
         "context_mode": draft.context_mode,
-        "skill_ids": _dedupe(draft.skill_ids, 50),
-        "kb_ids": _dedupe(draft.kb_ids, 20),
+        "skill_ids": dedupe(draft.skill_ids, 50),
+        "kb_ids": dedupe(draft.kb_ids, 20),
         "workspace_id": draft.workspace_id,
         "workspace_name": draft.workspace_name,
         "allow_network": draft.allow_network,

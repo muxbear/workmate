@@ -22,3 +22,9 @@ export async function installMcpTool(data: InstallMcpRequest): Promise<void> {
 export async function uninstallMcpTool(id: string): Promise<void> {
   await instance.delete(`/mcp/tools/${id}/uninstall`)
 }
+
+/** 可选的 MCP 服务类型（来自「参数配置」的 mcp_type 分组，未配置时为空列表） */
+export async function fetchMcpTypes(): Promise<{ value: string; label: string }[]> {
+  const res = await instance.get('/mcp/types')
+  return (res.data.data ?? []) as { value: string; label: string }[]
+}

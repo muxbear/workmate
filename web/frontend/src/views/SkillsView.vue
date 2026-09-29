@@ -3,12 +3,19 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Zap, CheckCircle2, PauseCircle, XCircle } from 'lucide-vue-next'
 import { useSkillStore } from '@/stores/skill'
+import { fetchSkillTypes } from '@/services/skillApi'
+import { useParamTypes } from '@/composables/useParamTypes'
+import { useClientPagination } from '@/composables/useClientPagination'
+import { PAGINATION_LAYOUT, PAGE_SIZE_OPTIONS } from '@/types/pagination'
 import type { Skill, SkillCreateRequest } from '@/types/skill'
-import { CATEGORY_ORDER, getSkillCategoryMeta } from '@/types/skill'
+import { getSkillCategoryMeta } from '@/types/skill'
 import SkillCard from '@/components/skill/SkillCard.vue'
 import SkillDialog from '@/components/skill/SkillDialog.vue'
 
 const skillStore = useSkillStore()
+
+// 类型清单来自「参数配置」的 skill_type 分组（未配置则筛选项为空）
+const { options: typeOptions, load: loadTypes } = useParamTypes(fetchSkillTypes)
 
 // Category filter（与工具页一致：带数量的彩色分类 chips，再次点击可取消筛选）
 const activeCategory = ref('')
@@ -17,18 +24,16 @@ const filteredSkills = computed(() => {
   return skillStore.skills.filter((s) => s.category === activeCategory.value)
 })
 
-// 分类 chips：仅展示有技能的分类，并按内置顺序排列
+// 分类 chips：仅展示有技能的分类，顺序与标签跟随参数配置
 const activeCategories = computed(() => {
   const stats = skillStore.categoryStats
-  const known = CATEGORY_ORDER.filter((key) => stats[key] && stats[key].total > 0)
-  const unknown = Object.keys(stats)
-    .filter((key) => !(CATEGORY_ORDER as readonly string[]).includes(key) && stats[key].total > 0)
-    .sort()
-  return [...known, ...unknown].map((key) => ({
-    key,
-    meta: getSkillCategoryMeta(key),
-    count: stats[key].total,
-  }))
+  return typeOptions.value
+    .filter((item) => (stats[item.value]?.total ?? 0) > 0)
+    .map((item) => ({
+      key: item.value,
+      meta: { ...getSkillCategoryMeta(item.value), label: item.label },
+      count: stats[item.value].total,
+    }))
 })
 
 // 当前分类被删空后自动回到全部
@@ -99,8 +104,17 @@ async function handleDelete(skill: Skill) {
   }
 }
 
+// -- 分页 --
+// 前端切片分页：分类 chips 的数量（categoryStats）与「只显示有技能的分类」都基于
+// 整份列表，后端分页会让这些计数退化成「本页的数量」。技能是几个的量级，整份加载即可。
+const { page, pageSize, total, paged, reset } = useClientPagination(filteredSkills)
+
+// 切分类就回第一页
+watch(activeCategory, reset)
+
 onMounted(() => {
   skillStore.fetchSkills()
+  void loadTypes()
 })
 </script>
 
@@ -217,10 +231,10 @@ onMounted(() => {
         </el-button>
       </el-empty>
 
-      <!-- Skills Grid -->
+      <!-- Skills Grid（当前页） -->
       <div v-else class="skills-grid">
         <SkillCard
-          v-for="skill in filteredSkills"
+          v-for="skill in paged"
           :key="skill.id"
           :skill="skill"
           @edit="openEditDialog"
@@ -228,6 +242,19 @@ onMounted(() => {
           @toggle="handleToggle"
         />
       </div>
+    </div>
+
+    <!-- 分页：共 N 条 / 改每页条数 / 翻页 / 跳页（与「定时模板」页同一套） -->
+    <div v-if="!skillStore.loading && total > 0" class="skills-pagination">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :page-sizes="[...PAGE_SIZE_OPTIONS]"
+        :total="total"
+        :layout="PAGINATION_LAYOUT"
+        background
+        size="small"
+      />
     </div>
 
     <!-- Skill Dialog -->
@@ -402,8 +429,27 @@ onMounted(() => {
 }
 
 /* Skills Grid */
+/*
+ * flex: none 不能省。.skills-page 是定高的 flex 列容器，这里的 min-height 允许被压缩，
+ * 网格比它高时就会溢出，后面的分页条便被摆到网格上面（视觉上压在卡片上）。
+ */
 .skills-content {
+  flex: none;
   min-height: 200px;
+}
+
+.skills-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .skills-pagination {
+    justify-content: center;
+  }
 }
 
 .skills-grid {

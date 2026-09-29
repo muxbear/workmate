@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # 首次启动时种子化内置技能、OAuth2 客户端、内置工具与参数分组
+    from api.automation.template_service import seed_builtin_task_templates
     from api.experts.service import seed_builtin_experts
     from api.mcp.service import seed_builtin_mcp_tools
     from api.oauth2.client_service import seed_oauth2_clients
@@ -85,7 +86,9 @@ async def lifespan(app: FastAPI):
         await seed_builtin_tools(session)
         await seed_builtin_mcp_tools(session)
         await seed_builtin_experts(session)
+        # 参数分组要先于模板种子：模板的类型取值来自「参数配置」
         await seed_builtin_params(session)
+        await seed_builtin_task_templates(session)
         await session.commit()
 
     # 迁移明文 api_key 为加密存储

@@ -43,6 +43,25 @@ from core.response import ApiResponse, ok
 router = APIRouter(prefix="/api/skill", tags=["skill"])
 
 
+# 注意：本路由必须声明在 `GET /{skill_id}` 之前，否则会被那条路径参数路由抢先匹配。
+@router.get("/types", response_model=ApiResponse[list[dict[str, str]]])
+@handle_errors
+async def skill_type_options(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user_id),
+):
+    """获取可选的技能类型（供「技能」页面的筛选使用）。
+
+    取值来自「参数配置」页面的 `skill_type` 分组。这里只要求登录，不要求
+    `admin:params`——技能页面本身对所有登录用户开放，若沿用参数配置的权限，
+    非管理员会拿到空筛选。管理员改配置、普通用户读结果。
+    """
+    from api.params.service import SKILL_TYPE_PARENT_CODE, list_param_options
+
+    return ok(await list_param_options(db, SKILL_TYPE_PARENT_CODE))
+
+
+
 @router.post("/upload_skills", response_model=ApiResponse[SkillsUploadResponse])
 @handle_errors
 async def upload_skills(

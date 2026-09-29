@@ -2,19 +2,30 @@
 /**
  * 定时任务页面（对齐桌面版「自动化」菜单）
  *
- * 两个页签：「定时任务」展示我的任务与任务模版，「运行记录」展示执行历史与本周统计。
+ * 两个页签：「定时任务」展示我的任务（卡片 / 表格两种形态可切换），
+ * 「运行记录」展示执行历史与本周统计。
+ *
+ * 任务模版不在这里——模版已独立为「控制 → 定时模板」页面，模板那边负责
+ * 「添加到定时任务」，本页只管任务本身。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Pencil, Pause, Play, Plus, RefreshCw, Search, Trash2, X, Zap } from 'lucide-vue-next'
+import {
+  LayoutGrid,
+  List,
+  Pencil,
+  Pause,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+  Zap,
+} from 'lucide-vue-next'
 import AutomationTaskDialog from '@/components/automation/AutomationTaskDialog.vue'
 import { useAutomationStore } from '@/stores/automation'
-import {
-  AUTOMATION_TEMPLATES,
-  RUN_STATUS_META,
-  RUN_TRIGGER_LABEL,
-  TASK_STATUS_META,
-} from '@/types/automation'
+import { RUN_STATUS_META, RUN_TRIGGER_LABEL, TASK_STATUS_META } from '@/types/automation'
 import type { AutomationRun, AutomationTask } from '@/types/automation'
 
 type Tab = 'tasks' | 'logs'
@@ -40,11 +51,6 @@ const myTasks = computed(() => {
       task.title.toLowerCase().includes(text) || task.promptText.toLowerCase().includes(text),
   )
 })
-
-/** 已添加的模版 id 集合，模版卡片据此显示「已添加」 */
-const addedTemplateIds = computed(
-  () => new Set(automation.tasks.map((task) => task.templateId).filter(Boolean) as string[]),
-)
 
 /** 运行记录展示行 */
 const runRows = computed(() =>
@@ -178,41 +184,6 @@ async function handleDialogSaved(): Promise<void> {
   closeDialog()
 }
 
-/** 模版快捷添加：落库并标记为模版来源，便于回显「已添加」 */
-async function addTemplate(templateId: number): Promise<void> {
-  const template = AUTOMATION_TEMPLATES.find((item) => item.id === templateId)
-  if (!template || addedTemplateIds.value.has(String(template.id))) return
-  try {
-    await automation.createTask({
-      title: template.title,
-      promptText: template.desc,
-      promptParts: [{ type: 'text', text: template.desc }],
-      icon: template.icon,
-      source: 'template',
-      templateId: String(template.id),
-      schedule: template.schedule,
-      model: null,
-      customModelId: null,
-      providerId: null,
-      modelId: null,
-      expertId: null,
-      expertName: null,
-      contextMode: 'default',
-      skillIds: [],
-      kbIds: [],
-      workspaceId: null,
-      workspaceName: null,
-      allowNetwork: false,
-      allowShell: false,
-      fullAccess: false,
-    })
-    await automation.loadStats()
-    ElMessage.success('已添加「' + template.title + '」')
-  } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '添加失败')
-  }
-}
-
 async function handleToggle(task: AutomationTask): Promise<void> {
   try {
     await automation.setEnabled(task.id, !task.enabled)
@@ -343,11 +314,18 @@ onUnmounted(() => {
       <div v-if="automation.tasks.length === 0" class="auto-empty">
         <div class="auto-empty-icon">⏰</div>
         <p class="auto-empty-title">开启你的第一个自动化任务吧</p>
-        <p class="auto-empty-desc">从模版选择或自定义定时任务，让智能体自动帮你完成重复工作</p>
-        <button class="auto-btn auto-btn--primary" @click="openCreate">
-          <Plus :size="15" />
-          添加自动化
-        </button>
+        <p class="auto-empty-desc">
+          直接新建一个定时任务，或到「控制 → 定时模板」里挑一个模板添加
+        </p>
+        <div class="auto-empty-actions">
+          <button class="auto-btn auto-btn--primary" @click="openCreate">
+            <Plus :size="15" />
+            添加自动化
+          </button>
+          <RouterLink class="auto-btn auto-btn--ghost" to="/schedule-templates">
+            去定时模板
+          </RouterLink>
+        </div>
       </div>
 
       <template v-else>
@@ -360,6 +338,24 @@ onUnmounted(() => {
               <Search :size="13" />
               <input v-model="keyword" type="text" placeholder="搜索任务名称或提示词" />
             </div>
+            <div class="auto-view-toggle">
+              <button
+                :class="{ active: automation.viewMode === 'card' }"
+                title="卡片视图"
+                aria-label="卡片视图"
+                @click="automation.viewMode = 'card'"
+              >
+                <LayoutGrid :size="14" />
+              </button>
+              <button
+                :class="{ active: automation.viewMode === 'table' }"
+                title="表格视图"
+                aria-label="表格视图"
+                @click="automation.viewMode = 'table'"
+              >
+                <List :size="14" />
+              </button>
+            </div>
             <button class="auto-btn auto-btn--primary auto-btn--sm" @click="openCreate">
               <Plus :size="13" />
               添加自动化
@@ -371,7 +367,7 @@ onUnmounted(() => {
           <p class="auto-empty-desc">没有匹配的任务，试试其他关键词。</p>
         </div>
 
-        <div class="auto-grid">
+        <div v-if="automation.viewMode === 'card'" class="auto-grid">
           <div v-for="task in myTasks" :key="task.id" class="auto-card">
             <span class="auto-card-icon">{{ task.icon }}</span>
             <div class="auto-card-main">
@@ -426,40 +422,75 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
-      </template>
 
-      <div class="auto-section-head auto-section-head--tpl">
-        <h2 class="auto-section-title">自动化任务模版</h2>
-      </div>
-      <div class="auto-grid">
-        <div
-          v-for="template in AUTOMATION_TEMPLATES"
-          :key="template.id"
-          class="auto-card auto-card--template"
-          :class="{ 'auto-card--added': addedTemplateIds.has(String(template.id)) }"
-        >
-          <span class="auto-card-icon">{{ template.icon }}</span>
-          <div class="auto-card-main">
-            <p class="auto-card-title">{{ template.title }}</p>
-            <p class="auto-card-desc">{{ template.desc }}</p>
-            <div class="auto-card-foot">
-              <span class="auto-meta-freq">{{ template.freq }}</span>
-              <button
-                class="auto-btn auto-btn--sm"
-                :class="
-                  addedTemplateIds.has(String(template.id))
-                    ? 'auto-btn--ghost'
-                    : 'auto-btn--primary'
-                "
-                :disabled="addedTemplateIds.has(String(template.id))"
-                @click="addTemplate(template.id)"
-              >
-                {{ addedTemplateIds.has(String(template.id)) ? '✓ 已添加' : '+ 添加' }}
-              </button>
+        <!-- 表格视图：与卡片同一份数据，只是换了排布（窄屏横向滚动） -->
+        <div v-else class="auto-table auto-table--tasks">
+          <div class="auto-table-inner">
+            <div class="auto-table-head">
+              <span>任务名称</span>
+              <span>执行计划</span>
+              <span>有效期</span>
+              <span>下次运行</span>
+              <span>运行 / 失败</span>
+              <span>状态</span>
+              <span class="auto-col-right">操作</span>
+            </div>
+            <div v-for="task in myTasks" :key="task.id" class="auto-table-row">
+              <div class="auto-cell-name">
+                <span class="auto-cell-icon">{{ task.icon }}</span>
+                <div class="auto-cell-text">
+                  <p class="auto-cell-title" :title="task.title">{{ task.title }}</p>
+                  <p class="auto-cell-sub" :title="task.promptText">{{ task.promptText }}</p>
+                </div>
+              </div>
+              <span class="auto-cell-mono">{{ task.freqSummary }}</span>
+              <span class="auto-cell-mono">{{ task.validitySummary }}</span>
+              <span class="auto-cell-mono">{{ formatNextRun(task) }}</span>
+              <span class="auto-cell-mono">{{ task.runCount }} / {{ task.failCount }}</span>
+              <div class="auto-cell-status">
+                <span
+                  class="auto-status"
+                  :style="{
+                    color: TASK_STATUS_META[taskStatusKey(task)].color,
+                    background: TASK_STATUS_META[taskStatusKey(task)].bg,
+                  }"
+                >
+                  <span
+                    class="auto-status-dot"
+                    :style="{ background: TASK_STATUS_META[taskStatusKey(task)].dot }"
+                  />
+                  {{ TASK_STATUS_META[taskStatusKey(task)].label }}
+                </span>
+              </div>
+              <div class="auto-cell-actions auto-cell-actions--tasks">
+                <button class="auto-icon-btn" title="立即运行" @click="handleRunNow(task)" aria-label="立即运行">
+                  <Zap :size="13" />
+                </button>
+                <button
+                  class="auto-icon-btn"
+                  :title="task.enabled ? '暂停' : '继续'"
+                  @click="handleToggle(task)"
+                  :aria-label="task.enabled ? '暂停' : '继续'"
+                >
+                  <Pause v-if="task.enabled" :size="13" />
+                  <Play v-else :size="13" />
+                </button>
+                <button class="auto-icon-btn" title="编辑" @click="openEdit(task)" aria-label="编辑">
+                  <Pencil :size="13" />
+                </button>
+                <button
+                  class="auto-icon-btn auto-icon-btn--danger"
+                  title="删除"
+                  @click="handleDelete(task)"
+                  aria-label="删除"
+                >
+                  <Trash2 :size="13" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </template>
     </div>
     <!-- 运行记录 -->
     <div v-else class="auto-body">
@@ -720,10 +751,6 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.auto-section-head--tpl {
-  margin-top: 8px;
-}
-
 .auto-section-title {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
@@ -752,6 +779,35 @@ onUnmounted(() => {
   border-radius: var(--radius-full);
   background: var(--surface-card);
   color: var(--foreground-muted);
+}
+
+/* 卡片 / 表格切换（与「定时模板」页同一套观感） */
+.auto-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+}
+
+.auto-view-toggle button {
+  display: inline-flex;
+  padding: 4px 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-muted);
+  cursor: pointer;
+}
+
+.auto-view-toggle button.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.auto-empty-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .auto-search input {
@@ -818,10 +874,6 @@ onUnmounted(() => {
 
 .auto-card:hover {
   border-color: var(--border-medium);
-}
-
-.auto-card--added {
-  opacity: 0.72;
 }
 
 .auto-card-icon {
@@ -941,6 +993,25 @@ onUnmounted(() => {
   padding: 10px 16px;
 }
 
+/* 任务表格的列与运行记录不同：多一列「下次运行」，且行不可点（操作用按钮）。
+ * 七列比运行记录宽，窄屏下改用横向滚动，不把每列压变形。 */
+.auto-table--tasks {
+  overflow-x: auto;
+}
+
+.auto-table--tasks .auto-table-inner {
+  min-width: 900px;
+}
+
+.auto-table--tasks .auto-table-head,
+.auto-table--tasks .auto-table-row {
+  grid-template-columns: minmax(220px, 2fr) 1fr 1fr 1fr 0.8fr 0.9fr 150px;
+}
+
+.auto-table--tasks .auto-table-row {
+  cursor: default;
+}
+
 .auto-table-head {
   border-bottom: 1px solid var(--border-subtle);
   color: var(--foreground-muted);
@@ -998,6 +1069,40 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.auto-cell-actions--tasks {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* 任务表格里的名称列：图标 + 标题 + 提示词两行 */
+.auto-cell-icon {
+  flex: none;
+  font-size: 16px;
+}
+
+.auto-cell-text {
+  min-width: 0;
+}
+
+.auto-cell-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--foreground-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auto-cell-sub {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .auto-col-right {

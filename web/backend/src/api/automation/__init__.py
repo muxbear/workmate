@@ -1,5 +1,6 @@
-"""自动化任务模块."""
+"""自动化模块（定时任务 + 定时任务模板）."""
 
 from api.automation.automation_api import router
+from api.automation.template_api import router as template_router
 
-__all__ = ["router"]
+__all__ = ["router", "template_router"]

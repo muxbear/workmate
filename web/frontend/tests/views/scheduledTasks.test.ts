@@ -118,7 +118,7 @@ describe('ScheduledTasksView', () => {
     vi.mocked(api.setTaskEnabled).mockResolvedValue(task({ enabled: false, status: 'paused' }))
   })
 
-  it('渲染我的任务卡与模版卡片', async () => {
+  it('渲染我的任务卡，且不再有「自动化任务模版」区域', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -127,22 +127,42 @@ describe('ScheduledTasksView', () => {
     expect(text).toContain('每天 08:00')
     expect(text).toContain('长期有效')
     expect(text).toContain('运行 3 次 / 失败 1 次')
-    expect(wrapper.findAll('.auto-card--template')).toHaveLength(12)
-    expect(text).toContain('每日 AI 新闻推送')
+    expect(wrapper.findAll('.auto-card')).toHaveLength(1)
+
+    // 模版已独立成「控制 → 定时模板」页面，本页不该再出现模板块
+    expect(text).not.toContain('自动化任务模版')
+    expect(wrapper.findAll('.auto-card--template')).toHaveLength(0)
   })
 
-  it('点击模版「添加」按模版来源创建任务', async () => {
+  it('卡片与表格两种形态可以切换，数据同源', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    await wrapper.findAll('.auto-card--template')[0].find('button').trigger('click')
-    await flushPromises()
+    // 默认卡片视图
+    expect(wrapper.findAll('.auto-card')).toHaveLength(1)
+    expect(wrapper.findAll('.auto-table--tasks .auto-table-row')).toHaveLength(0)
 
-    expect(api.createTask).toHaveBeenCalledTimes(1)
-    const draft = vi.mocked(api.createTask).mock.calls[0][0]
-    expect(draft.source).toBe('template')
-    expect(draft.templateId).toBe('1')
-    expect(draft.title).toBe('每日 AI 新闻推送')
+    await wrapper.find('.auto-view-toggle button[title="表格视图"]').trigger('click')
+    expect(wrapper.findAll('.auto-card')).toHaveLength(0)
+    const rows = wrapper.findAll('.auto-table--tasks .auto-table-row')
+    expect(rows).toHaveLength(1)
+    // 表格里同样能看到任务名与执行计划
+    expect(rows[0].text()).toContain('每日摘要')
+    expect(rows[0].text()).toContain('每天 08:00')
+
+    await wrapper.find('.auto-view-toggle button[title="卡片视图"]').trigger('click')
+    expect(wrapper.findAll('.auto-card')).toHaveLength(1)
+    expect(wrapper.findAll('.auto-table--tasks .auto-table-row')).toHaveLength(0)
+  })
+
+  it('表格形态下同样能编辑与删除', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('.auto-view-toggle button[title="表格视图"]').trigger('click')
+
+    const actions = wrapper.find('.auto-table--tasks .auto-cell-actions')
+    expect(actions.find('button[title="编辑"]').exists()).toBe(true)
+    expect(actions.find('button[title="删除"]').exists()).toBe(true)
   })
 
   it('点击暂停按钮调用 setTaskEnabled', async () => {

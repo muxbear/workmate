@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Wrench } from 'lucide-vue-next'
 import { useToolStore } from '@/stores/tool'
-import type { Tool, ToolCreateRequest, ToolCategory, ToolSource, ToolStatus } from '@/types/tool'
+import { fetchToolTypes } from '@/services/toolApi'
+import { useParamTypes } from '@/composables/useParamTypes'
+import { useClientPagination } from '@/composables/useClientPagination'
+import { PAGINATION_LAYOUT, PAGE_SIZE_OPTIONS } from '@/types/pagination'
+import type { Tool, ToolCreateRequest, ToolStatus } from '@/types/tool'
 import { CATEGORY_META, STATUS_META } from '@/types/tool'
 import ToolCard from '@/components/tool/ToolCard.vue'
 import ToolDialog from '@/components/tool/ToolDialog.vue'
@@ -11,12 +15,24 @@ import ToolDetailDrawer from '@/components/tool/ToolDetailDrawer.vue'
 
 const toolStore = useToolStore()
 
-// -- Source tab --
-type SourceTab = 'all' | ToolSource
-const sourceTab = ref<SourceTab>('all')
-
 // -- Category filter --
-const categoryFilter = ref<ToolCategory | 'all'>('all')
+// 类型清单来自「参数配置」的 tool_type 分组（未配置则筛选项为空）
+const { options: typeOptions, load: loadTypes } = useParamTypes(fetchToolTypes)
+const categoryFilter = ref<string>('all')
+
+/** 已知分类沿用既有配色；参数配置里新增的分类回退为中性灰 */
+const NEUTRAL_CATEGORY_META = {
+  label: '',
+  color: 'var(--color-tool-gray, #94a3b8)',
+  bg: 'rgba(148,163,184,0.08)',
+  border: 'rgba(148,163,184,0.2)',
+}
+
+function categoryMeta(value: string): { label: string; color: string; bg: string; border: string } {
+  const known = CATEGORY_META[value as keyof typeof CATEGORY_META]
+  const label = typeOptions.value.find((item) => item.value === value)?.label ?? value
+  return known ? { ...known, label } : { ...NEUTRAL_CATEGORY_META, label }
+}
 
 // -- Status filter --
 const statusFilter = ref<ToolStatus | 'all'>('all')
@@ -42,13 +58,10 @@ const statCards = computed(() => [
   { label: '不可用', value: toolStore.unavailableTools.length, color: '#94a3b8', bg: 'rgba(148,163,184,0.03)', border: 'rgba(148,163,184,0.15)' },
 ])
 
-// -- Category counts for current source tab --
+// -- Category counts（整份列表，不再按来源页签细分——来源筛选已移除） --
 const categoryCounts = computed(() => {
-  const src = sourceTab.value === 'all'
-    ? toolStore.tools
-    : toolStore.tools.filter((t) => t.source === sourceTab.value)
-  const map: Partial<Record<ToolCategory, number>> = {}
-  for (const t of src) {
+  const map: Record<string, number> = {}
+  for (const t of toolStore.tools) {
     map[t.category] = (map[t.category] ?? 0) + 1
   }
   return map
@@ -57,7 +70,6 @@ const categoryCounts = computed(() => {
 // -- Filtered tools --
 const filtered = computed(() => {
   return toolStore.tools.filter((t) => {
-    if (sourceTab.value !== 'all' && t.source !== sourceTab.value) return false
     if (categoryFilter.value !== 'all' && t.category !== categoryFilter.value) return false
     if (statusFilter.value !== 'all' && t.status !== statusFilter.value) return false
     if (search.value) {
@@ -72,19 +84,12 @@ const filtered = computed(() => {
   })
 })
 
-// -- Category entries that have tools --
+// -- 只显示确实有工具的分类（数量为 0 的不显示） --
 const activeCategories = computed(() => {
-  return (Object.keys(categoryCounts.value) as ToolCategory[]).filter(
-    (c) => categoryCounts.value[c] && categoryCounts.value[c]! > 0,
-  )
+  return typeOptions.value
+    .map((item) => item.value)
+    .filter((value) => (categoryCounts.value[value] ?? 0) > 0)
 })
-
-// -- Source tabs --
-const sourceTabs: { key: SourceTab; label: string; count: number }[] = [
-  { key: 'all', label: '全部', count: toolStore.tools.length },
-  { key: 'builtin', label: '内置工具', count: builtinCount.value },
-  { key: 'third-party', label: '第三方工具', count: thirdPartyCount.value },
-]
 
 // -- Status filter buttons --
 const statusFilters: { key: ToolStatus | 'all'; label: string }[] = [
@@ -154,32 +159,22 @@ async function handleDelete(id: string) {
 function openDetail(tool: Tool) { detail.value = tool }
 function closeDetail() { detail.value = null }
 
-// -- Scroll pagination --
-const pageRef = ref<HTMLElement | null>(null)
+// -- 分页 --
+// 整份列表在前端切片分页，不用后端分页：分类 chips 上的数量、「只显示有工具的分类」
+// 都是基于整份列表算的，换成后端分页这些计数会变成「本页的数量」。
+const { page, pageSize, total, paged, reset } = useClientPagination(filtered)
 
-function handleScroll() {
-  const el = pageRef.value
-  if (!el || toolStore.loadingMore || !toolStore.hasMore) return
-  const { scrollTop, scrollHeight, clientHeight } = el
-  if (scrollTop + clientHeight >= scrollHeight - 120) {
-    toolStore.loadMore()
-  }
-}
+// 筛选条件一变就回第一页，否则会停在一个与当前条件无关的页码上
+watch([categoryFilter, statusFilter, search], reset)
 
 onMounted(() => {
   toolStore.fetchTools()
-  const el = pageRef.value
-  if (el) el.addEventListener('scroll', handleScroll, { passive: true })
-})
-
-onUnmounted(() => {
-  const el = pageRef.value
-  if (el) el.removeEventListener('scroll', handleScroll)
+  void loadTypes()
 })
 </script>
 
 <template>
-  <div ref="pageRef" class="tools-page">
+  <div class="tools-page">
     <!-- ── Header ── -->
     <div class="page-header">
       <div class="page-header__info">
@@ -203,20 +198,6 @@ onUnmounted(() => {
         <span class="stat-label">{{ s.label }}</span>
         <span class="stat-value" :style="{ color: s.color }">{{ s.value }}</span>
       </div>
-    </div>
-
-    <!-- ── Source Tabs ── -->
-    <div class="source-tabs">
-      <button
-        v-for="tab in sourceTabs"
-        :key="tab.key"
-        class="source-tab"
-        :class="{ active: sourceTab === tab.key }"
-        @click="sourceTab = tab.key; categoryFilter = 'all'"
-      >
-        {{ tab.label }}
-        <span class="source-tab__count">{{ tab.count }}</span>
-      </button>
     </div>
 
     <!-- ── Filters + Search ── -->
@@ -247,11 +228,11 @@ onUnmounted(() => {
           class="chip-btn"
           :class="{ active: categoryFilter === c }"
           :style="categoryFilter === c
-            ? { background: CATEGORY_META[c].bg, color: CATEGORY_META[c].color, borderColor: CATEGORY_META[c].border }
+            ? { background: categoryMeta(c).bg, color: categoryMeta(c).color, borderColor: categoryMeta(c).border }
             : {}"
           @click="categoryFilter = categoryFilter === c ? 'all' : c"
         >
-          <span>{{ CATEGORY_META[c].label }}</span>
+          <span>{{ categoryMeta(c).label }}</span>
           <span class="chip-count">{{ categoryCounts[c] }}</span>
         </button>
       </div>
@@ -287,17 +268,17 @@ onUnmounted(() => {
       <!-- Empty -->
       <el-empty
         v-else-if="filtered.length === 0"
-        :description="sourceTab !== 'all' || categoryFilter !== 'all' || search ? '当前筛选条件下没有匹配的工具' : '暂无工具'"
+        :description="categoryFilter !== 'all' || statusFilter !== 'all' || search ? '当前筛选条件下没有匹配的工具' : '暂无工具'"
       >
-        <el-button v-if="sourceTab === 'all' && !search" type="primary" @click="openCreate">
+        <el-button v-if="!search" type="primary" @click="openCreate">
           添加第三方工具
         </el-button>
       </el-empty>
 
-      <!-- Grid -->
+      <!-- Grid（当前页） -->
       <div v-else class="tools-grid">
         <ToolCard
-          v-for="tool in filtered"
+          v-for="tool in paged"
           :key="tool.id"
           :tool="tool"
           @edit="openEdit"
@@ -308,18 +289,17 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Load more -->
-    <div v-if="!toolStore.loading && filtered.length > 0" class="load-more">
-      <div v-if="toolStore.loadingMore" class="load-more__loading">
-        <el-skeleton :rows="1" animated />
-        <span class="load-more__text">加载更多工具…</span>
-      </div>
-      <div v-else-if="toolStore.hasMore" class="load-more__hint">
-        向下滚动加载更多
-      </div>
-      <div v-else class="load-more__end">
-        — 已展示全部 {{ toolStore.total }} 个工具 —
-      </div>
+    <!-- 分页：共 N 条 / 改每页条数 / 翻页 / 跳页（与「定时模板」页同一套） -->
+    <div v-if="!toolStore.loading && total > 0" class="tools-pagination">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :page-sizes="[...PAGE_SIZE_OPTIONS]"
+        :total="total"
+        :layout="PAGINATION_LAYOUT"
+        background
+        size="small"
+      />
     </div>
 
     <!-- ── Dialogs ── -->
@@ -410,44 +390,6 @@ onUnmounted(() => {
 }
 
 /* Source Tabs */
-.source-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  width: fit-content;
-}
-
-.source-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 16px;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--foreground-secondary);
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-medium);
-  font-family: var(--font-family-base);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.source-tab:hover { color: var(--color-text-primary); }
-
-.source-tab.active {
-  background: var(--accent-primary);
-  color: #fff;
-  box-shadow: 0px 2px 8px rgba(59, 130, 246, 0.3);
-}
-
-.source-tab__count {
-  font-size: var(--font-size-xs);
-  opacity: 0.7;
-}
 
 /* Filters Row */
 .filters-row {
@@ -569,8 +511,28 @@ onUnmounted(() => {
 }
 
 /* Tools Grid */
+/*
+ * flex: none 不能省。.tools-page 是定高的 flex 列容器，而这里的 min-height 允许它被压缩，
+ * 网格比它高时就会溢出，后面的分页条便被摆到网格上面（视觉上压在卡片上）。
+ * 固定成内容高度，滚动交给 .tools-page。
+ */
 .tools-content {
+  flex: none;
   min-height: 200px;
+}
+
+.tools-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .tools-pagination {
+    justify-content: center;
+  }
 }
 
 .tools-grid {
@@ -587,34 +549,5 @@ onUnmounted(() => {
 }
 
 /* Load more */
-.load-more {
-  display: flex;
-  justify-content: center;
-  padding: 16px 0 8px;
-}
 
-.load-more__loading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  max-width: 360px;
-}
-
-.load-more__text {
-  font-size: var(--font-size-sm);
-  color: var(--foreground-muted);
-  white-space: nowrap;
-}
-
-.load-more__hint {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
-
-.load-more__end {
-  font-size: var(--font-size-sm);
-  color: var(--foreground-muted);
-  opacity: 0.7;
-}
 </style>

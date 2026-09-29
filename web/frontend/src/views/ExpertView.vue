@@ -3,12 +3,33 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, X, RefreshCw } from 'lucide-vue-next'
 import { useExpertStore } from '@/stores/expert'
+import { fetchExpertCategories } from '@/services/expertApi'
+import { PAGINATION_LAYOUT, PAGE_SIZE_OPTIONS } from '@/types/pagination'
 import type { Expert, ExpertUpdateRequest, ExpertProfileUpdateRequest, ExpertConfigUpdateRequest } from '@/types/expert'
-import { EXPERT_CATEGORY_FILTERS } from '@/types/expert'
 import ExpertCard from '@/components/expert/ExpertCard.vue'
 import ExpertEditDialog from '@/components/expert/ExpertEditDialog.vue'
 
 const expertStore = useExpertStore()
+
+/**
+ * 类型筛选项来自「参数配置」的 expert_type 分组（后端 /experts/categories 已经把
+ * 该分组的编码与名称连同各类型的专家数量一起返回）。未配置时筛选项为空。
+ */
+const categoryFilters = ref<{ key: string; label: string; count: number }[]>([
+  { key: '', label: '全部', count: 0 },
+])
+
+async function loadCategoryFilters(): Promise<void> {
+  try {
+    const rows = await fetchExpertCategories()
+    categoryFilters.value = [
+      { key: '', label: '全部', count: 0 },
+      ...rows.map((item) => ({ key: item.key, label: item.label, count: item.count })),
+    ]
+  } catch {
+    categoryFilters.value = [{ key: '', label: '全部', count: 0 }]
+  }
+}
 
 /* ---- dialog state ---- */
 const editVisible = ref(false)
@@ -43,6 +64,10 @@ function handleSortChange(key: 'rating' | 'usage' | 'recent' | 'name') {
 function handlePageChange(newPage: number) {
   expertStore.page = newPage
   expertStore.fetchExperts()
+}
+
+function handlePageSizeChange(size: number) {
+  expertStore.setPageSize(size)
 }
 
 function openCreateDialog() {
@@ -139,6 +164,7 @@ function handleRefresh() {
 
 onMounted(() => {
   expertStore.fetchExperts()
+  void loadCategoryFilters()
 })
 </script>
 
@@ -201,7 +227,7 @@ onMounted(() => {
 
     <div class="filter-chips">
       <button
-        v-for="cat in EXPERT_CATEGORY_FILTERS"
+        v-for="cat in categoryFilters"
         :key="cat.key"
         :class="['filter-chip', { 'filter-chip--active': expertStore.categoryFilter === cat.key }]"
         @click="handleCategoryChange(cat.key)"
@@ -241,15 +267,18 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 分页 -->
-    <div v-if="expertStore.total > expertStore.pageSize" class="pagination-bar">
+    <!-- 分页：共 N 条 / 改每页条数 / 翻页 / 跳页（与「定时模板」页同一套） -->
+    <div v-if="expertStore.total > 0" class="pagination-bar">
       <el-pagination
         :current-page="expertStore.page"
         :page-size="expertStore.pageSize"
+        :page-sizes="[...PAGE_SIZE_OPTIONS]"
         :total="expertStore.total"
-        layout="prev, pager, next"
+        :layout="PAGINATION_LAYOUT"
         background
+        size="small"
         @current-change="handlePageChange"
+        @size-change="handlePageSizeChange"
       />
     </div>
 
@@ -430,9 +459,12 @@ onMounted(() => {
 }
 
 /* Expert Grid */
+/*
+ * flex: none 而不是 flex: 1 —— 滚动由 .experts-page 负责，这里若允许被压缩，
+ * 列表比它高时就会溢出，底部的分页条会被摆到卡片上面。
+ */
 .experts-content {
-  flex: 1;
-  min-height: 0;
+  flex: none;
 }
 
 .expert-grid {
@@ -449,10 +481,13 @@ onMounted(() => {
 }
 
 /* Pagination */
+/* 与「技能」「工具」「定时模板」页一致：靠页面右侧，窄屏居中 */
 .pagination-bar {
   display: flex;
-  justify-content: center;
-  padding: 8px 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
   flex-shrink: 0;
 }
 
@@ -464,6 +499,12 @@ onMounted(() => {
 
   .expert-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .pagination-bar {
+    justify-content: center;
   }
 }
 </style>

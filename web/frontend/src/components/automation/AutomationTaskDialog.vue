@@ -21,6 +21,7 @@ import {
   Zap,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
+import AutomationScheduleFields from '@/components/automation/AutomationScheduleFields.vue'
 import RichInput from '@/components/chat/RichInput.vue'
 import { uploadAttachment } from '@/services/attachmentApi'
 import { fetchExperts } from '@/services/expertApi'
@@ -30,11 +31,6 @@ import { fetchProviders } from '@/services/modelApi'
 import { useAutomationStore } from '@/stores/automation'
 import {
   CONTEXT_MODE_LABEL,
-  CYCLE_OPTIONS,
-  INTERVAL_OPTIONS,
-  WEEK_DAYS,
-  buildFreqSummary,
-  buildValiditySummary,
   createDefaultSchedule,
 } from '@/types/automation'
 import type {
@@ -387,28 +383,6 @@ function removePendingAttachment(id: string): void {
 
 function onDropFiles(files: File[]): void {
   void uploadFiles(files)
-}
-
-/* ---------- 频率与有效期 ---------- */
-const isOnce = computed(
-  () => schedule.value.freqGroup === 'cycle' && schedule.value.cycleKind === 'once',
-)
-
-const freqSummary = computed(() => buildFreqSummary(schedule.value))
-const validitySummary = computed(() => buildValiditySummary(schedule.value))
-
-const MONTHS = Array.from({ length: 12 }, (_, index) => index + 1)
-const MONTH_DAYS = Array.from({ length: 31 }, (_, index) => index + 1)
-
-/** 星期多选：点击切换，至少保留一天 */
-function toggleWeekDay(list: number[], value: number): void {
-  const index = list.indexOf(value)
-  if (index >= 0) {
-    if (list.length === 1) return
-    list.splice(index, 1)
-  } else {
-    list.push(value)
-  }
 }
 
 /* ---------- 初始化与保存 ---------- */
@@ -767,174 +741,7 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
-        <div class="atd-field">
-          <label class="atd-label">执行频率</label>
-          <div class="atd-seg">
-            <button
-              class="atd-seg-btn"
-              :class="{ 'atd-seg-btn--active': schedule.freqGroup === 'cycle' }"
-              @click="schedule.freqGroup = 'cycle'"
-            >
-              周期
-            </button>
-            <button
-              class="atd-seg-btn"
-              :class="{ 'atd-seg-btn--active': schedule.freqGroup === 'interval' }"
-              @click="schedule.freqGroup = 'interval'"
-            >
-              间隔
-            </button>
-          </div>
-
-          <template v-if="schedule.freqGroup === 'cycle'">
-            <div class="atd-seg atd-seg--sub">
-              <button
-                v-for="option in CYCLE_OPTIONS"
-                :key="option.key"
-                class="atd-seg-btn atd-seg-btn--sm"
-                :class="{ 'atd-seg-btn--active': schedule.cycleKind === option.key }"
-                @click="schedule.cycleKind = option.key"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-            <div class="atd-freq-row">
-              <template v-if="schedule.cycleKind === 'once'">
-                <span class="atd-freq-label">日期</span>
-                <input v-model="schedule.onceDate" type="date" class="atd-input atd-input--sm" />
-                <span class="atd-freq-label">时间</span>
-                <input v-model="schedule.onceTime" type="time" class="atd-input atd-input--sm" />
-              </template>
-              <template v-else-if="schedule.cycleKind === 'daily'">
-                <span class="atd-freq-label">时间</span>
-                <input v-model="schedule.onceTime" type="time" class="atd-input atd-input--sm" />
-              </template>
-              <template v-else-if="schedule.cycleKind === 'weekly'">
-                <span class="atd-freq-label">星期</span>
-                <div class="atd-weekdays">
-                  <button
-                    v-for="day in WEEK_DAYS"
-                    :key="day.value"
-                    class="atd-weekday"
-                    :class="{ 'atd-weekday--active': schedule.weekDays.includes(day.value) }"
-                    @click="toggleWeekDay(schedule.weekDays, day.value)"
-                  >
-                    {{ day.label }}
-                  </button>
-                </div>
-                <span class="atd-freq-label">时间</span>
-                <input v-model="schedule.onceTime" type="time" class="atd-input atd-input--sm" />
-              </template>
-              <template v-else-if="schedule.cycleKind === 'monthly'">
-                <span class="atd-freq-label">每月</span>
-                <select v-model.number="schedule.monthDay" class="atd-input atd-input--sm">
-                  <option v-for="day in MONTH_DAYS" :key="day" :value="day">{{ day }}</option>
-                </select>
-                <span class="atd-freq-label">日</span>
-                <span class="atd-freq-label">时间</span>
-                <input v-model="schedule.onceTime" type="time" class="atd-input atd-input--sm" />
-              </template>
-              <template v-else>
-                <span class="atd-freq-label">每年</span>
-                <select v-model.number="schedule.yearMonth" class="atd-input atd-input--sm">
-                  <option v-for="month in MONTHS" :key="month" :value="month">{{ month }}</option>
-                </select>
-                <span class="atd-freq-label">月</span>
-                <select v-model.number="schedule.yearDay" class="atd-input atd-input--sm">
-                  <option v-for="day in MONTH_DAYS" :key="day" :value="day">{{ day }}</option>
-                </select>
-                <span class="atd-freq-label">日</span>
-                <span class="atd-freq-label">时间</span>
-                <input v-model="schedule.onceTime" type="time" class="atd-input atd-input--sm" />
-              </template>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="atd-seg atd-seg--sub">
-              <button
-                v-for="option in INTERVAL_OPTIONS"
-                :key="option.key"
-                class="atd-seg-btn atd-seg-btn--sm"
-                :class="{ 'atd-seg-btn--active': schedule.intervalKind === option.key }"
-                @click="schedule.intervalKind = option.key"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-            <div class="atd-freq-row">
-              <template v-if="schedule.intervalKind === 'weekly'">
-                <span class="atd-freq-label">星期</span>
-                <div class="atd-weekdays">
-                  <button
-                    v-for="day in WEEK_DAYS"
-                    :key="day.value"
-                    class="atd-weekday"
-                    :class="{
-                      'atd-weekday--active': schedule.weekIntervalDays.includes(day.value),
-                    }"
-                    @click="toggleWeekDay(schedule.weekIntervalDays, day.value)"
-                  >
-                    {{ day.label }}
-                  </button>
-                </div>
-              </template>
-              <template v-else>
-                <span class="atd-freq-label">每隔</span>
-                <input
-                  v-model.number="schedule.hourInterval"
-                  type="number"
-                  min="1"
-                  max="24"
-                  class="atd-input atd-input--num"
-                />
-                <span class="atd-freq-label">小时执行 1 次</span>
-              </template>
-            </div>
-          </template>
-
-          <p class="atd-summary">执行计划：{{ freqSummary }}</p>
-        </div>
-
-        <div class="atd-field">
-          <label class="atd-label">有效期</label>
-          <p v-if="isOnce" class="atd-summary">单次任务仅在指定时间执行一次，无需设置有效期。</p>
-          <template v-else>
-            <div class="atd-seg">
-              <button
-                class="atd-seg-btn"
-                :class="{ 'atd-seg-btn--active': schedule.validityMode === 'forever' }"
-                @click="schedule.validityMode = 'forever'"
-              >
-                长期有效
-              </button>
-              <button
-                class="atd-seg-btn"
-                :class="{ 'atd-seg-btn--active': schedule.validityMode === 'range' }"
-                @click="schedule.validityMode = 'range'"
-              >
-                指定时间段
-              </button>
-            </div>
-            <div v-if="schedule.validityMode === 'range'" class="atd-validity">
-              <div class="atd-freq-row">
-                <span class="atd-freq-label">开始</span>
-                <input v-model="schedule.validFrom" type="date" class="atd-input atd-input--sm" />
-                <input
-                  v-model="schedule.validFromTime"
-                  type="time"
-                  class="atd-input atd-input--sm"
-                />
-              </div>
-              <div class="atd-freq-row">
-                <span class="atd-freq-label">结束</span>
-                <input v-model="schedule.validTo" type="date" class="atd-input atd-input--sm" />
-                <input v-model="schedule.validToTime" type="time" class="atd-input atd-input--sm" />
-              </div>
-            </div>
-            <p class="atd-summary">有效期：{{ validitySummary }}</p>
-          </template>
-        </div>
+        <AutomationScheduleFields :schedule="schedule" />
 
         <div class="atd-field">
           <label class="atd-label">运行环境</label>
@@ -1055,6 +862,8 @@ onUnmounted(() => {
   </div>
 </template>
 <style scoped>
+@use '@/assets/styles/automationForm.scss';
+
 .atd-mask {
   position: fixed;
   inset: 0;
@@ -1134,40 +943,11 @@ onUnmounted(() => {
   z-index: 30;
 }
 
-.atd-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 
-.atd-label {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
 
-.atd-input {
-  padding: 8px 12px;
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-lg);
-  background: var(--surface-secondary);
-  color: var(--foreground-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-}
 
-.atd-input:focus {
-  border-color: var(--accent-primary);
-}
 
-.atd-input--sm {
-  padding: 6px 8px;
-  width: auto;
-  font-size: var(--font-size-xs);
-}
 
-.atd-input--num {
-  width: 72px;
-}
 
 .atd-prompt {
   display: flex;
@@ -1366,87 +1146,18 @@ onUnmounted(() => {
   text-align: center;
 }
 
-.atd-seg {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-secondary);
-  align-self: flex-start;
-}
 
-.atd-seg--sub {
-  margin-top: 2px;
-}
 
-.atd-seg-btn {
-  padding: 5px 14px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--foreground-muted);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
 
-.atd-seg-btn--sm {
-  padding: 4px 10px;
-}
 
-.atd-seg-btn:hover {
-  color: var(--foreground-primary);
-}
 
-.atd-seg-btn--active {
-  background: var(--accent-primary);
-  color: #fff;
-}
 
-.atd-freq-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
 
-.atd-freq-label {
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
 
-.atd-weekdays {
-  display: flex;
-  gap: 4px;
-}
 
-.atd-weekday {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--foreground-muted);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
 
-.atd-weekday--active {
-  border-color: var(--accent-primary);
-  background: var(--accent-primary);
-  color: #fff;
-}
 
-.atd-summary {
-  margin-top: 6px;
-  font-size: var(--font-size-xs);
-  color: var(--foreground-muted);
-}
 
-.atd-validity {
-  margin-top: 8px;
-}
 
 .atd-env-row {
   display: flex;

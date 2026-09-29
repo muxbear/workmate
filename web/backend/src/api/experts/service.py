@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -44,6 +43,11 @@ from api.experts.schemas import (
     McpConfigBrief,
     McpConfigItem,
     ToolBrief,
+)
+from core.versioning import (
+    DEFAULT_VERSION,
+    bump_patch,
+    is_newer_version,
 )
 from db.models.agent import Agent
 from db.models.ai_model import AIModel
@@ -97,43 +101,8 @@ FEATURED_SCENES = [
 
 
 # ── 版本号工具 ───────────────────────────────────────────────
-
-DEFAULT_VERSION = "1.0.0"
-
-_VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
-
-
-def bump_patch(version: str | None) -> str:
-    """递增语义化版本号的修订号（patch）：1.2.3 -> 1.2.4.
-
-    预发布标识与构建元数据（``1.2.3-beta.1`` / ``1.2.3+build``）在递增后丢弃。
-    非法或缺失的输入回退到 ``1.0.0``。该函数仅作为「调用方未传版本号」时的
-    兜底，主流程的版本号由客户端在编辑弹窗中计算并可手工修改。
-    """
-    match = _VERSION_PATTERN.match(version or "")
-    if match is None:
-        return DEFAULT_VERSION
-    major, minor, patch = match.groups()
-    return f"{major}.{minor}.{int(patch) + 1}"
-
-
-def _version_key(version: str | None) -> tuple[int, int, int]:
-    """把语义化版本号解析为可比较的数值三元组；非法或缺失回退 0.0.0。."""
-    match = _VERSION_PATTERN.match(version or "")
-    if match is None:
-        return (0, 0, 0)
-    major, minor, patch = match.groups()
-    return (int(major), int(minor), int(patch))
-
-
-def is_newer_version(candidate: str | None, current: str | None) -> bool:
-    """判断 candidate 是否比 current 更新（预发布标识不参与比较，与桌面端一致）。.
-
-    内置专家种子用它做**版本单调推进**：只有声明版本更高时才写库，
-    既能把定义变更推给各端重新同步，也不会把界面上手工调高的版本号回退掉。
-    """
-    return _version_key(candidate) > _version_key(current)
-
+# 实现已抽到 core/versioning.py（定时任务模板共用同一份口径）；
+# DEFAULT_VERSION / bump_patch / is_newer_version 仍从本模块导入，保持既有导入路径可用。
 
 # ── 工厂模式：ExpertAssembler ─────────────────────────────────
 
@@ -860,12 +829,22 @@ async def clone_expert(db: AsyncSession, expert_id: str) -> ExpertInfo:
 
 
 async def list_categories(db: AsyncSession) -> list[dict[str, Any]]:
-    """获取所有分类及计数。."""
+    """获取所有专家类型及各自的数量（供「专家」页面的类型筛选使用）。
+
+    类型清单**以「参数配置」的 `expert_type` 分组为唯一来源**（顺序也跟随该分组），
+    数量仍按 experts 表实际统计——因此某个类型可以存在但没有专家（计数为 0）。
+    管理员在参数配置里增删类型，专家页面的筛选项即时跟着变。
+    """
+    from api.params.service import EXPERT_TYPE_PARENT_CODE, list_param_options
+
     stmt = select(Expert.category, func.count()).group_by(Expert.category)
     rows = (await db.execute(stmt)).all()
+    counts: dict[str, int] = {key: count for key, count in rows}
+
+    options = await list_param_options(db, EXPERT_TYPE_PARENT_CODE)
     return [
-        {"key": key, "label": EXPERT_CATEGORIES.get(key, key), "count": count}
-        for key, count in rows
+        {"key": item["value"], "label": item["label"], "count": counts.get(item["value"], 0)}
+        for item in options
     ]
 
 

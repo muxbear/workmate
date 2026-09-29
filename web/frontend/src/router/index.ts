@@ -64,6 +64,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '定时任务', permKey: 'control:scheduled' },
       },
       {
+        path: 'schedule-templates',
+        name: 'schedule-templates',
+        component: () => import('@/views/ScheduleTemplatesView.vue'),
+        meta: { title: '定时模板', permKey: 'control:template' },
+      },
+      {
         path: 'knowledge-base',
         name: 'knowledge-base',
         component: () => import('@/views/KnowledgeBaseView.vue'),

@@ -37,3 +37,9 @@ export async function toggleTool(id: string, enabled: boolean): Promise<Tool> {
   const res = await instance.patch(`/tools/${id}/toggle`, { enabled })
   return res.data.data as Tool
 }
+
+/** 可选的工具类型（来自「参数配置」的 tool_type 分组，未配置时为空列表） */
+export async function fetchToolTypes(): Promise<{ value: string; label: string }[]> {
+  const res = await instance.get('/tools/types')
+  return (res.data.data ?? []) as { value: string; label: string }[]
+}

@@ -117,3 +117,9 @@ export async function importRepoSkills(
   const res = await instance.post('/skill/repo/import', { source, skill_ids: skillIds })
   return res.data.data as SkillRepoImportResponse
 }
+
+/** 可选的技能类型（来自「参数配置」的 skill_type 分组，未配置时为空列表） */
+export async function fetchSkillTypes(): Promise<{ value: string; label: string }[]> {
+  const res = await instance.get('/skill/types')
+  return (res.data.data ?? []) as { value: string; label: string }[]
+}

@@ -21,6 +21,7 @@ import {
   Settings,
   Shield,
   Brain,
+  LayoutTemplate,
   Search,
   X,
   Folder,
@@ -61,7 +62,7 @@ const searchInputRef = ref<HTMLInputElement | null>(null)
 const iconMap: Record<string, Component> = {
   MessageSquare, MessagesSquare, LayoutDashboard, Server, Database,
   Timer, BarChart3, Bot, Zap, Wrench, Network, CloudMoon,
-  FileText, Settings, Shield, Brain, Folder, Megaphone,
+  FileText, Settings, Shield, Brain, Folder, Megaphone, LayoutTemplate,
 }
 
 function resolveIcon(name: string): Component {

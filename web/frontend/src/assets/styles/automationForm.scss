@@ -1,0 +1,124 @@
+// 定时任务弹窗的表单基元样式。
+//
+// 「新建/编辑自动化」与「新建/编辑定时模板」两个弹窗共用同一套表单外观，
+// 抽成 partial 后两边各自 `@use` 一次即可——Vue 的 scoped 样式会把规则
+// 限定在各自组件内，不必复制粘贴，也不会互相污染。
+//
+// 类名前缀保持 `atd-`（automation task dialog），两个弹窗的模板都沿用这套命名。
+
+.atd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.atd-label {
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
+
+.atd-input {
+  padding: 8px 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--foreground-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.atd-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.atd-input--sm {
+  padding: 6px 8px;
+  width: auto;
+  font-size: var(--font-size-xs);
+}
+
+.atd-input--num {
+  width: 72px;
+}
+
+.atd-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  align-self: flex-start;
+}
+
+.atd-seg--sub {
+  margin-top: 2px;
+}
+
+.atd-seg-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.atd-seg-btn--sm {
+  padding: 4px 10px;
+}
+
+.atd-seg-btn:hover {
+  color: var(--foreground-primary);
+}
+
+.atd-seg-btn--active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.atd-freq-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.atd-freq-label {
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
+
+.atd-weekdays {
+  display: flex;
+  gap: 4px;
+}
+
+.atd-weekday {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--foreground-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.atd-weekday--active {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.atd-summary {
+  margin-top: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--foreground-muted);
+}
+
+.atd-validity {
+  margin-top: 8px;
+}

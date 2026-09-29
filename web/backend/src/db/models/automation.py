@@ -17,7 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from db.base import Base
 
 
-def _now_ms() -> int:
+def now_ms() -> int:
     """返回当前毫秒时间戳."""
     return int(time.time() * 1000)
 
@@ -67,9 +67,62 @@ class AutomationTask(Base):
     last_run_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     run_count: Mapped[int] = mapped_column(Integer, default=0)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[int] = mapped_column(BigInteger, default=_now_ms)
+    created_at: Mapped[int] = mapped_column(BigInteger, default=now_ms)
     updated_at: Mapped[int] = mapped_column(
-        BigInteger, default=_now_ms, onupdate=_now_ms
+        BigInteger, default=now_ms, onupdate=now_ms
+    )
+    deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class AutomationTemplate(Base):
+    """定时任务模板（「控制 → 定时模板」菜单）.
+
+    模板是任务的一份完整预设：用户点「+ 添加」时，模板的配置被原样拷进一份新的
+    AutomationTask（来源标记为 ``template`` 并回填 ``template_id``）。
+
+    与 AutomationTask 的差异：
+    - 模板是**全局共享**的资源（像专家/工具/技能那样），不按用户隔离，
+      写入由 RBAC 按钮权限（control:template:*）把关，``created_by`` 仅作审计；
+    - 没有 ``enabled`` / ``status`` / ``next_run_at`` 等运行期字段——模板本身不参与调度；
+    - 多一个 ``category``（类型，取值来自「参数配置」）和 ``version``（语义化版本号）。
+    """
+
+    __tablename__ = "automation_templates"
+    __table_args__ = (
+        Index("idx_auto_templates_category", "category", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    created_by: Mapped[str] = mapped_column(String(36), default="")
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    icon: Mapped[str] = mapped_column(String(16), default="⏰")
+    category: Mapped[str] = mapped_column(String(32), default="", index=True)
+    version: Mapped[str] = mapped_column(String(32), default="1.0.0")
+    prompt_text: Mapped[str] = mapped_column(Text, default="")
+    prompt_parts: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    schedule: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    freq_summary: Mapped[str] = mapped_column(String(128), default="")
+    validity_summary: Mapped[str] = mapped_column(String(128), default="")
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    custom_model_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expert_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expert_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    context_mode: Mapped[str] = mapped_column(String(16), default="default")
+    skill_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    kb_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    workspace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    workspace_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    allow_network: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_shell: Mapped[bool] = mapped_column(Boolean, default=False)
+    full_access: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[int] = mapped_column(BigInteger, default=now_ms)
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger, default=now_ms, onupdate=now_ms
     )
     deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 

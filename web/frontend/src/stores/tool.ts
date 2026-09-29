@@ -7,10 +7,16 @@ export const useToolStore = defineStore('tool', () => {
   const tools = ref<Tool[]>([])
   const total = ref(0)
   const loading = ref(false)
-  const loadingMore = ref(false)
   const error = ref<string | null>(null)
-  const page = ref(1)
-  const pageSize = 12
+
+  /**
+   * 一次取回整份工具列表。
+   *
+   * 工具页的类型 chips 数量、来源页签计数、以及「只显示当前来源下存在的分类」
+   * 都基于整份列表；分页放在页面里做前端切片（见 useClientPagination）。
+   * 内置工具是十几个量级，整份加载没有压力。
+   */
+  const FETCH_ALL_PAGE_SIZE = 100
 
   // -- Getters --
   const builtinTools = computed(() => tools.value.filter((t) => t.source === 'builtin'))
@@ -38,8 +44,6 @@ export const useToolStore = defineStore('tool', () => {
     return map
   })
 
-  const hasMore = computed(() => tools.value.length < total.value)
-
   // -- Actions --
   async function fetchTools(params?: {
     source?: string
@@ -49,31 +53,18 @@ export const useToolStore = defineStore('tool', () => {
   }) {
     loading.value = true
     error.value = null
-    page.value = 1
     try {
-      const res = await toolApi.fetchTools({ ...params, page: 1, page_size: pageSize })
+      const res = await toolApi.fetchTools({
+        ...params,
+        page: 1,
+        page_size: FETCH_ALL_PAGE_SIZE,
+      })
       tools.value = res.items
       total.value = res.total
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '加载工具列表失败'
     } finally {
       loading.value = false
-    }
-  }
-
-  async function loadMore() {
-    if (!hasMore.value || loadingMore.value) return
-    loadingMore.value = true
-    const nextPage = page.value + 1
-    try {
-      const res = await toolApi.fetchTools({ page: nextPage, page_size: pageSize })
-      tools.value.push(...res.items)
-      total.value = res.total
-      page.value = nextPage
-    } catch (err: unknown) {
-      error.value = err instanceof Error ? err.message : '加载更多失败'
-    } finally {
-      loadingMore.value = false
     }
   }
 
@@ -112,9 +103,9 @@ export const useToolStore = defineStore('tool', () => {
   }
 
   return {
-    tools, total, loading, loadingMore, error, page, pageSize, hasMore,
+    tools, total, loading, error,
     builtinTools, thirdPartyTools, enabledTools, disabledTools, unavailableTools,
     categoryStats, sourceCategoryCounts,
-    fetchTools, addTool, editTool, removeTool, toggleToolEnabled, loadMore,
+    fetchTools, addTool, editTool, removeTool, toggleToolEnabled,
   }
 })

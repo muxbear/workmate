@@ -14,7 +14,21 @@ const emit = defineEmits<{
   (e: 'detail', tool: Tool): void
 }>()
 
-const cm = computed(() => CATEGORY_META[props.tool.category])
+/**
+ * 分类元信息。分类清单现在由「参数配置」维护，管理员可以新增内置表里没有的
+ * 分类，因此这里必须能兜底——否则渲染时会读到 undefined 而报错。
+ */
+const cm = computed(() => {
+  const known = CATEGORY_META[props.tool.category as keyof typeof CATEGORY_META]
+  if (known) return known
+  return {
+    label: props.tool.category || '其他',
+    icon: 'Wrench',
+    color: 'var(--color-tool-gray, #94a3b8)',
+    bg: 'rgba(148,163,184,0.08)',
+    border: 'rgba(148,163,184,0.2)',
+  }
+})
 const sm = computed(() => STATUS_META[props.tool.status])
 const isBuiltin = computed(() => props.tool.source === 'builtin')
 const isUnavailable = computed(() => props.tool.status === 'unavailable')

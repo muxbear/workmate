@@ -22,12 +22,20 @@ GROUP_TYPE = "group"
 PARENTS_SCOPE = "parents"
 CHILDREN_SCOPE = "children"
 
-# ── 模型类型参数分组 ──────────────────────────────────────────────────────────
-# 「模型」页面添加模型时的「模型类型」下拉，取值来自本分组的子参数：
-#   param_value = 类型编码（写入 ai_models.type）
+# ── 「类型」参数分组 ──────────────────────────────────────────────────────────
+# 各页面筛选下拉里的「类型」统一由「参数配置」驱动，取值来自对应分组的子参数：
+#   param_value = 类型编码（与业务表 category / type 字段同值）
 #   param_label = 下拉中展示的名称
-# 管理员可在「参数配置」页面自由增删改，模型页面即时生效。
+# 管理员可在「参数配置」页面自由增删改，各页面即时生效。
+#
+# 默认项是把各页面原先硬编码在前端的分类**原样搬进来**的，这样改成
+# 「以参数配置为唯一来源」时不会出现筛选突然变空的回归；之后怎么增删由管理员决定。
 MODEL_TYPE_PARENT_CODE = "model_type"
+SCHEDULE_TEMPLATE_TYPE_PARENT_CODE = "schedule_template_type"
+EXPERT_TYPE_PARENT_CODE = "expert_type"
+TOOL_TYPE_PARENT_CODE = "tool_type"
+SKILL_TYPE_PARENT_CODE = "skill_type"
+MCP_TYPE_PARENT_CODE = "mcp_type"
 
 #: 首次启动时的默认模型类型（仅在该分组不存在时写入，之后不再覆盖管理员的改动）
 DEFAULT_MODEL_TYPES: list[tuple[str, str]] = [
@@ -42,57 +50,178 @@ DEFAULT_MODEL_TYPES: list[tuple[str, str]] = [
     ("rerank", "重排序模型"),
 ]
 
+#: 首次启动时的默认定时任务模板类型
+DEFAULT_SCHEDULE_TEMPLATE_TYPES: list[tuple[str, str]] = [
+    ("news", "资讯推送"),
+    ("learning", "学习成长"),
+    ("life", "生活提醒"),
+    ("work", "工作提效"),
+    ("fun", "休闲娱乐"),
+]
+
+#: 首次启动时的默认专家类型（原 `api/experts/service.py` 的 EXPERT_CATEGORIES）
+DEFAULT_EXPERT_TYPES: list[tuple[str, str]] = [
+    ("content_creation", "内容创作"),
+    ("legal_tax", "法律财税"),
+    ("tech_rnd", "技术研发"),
+    ("product_design", "产品设计"),
+    ("startup_invest", "创业投资"),
+    ("sme_ops", "小微企业"),
+    ("ai_tools", "AI工具专家"),
+    ("spc", "SPC"),
+    ("custom", "自定义"),
+]
+
+#: 首次启动时的默认工具类型（原 `api/tools/service.py` 的 CATEGORY_ALIASES，
+#: 展示名取前端 `types/tool.ts` 的 CATEGORY_META.label）
+DEFAULT_TOOL_TYPES: list[tuple[str, str]] = [
+    ("code", "编码工具"),
+    ("network", "网络工具"),
+    ("message", "消息工具"),
+    ("file", "文件工具"),
+    ("data", "数据工具"),
+    ("ai", "AI 工具"),
+    ("system", "系统工具"),
+    ("other", "其他"),
+]
+
+#: 首次启动时的默认技能类型（原前端 `types/skill.ts` 的 CATEGORY_ORDER + 展示名）
+DEFAULT_SKILL_TYPES: list[tuple[str, str]] = [
+    ("search", "搜索"),
+    ("code", "代码"),
+    ("creative", "创意"),
+    ("analysis", "分析"),
+    ("tools", "工具"),
+    ("custom", "自定义"),
+]
+
+#: 首次启动时的默认 MCP 服务类型（原前端 `types/mcp.ts` 的 MCP_CATEGORY_FILTERS）
+DEFAULT_MCP_TYPES: list[tuple[str, str]] = [
+    ("code_execution", "代码执行"),
+    ("search", "搜索"),
+    ("knowledge_base", "知识库"),
+    ("data_analysis", "数据分析"),
+    ("file_management", "文件管理"),
+    ("notification", "通知"),
+    ("database", "数据库"),
+    ("dev_tools", "开发工具"),
+    ("image_generation", "图像生成"),
+]
+
+#: 分组首次种子数据：parent_code -> (分组名称, 分组说明, 默认子项, 分组排序)
+_BUILTIN_TYPE_GROUPS: dict[str, tuple[str, str, list[tuple[str, str]], int]] = {
+    MODEL_TYPE_PARENT_CODE: (
+        "模型类型",
+        "「模型」页面添加模型时可选用的模型类型（值写入模型的 type 字段）",
+        DEFAULT_MODEL_TYPES,
+        0,
+    ),
+    SCHEDULE_TEMPLATE_TYPE_PARENT_CODE: (
+        "定时任务模板类型",
+        "「定时模板」页面的类型筛选项，同时作为模板的分类选项",
+        DEFAULT_SCHEDULE_TEMPLATE_TYPES,
+        2,
+    ),
+    EXPERT_TYPE_PARENT_CODE: (
+        "专家类型",
+        "「专家」页面的类型筛选项",
+        DEFAULT_EXPERT_TYPES,
+        3,
+    ),
+    TOOL_TYPE_PARENT_CODE: (
+        "工具类型",
+        "「工具」页面的类型筛选项",
+        DEFAULT_TOOL_TYPES,
+        4,
+    ),
+    SKILL_TYPE_PARENT_CODE: (
+        "技能类型",
+        "「技能」页面的类型筛选项",
+        DEFAULT_SKILL_TYPES,
+        5,
+    ),
+    MCP_TYPE_PARENT_CODE: (
+        "MCP 服务类型",
+        "「MCP 服务」页面的类型筛选项",
+        DEFAULT_MCP_TYPES,
+        6,
+    ),
+}
+
+
+def _child_param_code(parent_code: str, type_code: str) -> str:
+    """由父级编码与类型编码拼出子参数的 param_code（全局唯一）。
+
+    形如 ``tool_type_image_gen``；把类型编码里不适合出现在编码中的字符换成下划线。
+    """
+    safe = type_code.replace("-", "_").replace(".", "_")
+    return f"{parent_code}_{safe}"
+
+
+async def _seed_type_group(db: AsyncSession, parent_code: str) -> None:
+    """按需创建一个内置「类型」分组及其默认子项（幂等）。."""
+    if await _get_by_code(db, parent_code) is not None:
+        return  # 分组已存在——不再补写，避免把管理员删掉的类型"复活"
+
+    label, description, defaults, sort_order = _BUILTIN_TYPE_GROUPS[parent_code]
+    db.add(
+        SystemParam(
+            param_code=parent_code,
+            parent_code=None,
+            param_label=label,
+            param_name=parent_code,
+            param_value=None,
+            param_type=GROUP_TYPE,
+            description=description,
+            sort_order=sort_order,
+        )
+    )
+    for index, (code, item_label) in enumerate(defaults, start=1):
+        db.add(
+            SystemParam(
+                param_code=_child_param_code(parent_code, code),
+                parent_code=parent_code,
+                param_label=item_label,
+                param_name=code,
+                param_value=code,
+                param_type="string",
+                description=f"{item_label}（{code}）",
+                sort_order=index,
+            )
+        )
+    logger.info("已初始化参数分组 %s（%d 项）", parent_code, len(defaults))
+
 
 async def seed_builtin_params(db: AsyncSession) -> None:
     """初始化内置参数分组（幂等）。
 
-    仅在分组缺失时创建默认项：分组一旦存在就不再补写，避免把管理员删掉的
-    类型又"复活"。需要一个「已存在则补齐」的语义时应显式调用 backfill，
-    而不是放宽这里的条件。
+    每个分组各自判断存在性：分组缺失才创建默认项，分组一旦存在就不再补写，
+    避免把管理员删掉的类型又"复活"。需要一个「已存在则补齐」的语义时应显式调用
+    backfill，而不是放宽这里的条件。
     """
-    if await _get_by_code(db, MODEL_TYPE_PARENT_CODE) is not None:
-        return
-
-    db.add(
-        SystemParam(
-            param_code=MODEL_TYPE_PARENT_CODE,
-            parent_code=None,
-            param_label="模型类型",
-            param_name="model_type",
-            param_value=None,
-            param_type=GROUP_TYPE,
-            description="「模型」页面添加模型时可选用的模型类型（值写入模型的 type 字段）",
-            sort_order=0,
-        )
-    )
-    for index, (code, label) in enumerate(DEFAULT_MODEL_TYPES, start=1):
-        db.add(
-            SystemParam(
-                param_code=f"{MODEL_TYPE_PARENT_CODE}_{code.replace('-', '_')}",
-                parent_code=MODEL_TYPE_PARENT_CODE,
-                param_label=label,
-                param_name=code,
-                param_value=code,
-                param_type="string",
-                description=f"{label}（{code}）",
-                sort_order=index,
-            )
-        )
-    logger.info("已初始化模型类型参数分组（%d 项）", len(DEFAULT_MODEL_TYPES))
+    for parent_code in _BUILTIN_TYPE_GROUPS:
+        await _seed_type_group(db, parent_code)
 
 
-async def list_model_types(db: AsyncSession) -> list[dict[str, str]]:
-    """读取可选的模型类型，供「模型」页面渲染下拉。
+async def list_param_options(
+    db: AsyncSession,
+    parent_code: str,
+    default: list[tuple[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    """读取某个「类型」分组的可选值，供各页面的筛选下拉使用。
 
-    分组未配置或未填写任何有效值时回退到 :data:`DEFAULT_MODEL_TYPES`，
-    保证模型页面始终可用（不因管理员清空配置而变成空下拉）。
+    Args:
+        db: 数据库会话。
+        parent_code: 分组参数编码（如 ``expert_type``）。
+        default: 分组为空时的兜底列表；``None`` 表示**不回退**，此时返回空列表
+            （「以参数配置为唯一来源」的页面就属于这种：管理员清空即筛选为空）。
 
     Returns:
-        ``[{"value": 类型编码, "label": 展示名}, ...]``，按分组内排序。
+        ``[{"value": 类型编码, "label": 展示名}, ...]``，按分组内排序、按编码去重。
     """
     result = await db.execute(
         select(SystemParam)
-        .where(SystemParam.parent_code == MODEL_TYPE_PARENT_CODE)
+        .where(SystemParam.parent_code == parent_code)
         .order_by(SystemParam.sort_order, SystemParam.created_at)
     )
     options: list[dict[str, str]] = []
@@ -104,9 +233,21 @@ async def list_model_types(db: AsyncSession) -> list[dict[str, str]]:
         seen.add(code)
         options.append({"value": code, "label": (row.param_label or code).strip()})
 
-    if not options:
-        return [{"value": code, "label": label} for code, label in DEFAULT_MODEL_TYPES]
+    if not options and default is not None:
+        return [{"value": code, "label": label} for code, label in default]
     return options
+
+
+async def list_model_types(db: AsyncSession) -> list[dict[str, str]]:
+    """读取可选的模型类型，供「模型」页面渲染下拉。
+
+    分组未配置或未填写任何有效值时回退到 :data:`DEFAULT_MODEL_TYPES`，
+    保证模型页面始终可用（不因管理员清空配置而变成空下拉）。
+
+    Returns:
+        ``[{"value": 类型编码, "label": 展示名}, ...]``，按分组内排序。
+    """
+    return await list_param_options(db, MODEL_TYPE_PARENT_CODE, DEFAULT_MODEL_TYPES)
 
 
 async def _get_by_id(db: AsyncSession, param_id: str) -> SystemParam | None:
