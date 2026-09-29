@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useUserStore } from '../store/user'
 import { useSkillSyncStore } from '../store/skillSync'
 import { useExpertSyncStore } from '../store/expertSync'
+import { useAutomationTemplateSyncStore } from '../store/automationTemplateSync'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -36,6 +37,7 @@ router.beforeEach(async (to, _from, next) => {
     userStore.logout()
     useSkillSyncStore().resetLocal()
     useExpertSyncStore().resetLocal()
+    useAutomationTemplateSyncStore().resetLocal()
     next({ path: '/' })
     return
   }

@@ -1241,6 +1241,100 @@ export interface AutomationChangedEvent {
   status?: AutomationRunStatus
 }
 
+/**
+ * 本地保存的定时模板（源自 Web「定时模板」页，机器级快照，不按用户隔离）。
+ *
+ * 字段与服务端下发的 camelCase 一致，唯一改动是把 Web 的 `name` 原样保留。
+ */
+export interface DesktopAutomationTemplate {
+  id: string
+  name: string
+  description: string
+  icon: string
+  /** 类型，取值来自 Web「参数配置」的 schedule_template_type 分组 */
+  category: string
+  /** 语义化版本号（如 1.3.0）；同步时与服务端版本比对决定是否覆盖本地 */
+  version: string
+  promptText: string
+  promptParts: MessagePart[]
+  schedule: AutomationSchedule
+  /** 排期摘要（服务端算好，卡片直接展示） */
+  freqSummary: string
+  /** 有效期摘要 */
+  validitySummary: string
+  model: string | null
+  customModelId: string | null
+  expertId: string | null
+  expertName: string | null
+  contextMode: 'default' | 'local' | 'knowledge'
+  skillIds: string[]
+  workspaceId: string | null
+  workspaceName: string | null
+  fullAccess: boolean
+  /**
+   * Web 模板有、桌面任务草稿暂无对应项的字段：本机只存不用（建任务时不参与），
+   * 保留是为了同步数据完整、便于后续对接。见 AutomationTaskDraft。
+   */
+  providerId: string | null
+  modelId: string | null
+  kbIds: string[]
+  allowNetwork: boolean
+  allowShell: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+/** 定时模板同步统计（版本比对结果：新增 / 更新 / 保留本地） */
+export interface AutomationTemplateSyncStats {
+  added: number
+  updated: number
+  /** 本地版本不低于服务端版本、保持本地数据的条目数 */
+  kept: number
+}
+
+/** 定时模板同步状态 */
+export type AutomationTemplateSyncStatus = {
+  status: 'unauthorized' | 'authorized'
+  webUser: WebUser | null
+}
+
+/** 定时模板同步阶段（主进程 → 渲染层进度事件） */
+export type AutomationTemplateSyncPhase = 'authorize' | 'fetch' | 'save' | 'load' | 'done' | 'error'
+
+export interface AutomationTemplateSyncProgress {
+  phase: AutomationTemplateSyncPhase
+  /** 0–100 单调递增进度 */
+  percent: number
+  /** 阶段提示文案 */
+  message?: string
+  received?: number
+  total?: number
+}
+
+export interface AutomationTemplateSyncAPI {
+  getStatus(): Promise<IpcResult<AutomationTemplateSyncStatus>>
+  authorize(): Promise<IpcResult<{ webUser: WebUser | null }>>
+  /** 拉取 → 按版本比对合并 → 落盘 → 读回，返回与磁盘一致的模板数据与比对统计 */
+  sync(): Promise<
+    IpcResult<{
+      templates: DesktopAutomationTemplate[]
+      syncedAt: number
+      stats: AutomationTemplateSyncStats
+    }>
+  >
+  /** 读取 ~/.ke-work/automation-templates/templates.json；文件缺失返回 null */
+  loadLocal(): Promise<
+    IpcResult<{ templates: DesktopAutomationTemplate[]; syncedAt: number } | null>
+  >
+  /** 删除本地模板（仅本机副本）；服务端仍存在时下次同步会重新拉回 */
+  deleteTemplate(
+    id: string
+  ): Promise<IpcResult<{ templates: DesktopAutomationTemplate[]; syncedAt: number }>>
+  disconnect(): Promise<IpcResult<null>>
+  /** 订阅同步进度事件，返回取消订阅函数 */
+  onSyncProgress(callback: (data: AutomationTemplateSyncProgress) => void): () => void
+}
+
 export interface KeWorkWindowApi
   extends
     AgentAPI,
@@ -1259,6 +1353,7 @@ export interface KeWorkWindowApi
   modelSync: ModelSyncAPI
   knowledgeCloud: CloudKnowledgeAPI
   automation: AutomationAPI
+  automationTemplateSync: AutomationTemplateSyncAPI
 }
 
 declare global {

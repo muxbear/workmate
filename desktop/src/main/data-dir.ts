@@ -12,7 +12,8 @@ export const SUB_DIRS = [
   'binaries',
   'experts',
   'knowledge',
-  'skills'
+  'skills',
+  'automation-templates'
 ] as const
 export type SubDir = (typeof SUB_DIRS)[number]
 

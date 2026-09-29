@@ -53,8 +53,10 @@ import { registerKnowledgeHandlers } from './ipc/knowledge-handlers'
 import { AutomationRepository } from './automation/AutomationRepository'
 import { AutomationRunRepository } from './automation/AutomationRunRepository'
 import { AutomationService } from './automation/AutomationService'
+import { AutomationTemplateSyncService } from './automation/AutomationTemplateSyncService'
 import { AuditLogRepository } from './automation/AuditLogRepository'
 import { registerAutomationHandlers } from './ipc/automation-handlers'
+import { registerAutomationTemplateSyncHandlers } from './ipc/automation-template-sync-handlers'
 import { AutomationRunner } from './automation/AutomationRunner'
 import { AutomationScheduler } from './automation/AutomationScheduler'
 import { KnowledgeStore } from './knowledge/KnowledgeStore'
@@ -371,6 +373,13 @@ app.whenReady().then(() => {
   })
   registerExpertSyncHandlers(ipcMain, { expertSyncService, session })
 
+  const automationTemplateSyncService = new AutomationTemplateSyncService({
+    authorization,
+    templatesDir: join(dataDir.getBaseDir(), 'automation-templates'),
+    apiBaseUrl: webApiBaseUrl
+  })
+  registerAutomationTemplateSyncHandlers(ipcMain, { automationTemplateSyncService, session })
+
   const modelSyncService = new ModelSyncService({
     authorization,
     modelService,
@@ -391,6 +400,7 @@ app.whenReady().then(() => {
       void skillSyncService.disconnect(localUserId)
       void expertSyncService.disconnect(localUserId)
       void modelSyncService.disconnect(localUserId)
+      void automationTemplateSyncService.disconnect(localUserId)
     }
     // 云知识库的内存缓存（文档列表）随登出丢弃；磁盘缓存按 kbId/docId 保留
     cloudKnowledgeService.disconnect()

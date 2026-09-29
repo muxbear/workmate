@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
+  AutomationTemplateSyncProgress,
   BrandLogoUploadPayload,
   DesktopExpert,
   ExpertSyncProgress,
@@ -578,6 +579,36 @@ const api = {
       }
       ipcRenderer.on('expert-sync:progress', handler)
       return () => ipcRenderer.removeListener('expert-sync:progress', handler)
+    }
+  },
+  automationTemplateSync: {
+    getStatus() {
+      return ipcRenderer.invoke('automation-template-sync:status')
+    },
+    authorize() {
+      return ipcRenderer.invoke('automation-template-sync:authorize')
+    },
+    sync() {
+      return ipcRenderer.invoke('automation-template-sync:sync')
+    },
+    loadLocal() {
+      return ipcRenderer.invoke('automation-template-sync:load-local')
+    },
+    deleteTemplate(id: string) {
+      return ipcRenderer.invoke('automation-template-sync:delete-template', id)
+    },
+    disconnect() {
+      return ipcRenderer.invoke('automation-template-sync:disconnect')
+    },
+    onSyncProgress(callback: (data: AutomationTemplateSyncProgress) => void): () => void {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: AutomationTemplateSyncProgress
+      ): void => {
+        callback(data)
+      }
+      ipcRenderer.on('automation-template-sync:progress', handler)
+      return () => ipcRenderer.removeListener('automation-template-sync:progress', handler)
     }
   },
   modelSync: {

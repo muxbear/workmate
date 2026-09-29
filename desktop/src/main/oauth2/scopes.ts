@@ -17,6 +17,8 @@ export const SCOPE_SKILL_READ = 'skill:read'
 export const SCOPE_EXPERT_READ = 'expert:read'
 /** 设置-模型：读取并同步模型提供商和模型 */
 export const SCOPE_MODEL_READ = 'model:read'
+/** 定时模板：读取并同步自动化任务模板 */
+export const SCOPE_TEMPLATE_READ = 'template:read'
 /** 云端工作：读取智能体配置 */
 export const SCOPE_AGENT_READ = 'agent:read'
 /** 云端工作：读取会话 */
@@ -92,6 +94,13 @@ export const DESKTOP_SCOPE_CATALOG: readonly DesktopScopeMeta[] = [
     label: '读取并同步模型提供商和模型',
     description: '关闭后设置中的模型无法从 Web 端同步',
     group: '模型',
+    required: false
+  },
+  {
+    key: SCOPE_TEMPLATE_READ,
+    label: '读取并同步定时模板',
+    description: '关闭后定时模板页无法从 Web 端同步模板',
+    group: '定时模板',
     required: false
   },
   {

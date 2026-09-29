@@ -1,12 +1,13 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, type ComputedRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../store/user'
 import ExpertPage from './ExpertPage.vue'
 import SkillPage from './SkillPage.vue'
 import ConnectorPage from './ConnectorPage.vue'
 import KnowledgePage from './KnowledgePage.vue'
-import AutomationPage from './AutomationPage.vue'
+import AutomationTasksPage from './AutomationTasksPage.vue'
+import AutomationTemplatesPage from './AutomationTemplatesPage.vue'
 import NewTaskPage from './NewTaskPage.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import BrandMark from '../components/brand/BrandMark.vue'
@@ -17,6 +18,7 @@ import { useWorkspaceStore } from '@renderer/store/workspace'
 import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
 import { useSkillSyncStore } from '@renderer/store/skillSync'
 import { useExpertSyncStore } from '@renderer/store/expertSync'
+import { useAutomationTemplateSyncStore } from '@renderer/store/automationTemplateSync'
 import type { ThemeName } from '@renderer/store/settings'
 import type { NavIconName } from '../components/navIcon'
 import type { Conversation } from '@renderer/store/agent'
@@ -29,6 +31,7 @@ const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
 const skillSyncStore = useSkillSyncStore()
 const expertSyncStore = useExpertSyncStore()
+const automationTemplateSyncStore = useAutomationTemplateSyncStore()
 
 // ── 当前登录用户展示 ──
 /** 显示名：用户名 → 手机号 → 兜底文案 */
@@ -189,28 +192,30 @@ const handleAddSpaceItem = (spaceName: string): void => {
 }
 
 // ── Navigation ──
-type NavKey = '新建任务' | '知识库' | '自动化' | '更多'
+type NavKey = '新建任务' | '知识库' | '更多'
 type AgentNavKey = '专家' | '技能' | '连接器'
-type AppNav = NavKey | AgentNavKey
+type AutomationNavKey = '定时任务' | '定时模板'
+type AppNav = NavKey | AgentNavKey | AutomationNavKey
 const activeNav = ref<AppNav>('新建任务')
+
+/** 可折叠分组（父级菜单不是页面，只是分组的展开/收起开关） */
+type NavGroupKey = 'agent' | 'automation'
 
 /** 侧栏一级菜单（收起态只显示 icon，图形见 NavIcon.vue） */
 interface NavEntry {
   label: NavKey
   icon: NavIconName
   tag?: string
-  /** 该项之后插入「智能体」分组（专家/技能/连接器） */
-  agentGroupAfter?: boolean
+  /** 该项之后插入的分组（按数组顺序渲染） */
+  groupAfter?: NavGroupKey[]
 }
 
 const navItems: NavEntry[] = [
-  { label: '知识库', icon: 'book', agentGroupAfter: true },
-  { label: '自动化', icon: 'workflow' },
+  { label: '知识库', icon: 'book', groupAfter: ['agent', 'automation'] },
   { label: '更多', icon: 'more', tag: '资库·灵感' }
 ]
 
 /** 智能体子菜单（父菜单紧跟在「知识库」之后，可折叠展开；默认展开） */
-const agentMenuOpen = ref(true)
 const agentSubItems: Array<{ label: AgentNavKey }> = [
   { label: '专家' },
   { label: '技能' },
@@ -219,6 +224,37 @@ const agentSubItems: Array<{ label: AgentNavKey }> = [
 const isAgentSectionActive = computed(
   () => activeNav.value === '专家' || activeNav.value === '技能' || activeNav.value === '连接器'
 )
+
+/** 自动化子菜单（父菜单「自动化」本身不是页面，只作分组标题） */
+const automationSubItems: Array<{ label: AutomationNavKey }> = [
+  { label: '定时任务' },
+  { label: '定时模板' }
+]
+const isAutomationSectionActive = computed(
+  () => activeNav.value === '定时任务' || activeNav.value === '定时模板'
+)
+
+/** 分组的展开态（默认展开；父级菜单只是开关，不承载页面） */
+const navGroupOpen = reactive<Record<NavGroupKey, boolean>>({ agent: true, automation: true })
+
+/** 分组元信息：标题与收起态图标 */
+const navGroupMeta: Record<NavGroupKey, { label: string; icon: NavIconName }> = {
+  agent: { label: '智能体', icon: 'agent' },
+  automation: { label: '自动化', icon: 'workflow' }
+}
+
+/** 分组当前是否有子项被选中（父级高亮） */
+const navGroupActive: Record<NavGroupKey, ComputedRef<boolean>> = {
+  agent: isAgentSectionActive,
+  automation: isAutomationSectionActive
+}
+const isGroupActive = (key: NavGroupKey): boolean => navGroupActive[key].value
+
+/** 分组的子项（父菜单点开后才渲染） */
+const navGroupSubItems: Record<NavGroupKey, Array<{ label: AppNav }>> = {
+  agent: agentSubItems,
+  automation: automationSubItems
+}
 
 /** 会话按工作空间分组（遍历 workspaceStore.workspaces，含无会话的空空间）；无绑定会话归"默认空间"组 */
 interface ConversationGroup {
@@ -369,6 +405,7 @@ const handleLogout = async (): Promise<void> => {
     userStore.logout() // 清渲染层 pinia + localStorage
     skillSyncStore.resetLocal() // 清 Web 技能同步状态，避免切换账号残留
     expertSyncStore.resetLocal() // 清 Web 专家同步状态与本地列表，避免切换账号残留
+    automationTemplateSyncStore.resetLocal() // 清 Web 定时模板同步状态与本地列表
     workspaceStore.reset() // 清工作空间列表/选中态，防切换账号残留
     await router.push('/') // 此时主进程 session 已清，守卫放行至登录页
   } catch (err: unknown) {
@@ -406,8 +443,11 @@ const handleSettingsLogout = (): void => {
 const switchNav = (nav: AppNav): void => {
   activeNav.value = nav
   userMenuOpen.value = false
-  if (agentSubItems.some((item) => item.label === nav)) {
-    agentMenuOpen.value = true
+  // 点到分组子项时确保父分组是展开的（否则当前页在菜单里不可见）
+  for (const key of Object.keys(navGroupSubItems) as NavGroupKey[]) {
+    if (navGroupSubItems[key].some((item) => item.label === nav)) {
+      navGroupOpen[key] = true
+    }
   }
   if (nav === '新建任务') {
     // 仅进入欢迎态，不创建会话条目（发送第一条消息时才创建）
@@ -415,10 +455,10 @@ const switchNav = (nav: AppNav): void => {
   }
 }
 
-/** 收起侧栏点击「智能体」：先展开侧栏并展开分组（收起态放不下子菜单） */
-const openAgentGroupFromCollapsed = (): void => {
+/** 收起侧栏点击分组图标：先展开侧栏并展开该分组（收起态放不下子菜单） */
+const openGroupFromCollapsed = (key: NavGroupKey): void => {
   sidebarCollapsed.value = false
-  agentMenuOpen.value = true
+  navGroupOpen[key] = true
 }
 
 /** 悬浮全名：仅当文本溢出容器被截断时才设置 title（未截断不弹提示） */
@@ -487,14 +527,14 @@ const adjustMenuDirection = (): void => {
               <NavIcon :name="item.icon" />
             </span>
           </button>
-          <template v-if="item.agentGroupAfter">
+          <template v-for="group in item.groupAfter ?? []" :key="group">
             <button
-              :class="['nav-item', 'nav-item--icon', { 'nav-item--active': isAgentSectionActive }]"
-              title="智能体"
-              @click="openAgentGroupFromCollapsed"
+              :class="['nav-item', 'nav-item--icon', { 'nav-item--active': isGroupActive(group) }]"
+              :title="navGroupMeta[group].label"
+              @click="openGroupFromCollapsed(group)"
             >
               <span class="nav-icon">
-                <NavIcon name="agent" />
+                <NavIcon :name="navGroupMeta[group].icon" />
               </span>
             </button>
           </template>
@@ -558,21 +598,21 @@ const adjustMenuDirection = (): void => {
             <span v-if="item.tag" class="nav-tag">{{ item.tag }}</span>
           </button>
 
-          <template v-if="item.agentGroupAfter">
+          <template v-for="group in item.groupAfter ?? []" :key="group">
             <button
               class="nav-item nav-item--group"
-              :class="{ 'nav-item--active': isAgentSectionActive }"
+              :class="{ 'nav-item--active': isGroupActive(group) }"
               type="button"
-              :aria-expanded="agentMenuOpen"
-              @click="agentMenuOpen = !agentMenuOpen"
+              :aria-expanded="navGroupOpen[group]"
+              @click="navGroupOpen[group] = !navGroupOpen[group]"
             >
               <span class="nav-icon">
-                <NavIcon name="agent" />
+                <NavIcon :name="navGroupMeta[group].icon" />
               </span>
-              <span class="nav-label">智能体</span>
+              <span class="nav-label">{{ navGroupMeta[group].label }}</span>
               <svg
                 class="nav-chevron"
-                :class="{ 'nav-chevron--collapsed': !agentMenuOpen }"
+                :class="{ 'nav-chevron--collapsed': !navGroupOpen[group] }"
                 width="11"
                 height="11"
                 viewBox="0 0 24 24"
@@ -585,9 +625,9 @@ const adjustMenuDirection = (): void => {
               </svg>
             </button>
             <Transition name="agent-collapse">
-              <div v-show="agentMenuOpen" class="agent-submenu">
+              <div v-show="navGroupOpen[group]" class="agent-submenu">
                 <button
-                  v-for="sub in agentSubItems"
+                  v-for="sub in navGroupSubItems[group]"
                   :key="sub.label"
                   :class="[
                     'nav-item nav-item--sub',
@@ -1221,7 +1261,8 @@ const adjustMenuDirection = (): void => {
         <SkillPage v-else-if="activeNav === '技能'" key="skill" />
         <ConnectorPage v-else-if="activeNav === '连接器'" key="connector" />
         <KnowledgePage v-else-if="activeNav === '知识库'" key="knowledge" />
-        <AutomationPage v-else-if="activeNav === '自动化'" key="automation" />
+        <AutomationTasksPage v-else-if="activeNav === '定时任务'" key="automation-tasks" />
+        <AutomationTemplatesPage v-else-if="activeNav === '定时模板'" key="automation-templates" />
         <div v-else key="placeholder" class="placeholder-page">
           <div class="placeholder-icon">
             <svg

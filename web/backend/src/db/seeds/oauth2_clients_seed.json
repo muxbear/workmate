@@ -17,7 +17,8 @@
         "workspace:read",
         "model:read",
         "knowledge:read",
-        "knowledge:write"
+        "knowledge:write",
+        "template:read"
       ],
       "grant_types": ["authorization_code"],
       "enabled": true

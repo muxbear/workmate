@@ -74,6 +74,11 @@ SCOPE_CATALOG: dict[str, ScopeMeta] = {
         description="关闭后设置中的模型无法从 Web 端同步",
         group="模型",
     ),
+    "template:read": ScopeMeta(
+        label="读取并同步定时模板",
+        description="关闭后桌面端的定时模板无法从 Web 端同步",
+        group="定时模板",
+    ),
     "knowledge:read": ScopeMeta(
         label="读取并检索知识库",
         description="关闭后客户端无法列出、检索与查看知识库内容（含云知识库检索专家）",
