@@ -38,7 +38,12 @@ CAPABILITY_BUILTIN_TOOLS: dict[str, tuple[str, ...]] = {
     # 上下文取 user_id，是进程内唯一能带上身份的路径。
     CAPABILITY_KNOWLEDGE_SEARCH: ("kb_search", "list_knowledge_bases"),
     CAPABILITY_DOCUMENT_ASSEMBLE: ("download_asset",),
-    CAPABILITY_WEB_SEARCH: ("tavily_search",),
+    # 联网检索与 video.generate 同类：**没有端侧实现**，三端统一走服务端
+    # 「联网搜索」MCP 服务（专家用 mcp_configs 关联）。该服务自带多源回退
+    # （Tavily → Bing → DuckDuckGo），是唯一在单一数据源故障时仍有产出的实现；
+    # 内置的 tavily_search 是单源工具（配额耗尽即返回空结果），用它绑定本能力会
+    # 通过 _resolve_entity_tools 的 skip 判据把 MCP 顶掉，反而让两端检索一起失效。
+    CAPABILITY_WEB_SEARCH: (),
 }
 
 # 能力 → MCP 工具名（由 MCP server 暴露，不写入 expert_tools）

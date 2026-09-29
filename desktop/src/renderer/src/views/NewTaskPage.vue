@@ -534,7 +534,8 @@ const quickChips = [
 /** 场景快捷入口 → 对应专家名（未登记的场景暂无专家可召唤） */
 const QUICK_CHIP_EXPERTS: Record<string, string> = {
   视频生成: '视频创作专家',
-  文档处理: '文档写作专家'
+  文档处理: '文档写作专家',
+  深度研究: '互联网信息检索专家'
 }
 
 /**

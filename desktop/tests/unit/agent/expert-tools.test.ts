@@ -34,4 +34,10 @@ describe('buildExpertTools（能力声明驱动）', () => {
   it('仅声明 video.generate 时不产生本地工具（视频生成走 MCP）', () => {
     expect(buildExpertTools([], undefined, null, ['video.generate'])).toHaveLength(0)
   })
+
+  it('仅声明 web.search 时不产生本地工具（联网检索走 MCP 服务）', () => {
+    // 「互联网信息检索专家」只声明 web.search：三端统一走「联网搜索」MCP 服务，
+    // 该服务自带多源回退；桌面端没有、也不需要本地检索实现。
+    expect(buildExpertTools([], undefined, null, ['web.search'])).toHaveLength(0)
+  })
 })

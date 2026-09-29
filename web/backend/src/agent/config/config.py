@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     # ---- Tavily ----
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
 
+    # ---- 联网搜索（MCP 服务「联网搜索」的多源回退链）----
+    # 提供方顺序，逗号分隔；可用取值 tavily / bing / duckduckgo。
+    # 默认把 Bing 排在 DuckDuckGo 之前：DDG 在部分网络（含国内）不可达，
+    # 排在前面会白吃一次连接超时；DDG 仍保留为最后一档。
+    WEB_SEARCH_PROVIDERS: str = os.getenv(
+        "WEB_SEARCH_PROVIDERS", "tavily,bing,duckduckgo"
+    )
+    WEB_SEARCH_TIMEOUT_SECONDS: int = int(
+        os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "10")
+    )
+
     # ---- Workspace ----
     WORKSPACE: str = Field(default_factory=get_default_workspace)
 

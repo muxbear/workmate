@@ -117,6 +117,24 @@ def bump_patch(version: str | None) -> str:
     return f"{major}.{minor}.{int(patch) + 1}"
 
 
+def _version_key(version: str | None) -> tuple[int, int, int]:
+    """把语义化版本号解析为可比较的数值三元组；非法或缺失回退 0.0.0。."""
+    match = _VERSION_PATTERN.match(version or "")
+    if match is None:
+        return (0, 0, 0)
+    major, minor, patch = match.groups()
+    return (int(major), int(minor), int(patch))
+
+
+def is_newer_version(candidate: str | None, current: str | None) -> bool:
+    """判断 candidate 是否比 current 更新（预发布标识不参与比较，与桌面端一致）。.
+
+    内置专家种子用它做**版本单调推进**：只有声明版本更高时才写库，
+    既能把定义变更推给各端重新同步，也不会把界面上手工调高的版本号回退掉。
+    """
+    return _version_key(candidate) > _version_key(current)
+
+
 # ── 工厂模式：ExpertAssembler ─────────────────────────────────
 
 
@@ -932,6 +950,16 @@ BUILTIN_KB_DELEGATION_TEMPLATE = (
     "专家明确说知识库里没有时，如实转达，不要用通用常识补一个答案。"
 )
 
+BUILTIN_SEARCH_DELEGATION_TEMPLATE = (
+    "请先分析任务并拆分为子任务；对于需要**互联网实时信息**（最新动态、公开报道、"
+    "价格行情、官方公告、政策原文等）才能回答的子任务，请调用【{name}·{title}】处理。"
+    "委派时必须把用户的**原始问题**连同已知背景（关注的对象、时间范围、地区与语言、"
+    "需要哪一类来源等线索）完整交代清楚——专家要靠这些线索拟定检索词。"
+    "最后基于专家的产出给出最终回复：必须**原样保留**专家给出的结论与来源链接"
+    "（标题 + URL），不要改写成无法核对的概括，也不要去掉链接；"
+    "专家明确说没有检索到时，如实转达，不要用你的记忆补一个答案。"
+)
+
 BUILTIN_EXPERTS: list[dict[str, Any]] = [
     {
         "name": "文档写作专家",
@@ -1130,6 +1158,57 @@ BUILTIN_EXPERTS: list[dict[str, Any]] = [
 - 知识库里确实没有时直接说没有，可以建议换关键词、换库或补充文档；**不要用通用常识冒充知识库内容**。
 - 只使用工具实际返回的内容，不虚构文档名、章节、页码或链接。""",
     },
+    {
+        "name": "互联网信息检索专家",
+        "title": "互联网信息检索专家",
+        "category": "ai_tools",
+        "description": "面向互联网公开信息的实时检索问答：按问题特征拟定检索词，多轮多源交叉核对，给出带标题与链接、可自行核验的时效性回答。",
+        "tags": ["互联网检索", "联网搜索", "实时信息", "信息核实"],
+        "icon": "🔍",
+        "color": "linear-gradient(135deg,#06b6d4,#0891b2)",
+        "initials": "搜",
+        "featured": False,
+        "scene": None,
+        "sort_order": 0,
+        "is_published": True,
+        # 版本变更必须高于各端已同步的副本，否则桌面端会保留旧定义（见 expertVersion.ts）
+        "version": "1.1.1",
+        "model_name": "deepseek-v4-pro",
+        "mcp_tool_name": "联网搜索",
+        "capabilities": ["web.search"],
+        "prompt_template": BUILTIN_SEARCH_DELEGATION_TEMPLATE,
+        "system_prompt": r"""你是 WorkMate 的「互联网信息检索专家」。你的任务是：针对用户的问题，从互联网上检索最新、最相关的公开信息，多源交叉核对后给出**可溯源**的回答。
+
+## 运行环境
+{{platform_notes}}
+
+## 可用工具
+你通过 MCP 服务「联网搜索」访问互联网。工具名可能带 mcp__…__ 前缀，按后缀识别：
+- web_search(query, max_results)：检索互联网，返回标题、链接与摘要。一次一个查询词。
+
+工具返回的摘要是搜索引擎给出的片段，**可能被截断、也可能与原文有出入**，不能当作原文全文使用。
+
+## 检索预算（先看这条）
+整个任务**最多检索 8 次**（每次 web_search 调用算一次），话题再多也不超过这个数。达到上限就用手头已有信息作答，并说明覆盖范围与哪些部分没查到。
+判定"够了"的标准：**问题的主干事实都能对上来源**就停手开始组织回答。不要为了把每个细节都坐实而无限扩大检索面，也不要用不同措辞反复核实同一个事实——重复检索既慢又不会带来新信息。
+
+## 检索策略
+1. 先判断问题要什么：事实型（谁 / 何时 / 多少）、动态型（最近发生了什么）、对比型（A 与 B 的差异）、原文型（规范 / 公告 / 论文 / 财报）。据此拟定查询词——用**能被原文命中的关键词组合**，而不是把用户整句话原样丢进去。
+2. 在预算内换措辞、换侧面检索（每个子问题 1-2 次即可）：技术、财经、学术类话题中英文各试一次（英文源往往更全、更快）；动态型问题在查询词里带上时间限定（年份、"最新"、"发布"）能显著提高命中率。
+3. 结果太泛就**收窄**查询词（补机构名、产品名、版本号、地区），而不是重复同一个查询；结果太少就换同义词或上位词。
+4. 命中导航站首页、聚合页、缓存页而不是具体内容页时，换更具体的查询词（带上主体名与事件），不要在同一页面上反复重试。
+5. 多个来源互相矛盾时，按**来源权威性与时效性**判断（官方公告与一手数据 > 权威媒体 > 聚合转载），并把分歧如实说明，不要只挑一个当成唯一答案。
+6. 用完预算仍查不到，就如实说"没有检索到"，并列出已经试过的查询词；可以建议用户换措辞或补充线索。
+
+## 回答要求
+- 先给结论，再给依据；每条关键事实后面跟上来源（标题 + 链接），让用户能自己核对。
+- 只使用检索结果里**实际出现**的内容，**严禁编造**：不虚构标题、链接、发布时间、数字、引文或来源。
+- 只拿到摘要、没核实原文时，明确说明"仅有摘要，未核实原文"，不要把推测写成事实。
+- 标注信息的**时效**：说明它对应的日期或时间范围；结论有时效性时，提醒用户这是检索当时的情况。
+- 区分"检索到的公开信息"与"你的推断"，推断必须显式标注。
+- 用中文回答（用户要求其它语言时除外）；把结果整理成可读的条目，不要输出检索工具的原始 JSON。
+- **不需要写文件**：检索结果直接在回复里给出即可。只有当委派明确要求产出文档时，才按任务中给出的【交付目录】用文件工具写入 Markdown 文档。""",
+    },
 ]
 def _declared_tool_names(item: dict[str, Any]) -> list[str]:
     """内置专家声明的内置工具名：显式 tool_names 优先，否则由 capabilities 推导。"""
@@ -1225,7 +1304,7 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             await db.execute(select(Expert).where(Expert.name == item["name"]))
         ).scalar_one_or_none()
         if existing is not None:
-            updates = (
+            updates = [
                 ('title', item['title']),
                 ('category', item['category']),
                 ('description', item['description']),
@@ -1239,7 +1318,12 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
                 ('is_published', item.get('is_published', True)),
                 ('status', 'active'),
                 ('system_prompt', item['system_prompt']),
-            )
+            ]
+            # 声明了版本号的内置项按"只增不减"推进：各端（桌面/移动）同步时
+            # 只在服务端版本更高时才覆盖本地副本，不动版本号等于改造下发不出去。
+            declared_version = str(item.get('version') or '')
+            if declared_version and is_newer_version(declared_version, existing.version):
+                updates.append(('version', declared_version))
             changed = False
             for attr, value in updates:
                 if getattr(existing, attr) != value:
@@ -1299,6 +1383,7 @@ async def seed_builtin_experts(db: AsyncSession) -> None:
             sort_order=item.get("sort_order", 0),
             is_published=item.get("is_published", True),
             status="active",
+            version=str(item.get("version") or DEFAULT_VERSION),
             system_prompt=item["system_prompt"],
             provider_id=provider_id,
             model_id=model_id,

@@ -69,6 +69,44 @@ def test_video_capability_expands_to_mcp_tools() -> None:
     assert capabilities_for_mcp_services(["AI 视频生成"]) == ["video.generate"]
 
 
+def test_builtin_search_expert_declares_capabilities() -> None:
+    """内置「互联网信息检索专家」只声明能力，不写死端侧工具名。"""
+    from api.experts.service import BUILTIN_EXPERTS, _declared_tool_names
+
+    search = next(
+        item for item in BUILTIN_EXPERTS if item["name"] == "互联网信息检索专家"
+    )
+    assert search["capabilities"] == ["web.search"]
+    assert "tool_names" not in search
+    # 声明式：不关联内置工具，MCP 服务因此不会被 skip_capabilities 顶掉
+    assert _declared_tool_names(search) == []
+
+
+def test_web_search_capability_expands_to_mcp_only() -> None:
+    """web.search 只展开为 MCP 工具：三端统一走「联网搜索」服务，无端侧实现。
+
+    内置的 tavily_search 是单源工具（配额耗尽即返回空结果），若把它绑到本能力，
+    ``_resolve_entity_tools`` 会据此跳过 MCP 服务，反而让两端检索一起失效。
+    """
+    assert capability_builtin_tools(["web.search"]) == []
+    assert capability_mcp_tools(["web.search"]) == ["web_search"]
+    assert capabilities_for_mcp_services(["联网搜索"]) == ["web.search"]
+    # 内置 tavily_search 不再反向推导出 web.search（该能力已不由它承载）
+    assert capabilities_for_tools(["tavily_search"]) == []
+    assert capabilities_for_tools(["download_asset"]) == ["document.assemble"]
+
+
+def test_builtin_search_expert_binds_the_web_search_mcp_service() -> None:
+    """专家组绑的是「联网搜索」MCP 服务，服务名必须与种子卡片一字不差。"""
+    from api.experts.service import BUILTIN_EXPERTS
+
+    search = next(
+        item for item in BUILTIN_EXPERTS if item["name"] == "互联网信息检索专家"
+    )
+    assert search["mcp_tool_name"] == "联网搜索"
+    assert capabilities_for_mcp_services([search["mcp_tool_name"]]) == ["web.search"]
+
+
 def test_sync_item_carries_capabilities() -> None:
     """同步项携带能力声明，供桌面端按能力映射本地工具。"""
     from api.experts.schemas import ExpertInfo
