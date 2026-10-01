@@ -31,6 +31,7 @@ import type { Component } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { usePermissionStore } from '@/stores/permission'
 import { useBrandStore } from '@/stores/brand'
+import BrandMark from '@/components/common/BrandMark.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -167,7 +168,10 @@ onUnmounted(() => {
 <template>
   <aside class="sidebar" :class="{ collapsed: uiStore.sidebarCollapsed }">
     <div class="side-top">
-      <span class="logo">{{ brandStore.systemName }}</span>
+      <div class="brand">
+        <BrandMark :size="22" :src="brandStore.logoDisplaySrc" />
+        <span class="logo">{{ brandStore.systemName }}</span>
+      </div>
       <button
         class="collapse-btn"
         :aria-label="uiStore.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
@@ -288,18 +292,36 @@ onUnmounted(() => {
   padding-bottom: 0;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 让系统名称先被压缩、再截断，而不是把折叠按钮挤出侧栏。
+     系统名称最长 24 字且由管理员配置，不设约束时会把这一行撑破。 */
+  flex: 1;
+  min-width: 0;
+}
+
+/* 与 .search-wrap.collapsed 同一套写法：淡出 + 塌陷，而不是 display:none，
+   这样和侧栏宽度动画同时进行。
+   `flex: 0 0 0` 不能省：基类的 `flex: 1` 会让它把剩余空间吃满，
+   折叠时仍占几个像素，把折叠按钮挤得偏心。 */
+.sidebar.collapsed .brand {
+  opacity: 0;
+  flex: 0 0 0;
+  width: 0;
+  overflow: hidden;
+}
+
 .logo {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
   color: var(--accent-primary);
   white-space: nowrap;
-  transition: opacity var(--transition-duration) ease;
-}
-
-.sidebar.collapsed .logo {
-  opacity: 0;
-  width: 0;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity var(--transition-duration) ease;
 }
 
 .collapse-btn {
