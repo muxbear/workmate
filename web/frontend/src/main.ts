@@ -9,6 +9,7 @@ import App from './App.vue'
 import router from './router'
 import i18n from './locales'
 import { useUiStore } from '@/stores/ui'
+import { useBrandStore } from '@/stores/brand'
 import './assets/styles/main.css'
 
 import '@vue-flow/core/dist/style.css'
@@ -26,6 +27,10 @@ app.use(i18n)
 app.use(ElementPlus, { locale: zhCn })
 app.use(MotionPlugin)
 
-useUiStore().initTheme()
+useUiStore().initAppearance()
+
+// 公开接口，未登录也能取——登录页在 MainLayout 之外，同样要显示系统名称与 LOGO。
+// 不 await：后端慢或挂掉都不该拖慢首屏，load() 内部吞掉所有异常。
+void useBrandStore().load()
 
 app.mount('#app')

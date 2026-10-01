@@ -12,6 +12,16 @@
         if (saved === 'light' || saved === 'dark') theme = saved
       } catch (e) {}
       document.documentElement.dataset.theme = theme
+
+      // 字号预置：必须在 bundle 之前应用，否则页面会先按 17px 渲染再跳一下。
+      // 12 / 24 / 17 三个常量与 src/stores/ui.ts 的
+      // FONT_SIZE_MIN / FONT_SIZE_MAX / DEFAULT_FONT_SIZE 保持一致。
+      try {
+        var fs = Number(window.localStorage.getItem('ui_font_size'))
+        if (fs >= 12 && fs <= 24 && fs !== 17) {
+          document.documentElement.style.zoom = String(fs / 17)
+        }
+      } catch (e) {}
     })()
   </script>
 </head>

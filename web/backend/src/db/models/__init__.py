@@ -42,9 +42,11 @@ from db.models.role_permission import RolePermission
 from db.models.skill import Skill
 from db.models.system_event import SystemEvent
 from db.models.system_param import SystemParam
+from db.models.system_setting import SystemSetting
 from db.models.tool import Tool
 from db.models.user import Account
 from db.models.user_oauth import UserOAuth
+from db.models.user_preference import UserPreference
 from db.models.user_role import UserRole
 
 __all__ = [
@@ -93,8 +95,10 @@ __all__ = [
     "Skill",
     "SystemEvent",
     "SystemParam",
+    "SystemSetting",
     "Tool",
     "Account",
     "UserOAuth",
+    "UserPreference",
     "UserRole",
 ]

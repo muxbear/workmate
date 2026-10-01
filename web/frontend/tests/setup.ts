@@ -30,6 +30,62 @@ if (!('ResizeObserver' in globalThis)) {
   })
 }
 
+// jsdom 不实现 URL.createObjectURL / revokeObjectURL，而 LOGO 预览（选中文件后
+// 用 objectURL 显示）依赖它。判"是不是函数"而不是 `in`，理由同下面的 matchMedia。
+if (typeof URL.createObjectURL !== 'function') {
+  let seq = 0
+  Object.defineProperty(URL, 'createObjectURL', {
+    value: () => `blob:mock-${++seq}`,
+    writable: true,
+  })
+  Object.defineProperty(URL, 'revokeObjectURL', { value: () => {}, writable: true })
+}
+
+// jsdom 不实现 Web Audio，而提示音（utils/browserNotify 的 playNotificationSound）
+// 会 new AudioContext()。它是在函数内部惰性创建的，所以只有真正测到声音的用例
+// 才会碰到——但那时若没桩，报错会指向音频 API 而不是被测逻辑。
+// 判"是不是函数"而不是 `'AudioContext' in window`：与上面 matchMedia 同样的坑。
+if (typeof (globalThis as { AudioContext?: unknown }).AudioContext !== 'function') {
+  class AudioContextStub {
+    currentTime = 0
+    state = 'running'
+    destination = {}
+    resume(): Promise<void> {
+      return Promise.resolve()
+    }
+    createOscillator() {
+      return {
+        type: 'sine',
+        frequency: { setValueAtTime: () => {} },
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+      }
+    }
+    createGain() {
+      return {
+        gain: {
+          setValueAtTime: () => {},
+          linearRampToValueAtTime: () => {},
+          exponentialRampToValueAtTime: () => {},
+        },
+        connect: () => {},
+      }
+    }
+    createBiquadFilter() {
+      return {
+        type: 'lowpass',
+        frequency: { setValueAtTime: () => {} },
+        connect: () => {},
+      }
+    }
+  }
+  Object.defineProperty(globalThis, 'AudioContext', {
+    value: AudioContextStub,
+    writable: true,
+  })
+}
+
 // vue-i18n：组件里的 useI18n() 需要一个已安装的 i18n 实例，否则挂载即抛
 // "Not installed"。**这一条是组件迁移到 i18n 的前置**——不注册的话，任何用了
 // useI18n 的组件一被测试挂载就全挂（迭代 6 T6.6）。

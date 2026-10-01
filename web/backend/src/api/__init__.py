@@ -45,6 +45,12 @@ from api.params import router as params_router
 from api.personnel import router as personnel_router
 from api.providers import router as providers_router
 from api.rbac import router as rbac_router
+from api.settings import (
+    admin_router as settings_admin_router,
+)
+from api.settings import (
+    router as settings_router,
+)
 from api.skill import router as skill_router
 from api.sms import router as sms_router
 from api.tools import router as tools_router
@@ -87,5 +93,7 @@ router.include_router(notification_router)
 router.include_router(notification_admin_router)
 router.include_router(overview_router)
 router.include_router(params_router)
+router.include_router(settings_router)
+router.include_router(settings_admin_router)
 
 __all__ = ["router"]

@@ -18,6 +18,8 @@ import {
   deleteAdminAnnouncement,
 } from '@/services/announcementApi'
 import { getAccessToken } from '@/services/request'
+import { useUiStore } from '@/stores/ui'
+import { playNotificationSound, showDesktopNotification } from '@/utils/browserNotify'
 
 function toInboxNotification(n: NotificationItem): InboxItem {
   return {
@@ -170,12 +172,19 @@ export const useNotificationStore = defineStore('notification', () => {
           created_at: new Date().toISOString(),
           read_at: null,
         })
+        const title = isAnnouncement ? '新公告：' + data.title : data.title
         ElNotification({
-          title: isAnnouncement ? '新公告：' + data.title : data.title,
+          title,
           message: data.content,
           type: popupType,
           position: 'bottom-right',
         })
+        // 端内提示已在上面弹过；这里补后台时的系统通知与提示音。
+        // 用惰性 useUiStore()：notification store 目前不依赖其它 store，
+        // 在 handler 内部取可以避开 store 初始化顺序问题。
+        const uiStore = useUiStore()
+        showDesktopNotification(title, data.content)
+        playNotificationSound(uiStore.notificationSound)
       } catch {
         // ignore parse error
       }

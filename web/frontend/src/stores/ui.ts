@@ -6,6 +6,8 @@ import {
   fetchConversations,
   deleteConversation as deleteConversationApi,
 } from '@/services/conversationApi'
+import { fetchPreferences, updatePreferences } from '@/services/settingsApi'
+import type { NotificationSound, UserPreferences } from '@/types/settings'
 
 export interface HistoryItem {
   thread_id: string
@@ -50,6 +52,75 @@ function applyThemeToDocument(theme: ThemeMode) {
   document.documentElement.classList.toggle('dark', theme === 'dark')
 }
 
+/** 默认字号——缩放系数为 1.0（现有视觉不变）。桌面版同样以 17 为基准。 */
+export const DEFAULT_FONT_SIZE = 17
+/** 字号下限 */
+export const FONT_SIZE_MIN = 12
+/** 字号上限 */
+export const FONT_SIZE_MAX = 24
+const FONT_SIZE_STORAGE_KEY = 'ui_font_size'
+
+/** 把字号收敛到 [12, 24]；非数字回落到默认值 */
+export function clampFontSize(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_FONT_SIZE
+  return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, Math.round(value)))
+}
+
+/**
+ * 读取初始字号。
+ *
+ * 与 theme / locale 一样**必须先于服务端可读**：等接口回来再应用，
+ * 页面会先按 17 渲染再跳一下，字号越大幅度越明显。
+ * `index.html` 的内联脚本做了同样的事，避免首帧闪烁。
+ */
+function getInitialFontSize(): number {
+  try {
+    const stored = Number(localStorage.getItem(FONT_SIZE_STORAGE_KEY))
+    if (Number.isFinite(stored) && stored >= FONT_SIZE_MIN && stored <= FONT_SIZE_MAX) {
+      return Math.round(stored)
+    }
+  } catch {
+    // 忽略本地存储不可用的场景
+  }
+  return DEFAULT_FONT_SIZE
+}
+
+/**
+ * 字号对应的根元素 `zoom` 取值；返回 null 表示「不需要缩放，应移除该内联样式」。
+ *
+ * 抽成纯函数是为了可测：jsdom 的 `CSSStyleDeclaration` 不支持 `zoom`
+ * （非标准属性），`setProperty('zoom', …)` 会被静默丢弃，DOM 断言在单测里
+ * 永远读到空串——比例的换算只能这样单独钉住，真实效果靠浏览器验证。
+ */
+export function fontZoomValue(size: number): string | null {
+  const factor = clampFontSize(size) / DEFAULT_FONT_SIZE
+  return factor === 1 ? null : String(factor)
+}
+
+/**
+ * 应用字号缩放。
+ *
+ * 用根元素 `zoom` 而不是覆盖 `--font-size-*` 令牌：全仓有 279 处硬编码
+ * `font-size: Npx`，改令牌只覆盖走变量的那些，**也缩放不了固定高度**
+ * （`--topbar-height` 52px、按钮 36px）——字号调大后文字会直接在容器里被裁掉。
+ * `zoom` 缩放整页，也正是桌面版 `setZoomFactor(fontSize / 17)` 的 CSS 对应物。
+ *
+ * 已知代价：`zoom` 会改变 `clientX` / `getBoundingClientRect()` 与内联 px 的
+ * 换算关系，三个拖拽 composable（usePanelResize / useDragSort / useKbQaResize）
+ * 需要真机验证；媒体查询也不跟随 zoom。
+ */
+function applyFontSize(size: number) {
+  if (typeof document === 'undefined') return
+  const value = fontZoomValue(size)
+  const root = document.documentElement
+  if (value === null) {
+    // 1.0 时不留内联样式，避免污染 DOM 快照
+    root.style.removeProperty('zoom')
+  } else {
+    root.style.setProperty('zoom', value)
+  }
+}
+
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(false)
   /** 右栏默认收起：进入对话页先只展示对话区，需要时再展开 */
@@ -61,11 +132,39 @@ export const useUiStore = defineStore('ui', () => {
   /** 主体容器实测宽度（由 AppShell 上报），用于按比例调整右栏宽度 */
   const shellWidth = ref(0)
   const plusMenuOpen = ref(false)
+  /**
+   * 设置窗口是否打开。
+   *
+   * 放在 store 而不是某个组件的局部状态：打开它的 `TopBar` 与渲染它的
+   * `MainLayout` 是兄弟节点，没有共同的局部作用域。
+   */
+  const settingsOpen = ref(false)
   const searchQuery = ref('')
   const selectedModel = ref('DeepSeek V4')
   const theme = ref<ThemeMode>(getInitialTheme())
   /** 界面语言（迭代 6 T6.6）——与 theme 一样持久化到 localStorage */
   const locale = ref<LocaleCode>(getInitialLocale())
+  /** 界面字号——同时持久化到 localStorage 与服务端（按用户） */
+  const fontSize = ref<number>(getInitialFontSize())
+  /** 客户端通知开关。刻意不落 localStorage：它首屏不渲染任何东西，
+   *  只在收到通知时被读（那必然是登录之后），落本地只会制造跨用户泄漏。 */
+  const clientNotifications = ref(true)
+  /** 提示音风格。同上，不落 localStorage。 */
+  const notificationSound = ref<NotificationSound>('none')
+  /**
+   * 记录「已为哪个用户加载过偏好」。
+   *
+   * 用 userId 而不是布尔 `loaded`：布尔 guard 会让第二个登录的用户**永远拉不到**
+   * 自己的偏好，静默继承上一个人的设置。
+   */
+  const prefsLoadedFor = ref<string | null>(null)
+  /**
+   * 最近一次与服务端一致的字号。
+   *
+   * 滑块是"本地跟手、松手提交"的：拖动过程中本地值已经变了，失败时要回滚到
+   * **服务端确认过的那个值**，而不是"本次改动之前的值"——后者早已被覆盖。
+   */
+  const confirmedFontSize = ref(DEFAULT_FONT_SIZE)
   const histories = ref<HistoryItem[]>([])
   const activeThreadId = ref<string | null>(null)
 
@@ -74,8 +173,19 @@ export const useUiStore = defineStore('ui', () => {
     shellWidth.value > 0 ? rightPanelWidth.value / shellWidth.value : 0,
   )
 
-  function initTheme() {
+  /**
+   * 当前字号缩放系数（1 = 未缩放）。
+   *
+   * 拖拽类交互需要它把**视觉坐标换算回布局坐标**：`getBoundingClientRect()` 与
+   * `MouseEvent.clientX` 都是 zoom 之后的视觉 px，而宽度、`clientWidth` 是布局 px，
+   * 两者在字号 ≠ 1 时差一个系数，混用会让分割线不跟手、上下界也偏。
+   */
+  const fontScale = computed(() => clampFontSize(fontSize.value) / DEFAULT_FONT_SIZE)
+
+  /** 应用外观设置（主题 + 字号）。启动时调用一次，早于挂载。 */
+  function initAppearance() {
     applyThemeToDocument(theme.value)
+    applyFontSize(fontSize.value)
   }
 
   function setTheme(mode: ThemeMode) {
@@ -101,6 +211,117 @@ export const useUiStore = defineStore('ui', () => {
     } catch {
       // 忽略本地存储不可用的场景
     }
+  }
+
+  /** 设置字号：立即应用缩放并持久化到本地 */
+  function setFontSize(next: number) {
+    const size = clampFontSize(next)
+    fontSize.value = size
+    applyFontSize(size)
+    try {
+      localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(size))
+    } catch {
+      // 忽略本地存储不可用的场景
+    }
+  }
+
+  // 偏好写入串行化：各控件一次只发一个 PUT，但两个在途请求理论上可能乱序落库，
+  // 串成一条链就消除了这一类问题。
+  let prefWriteChain: Promise<unknown> = Promise.resolve()
+
+  function persistPreferences(patch: Partial<UserPreferences>): Promise<unknown> {
+    prefWriteChain = prefWriteChain.catch(() => {}).then(() => updatePreferences(patch))
+    return prefWriteChain
+  }
+
+  /**
+   * 切换语言并写入服务端。
+   *
+   * 本地先生效（与 TopBar 的切换器共用 `setLocale`，所以两处不可能不同步），
+   * 写失败则回滚——否则界面显示的和库里存的不一致。
+   */
+  async function saveLanguage(next: LocaleCode) {
+    const previous = locale.value
+    setLocale(next)
+    try {
+      await persistPreferences({ language: next })
+    } catch (error) {
+      setLocale(previous)
+      throw error
+    }
+  }
+
+  /**
+   * 把当前字号写入服务端。
+   *
+   * **不设本地值**：滑块在 `input` 阶段已经把本地值改成了用户拖到的位置，
+   * 这里只负责提交。失败时回滚到最近一次与服务端一致的字号
+   * （而不是"改之前的值"——那个值在拖动过程中已经被覆盖掉了）。
+   */
+  async function persistFontSize(next: number) {
+    const size = clampFontSize(next)
+    try {
+      await persistPreferences({ fontSize: size })
+      confirmedFontSize.value = size
+    } catch (error) {
+      setFontSize(confirmedFontSize.value)
+      throw error
+    }
+  }
+
+  /** 一步到位的字号设置：改本地 + 写服务端（失败回滚） */
+  async function saveFontSize(next: number) {
+    setFontSize(next)
+    await persistFontSize(next)
+  }
+
+  /** 设置客户端通知开关并写入服务端（权限拒绝的判定在调用方，这里只管落值） */
+  function setClientNotifications(next: boolean) {
+    clientNotifications.value = next
+    void persistPreferences({ clientNotifications: next })
+  }
+
+  /** 设置提示音并写入服务端 */
+  function setNotificationSound(next: NotificationSound) {
+    notificationSound.value = next
+    void persistPreferences({ notificationSound: next })
+  }
+
+  /**
+   * 拉取服务端偏好并应用。
+   *
+   * 幂等：同一 userId 只拉一次，路由来回切换导致的重挂载是 no-op。
+   * 失败时保持本地语言与字号（localStorage 里已有值），不打断使用，
+   * 也不置 `prefsLoadedFor`，下次挂载会重试。
+   */
+  async function loadPreferences(userId: string | null) {
+    if (!userId || prefsLoadedFor.value === userId) return
+    try {
+      const prefs = await fetchPreferences()
+      setLocale(prefs.language)
+      setFontSize(prefs.fontSize)
+      clientNotifications.value = prefs.clientNotifications
+      notificationSound.value = prefs.notificationSound
+      confirmedFontSize.value = clampFontSize(prefs.fontSize)
+      prefsLoadedFor.value = userId
+    } catch {
+      // 静默失败：沿用本地值
+    }
+  }
+
+  /**
+   * 登出清理。
+   *
+   * 必须清 `prefsLoadedFor`：否则下一个登录的用户会因为 guard 命中而永远拉不到
+   * 自己的偏好。复位字号会立刻撤掉 zoom，下一个人不会在请求回来之前先看到
+   * 上一个人的大字号。
+   */
+  function clearPreferences() {
+    prefsLoadedFor.value = null
+    clientNotifications.value = true
+    notificationSound.value = 'none'
+    confirmedFontSize.value = DEFAULT_FONT_SIZE
+    setFontSize(DEFAULT_FONT_SIZE)
   }
 
   async function fetchHistories() {
@@ -201,6 +422,14 @@ export const useUiStore = defineStore('ui', () => {
     plusMenuOpen.value = false
   }
 
+  function openSettings() {
+    settingsOpen.value = true
+  }
+
+  function closeSettings() {
+    settingsOpen.value = false
+  }
+
   async function deleteHistory(thread_id: string) {
     try {
       await deleteConversationApi(thread_id)
@@ -228,14 +457,28 @@ export const useUiStore = defineStore('ui', () => {
     shellWidth,
     rightPanelRatio,
     plusMenuOpen,
+    settingsOpen,
     searchQuery,
     selectedModel,
     theme,
     locale,
+    fontSize,
+    fontScale,
+    clientNotifications,
+    notificationSound,
+    prefsLoadedFor,
     setLocale,
+    setFontSize,
+    saveLanguage,
+    saveFontSize,
+    persistFontSize,
+    setClientNotifications,
+    setNotificationSound,
+    loadPreferences,
+    clearPreferences,
     histories,
     activeThreadId,
-    initTheme,
+    initAppearance,
     setTheme,
     toggleTheme,
     fetchHistories,
@@ -250,6 +493,8 @@ export const useUiStore = defineStore('ui', () => {
     syncShellWidth,
     togglePlusMenu,
     closePlusMenu,
+    openSettings,
+    closeSettings,
     newConversation,
   }
 })

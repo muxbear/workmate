@@ -288,6 +288,8 @@ async def init_db():
     from db.models.role import Role  # noqa: F401
     from db.models.role_permission import RolePermission  # noqa: F401
     from db.models.system_event import SystemEvent  # noqa: F401
+    from db.models.system_setting import SystemSetting  # noqa: F401
+    from db.models.user_preference import UserPreference  # noqa: F401
     from db.models.user_role import UserRole  # noqa: F401
 
     # 断言 async_engine 不为 None，类型检查器会据此收窄类型

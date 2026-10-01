@@ -18,7 +18,9 @@ import BrandPanel from './BrandPanel.vue'
 
 .auth-layout {
   display: flex;
-  height: 100vh;
+  /* 同 MainLayout：100% 而不是 100vh，避免字号偏好的 zoom 影响高度。
+     登录页正是最需要稳的那个页面——它是用户改完字号后最先看到的一屏。 */
+  height: 100%;
   background: var(--color-bg-form-area);
 }
 

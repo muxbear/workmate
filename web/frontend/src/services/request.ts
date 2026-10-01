@@ -20,6 +20,16 @@ declare module 'axios' {
      * 之后的一行改动，已记入遗留。
      */
     notify?: boolean
+
+    /**
+     * 置 ``true`` 时 401 不触发刷新 token 与跳转登录页。
+     *
+     * **给公开接口用**：这类接口在登录页上也会被调用（例如启动时拉取系统
+     * 名称与 LOGO，登录页本身就要渲染品牌）。一旦后端误配成返回 401，
+     * 下面那段 ``window.location.href = '/login'`` 会在登录页上自我重定向：
+     * 加载 → 401 → 跳 /login → 重新加载 → 又 401，形成无限重载循环。
+     */
+    skipAuthRedirect?: boolean
   }
 }
 
@@ -135,7 +145,12 @@ instance.interceptors.response.use(
     const config = error.config as InternalAxiosRequestConfig | undefined
     const isRefreshRequest = config?.url?.includes('/auth/refresh') ?? false
 
-    if (error.response?.status === 401 && config && !isRefreshRequest) {
+    if (
+      error.response?.status === 401 &&
+      config &&
+      !isRefreshRequest &&
+      !config.skipAuthRedirect
+    ) {
       if (!getRefreshTokenValue()) {
         clearTokensFromStorage()
         window.location.href = '/login'

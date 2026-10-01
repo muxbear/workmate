@@ -5,6 +5,7 @@ import { authApi } from '@/services/authApi'
 import { clearTokensFromStorage } from '@/services/request'
 import { useNotificationStore } from '@/stores/notification'
 import { usePermissionStore } from '@/stores/permission'
+import { useUiStore } from '@/stores/ui'
 
 const TOKEN_STORAGE_KEY = 'auth_tokens'
 const USER_STORAGE_KEY = 'auth_user'
@@ -101,6 +102,8 @@ export const useAuthStore = defineStore('auth', () => {
     permStore.reset()
     const notifStore = useNotificationStore()
     notifStore.disconnectSSE()
+    // 撤销上一位用户留下的字号与通知开关，避免泄漏给下一位用户
+    useUiStore().clearPreferences()
   }
 
   // ---- Token 刷新去重锁 ----

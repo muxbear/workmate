@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { Sparkles } from 'lucide-vue-next'
 import { useChatStore } from '@/stores/chat'
 import { useUiStore } from '@/stores/ui'
+import { useBrandStore } from '@/stores/brand'
 import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
 import SharePanel from './chat/SharePanel.vue'
@@ -14,6 +15,7 @@ const chatStore = useChatStore()
 // 欢迎态：无任何消息时显示；发送首条消息或加载历史对话后自动切换为对话态
 const isWelcome = computed(() => chatStore.messages.length === 0)
 const uiStore = useUiStore()
+const brandStore = useBrandStore()
 const route = useRoute()
 
 // 分享链接入口：/chat?thread=<id> 打开后自动加载该会话
@@ -34,7 +36,7 @@ onMounted(() => {
         <div class="welcome-icon">
           <Sparkles :size="40" />
         </div>
-        <h1 class="welcome-title">Ke-Work 助手，有什么可以帮你？</h1>
+        <h1 class="welcome-title">{{ brandStore.systemName }} 助手，有什么可以帮你？</h1>
         <p class="welcome-subtitle">输入消息开始对话，或从右侧历史记录中选择已有对话</p>
       </div>
       <div class="welcome-input">

@@ -16,6 +16,7 @@ import {
 import { ElMessage } from 'element-plus'
 import { useUiStore } from '@/stores/ui'
 import { LOCALE_OPTIONS } from '@/locales'
+import type { LocaleCode } from '@/locales'
 import { useNotificationStore } from '@/stores/notification'
 import NotificationPanel from './NotificationPanel.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -101,7 +102,22 @@ function toggleUserMenu() {
 
 function handleSettings() {
   userMenuOpen.value = false
-  ElMessage.info('设置页面开发中')
+  uiStore.openSettings()
+}
+
+/**
+ * 切换界面语言。
+ *
+ * 走 `saveLanguage` 而不是 `setLocale`：语言偏好现在是按用户存在服务端的，
+ * 只改本地的话下次登录会被服务端值覆盖，与用户刚选的不一致。
+ * 设置页的语言下拉走同一个方法，两处因此不可能不同步。
+ */
+async function handleLocaleChange(next: LocaleCode) {
+  try {
+    await uiStore.saveLanguage(next)
+  } catch {
+    ElMessage.error('语言保存失败')
+  }
 }
 
 function openChangePassword() {
@@ -316,7 +332,7 @@ onUnmounted(() => {
                   class="locale-option"
                   :class="{ active: uiStore.locale === opt.value }"
                   :aria-pressed="uiStore.locale === opt.value"
-                  @click.stop="uiStore.setLocale(opt.value)"
+                  @click.stop="handleLocaleChange(opt.value)"
                 >
                   {{ opt.label }}
                 </button>

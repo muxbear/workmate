@@ -1,5 +1,6 @@
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { useKbQaStore } from '@/stores/kbQa'
+import { useUiStore } from '@/stores/ui'
 
 /** 拖拽分割线的每次键盘微调步长（px） */
 const KEYBOARD_STEP = 24
@@ -13,6 +14,7 @@ const KEYBOARD_STEP = 24
  */
 export function useKbQaResize(shellRef: Ref<HTMLElement | null>) {
   const store = useKbQaStore()
+  const uiStore = useUiStore()
   const dragging = ref(false)
   let observer: ResizeObserver | null = null
   let previousCursor = ''
@@ -27,7 +29,9 @@ export function useKbQaResize(shellRef: Ref<HTMLElement | null>) {
     const el = shellRef.value
     if (!el) return
     const rect = el.getBoundingClientRect()
-    store.setPanelWidth(rect.right - clientX)
+    // 同 usePanelResize：视觉 px → 布局 px。宽度按布局 px 存储（与 clientWidth 同系），
+    // 直接塞视觉距离会让字号放大后的分割线不跟手、边界也偏。
+    store.setPanelWidth((rect.right - clientX) / uiStore.fontScale)
   }
 
   function onPointerMove(event: PointerEvent) {

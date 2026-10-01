@@ -30,11 +30,13 @@ import {
 import type { Component } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { usePermissionStore } from '@/stores/permission'
+import { useBrandStore } from '@/stores/brand'
 
 const router = useRouter()
 const route = useRoute()
 const uiStore = useUiStore()
 const permStore = usePermissionStore()
+const brandStore = useBrandStore()
 
 interface MenuItem {
   icon: Component
@@ -165,7 +167,7 @@ onUnmounted(() => {
 <template>
   <aside class="sidebar" :class="{ collapsed: uiStore.sidebarCollapsed }">
     <div class="side-top">
-      <span class="logo">Ke-Work</span>
+      <span class="logo">{{ brandStore.systemName }}</span>
       <button
         class="collapse-btn"
         :aria-label="uiStore.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"

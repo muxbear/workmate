@@ -24,7 +24,10 @@ export function usePanelResize(shellRef: Ref<HTMLElement | null>) {
     const el = shellRef.value
     if (!el) return
     const rect = el.getBoundingClientRect()
-    uiStore.setRightPanelWidth(rect.right - clientX)
+    // rect / clientX 是 zoom 之后的视觉 px，而右栏宽度按**布局 px** 存储、也用布局 px
+    // 渲染（CSS width 不受祖先 zoom 影响）。不换算回布局 px 的话，字号一放大分割线
+    // 就不跟手（跑得比指针快 zoom 倍），钳制上下界也会偏。
+    uiStore.setRightPanelWidth((rect.right - clientX) / uiStore.fontScale)
   }
 
   function onPointerMove(event: PointerEvent) {

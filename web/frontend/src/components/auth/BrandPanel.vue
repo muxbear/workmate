@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import FeatureGrid from './FeatureGrid.vue'
+import BrandMark from '@/components/common/BrandMark.vue'
+import { useBrandStore } from '@/stores/brand'
+
+// 登录页在 MainLayout 之外，品牌状态由 main.ts 在启动时拉取（公开接口，未登录也能取）
+const brandStore = useBrandStore()
 </script>
 
 <template>
@@ -11,22 +16,11 @@ import FeatureGrid from './FeatureGrid.vue'
     <div class="brand-content">
       <!-- Logo -->
       <div class="brand-logo">
-        <svg viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="96" height="96" rx="20" fill="url(#logo-grad)" />
-          <circle cx="48" cy="48" r="28" stroke="white" stroke-width="3" fill="none" opacity="0.9" />
-          <circle cx="48" cy="48" r="14" stroke="white" stroke-width="2" fill="none" opacity="0.6" />
-          <circle cx="48" cy="28" r="4" fill="white" opacity="0.8" />
-          <defs>
-            <linearGradient id="logo-grad" x1="0" y1="0" x2="96" y2="96">
-              <stop offset="0%" stop-color="#3b82f6" />
-              <stop offset="100%" stop-color="#8b5cf6" />
-            </linearGradient>
-          </defs>
-        </svg>
+        <BrandMark :src="brandStore.logoDisplaySrc" />
       </div>
 
       <!-- System name -->
-      <h1 class="brand-name">Ke-Work</h1>
+      <h1 class="brand-name">{{ brandStore.systemName }}</h1>
 
       <!-- Tagline -->
       <p class="brand-tagline">自我进化，越用越强</p>
@@ -39,7 +33,7 @@ import FeatureGrid from './FeatureGrid.vue'
     <div class="brand-spacer" />
 
     <!-- Copyright -->
-    <footer class="brand-footer">2026 Ke-Work 版权所有</footer>
+    <footer class="brand-footer">2026 {{ brandStore.systemName }} 版权所有</footer>
   </div>
 </template>
 
@@ -69,6 +63,8 @@ import FeatureGrid from './FeatureGrid.vue'
   height: var(--size-logo);
   border-radius: var(--radius-logo);
   filter: drop-shadow(var(--shadow-logo));
+  /* 自定义 LOGO 是 <img>，需要裁切才能跟随圆角 */
+  overflow: hidden;
 }
 
 .brand-name {
