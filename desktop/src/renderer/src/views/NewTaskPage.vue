@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import QRCode from 'qrcode'
 import { useAgentStore } from '@store/agent'
 import { useModelStore } from '@store/models'
@@ -495,21 +496,115 @@ const thinking = computed(() => {
   return val
 })
 
-// 思考块折叠状态：按消息 id 记录（regenerate 截断后 index 会错位）
-const thinkingCollapsed = ref<Record<string, boolean>>({})
-
-const toggleThinking = (msgId: string): void => {
-  thinkingCollapsed.value[msgId] = !thinkingCollapsed.value[msgId]
-}
-
-const isLastAssistant = (msgId: string): boolean => {
+const findLastAssistant = (): (typeof messages.value)[number] | null => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     if (messages.value[i].role === 'assistant') {
-      return messages.value[i].id === msgId
+      return messages.value[i]
     }
   }
-  return false
+  return null
 }
+
+const isLastAssistant = (msgId: string): boolean => findLastAssistant()?.id === msgId
+
+// ── 思考块交互：按消息 id 记录（regenerate 截断后 index 会错位）──
+/** 折叠为一行（仅保留标题行） */
+const thinkingCollapsed = ref<Record<string, boolean>>({})
+/** 展开浏览（高度上限放宽到阅读高度；默认在紧凑高度内滚动） */
+const thinkingExpanded = ref<Record<string, boolean>>({})
+/** 内容是否超出紧凑高度（决定「展开浏览」入口是否出现） */
+const thinkingOverflow = ref<Record<string, boolean>>({})
+/** 内部滚动是否跟随输出（用户向上翻阅后暂停跟随） */
+const thinkingFollow = ref<Record<string, boolean>>({})
+/** 用户手动操作过的思考块：思考结束后不自动收起，尊重用户意图 */
+const thinkingTouched = new Set<string>()
+/** 思考块正文滚动容器（ref 回调注册，卸载自动移除） */
+const thinkingBodies = new Map<string, HTMLElement>()
+
+function registerThinkingBody(msgId: string, el: Element | ComponentPublicInstance | null): void {
+  if (el instanceof HTMLElement) thinkingBodies.set(msgId, el)
+  else thinkingBodies.delete(msgId)
+}
+
+/** 贴近底部判定阈值（px）：留容差，避免逐像素误差把跟随判停 */
+const THINKING_FOLLOW_GAP = 24
+
+/** 思考块内部滚到底（流式逐块增长时跟随输出；force 用于用户主动展开时定位到最新） */
+function scrollThinkingToBottom(msgId: string, force = false): void {
+  const el = thinkingBodies.get(msgId)
+  if (!el) return
+  if (!force && thinkingFollow.value[msgId] === false) return
+  el.scrollTop = el.scrollHeight
+  thinkingFollow.value[msgId] = true
+}
+
+/** 内部滚动事件：刷新「是否仍贴近底部」，决定后续输出是否继续跟随 */
+function onThinkingScroll(msgId: string, e: Event): void {
+  const el = e.target as HTMLElement
+  thinkingFollow.value[msgId] =
+    el.scrollHeight - el.scrollTop - el.clientHeight <= THINKING_FOLLOW_GAP
+}
+
+/** 内容超出紧凑高度 → 出现「展开浏览」；折叠隐藏（高度为 0）时不测量，保留既有判断 */
+function updateThinkingOverflow(msgId: string): void {
+  if (thinkingOverflow.value[msgId]) return
+  const el = thinkingBodies.get(msgId)
+  if (!el || el.clientHeight === 0) return
+  thinkingOverflow.value[msgId] = el.scrollHeight > el.clientHeight + 1
+}
+
+/** 该思考块是否正在输出（此消息为最后一条 AI 消息且思考流未结束） */
+function isThinkingNow(msgId: string): boolean {
+  return isStreaming.value && isThinking.value && isLastAssistant(msgId)
+}
+
+/** 折叠/展开切换（手动操作后不再自动收起）；展开时定位到最新输出 */
+const toggleThinking = (msgId: string): void => {
+  thinkingTouched.add(msgId)
+  thinkingCollapsed.value[msgId] = !thinkingCollapsed.value[msgId]
+  if (!thinkingCollapsed.value[msgId]) {
+    nextTick(() => {
+      scrollThinkingToBottom(msgId, true)
+      updateThinkingOverflow(msgId)
+    })
+  }
+}
+
+/** 展开浏览 / 收起：紧凑高度 ↔ 阅读高度 */
+const toggleThinkingExpand = (msgId: string): void => {
+  thinkingTouched.add(msgId)
+  thinkingExpanded.value[msgId] = !thinkingExpanded.value[msgId]
+  nextTick(() => updateThinkingOverflow(msgId))
+}
+
+const showThinkingExpandToggle = (msgId: string): boolean =>
+  !!thinkingOverflow.value[msgId] && !thinkingCollapsed.value[msgId]
+
+// ── 委派专家进行中：动态状态提示（主智能体拆分任务交给专家时给出明确反馈）──
+const activeDelegation = computed(() => {
+  const list = agentStore.activeDelegations
+  return list.length > 0 ? list[list.length - 1] : null
+})
+
+/** 当前委派已等待秒数：长任务期间持续刷新，表明仍在进行 */
+const delegationWaitSec = ref(0)
+let delegationTimer: ReturnType<typeof setInterval> | null = null
+
+watch(activeDelegation, (val) => {
+  if (delegationTimer) {
+    clearInterval(delegationTimer)
+    delegationTimer = null
+  }
+  delegationWaitSec.value = 0
+  if (!val) return
+  delegationTimer = setInterval(() => {
+    delegationWaitSec.value += 1
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (delegationTimer) clearInterval(delegationTimer)
+})
 
 // ── Constants ──
 const categories = [
@@ -607,18 +702,35 @@ const scrollChips = (dir: 'left' | 'right'): void => {
   el.scrollBy({ left: dir === 'right' ? 120 : -120, behavior: 'smooth' })
 }
 
+/** 失败回填：把文本段写回输入卡（文件 token 不恢复，与发送失败路径一致） */
+const restorePromptText = (parts: PromptPayload['parts']): void => {
+  const text = parts
+    .filter((p) => p.type === 'text')
+    .map((p) => p.text)
+    .join('')
+  promptRef.value?.setText(text)
+  taskInput.value = text
+}
+
 /** 发送消息：注入专家 → 调 agent → 清空输入卡（失败回填） */
 const sendMessage = async (payload: PromptPayload): Promise<void> => {
   // 先将选中专家注入主智能体；无专家时清空子智能体，避免沿用上一条会话的专家配置。
   const expert = payload.expertId
     ? (catalog.experts.find((e) => e.id === payload.expertId) ?? null)
     : null
+
+  // 提交即清空输入卡（正文 + token + 技能勾选，保留专家与模式选择）：
+  // setExperts 可能因专家 MCP 加载耗时，不能等它再清（否则用户会以为没提交上而重复回车）
+  promptRef.value?.clear()
+  taskInput.value = ''
+
   try {
     const expertRes = await window.api.setExperts(
       expert ? [JSON.parse(JSON.stringify(expert))] : []
     )
     if (!expertRes.success) {
       showToast(expertRes.error || '设置专家失败')
+      restorePromptText(payload.parts)
       return
     }
     // 专家依赖的 MCP 服务连不上时（例如视频生成服务不可达）明确提示，避免用户以为专家"坏了"
@@ -632,12 +744,10 @@ const sendMessage = async (payload: PromptPayload): Promise<void> => {
   } catch (err) {
     console.error('[NewTaskPage] setExperts failed:', err)
     showToast(err instanceof Error ? err.message : '设置专家失败')
+    restorePromptText(payload.parts)
     return
   }
 
-  // 清空输入卡（正文 + token + 技能勾选），保留专家与模式选择
-  promptRef.value?.clear()
-  taskInput.value = ''
   // 用户主动触发的消息动作：即使向上翻阅过也强制回到底部跟随
   atBottom.value = true
   agentStore
@@ -648,13 +758,7 @@ const sendMessage = async (payload: PromptPayload): Promise<void> => {
     })
     .catch((err: unknown) => {
       console.error('[NewTaskPage] sendMessage failed:', err)
-      // 失败时恢复输入内容：仅恢复文本段（文件 token 不恢复）
-      const restoreText = payload.parts
-        .filter((p) => p.type === 'text')
-        .map((p) => p.text)
-        .join('')
-      promptRef.value?.setText(restoreText)
-      taskInput.value = restoreText
+      restorePromptText(payload.parts)
     })
 }
 
@@ -722,6 +826,46 @@ watch(lastAssistantContentLen, () => {
   if (!atBottom.value) return
   nextTick(scrollMessagesToBottom)
 })
+
+// ── 思考块：输出中跟随内部滚动 + 溢出测量（决定是否出现「展开浏览」）──
+const lastAssistantReasoningLen = computed(() => findLastAssistant()?.reasoning?.length ?? 0)
+
+watch(lastAssistantReasoningLen, () => {
+  const last = findLastAssistant()
+  if (!last?.reasoning) return
+  nextTick(() => {
+    scrollThinkingToBottom(last.id)
+    updateThinkingOverflow(last.id)
+  })
+})
+
+// 思考流结束：自动收起为一行（对齐主流同类产品：思考完成后收起，点击可再展开）；
+// 用户手动操作过的思考块保持现状，不打扰阅读
+watch(isThinking, (now, prev) => {
+  if (!prev || now) return
+  const last = findLastAssistant()
+  if (!last?.reasoning) return
+  if (thinkingTouched.has(last.id)) return
+  thinkingCollapsed.value[last.id] = true
+})
+
+// 会话切换/历史回显：思考块默认收起（仅一行摘要），并同步可见块的溢出状态；
+// 正在流式输出的消息除外（保持展开可见）
+watch(
+  () => messages.value.map((m) => m.id).join('|'),
+  () => {
+    nextTick(() => {
+      for (const m of messages.value) {
+        if (!m.reasoning || m.id in thinkingCollapsed.value) continue
+        if (isStreaming.value && isLastAssistant(m.id)) continue
+        thinkingCollapsed.value[m.id] = true
+      }
+      for (const m of messages.value) {
+        if (m.reasoning && !thinkingCollapsed.value[m.id]) updateThinkingOverflow(m.id)
+      }
+    })
+  }
+)
 
 // ── 历史会话回显：切换会话后等消息加载完成滚到底部（修复残留上次滚动位置问题）──
 const echoPendingScroll = ref(false)
@@ -1206,10 +1350,24 @@ watch(
                 <span class="chat-bubble-head-name">{{ settingsStore.systemName }}</span>
               </div>
               <div class="chat-bubble-wrapper">
-                <!-- 深度思考块 -->
+                <!-- 深度思考块：高度受限+内部滚动+输出提示；「展开浏览」放宽高度上限 -->
                 <div v-if="msg.reasoning" class="thinking-block">
                   <button class="thinking-header" @click="toggleThinking(msg.id)">
-                    <span class="thinking-header-text">深度思考</span>
+                    <span class="thinking-header-text">
+                      深度思考
+                      <span v-if="isThinkingNow(msg.id)" class="thinking-live">
+                        <span class="thinking-live-dot"></span>
+                        <span class="thinking-live-text">正在思考…</span>
+                      </span>
+                    </span>
+                    <span
+                      v-if="showThinkingExpandToggle(msg.id)"
+                      class="thinking-expand"
+                      :title="thinkingExpanded[msg.id] ? '收起为紧凑高度' : '展开浏览完整思考'"
+                      @click.stop="toggleThinkingExpand(msg.id)"
+                    >
+                      {{ thinkingExpanded[msg.id] ? '收起' : '展开浏览' }}
+                    </span>
                     <svg
                       :class="[
                         'thinking-chevron',
@@ -1227,7 +1385,15 @@ watch(
                     </svg>
                   </button>
                   <Transition name="thinking-collapse">
-                    <div v-show="!thinkingCollapsed[msg.id]" class="thinking-body">
+                    <div
+                      v-show="!thinkingCollapsed[msg.id]"
+                      :ref="(el) => registerThinkingBody(msg.id, el)"
+                      :class="[
+                        'thinking-body',
+                        { 'thinking-body--expanded': thinkingExpanded[msg.id] }
+                      ]"
+                      @scroll="onThinkingScroll(msg.id, $event)"
+                    >
                       <MessageContent
                         :content="msg.reasoning"
                         content-type="markdown"
@@ -1246,8 +1412,15 @@ watch(
                     @open-file="openDocFromRelPath"
                   />
                 </div>
+                <!-- 等待首块输出：无正文且无思考时显示加载动画（思考块/委派提示已给状态时不重复） -->
                 <div
-                  v-if="!msg.content && isLastAssistant(msg.id) && thinking"
+                  v-if="
+                    !msg.content &&
+                    !msg.reasoning &&
+                    !activeDelegation &&
+                    isLastAssistant(msg.id) &&
+                    thinking
+                  "
                   class="chat-bubble thinking-bubble"
                 >
                   <span class="dot-pulse" style="animation-delay: 0s"></span>
@@ -1277,6 +1450,18 @@ watch(
                       <span class="msg-artifact-name">{{ file.name }}</span>
                     </button>
                   </template>
+                </div>
+                <!-- 委派专家进行中：主智能体拆分任务交给专家时的动态状态（长任务期间界面不空转） -->
+                <div
+                  v-if="activeDelegation && isLastAssistant(msg.id) && thinking"
+                  class="chat-bubble delegate-bubble"
+                  :title="activeDelegation.description"
+                >
+                  <span class="delegate-spinner"></span>
+                  <span class="delegate-text">正在委派「{{ activeDelegation.name }}」处理…</span>
+                  <span v-if="delegationWaitSec > 0" class="delegate-elapsed"
+                    >{{ delegationWaitSec }}s</span
+                  >
                 </div>
               </div>
               <!-- 操作栏：按钮组 + 元信息 -->
@@ -1422,10 +1607,12 @@ watch(
             <template v-else>
               <div class="chat-bubble-wrapper chat-bubble-wrapper--user">
                 <div class="chat-bubble chat-bubble--user">
+                  <!-- 用户输入按行断行（GFM 软换行）：多行提问保持输入的换行结构 -->
                   <MessageContent
                     :content="msg.content"
                     content-type="markdown"
                     :workspace-id="currentWorkspaceId"
+                    :breaks="true"
                     @open-file="openDocFromRelPath"
                   />
                 </div>
@@ -2194,6 +2381,77 @@ watch(
 .thinking-header-text {
   flex: 1;
   text-align: left;
+  display: flex;
+  align-items: center;
+}
+
+/* 思考输出中的提示：呼吸圆点 + 文案（仅流式期间出现） */
+.thinking-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  font-weight: 500;
+  color: var(--kw-color-brand);
+}
+
+.thinking-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: thinkingPulse 1s ease-in-out infinite;
+}
+
+.thinking-live-text {
+  animation: thinkingBreathe 1.4s ease-in-out infinite;
+}
+
+@keyframes thinkingPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes thinkingBreathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 「展开浏览 / 收起」：内容超出紧凑高度时出现，切换阅读高度 */
+.thinking-expand {
+  flex-shrink: 0;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--kw-color-border-brand);
+  border-radius: 999px;
+  background: var(--kw-color-surface);
+  color: var(--kw-color-brand);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.thinking-expand:hover {
+  background: var(--kw-color-brand-hover);
+  border-color: var(--kw-color-brand);
 }
 
 .thinking-chevron {
@@ -2214,6 +2472,34 @@ watch(
   color: var(--kw-color-text-faint);
   border-top: 1px solid var(--kw-color-border-brand);
   transition: color 0.15s ease;
+  /* 高度上限：思考输出不随内容无限拉长，超出后在块内滚动 */
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 逐块重渲染（v-html 整体替换）会触发浏览器滚动锚定自行调 scrollTop：
+     用户上翻阅读时会被莫名拽动，这里禁用锚定，交给上面的跟随逻辑 */
+  overflow-anchor: none;
+  /* 细滚动条：内容未超出时不出现，出现时也不喧宾夺主 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--kw-color-border-strong) transparent;
+}
+
+/* 展开浏览：放宽到阅读高度（仍有限，避免长思考把消息区顶飞） */
+.thinking-body--expanded {
+  max-height: min(70vh, 720px);
+}
+
+.thinking-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.thinking-body::-webkit-scrollbar-thumb {
+  background: var(--kw-color-border-strong);
+  border-radius: 4px;
+}
+
+.thinking-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .thinking-block:hover .thinking-body {
@@ -2274,6 +2560,45 @@ watch(
 
   50% {
     transform: translateY(-4px);
+  }
+}
+
+/* 委派专家进行中：旋转指示 + 文案 + 已等待秒数（气泡贴合内容宽度） */
+.delegate-bubble {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--kw-color-input-bg);
+  border-radius: 14px 14px 14px 4px;
+  font-size: 13px;
+}
+
+.delegate-spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--kw-color-brand);
+  border-top-color: transparent;
+  animation: delegateSpin 0.8s linear infinite;
+}
+
+.delegate-text {
+  color: var(--kw-color-brand);
+  font-weight: 500;
+}
+
+.delegate-elapsed {
+  color: var(--kw-color-text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes delegateSpin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

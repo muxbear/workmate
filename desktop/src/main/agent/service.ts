@@ -260,6 +260,21 @@ export async function invokeSendMessage(
       return
     }
     if (call.name === 'task' || call.name === 'execute') {
+      // 委派专家（子智能体）事件：渲染层据此显示「正在委派…」动态状态，
+      // 否则长任务期间界面完全无反馈（用户不知道当前进度）
+      if (call.name === 'task') {
+        const callId = call.callId ?? randomUUID()
+        const name = toolInputString(call.input, 'subagent_type') ?? '专家'
+        const description = toolInputString(call.input, 'description')
+        win?.webContents.send('agent:delegate-start', {
+          callId,
+          name,
+          ...(description ? { description } : {})
+        })
+        void Promise.resolve(call.output)
+          .then(() => win?.webContents.send('agent:delegate-end', { callId, ok: true }))
+          .catch(() => win?.webContents.send('agent:delegate-end', { callId, ok: false }))
+      }
       const outputText = contentToText(await (call.output ?? Promise.resolve('')).catch(() => ''))
       const baseDir = config.workspace_dir ?? config.workspace?.dir
       const extracted = extractDocArtifactsFromText(

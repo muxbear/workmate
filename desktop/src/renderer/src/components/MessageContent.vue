@@ -30,13 +30,16 @@ export interface MessageContentProps {
   knowledgeId?: string
   /** 当前 Markdown 文件的相对路径：相对图片以它所在目录为基准解析 */
   basePath?: string
+  /** GFM 软换行：单个换行渲染为 <br>（聊天输入用；文档预览保持标准 Markdown 语义） */
+  breaks?: boolean
 }
 
 const props = withDefaults(defineProps<MessageContentProps>(), {
   contentType: 'markdown',
   workspaceId: undefined,
   knowledgeId: undefined,
-  basePath: undefined
+  basePath: undefined,
+  breaks: false
 })
 
 /** 工作区文档链接点击 → 由父级在右侧栏打开（历史与实时共用同一渲染路径） */
@@ -380,7 +383,7 @@ const renderedHtml = computed(() => {
         return `<img ${attrs.join(' ')}>`
       }
       return replaceWorkspaceVideoSrc(
-        marked.parse(props.content, { async: false, renderer }) as string,
+        marked.parse(props.content, { async: false, renderer, breaks: props.breaks }) as string,
         workspaceVideoMap.value
       )
     }

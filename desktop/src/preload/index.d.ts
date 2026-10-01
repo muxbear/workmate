@@ -58,6 +58,22 @@ export interface AgentArtifactMeta {
   preview: ArtifactPreviewKind
 }
 
+/** 主智能体把子任务委派给专家（子智能体）开始（agent:delegate-start 载荷） */
+export interface AgentDelegateStart {
+  /** 工具调用 id（delegate-end 按它配对） */
+  callId: string
+  /** 子智能体（专家）name */
+  name: string
+  /** 委派任务描述（模型传给 task 工具的子任务说明） */
+  description?: string
+}
+
+/** 委派结束（agent:delegate-end 载荷） */
+export interface AgentDelegateEnd {
+  callId: string
+  ok: boolean
+}
+
 export interface AuthResult {
   token: string
   refreshToken: string
@@ -136,6 +152,8 @@ export interface AgentAPI {
   onAgentThinking(callback: (chunk: string) => void): () => void
   onAgentThinkingDone(callback: () => void): () => void
   onAgentDone(callback: () => void): () => void
+  onAgentDelegateStart(callback: (data: AgentDelegateStart) => void): () => void
+  onAgentDelegateEnd(callback: (data: AgentDelegateEnd) => void): () => void
   onAgentArtifactStart(callback: (meta: AgentArtifactMeta) => void): () => void
   onAgentArtifactChunk(callback: (data: { artifactId: string; text: string }) => void): () => void
   onAgentArtifactEnd(callback: (data: { artifactId: string; ok: boolean }) => void): () => void

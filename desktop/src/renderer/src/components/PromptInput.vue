@@ -567,11 +567,17 @@ watch(
   { immediate: true }
 )
 
-/** 输入框挂载时补做待处理的专家提示词同步 */
+/**
+ * 输入框挂载时补做待处理的专家提示词同步。
+ *
+ * 对话态（compact）输入框不回填：首轮提交后「欢迎态 → 对话态」会重挂载输入框，
+ * 若在此把仍选中专家的提示词重新插入，用户会看到"提交之后输入框还有内容"
+ * （提示词原文已随消息进入对话；再次选择专家时 watcher 仍会正常插入）。
+ */
 watch(inputRef, (el) => {
   if (el && pendingExpertPromptSync.value) {
     pendingExpertPromptSync.value = false
-    syncExpertPromptToDom(el, catalog.selectedExpertPrompt, '')
+    if (!props.compact) syncExpertPromptToDom(el, catalog.selectedExpertPrompt, '')
   }
 })
 

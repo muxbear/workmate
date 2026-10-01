@@ -299,3 +299,102 @@ describe('invokeSendMessage（文档产物流事件）', () => {
     expect(send.mock.calls.some((c) => c[0] === 'agent:artifact-start')).toBe(false)
   })
 })
+
+describe('invokeSendMessage（委派专家事件）', () => {
+  type FakeToolCall = {
+    name: string
+    callId: string
+    input: Record<string, unknown>
+    output: Promise<unknown>
+  }
+
+  function makeWin(): BrowserWindow {
+    return { webContents: { send: vi.fn() } } as unknown as BrowserWindow
+  }
+
+  function makeAgent(streamEvents: ReturnType<typeof vi.fn>): DeepAgent {
+    return { streamEvents } as unknown as DeepAgent
+  }
+
+  it('task 工具调用推送 delegate-start / delegate-end（含子智能体名与任务描述）', async () => {
+    // 委派期间界面此前完全没有状态反馈（用户不知道主智能体在干什么）
+    async function* toolCalls(): AsyncGenerator<FakeToolCall> {
+      yield {
+        name: 'task',
+        callId: 'call_task_1',
+        input: { description: '检索最近一周 AI 重要新闻', subagent_type: '互联网信息检索专家' },
+        output: Promise.resolve('检索结果正文')
+      }
+    }
+    const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
+    const win = makeWin()
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1' },
+      undefined,
+      () => {}
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    const starts = send.mock.calls.filter((c) => c[0] === 'agent:delegate-start')
+    const ends = send.mock.calls.filter((c) => c[0] === 'agent:delegate-end')
+    expect(starts).toHaveLength(1)
+    expect(starts[0][1]).toMatchObject({
+      callId: 'call_task_1',
+      name: '互联网信息检索专家',
+      description: '检索最近一周 AI 重要新闻'
+    })
+    expect(ends).toHaveLength(1)
+    expect(ends[0][1]).toMatchObject({ callId: 'call_task_1', ok: true })
+  })
+
+  it('子智能体执行失败时 delegate-end 标记 ok=false', async () => {
+    async function* toolCalls(): AsyncGenerator<FakeToolCall> {
+      yield {
+        name: 'task',
+        callId: 'call_task_2',
+        input: { description: '失败任务', subagent_type: '某专家' },
+        output: Promise.reject(new Error('subagent failed'))
+      }
+    }
+    const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
+    const win = makeWin()
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1' },
+      undefined,
+      () => {}
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    const ends = send.mock.calls.filter((c) => c[0] === 'agent:delegate-end')
+    expect(ends).toHaveLength(1)
+    expect(ends[0][1]).toMatchObject({ callId: 'call_task_2', ok: false })
+  })
+
+  it('非 task 工具调用不推送委派事件', async () => {
+    async function* toolCalls(): AsyncGenerator<FakeToolCall> {
+      yield {
+        name: 'write_todos',
+        callId: 'call_todo',
+        input: { todos: [] },
+        output: Promise.resolve('ok')
+      }
+    }
+    const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
+    const win = makeWin()
+    await invokeSendMessage(
+      [],
+      win,
+      makeAgent(streamEvents),
+      { thread_id: 't1', user_id: 'u1' },
+      undefined,
+      () => {}
+    )
+    const send = win.webContents.send as ReturnType<typeof vi.fn>
+    expect(send.mock.calls.some((c) => c[0] === 'agent:delegate-start')).toBe(false)
+    expect(send.mock.calls.some((c) => c[0] === 'agent:delegate-end')).toBe(false)
+  })
+})

@@ -18,6 +18,8 @@ interface MockApi {
   onAgentThinking: ReturnType<typeof vi.fn>
   onAgentThinkingDone: ReturnType<typeof vi.fn>
   onAgentDone: ReturnType<typeof vi.fn>
+  onAgentDelegateStart: ReturnType<typeof vi.fn>
+  onAgentDelegateEnd: ReturnType<typeof vi.fn>
   onAgentArtifactStart: ReturnType<typeof vi.fn>
   onAgentArtifactChunk: ReturnType<typeof vi.fn>
   onAgentArtifactEnd: ReturnType<typeof vi.fn>
@@ -66,6 +68,8 @@ function createMockWindowApi(): {
     onAgentThinking: vi.fn(() => () => {}),
     onAgentThinkingDone: vi.fn(() => () => {}),
     onAgentDone: vi.fn(() => () => {}),
+    onAgentDelegateStart: vi.fn(() => () => {}),
+    onAgentDelegateEnd: vi.fn(() => () => {}),
     onAgentArtifactStart: vi.fn(() => () => {}),
     onAgentArtifactChunk: vi.fn(() => () => {}),
     onAgentArtifactEnd: vi.fn(() => () => {}),
@@ -160,6 +164,42 @@ describe('useAgentStore（会话数据基于 LangGraph checkpoint）', () => {
     expect(store.currentConversation?.title).toBe('你好世界')
     // 不再经 IPC 落库
     expect(mock.api.getConversation).not.toHaveBeenCalled()
+  })
+
+  it('委派专家事件驱动 activeDelegations（start 加入 / 重复忽略 / end 移除 / 流结束清空）', async () => {
+    const store = useAgentStore()
+    await store.createConversation()
+
+    const sendPromise = store.sendMessage([{ type: 'text', text: '检索新闻' }])
+    await vi.waitFor(() => {
+      expect(mock.api.onAgentDelegateStart).toHaveBeenCalled()
+      expect(mock.api.onAgentDone).toHaveBeenCalled()
+    })
+    const delegateStart = firstCallArg(mock.api.onAgentDelegateStart) as (d: {
+      callId: string
+      name: string
+    }) => void
+    const delegateEnd = firstCallArg(mock.api.onAgentDelegateEnd) as (d: {
+      callId: string
+      ok: boolean
+    }) => void
+    const doneHandler = firstCallArg(mock.api.onAgentDone) as () => void
+
+    delegateStart({ callId: 'c1', name: '互联网信息检索专家' })
+    expect(store.activeDelegations).toHaveLength(1)
+    expect(store.activeDelegations[0].name).toBe('互联网信息检索专家')
+    // 同一 callId 重复 start 不重复加入
+    delegateStart({ callId: 'c1', name: '互联网信息检索专家' })
+    expect(store.activeDelegations).toHaveLength(1)
+    delegateEnd({ callId: 'c1', ok: true })
+    expect(store.activeDelegations).toHaveLength(0)
+
+    // 流结束兜底清空（即使 end 事件缺失）
+    delegateStart({ callId: 'c2', name: '某专家' })
+    expect(store.activeDelegations).toHaveLength(1)
+    doneHandler()
+    await sendPromise
+    expect(store.activeDelegations).toHaveLength(0)
   })
 
   it('sendMessage 文件段折叠为 📎 文件名，保序 parts 透传主进程', async () => {

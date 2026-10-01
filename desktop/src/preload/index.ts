@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
+  AgentDelegateEnd,
+  AgentDelegateStart,
   AutomationTemplateSyncProgress,
   BrandLogoUploadPayload,
   DesktopExpert,
@@ -58,6 +60,20 @@ const api = {
   onAgentDone(callback: () => void): () => void {
     ipcRenderer.on('agent:stream-done', callback)
     return () => ipcRenderer.removeListener('agent:stream-done', callback)
+  },
+  onAgentDelegateStart(callback: (data: AgentDelegateStart) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, data: AgentDelegateStart): void => {
+      callback(data)
+    }
+    ipcRenderer.on('agent:delegate-start', handler)
+    return () => ipcRenderer.removeListener('agent:delegate-start', handler)
+  },
+  onAgentDelegateEnd(callback: (data: AgentDelegateEnd) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, data: AgentDelegateEnd): void => {
+      callback(data)
+    }
+    ipcRenderer.on('agent:delegate-end', handler)
+    return () => ipcRenderer.removeListener('agent:delegate-end', handler)
   },
   onAgentArtifactStart(
     callback: (meta: {

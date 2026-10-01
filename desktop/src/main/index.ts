@@ -154,6 +154,15 @@ function createWindow(backgroundColor = '#ffffff'): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // 消息正文里的外链是同窗导航（无 target）：不拦截会把应用界面顶掉且无法返回。
+  // 统一拦截并交系统浏览器打开；仅放行开发态 dev server 地址（应用自身为 hash 路由，不会走这里）
+  const devServerUrl = process.env['ELECTRON_RENDERER_URL']
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (devServerUrl && url.startsWith(devServerUrl)) return
+    event.preventDefault()
+    void shell.openExternal(url)
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

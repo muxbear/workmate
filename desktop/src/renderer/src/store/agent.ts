@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 // 渲染层 window.api 类型（preload 的全局声明；node tsconfig 下需此处显式合并）
 import type { KeWorkWindowApi, MessagePart, DocArtifactFile } from '../../../preload/index.d'
 import type { ConversationMessage } from '../../../preload/index.d'
+import type { AgentDelegateStart } from '../../../preload/index.d'
 import { useWorkspaceStore } from './workspace'
 
 declare global {
@@ -86,6 +87,8 @@ export const useAgentStore = defineStore('agent', () => {
   const selectedMessages = ref<Message[]>([])
   const isStreaming = ref<boolean>(false)
   const isThinking = ref<boolean>(false)
+  /** 进行中的委派专家（子智能体）任务：delegate-start 加入、delegate-end 移除，用于动态状态提示 */
+  const activeDelegations = ref<AgentDelegateStart[]>([])
   const loaded = ref<boolean>(false)
   // 右侧栏流式文档：当前 live 产物 + 递增版本号（NewTaskPage 监听驱动 ChatSidePanel）
   const liveArtifact = ref<LiveDocArtifact | null>(null)
@@ -151,6 +154,7 @@ export const useAgentStore = defineStore('agent', () => {
     currentConversationId.value = null
     selectedMessages.value = []
     liveArtifact.value = null
+    activeDelegations.value = []
     artifactVersion.value += 1
   }
 
@@ -170,6 +174,7 @@ export const useAgentStore = defineStore('agent', () => {
     currentConversationId.value = id
     selectedMessages.value = []
     liveArtifact.value = null
+    activeDelegations.value = []
     artifactConversationId.value = null
     artifactVersion.value += 1
     const result = await window.api.getConversation(id)
@@ -267,6 +272,19 @@ export const useAgentStore = defineStore('agent', () => {
 
     const unlistenThinkingDone = window.api.onAgentThinkingDone(() => {
       isThinking.value = false
+    })
+
+    // 委派专家（子智能体）状态：进入/结束「正在委派…」动态提示（与当前会话绑定）
+    const unlistenDelegateStart = window.api.onAgentDelegateStart((data) => {
+      if (currentConversationId.value !== conv.id) return
+      if (!activeDelegations.value.some((item) => item.callId === data.callId)) {
+        activeDelegations.value = [...activeDelegations.value, data]
+      }
+    })
+    const unlistenDelegateEnd = window.api.onAgentDelegateEnd((data) => {
+      activeDelegations.value = activeDelegations.value.filter(
+        (item) => item.callId !== data.callId
+      )
     })
 
     const unlistenChunk = window.api.onAgentChunk((chunk: string) => {
@@ -383,6 +401,8 @@ export const useAgentStore = defineStore('agent', () => {
     } finally {
       unlistenThinking()
       unlistenThinkingDone()
+      unlistenDelegateStart()
+      unlistenDelegateEnd()
       unlistenChunk()
       unlistenArtifactStart()
       unlistenArtifactChunk()
@@ -390,6 +410,7 @@ export const useAgentStore = defineStore('agent', () => {
       unlistenArtifactError()
       isThinking.value = false
       isStreaming.value = false
+      activeDelegations.value = []
       conv.updateAt = Date.now()
       const msg = getAssistantMsg()
       if (msg) {
@@ -508,6 +529,7 @@ export const useAgentStore = defineStore('agent', () => {
   function stopAllTasks(): void {
     isStreaming.value = false
     isThinking.value = false
+    activeDelegations.value = []
     artifactConversationId.value = null
     liveArtifact.value = null
     artifactVersion.value += 1
@@ -528,6 +550,7 @@ export const useAgentStore = defineStore('agent', () => {
     stopAllTasks,
     isStreaming,
     isThinking,
+    activeDelegations,
     currentConversationId,
     createConversation,
     resetNewTask,

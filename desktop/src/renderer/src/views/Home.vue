@@ -78,6 +78,11 @@ onMounted(() => {
   // 加载工作空间列表与会话列表（空间分组数据源）
   workspaceStore.load()
   agentStore.loadConversations()
+  // 本地缓存的专家 / 技能预加载（~/.ke-work 下的 experts.json / skills.json 为展示事实源）：
+  // 否则登录后直接到「新建任务」，场景 chip 与「+」菜单要等访问过对应页面才有数据，
+  // 表现为"本地明明有缓存却没加载出来"
+  void expertSyncStore.loadLocal()
+  void skillSyncStore.loadLocal()
 })
 
 onUnmounted(() => {
