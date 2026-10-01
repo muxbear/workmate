@@ -7,7 +7,7 @@
  * 覆盖：
  *  - hover 滑出 5 个二级子菜单及其内容
  *  - 模式开关互斥（radio）
- *  - 专家选中：工具栏「+」右侧徽标 + textarea 使用提示词 + 菜单关闭；hover 删除图标；点击移除
+ *  - 专家选中：工具栏「+」右侧徽标（输入框不填提示词，指令由主进程注入）+ hover 删除图标；点击移除
  *  - 技能选中：输入框光标处插入 token（图标+名称）+ 菜单保持打开连续多选；hover 删除；发送序列化为 /技能名
  *  - 召唤更多专家 → 智能体下的「专家」页面
  *  - 连接器点击 → 智能体下的「连接器」页面 + 对应授权连接卡片高亮
@@ -185,11 +185,10 @@ describe('E2E 「+」菜单', () => {
     await localSwitch.waitFor({ state: 'visible', timeout: 5_000 })
   }, 60_000)
 
-  it('专家选中：工具栏「+」右侧徽标 + textarea 提示词 + hover 删除', async () => {
+  it('专家选中：工具栏「+」右侧徽标 + hover 删除（委派指令不再写入 textarea）', async () => {
     await seedSelections({
       mode: 'default',
       selectedExpertId: null,
-      selectedExpertPrompt: '',
       recentExpertIds: [1, 2] // 林晓雯 / 陈法鉴
     })
 
@@ -208,21 +207,18 @@ describe('E2E 「+」菜单', () => {
     const chipBox = (await chip.boundingBox())!
     expect(chipBox.x).toBeGreaterThan(plusBox.x + plusBox.width)
 
-    // textarea 插入使用提示词
-    const val = await page.locator('.task-textarea').innerText()
-    expect(val).toContain('请以【林晓雯·内容创作专家】')
+    // 输入框不再被填入专家提示词（委派指令改由主进程中间件注入系统提示词）
+    expect((await page.locator('.task-textarea').innerText()).trim()).toBe('')
 
-    // 切换专家 → 提示词替换而非追加（旧专家提示词被剔除）
+    // 切换专家 → 徽标更新，输入框仍无提示词
     await openPlusMenu()
     await hoverTop('专家')
     await page.locator('.plus-submenu-item', { hasText: '陈法鉴' }).click()
     await page.locator('.plus-menu').waitFor({ state: 'hidden', timeout: 5_000 })
     expect(await chip.textContent()).toContain('陈法鉴')
-    const valSwitch = await page.locator('.task-textarea').innerText()
-    expect(valSwitch).toContain('请以【陈法鉴·法律顾问专家】')
-    expect(valSwitch).not.toContain('林晓雯')
+    expect((await page.locator('.task-textarea').innerText()).trim()).toBe('')
 
-    // hover 徽标 → 头像内删除图标出现；点击 → 徽标与提示词一并移除
+    // hover 徽标 → 头像内删除图标出现；点击 → 徽标移除
     // （过渡 0.15s，用 poll 等过渡完成，避免负载下读到中间值）
     await hoverAwayThen(chip)
     await expect
@@ -236,9 +232,7 @@ describe('E2E 「+」菜单', () => {
       .toBe('1')
     await chip.click()
     await page.locator('.expert-chip').waitFor({ state: 'detached', timeout: 5_000 })
-    const val2 = await page.locator('.task-textarea').innerText()
-    expect(val2).not.toContain('林晓雯')
-    expect(val2).not.toContain('陈法鉴')
+    expect((await page.locator('.task-textarea').innerText()).trim()).toBe('')
   }, 60_000)
 
   it('技能选中：菜单保持打开连续插入 token + hover 删除 + 发送序列化', async () => {

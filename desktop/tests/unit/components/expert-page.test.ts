@@ -29,7 +29,6 @@ function makeExpert(overrides: Partial<Expert> = {}): Expert {
     tools: [],
     providerId: null,
     modelId: null,
-    promptTemplate: '',
     expertiseAreas: [],
     isExpert: true,
     ...overrides

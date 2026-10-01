@@ -47,7 +47,6 @@ function makeExpert(id: string, name = `expert-${id}`, title = `title-${id}`): E
     tools: [],
     providerId: null,
     modelId: null,
-    promptTemplate: '',
     expertiseAreas: [],
     isExpert: true
   }
@@ -101,17 +100,16 @@ describe('catalog store: 模式 radio 互斥', () => {
 })
 
 describe('catalog store: 专家单选与最近使用', () => {
-  it('选中专家生成提示词并记入最近使用', () => {
+  it('选中专家记入最近使用（委派指令由主进程中间件注入，不产生输入框提示词）', () => {
     const store = useCatalogStore()
     store.setExpert('1')
     expect(store.selectedExpertId).toBe('1')
-    expect(store.selectedExpertPrompt).toContain('林晓雯')
-    expect(store.selectedExpertPrompt).toContain('内容创作专家')
+    expect(store.selectedExpert?.name).toBe('林晓雯')
     expect(store.recentExpertIds).toEqual(['1'])
     // 单选：切换专家替换
     store.setExpert('2')
     expect(store.selectedExpertId).toBe('2')
-    expect(store.selectedExpertPrompt).toContain('陈法鉴')
+    expect(store.selectedExpert?.name).toBe('陈法鉴')
   })
 
   it('最近使用：去重置顶、上限 5', () => {
@@ -131,12 +129,12 @@ describe('catalog store: 专家单选与最近使用', () => {
     expect(store.recentExpertIds.length).toBe(5)
   })
 
-  it('clearExpert 清空 id 与提示词', () => {
+  it('clearExpert 清空专家选择', () => {
     const store = useCatalogStore()
     store.setExpert('1')
     store.clearExpert()
     expect(store.selectedExpertId).toBeNull()
-    expect(store.selectedExpertPrompt).toBe('')
+    expect(store.selectedExpert).toBeNull()
   })
 
   it('不存在的专家 id 无副作用', () => {
@@ -203,8 +201,8 @@ describe('catalog store: 持久化', () => {
       STORAGE_KEY,
       JSON.stringify({
         mode: 'bogus',
-        selectedExpertId: 'not-a-number',
-        selectedExpertPrompt: 123,
+        // 非法类型（对象）；string/number id 均视为合法（服务端 id 为 uuid 字符串）
+        selectedExpertId: { bad: true },
         selectedSkillIds: ['a', 1, 2.5],
         recentExpertIds: ['2', 'x', '3', '4', '5', '6', '7']
       })
@@ -212,10 +210,10 @@ describe('catalog store: 持久化', () => {
     const store = useCatalogStore()
     expect(store.mode).toBe('default')
     expect(store.selectedExpertId).toBeNull()
-    expect(store.selectedExpertPrompt).toBe('')
     // 技能字段不再解析：任何持久化数据下均为空
     expect(store.selectedSkillIds).toEqual([])
-    expect(store.recentExpertIds).toEqual(['2', '3', '4', '5', '6']) // 去非法项 + 截断 5
+    // 专家 id 为服务端 uuid 字符串：任意字符串均合法（['x'] 也在内），仅截断 5
+    expect(store.recentExpertIds).toEqual(['2', 'x', '3', '4', '5'])
   })
 })
 

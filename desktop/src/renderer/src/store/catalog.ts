@@ -30,7 +30,6 @@ export interface Expert {
   modelType?: string | null
   skills?: unknown[]
   mcpConfigs?: unknown[]
-  promptTemplate: string
   expertiseAreas: string[]
   /** 语义化版本号（同步时与服务端版本比对；老数据可能缺失） */
   version?: string
@@ -121,14 +120,12 @@ const STORAGE_KEY = 'ke-work:task-selection'
 interface PersistedState {
   mode: Mode
   selectedExpertId: string | null
-  selectedExpertPrompt: string
   recentExpertIds: string[]
 }
 
 const DEFAULT_STATE: PersistedState = {
   mode: 'default',
   selectedExpertId: null,
-  selectedExpertPrompt: '',
   recentExpertIds: []
 }
 
@@ -166,8 +163,6 @@ function loadPersisted(): PersistedState {
     } else if (d.selectedExpertId === null) {
       out.selectedExpertId = null
     }
-    if (typeof d.selectedExpertPrompt === 'string')
-      out.selectedExpertPrompt = d.selectedExpertPrompt
     if (Array.isArray(d.recentExpertIds)) {
       out.recentExpertIds = d.recentExpertIds
         .filter((n): n is string | number => typeof n === 'string' || typeof n === 'number')
@@ -180,14 +175,6 @@ function loadPersisted(): PersistedState {
   }
 }
 
-/** 专家使用提示词模板（插入输入框的可编辑文本，删除专家时按原文移除） */
-function buildExpertPrompt(expert: Expert): string {
-  const template =
-    expert.promptTemplate ||
-    '请先分析任务并拆分为子任务；对于适合【{name}·{title}】处理的子任务，请调用该专家处理；最后汇总结果。'
-  return template.replace('{name}', expert.name).replace('{title}', expert.title)
-}
-
 export const useCatalogStore = defineStore('catalog', () => {
   // ====== 状态(State) ======
   /** 智能体下专家 / 技能 / 连接器页的目标标签页（PlusMenu 导航目标） */
@@ -195,8 +182,6 @@ export const useCatalogStore = defineStore('catalog', () => {
   /** 任务模式（互斥）：default=默认 / local=本地文件 / knowledge=知识库 */
   const mode = ref<Mode>(loadPersisted().mode)
   const selectedExpertId = ref<string | null>(loadPersisted().selectedExpertId)
-  /** 插入输入框的专家提示词原文（切换/删除专家时用于移除） */
-  const selectedExpertPrompt = ref<string>(loadPersisted().selectedExpertPrompt)
   /** 已选技能 id（选择顺序即展示顺序；不持久化，随输入框会话状态） */
   const selectedSkillIds = ref<string[]>([])
   /** 最近使用专家 id（最近在前，上限 5） */
@@ -226,7 +211,6 @@ export const useCatalogStore = defineStore('catalog', () => {
     writeStorage({
       mode: mode.value,
       selectedExpertId: selectedExpertId.value,
-      selectedExpertPrompt: selectedExpertPrompt.value,
       recentExpertIds: [...recentExpertIds.value]
     })
   }
@@ -246,19 +230,17 @@ export const useCatalogStore = defineStore('catalog', () => {
     persist()
   }
 
-  /** 选择专家（单选；生成提示词并记入最近使用） */
+  /** 选择专家（单选；记入最近使用。委派指令由主进程中间件注入，不写入输入框） */
   function setExpert(id: string): void {
     const expert = experts.value.find((e) => e.id === id)
     if (!expert) return
     selectedExpertId.value = id
-    selectedExpertPrompt.value = buildExpertPrompt(expert)
     recordExpertUse(id)
   }
 
-  /** 取消专家选择（提示词由页面从输入框移除） */
+  /** 取消专家选择（委派指令随选择状态由主进程中间件决定，输入框无残留文本） */
   function clearExpert(): void {
     selectedExpertId.value = null
-    selectedExpertPrompt.value = ''
     persist()
   }
 
@@ -334,7 +316,6 @@ export const useCatalogStore = defineStore('catalog', () => {
     pageTab,
     mode,
     selectedExpertId,
-    selectedExpertPrompt,
     selectedSkillIds,
     recentExpertIds,
     focusConnectorId,

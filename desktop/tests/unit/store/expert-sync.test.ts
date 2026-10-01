@@ -173,7 +173,6 @@ describe('expertSync store', () => {
     expect(mock.deleteExpert).toHaveBeenCalledWith('local')
     expect(experts.value).toHaveLength(0)
     expect(catalog.selectedExpertId).toBeNull()
-    expect(catalog.selectedExpertPrompt).toBe('')
     expect(store.removingId).toBeNull()
   })
 

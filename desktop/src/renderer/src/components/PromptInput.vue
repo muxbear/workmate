@@ -517,69 +517,10 @@ const removeChip = (chip: SelectionChip): void => {
   if (chip.kind === 'mode') catalog.setMode('default')
 }
 
-/** 移除专家选择（提示词由 watcher 从输入框移除） */
+/** 移除专家选择（输入框不含提示词，仅取消选择状态） */
 const removeExpert = (): void => {
   catalog.clearExpert()
 }
-
-/** 从输入框文本中剔除提示词原文（前缀优先，兜底扫描任意文本节点） */
-const removePromptFromDom = (el: HTMLElement, prompt: string): void => {
-  const prefix = prompt + '\n'
-  const first = el.firstChild
-  if (first && first.nodeType === Node.TEXT_NODE && (first.textContent ?? '').startsWith(prefix)) {
-    const rest = (first.textContent ?? '').slice(prefix.length)
-    if (rest) first.textContent = rest
-    else el.removeChild(first)
-    return
-  }
-  // 兜底：提示词被编辑或移位时，在任何文本节点中剔除原文
-  for (const node of Array.from(el.childNodes)) {
-    if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').includes(prompt)) {
-      node.textContent = (node.textContent ?? '').split(prompt).join('').replace(/^\n+/, '')
-      return
-    }
-  }
-}
-
-/** 专家提示词与 contenteditable DOM 同步（插入开头；切换专家先剔除旧提示词再插入新提示词） */
-const syncExpertPromptToDom = (el: HTMLElement, prompt: string, prev: string): void => {
-  if (prompt && prev && prompt !== prev && el.innerText.includes(prev)) {
-    // 切换专家：先剔除上一个专家的提示词，避免叠加成两条
-    removePromptFromDom(el, prev)
-  }
-  if (prompt && !el.innerText.includes(prompt)) {
-    el.insertBefore(document.createTextNode(prompt + '\n'), el.firstChild)
-  } else if (!prompt && prev) {
-    removePromptFromDom(el, prev)
-  }
-  taskInput.value = el.innerText
-}
-
-const pendingExpertPromptSync = ref(false)
-
-watch(
-  () => catalog.selectedExpertPrompt,
-  (prompt, prev) => {
-    const el = getInputEl()
-    if (el) syncExpertPromptToDom(el, prompt, prev ?? '')
-    else pendingExpertPromptSync.value = true
-  },
-  { immediate: true }
-)
-
-/**
- * 输入框挂载时补做待处理的专家提示词同步。
- *
- * 对话态（compact）输入框不回填：首轮提交后「欢迎态 → 对话态」会重挂载输入框，
- * 若在此把仍选中专家的提示词重新插入，用户会看到"提交之后输入框还有内容"
- * （提示词原文已随消息进入对话；再次选择专家时 watcher 仍会正常插入）。
- */
-watch(inputRef, (el) => {
-  if (el && pendingExpertPromptSync.value) {
-    pendingExpertPromptSync.value = false
-    if (!props.compact) syncExpertPromptToDom(el, catalog.selectedExpertPrompt, '')
-  }
-})
 
 /** 菜单内导航（专家 / 技能 / 连接器页面）由父级决定是否响应 */
 const onPlusNavigate = (tab: CatalogTab): void => {

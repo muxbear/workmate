@@ -5,6 +5,7 @@ import type { WorkMode } from '../mode/work-mode'
 import type { ModelService } from '../model/ModelService'
 import { AgentBuilder } from './AgentBuilder'
 import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
+import { createExpertDirectiveMiddleware } from './ExpertDirectiveMiddleware'
 import { createModelFromCredential, resolveDefaultModel, type ChatModel } from './ModelFactory'
 import { buildExpertTools, buildExpertSkills } from './tools/DesktopToolRegistry'
 import { buildExpertMcpTools, type McpLoadFailure } from './tools/McpToolRegistry'
@@ -124,9 +125,16 @@ export class AgentManager {
       : this.model
 
     this.builder.setModel(model)
-    // 自定义模型覆盖中间件：运行期按 configurable.model_override 切换模型（无需重建 agent）
-    if (this.modelService)
-      this.builder.setMiddleware([createModelOverrideMiddleware(this.modelService)])
+    // 中间件链：
+    // 1) 模型覆盖：运行期按 configurable.model_override 切换模型（无需重建 agent）
+    // 2) 专家委派：选中专家的一轮向主智能体系统提示词追加强制委派指令
+    //    （用户消息只保留原文；单选模式才注入，自动化全量专家模式不注入）
+    const middleware: unknown[] = []
+    if (this.modelService) middleware.push(createModelOverrideMiddleware(this.modelService))
+    middleware.push(
+      createExpertDirectiveMiddleware(() => (this.expertMode === 'selected' ? this.experts : []))
+    )
+    this.builder.setMiddleware(middleware)
     // 技能仅本地模式生效（云端 StoreBackend 不含本地技能目录）
     if (this.skills.length > 0 && mode === 'local') this.builder.setSkills(this.skills)
 

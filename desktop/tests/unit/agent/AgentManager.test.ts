@@ -136,7 +136,7 @@ describe('AgentManager', () => {
     await expect(manager.switchMode('cloud')).rejects.toThrow(/not initialized/i)
   })
 
-  it('AG-08: 注入 modelService 后 build 注册模型覆盖中间件（config.middleware 含 modelOverrideMiddleware）', async () => {
+  it('AG-08: 注入 modelService 后 build 注册模型覆盖 + 专家委派中间件', async () => {
     const withService = new AgentManager(
       workDir,
       join(workDir, 'ke-work.db'),
@@ -147,12 +147,17 @@ describe('AgentManager', () => {
     const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
     const middleware = config.middleware as { name?: string }[]
     expect(Array.isArray(middleware)).toBe(true)
-    expect(middleware).toHaveLength(1)
-    expect(middleware[0].name).toBe('modelOverrideMiddleware')
+    expect(middleware.map((m) => m.name)).toEqual([
+      'modelOverrideMiddleware',
+      'expertDirectiveMiddleware'
+    ])
     // 模式切换重建同样带中间件（保留自定义配置）
     await withService.switchMode('cloud')
     const config2 = createDeepAgentMock.mock.calls[1][0] as Record<string, never>
-    expect((config2.middleware as { name?: string }[])[0].name).toBe('modelOverrideMiddleware')
+    expect((config2.middleware as { name?: string }[]).map((m) => m.name)).toEqual([
+      'modelOverrideMiddleware',
+      'expertDirectiveMiddleware'
+    ])
     // 注入 modelService 后，默认模型应在 build 前解析为模型实例
     expect(config.model).toEqual({ id: 'mock-model' })
     expect(config2.model).toEqual({ id: 'mock-model' })
@@ -177,10 +182,11 @@ describe('AgentManager', () => {
     expect(config.skills).toEqual(['/skills/web-search/'])
   })
 
-  it('AG-09: 未注入 modelService 时不注册中间件（config.middleware 缺失）', async () => {
+  it('AG-09: 未注入 modelService 时不注册模型覆盖中间件（专家委派中间件仍在）', async () => {
     await manager.init('local')
     const config = createDeepAgentMock.mock.calls[0][0] as Record<string, never>
-    expect(config.middleware).toBeUndefined()
+    const middleware = config.middleware as { name?: string }[]
+    expect(middleware.map((m) => m.name)).toEqual(['expertDirectiveMiddleware'])
   })
 
   it('P2: setExperts 专家集合未变化时跳过重建，集合变化才重建', async () => {
