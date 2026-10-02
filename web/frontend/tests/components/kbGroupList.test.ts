@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { defineComponent, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import KbGroupList from '@/components/knowledgeBase/KbGroupList.vue'
 import type { KB } from '@/types/knowledgeBase'
 
@@ -79,6 +79,16 @@ function setGroup(scope: string, items: KB[], total = items.length) {
   }
 }
 
+/** jsdom 没有 DragEvent：用 MouseEvent 造一个够用的（组件只读 clientX/Y） */
+function dragEvent(type: string, pos: { x?: number; y?: number } = {}): Event {
+  return new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: pos.x ?? 0,
+    clientY: pos.y ?? 0,
+  })
+}
+
 /** 分页条换成"每页一个按钮"的桩：点得动，才测得了翻页 */
 const PaginationStub = defineComponent({
   name: 'ElPagination',
@@ -131,21 +141,23 @@ describe('KbGroupList · 拖动排序的开放条件', () => {
     setGroup('public', [makeKb('kb-3', '公共手册')])
   })
 
-  it('个人知识库页：卡片带拖拽标识并给出长按提示', async () => {
+  it('个人知识库页：卡片可拖（draggable）并显示抓手与提示', async () => {
     const wrapper = mountList('personal')
     await flushPromises()
 
-    expect(wrapper.find('[data-sort-area]').classes()).toContain('kb-grid--sortable')
-    expect(wrapper.find('[data-card-id="kb-1"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('长按卡片可拖动排序')
+    expect(wrapper.find('[data-sort-area]').exists()).toBe(true)
+    expect(wrapper.get('[data-card-id="kb-1"]').attributes('draggable')).toBe('true')
+    expect(wrapper.find('[data-card-id="kb-1"] .kb-drag-handle').exists()).toBe(true)
+    expect(wrapper.text()).toContain('拖动卡片可调整顺序')
   })
 
   it('其它栏目（顺序不由我决定）不开放拖动', async () => {
     const wrapper = mountList('public')
     await flushPromises()
 
-    expect(wrapper.find('[data-sort-area]').classes()).not.toContain('kb-grid--sortable')
-    expect(wrapper.text()).not.toContain('长按卡片可拖动排序')
+    expect(wrapper.get('[data-card-id="kb-3"]').attributes('draggable')).toBe('false')
+    expect(wrapper.find('.kb-drag-handle').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('拖动卡片可调整顺序')
   })
 
   it('检索中不开放拖动（屏幕上的相邻≠列表里的相邻）', async () => {
@@ -154,7 +166,31 @@ describe('KbGroupList · 拖动排序的开放条件', () => {
 
     await wrapper.get('.search-input').setValue('手册')
 
-    expect(wrapper.find('[data-sort-area]').classes()).not.toContain('kb-grid--sortable')
+    expect(wrapper.get('[data-card-id="kb-1"]').attributes('draggable')).toBe('false')
+  })
+
+  it('卡片拖拽：dragstart → dragover 定落点 → drop 按新顺序落库', async () => {
+    const wrapper = mountList('personal')
+    await flushPromises()
+
+    const source = wrapper.get('[data-card-id="kb-1"]')
+    const target = wrapper.get('[data-card-id="kb-2"]')
+    // jsdom 没有排版：给落点目标一个假盒子（100x100），右半区=落在其后
+    ;(target.element as HTMLElement).getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 100, height: 100,
+      right: 100, bottom: 100, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect)
+
+    source.element.dispatchEvent(dragEvent('dragstart'))
+    target.element.dispatchEvent(dragEvent('dragover', { x: 75, y: 50 }))
+    await nextTick()
+
+    expect(target.classes()).toContain('kb-card--drop-after')
+
+    target.element.dispatchEvent(dragEvent('drop'))
+    await flushPromises()
+
+    expect(store.reorderKbs).toHaveBeenCalledWith(['kb-2', 'kb-1'])
   })
 })
 
@@ -181,13 +217,14 @@ describe('KbGroupList · 卡片 / 列表两种视图', () => {
     expect(wrapper.find('.kb-list-row[data-card-id="kb-2"]').text()).toContain('运维手册')
   })
 
-  it('列表视图同样能拖动排序（同一套长按逻辑）', async () => {
+  it('列表视图同样能拖动排序（同一条原生拖拽链路）', async () => {
     const wrapper = mountList('personal')
     await flushPromises()
     await wrapper.findAll('.view-btn')[1].trigger('click')
 
-    expect(wrapper.find('[data-sort-area]').classes()).toContain('kb-grid--sortable')
-    expect(wrapper.text()).toContain('长按卡片可拖动排序')
+    expect(wrapper.get('.kb-list-row[data-card-id="kb-1"]').attributes('draggable')).toBe('true')
+    expect(wrapper.find('.kb-list-row[data-card-id="kb-1"] .kb-drag-handle').exists()).toBe(true)
+    expect(wrapper.text()).toContain('拖动卡片可调整顺序')
   })
 })
 

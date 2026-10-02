@@ -5,7 +5,7 @@ import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Database, CheckCircle2, Loader2, CircleAlert, Pause,
-  Sparkle, Scissors, Hash, Network,
+  Sparkle, Scissors, Hash, Network, GripVertical,
   MoreVertical, Pin, PinOff, Pencil, Copy, Download, SquarePen,
 } from 'lucide-vue-next'
 import type { KB } from '@/types/knowledgeBase'
@@ -25,6 +25,13 @@ const props = defineProps<{
    * ——两处都能改，改完看不出是哪儿改的。
    */
   hideMenu?: boolean
+  /**
+   * 显示六点抓手（拖拽排序页用）。
+   *
+   * 只作视觉提示：拖动能力由父级的 `:draggable` 提供（与桌面版一致，整卡可拖）。
+   * 默认不渲染——概览页、只读场景看不到它。
+   */
+  dragHandle?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -146,6 +153,14 @@ function metricFormat(val: number): string {
           />
           {{ statusCfg.label }}
         </el-tag>
+        <span
+          v-if="dragHandle"
+          class="kb-drag-handle"
+          :title="t('knowledge.card.dragHandleTitle')"
+          aria-hidden="true"
+        >
+          <GripVertical :size="14" />
+        </span>
         <el-dropdown v-if="canOrganize() && !hideMenu" trigger="click" @command="handleCommand">
           <button class="card-menu-btn" :disabled="busy" :title="t('knowledge.common.moreActions')" :aria-label="t('knowledge.common.moreActions')">
             <MoreVertical :size="16" />
@@ -249,7 +264,21 @@ function metricFormat(val: number): string {
   cursor: pointer;
 }
 
+/* 六点抓手：光标提示可拖（整卡都是拖拽面，这里只作视觉提示） */
+.kb-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  color: var(--foreground-muted);
+  cursor: grab;
+}
+
+.kb-drag-handle:active {
+  cursor: grabbing;
+}
+
 .kb-card {
+  /* 拖拽落点的插入线是伪元素，要相对卡片定位 */
+  position: relative;
   padding: 20px;
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);

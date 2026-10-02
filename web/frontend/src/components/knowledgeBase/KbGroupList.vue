@@ -9,7 +9,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Database, LayoutGrid, List, Search } from 'lucide-vue-next'
+import { Database, GripVertical, LayoutGrid, List, Search } from 'lucide-vue-next'
 import { useKnowledgeBaseStore, KB_GROUPS } from '@/stores/knowledgeBase'
 import type { KB, KbScope, ViewMode } from '@/types/knowledgeBase'
 import { KB_STATUS_CONFIG } from '@/types/knowledgeBase'
@@ -103,14 +103,20 @@ const sortable = computed(
 
 const {
   draggingId,
-  items: orderedItems,
-  onCardPointerDown,
+  dropTargetId,
+  dropAfter,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  resetDrag,
   handleClick,
 } = useCardDragSort<KB>({
   items: () => pagedItems.value,
   idOf: (kb) => kb.id,
   blockOf: (kb) => (kb.isPinned ? 'pinned' : 'plain'),
   enabled: () => sortable.value,
+  // 网格里卡片排成行，落点看左右半区；列表是单列，看上下半区
+  dropAxis: () => (viewMode.value === 'grid' ? 'x' : 'y'),
   onReorder: async (ids) => {
     try {
       await store.reorderKbs(ids)
@@ -153,30 +159,37 @@ const {
     </div>
 
     <div v-loading="state?.loading" class="panel-body">
-      <!-- 卡片视图 -->
+      <!-- 卡片视图：整卡可拖（原生 HTML5 拖拽），落点用插入线指示 -->
       <div
         v-if="pagedItems.length && viewMode === 'grid'"
         data-sort-area
         class="kb-grid"
-        :class="{ 'kb-grid--sortable': sortable, 'kb-grid--dragging': !!draggingId }"
       >
         <KbCard
-          v-for="kb in orderedItems()"
+          v-for="kb in pagedItems"
           :key="kb.id"
           :data-card-id="kb.id"
-          :class="{ 'kb-card--dragging': draggingId === kb.id }"
+          :draggable="sortable"
+          :drag-handle="sortable"
+          :class="{
+            'kb-card--dragging': draggingId === kb.id,
+            'kb-card--drop-before': dropTargetId === kb.id && !dropAfter,
+            'kb-card--drop-after': dropTargetId === kb.id && dropAfter,
+          }"
           :kb="kb"
-          @pointerdown="onCardPointerDown($event, kb.id)"
+          @dragstart="onDragStart(kb.id, $event)"
+          @dragover="onDragOver(kb.id, $event)"
+          @drop.prevent="onDrop"
+          @dragend="resetDrag"
           @click="handleClick(() => openKb(kb.id))"
         />
       </div>
 
-      <!-- 列表视图（用 div 排的表格：<tr> 上的 transform 各浏览器行为不一，拖动会飘） -->
+      <!-- 列表视图：单列排布，与卡片视图同一套拖拽（落点改看上下半区） -->
       <div
         v-else-if="pagedItems.length"
         data-sort-area
         class="kb-list"
-        :class="{ 'kb-grid--sortable': sortable, 'kb-grid--dragging': !!draggingId }"
       >
         <div class="kb-list-head">
           <span class="col-name">{{ t('knowledge.list.colName') }}</span>
@@ -187,18 +200,34 @@ const {
           <span class="col-date">{{ t('knowledge.list.colUpdated') }}</span>
         </div>
         <div
-          v-for="kb in orderedItems()"
+          v-for="kb in pagedItems"
           :key="kb.id"
           :data-card-id="kb.id"
           class="kb-list-row"
-          :class="{ 'kb-card--dragging': draggingId === kb.id }"
+          :class="{
+            'kb-list-row--dragging': draggingId === kb.id,
+            'kb-list-row--drop-before': dropTargetId === kb.id && !dropAfter,
+            'kb-list-row--drop-after': dropTargetId === kb.id && dropAfter,
+          }"
           role="button"
           tabindex="0"
-          @pointerdown="onCardPointerDown($event, kb.id)"
+          :draggable="sortable"
+          @dragstart="onDragStart(kb.id, $event)"
+          @dragover="onDragOver(kb.id, $event)"
+          @drop.prevent="onDrop"
+          @dragend="resetDrag"
           @click="handleClick(() => openKb(kb.id))"
           @keydown.enter="openKb(kb.id)"
         >
           <span class="col-name">
+            <span
+              v-if="sortable"
+              class="kb-drag-handle"
+              :title="t('knowledge.card.dragHandleTitle')"
+              aria-hidden="true"
+            >
+              <GripVertical :size="14" />
+            </span>
             <span class="kb-list-icon"><Database :size="14" /></span>
             <span class="kb-list-text">
               <span class="kb-list-name">{{ kb.name }}</span>
@@ -373,6 +402,8 @@ const {
 }
 
 .kb-list-row {
+  /* 拖拽落点的插入线是伪元素，要相对行定位 */
+  position: relative;
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
   transition: background 0.15s;
@@ -463,23 +494,64 @@ const {
   border-color: rgba(100, 116, 139, 0.3);
 }
 
-/* 可拖动时的抓手光标：不给提示的话没人会去长按卡片 */
-.kb-grid--sortable .kb-card,
-.kb-grid--sortable .kb-list-row {
+/* 拖动中的条目：整块淡出（与桌面版同款）——影子由浏览器拖拽影像负责 */
+.kb-card--dragging,
+.kb-list-row--dragging {
+  opacity: 0.45;
+}
+
+/* 落点插入线：网格里"前后"是左右 → 竖条；列表里是上下 → 横线 */
+.kb-card--drop-before::before,
+.kb-card--drop-after::after {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  z-index: 2;
+  content: '';
+}
+
+.kb-card--drop-before::before {
+  left: -9px;
+}
+
+.kb-card--drop-after::after {
+  right: -9px;
+}
+
+.kb-list-row--drop-before::before,
+.kb-list-row--drop-after::after {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  z-index: 2;
+  content: '';
+}
+
+.kb-list-row--drop-before::before {
+  top: -1px;
+}
+
+.kb-list-row--drop-after::after {
+  bottom: -1px;
+}
+
+/* 六点抓手：光标提示可拖（整行都是拖拽面，这里只作视觉提示） */
+.kb-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--foreground-muted);
   cursor: grab;
 }
 
-.kb-grid--dragging .kb-card,
-.kb-grid--dragging .kb-list-row {
-  /* 拖动期间关掉过渡：卡片要跟手，动画会让它慢半拍 */
-  transition: none;
-  user-select: none;
-}
-
-.kb-card--dragging {
+.kb-drag-handle:active {
   cursor: grabbing;
-  opacity: 0.9;
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.3);
 }
 
 .panel-pager {

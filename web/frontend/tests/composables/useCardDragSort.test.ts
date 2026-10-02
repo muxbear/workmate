@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, nextTick, ref } from 'vue'
 import {
@@ -8,14 +8,20 @@ import {
 } from '@/composables/useCardDragSort'
 
 /**
- * 卡片拖动排序（长按 → 拖动 → 松手落库）。
+ * 卡片拖拽排序（浏览器原生拖拽：dragstart → dragover 定落点 → drop 落库）。
  *
- * 两条不变式：
+ * 三条不变式：
  *
  * 1. **不跨组换位**——列表按「置顶 → 手工顺序」排，跨过置顶边界的顺序刷新后会被
- *    服务端推翻，所以拖动夹在本组内；
+ *    服务端推翻，所以落点先夹取到同组边界；
  * 2. **提交的是整段同组 id**——服务端按"这段在列表里的位置"重编号，少一个或多一个
- *    都会 400（跳段提交会被拒）。
+ *    都会 400（跳段提交会被拒）；
+ * 3. **没有拖动时不接管**——其它栏目 / 检索中的卡片不可拖，外部拖入（文件）也不该
+ *    被页面拦下。
+ *
+ * jsdom 24 没有 DragEvent/DataTransfer：事件用 MouseEvent 造（字段够用），
+ * dataTransfer 按需以桩注入——生产代码本来就 `if (event.dataTransfer)` 守卫，
+ * "没有 dataTransfer"这条路径也要测到。
  */
 
 interface Card {
@@ -63,7 +69,8 @@ describe('拖动排序 · 分组裁剪（纯函数）', () => {
 })
 
 /** 用完即弃的宿主组件：把 composable 接到真实 DOM 上 */
-function mountHarness(options: { enabled?: boolean; items?: Card[] } = {}) {
+function mountHarness(options: { enabled?: boolean; items?: Card[]; axis?: 'x' | 'y' } = {}) {
+  const axis = options.axis ?? 'x'
   const items = ref(options.items ?? [card('a'), card('b'), card('c')])
   const committed = ref<string[][]>([])
   const opened = ref<string[]>([])
@@ -71,192 +78,281 @@ function mountHarness(options: { enabled?: boolean; items?: Card[] } = {}) {
 
   const Harness = defineComponent({
     setup() {
-      const sort = useCardDragSort<Card>({
+      const drag = useCardDragSort<Card>({
         items: () => items.value,
         idOf: (kb) => kb.id,
         blockOf,
         enabled: () => enabled.value,
+        dropAxis: () => axis,
         onReorder: (ids) => {
           committed.value.push(ids)
         },
       })
-      return { sort, opened }
+      return { ...drag, items, opened, enabled }
     },
     template: `
       <div data-sort-area>
         <div
-          v-for="kb in sort.items()"
+          v-for="kb in items"
           :key="kb.id"
           :data-card-id="kb.id"
-          @pointerdown="sort.onCardPointerDown($event, kb.id)"
-          @click="sort.handleClick(() => opened.push(kb.id))"
+          :draggable="enabled"
+          :class="{
+            'is-dragging': draggingId === kb.id,
+            'is-drop-before': dropTargetId === kb.id && !dropAfter,
+            'is-drop-after': dropTargetId === kb.id && dropAfter,
+          }"
+          @dragstart="onDragStart(kb.id, $event)"
+          @dragover="onDragOver(kb.id, $event)"
+          @drop.prevent="onDrop"
+          @dragend="resetDrag"
+          @click="handleClick(() => opened.push(kb.id))"
         >{{ kb.name }}</div>
       </div>
     `,
   })
 
-  // attachTo：拖动靠 document 上的 pointermove/pointerup 推进，挂在游离节点上的
-  // 元素派发的事件传不到 document——必须真挂进文档（与真实用法一致）
-  const wrapper = mount(Harness, { attachTo: document.body })
-  // jsdom 没有排版：给每个卡片一个假盒子（一排三张，各 100x100），
-  // 否则所有 rect 都是 0，"影子压在哪一格上"无从谈起。
-  // 桩要**把 transform 算进去**（真浏览器就是如此）：卡片靠位移跟手，落点判定又
-  // 要从位移反推它的槽位框，桩不认 transform 就测不出真问题。
+  const wrapper = mount(Harness)
+  // jsdom 没有排版：给每个条目一个假盒子，落点半区才判得了。
+  // 网格（axis=x）：一排三张 100x100；列表（axis=y）：一列三行 100x40。
   const els = wrapper.findAll('[data-card-id]')
   els.forEach((item) => {
     const el = item.element as HTMLElement
     el.getBoundingClientRect = () => {
-      // 位置按**当前的 DOM 次序**现算（一排三格、每格 100x100）：换过位之后布局
-      // 真的会变，钉死初始下标的桩会让"换过去又换回来"这种假问题冒出来
       const siblings = el.parentElement ? [...el.parentElement.children] : []
       const index = Math.max(siblings.indexOf(el), 0)
-      const moved = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(el.style.transform)
-      const left = index * 100 + (moved ? Number(moved[1]) : 0)
-      const top = (moved ? Number(moved[2]) : 0)
+      const width = 100
+      const height = axis === 'x' ? 100 : 40
+      const left = axis === 'x' ? index * 100 : 0
+      const top = axis === 'x' ? 0 : index * 40
       return {
-        left, top, width: 100, height: 100,
-        right: left + 100, bottom: top + 100,
+        left, top, width, height,
+        right: left + width, bottom: top + height,
         x: left, y: top, toJSON: () => ({}),
       } as DOMRect
     }
   })
 
-  return { wrapper, items, committed, opened, enabled }
+  return { wrapper, items, committed, opened, enabled, axis }
 }
 
-/** jsdom 没有 PointerEvent：用 MouseEvent 造一个够用的（composable 只读这几个字段） */
-function pointerEvent(type: string, clientX: number, clientY = 50): Event {
-  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
-  Object.defineProperty(event, 'pointerId', { value: 1 })
-  Object.defineProperty(event, 'pointerType', { value: 'mouse' })
+type Harness = ReturnType<typeof mountHarness>
+
+function elOf(harness: Harness, id: string) {
+  return harness.wrapper.get(`[data-card-id="${id}"]`)
+}
+
+/** jsdom 没有 DragEvent：用 MouseEvent 造一个够用的（只读 clientX/Y 与 dataTransfer） */
+function dragEvent(
+  type: string,
+  pos: { x?: number; y?: number } = {},
+  dataTransfer?: Record<string, unknown>,
+): Event {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: pos.x ?? 0,
+    clientY: pos.y ?? 0,
+  })
+  if (dataTransfer) {
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+  }
   return event
 }
 
-function cardEl(wrapper: ReturnType<typeof mountHarness>['wrapper'], id: string) {
-  return wrapper.get(`[data-card-id="${id}"]`)
+/** 悬停目标条目：坐标落在其前半 / 后半区的中心（网格看左右、列表看上下） */
+function overTarget(harness: Harness, id: string, half: 'before' | 'after'): Event {
+  const rect = elOf(harness, id).element.getBoundingClientRect()
+  const ratio = half === 'before' ? 0.25 : 0.75
+  const pos =
+    harness.axis === 'x'
+      ? { x: rect.left + rect.width * ratio, y: rect.top + rect.height / 2 }
+      : { x: rect.left + rect.width / 2, y: rect.top + rect.height * ratio }
+  return dragEvent('dragover', pos)
 }
 
-async function longPress(wrapper: ReturnType<typeof mountHarness>['wrapper'], id: string, x: number) {
-  cardEl(wrapper, id).element.dispatchEvent(pointerEvent('pointerdown', x))
-  await vi.advanceTimersByTimeAsync(500)
+function dragStart(harness: Harness, id: string, dataTransfer?: Record<string, unknown>) {
+  return elOf(harness, id).element.dispatchEvent(dragEvent('dragstart', {}, dataTransfer))
 }
 
-describe('拖动排序 · 长按拖动', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
+describe('拖动排序 · 原生拖拽', () => {
+  it('拖到目标后半区，落下提交新顺序', async () => {
+    const harness = mountHarness()
 
-  afterEach(() => {
-    vi.useRealTimers()
-    document.body.style.userSelect = ''
-  })
-
-  it('长按后拖到别的卡片上，松手提交新顺序', async () => {
-    const { wrapper, committed } = mountHarness()
-
-    await longPress(wrapper, 'c', 250)
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointermove', 10))
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointerup', 10))
+    dragStart(harness, 'a')
+    elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    elOf(harness, 'b').element.dispatchEvent(dragEvent('drop'))
     await flushPromises()
 
-    expect(committed.value).toEqual([['c', 'a', 'b']])
+    expect(harness.committed.value).toEqual([['b', 'a', 'c']])
   })
 
-  it('刚按下时手抖一下不换位（影子还压在自己身上的回归）', async () => {
-    // 之前落点判定把被拖的卡片排除在外，"最近的那张"永远是邻居：长按后手指刚动
-    // 一下就先跟邻居换了位。影子还压在自己这一格时，落点必须是自己。
-    const { wrapper, committed } = mountHarness()
+  it('拖到目标前半区，落在目标之前', async () => {
+    const harness = mountHarness()
 
-    await longPress(wrapper, 'a', 50)
-    cardEl(wrapper, 'a').element.dispatchEvent(pointerEvent('pointermove', 55))
-    cardEl(wrapper, 'a').element.dispatchEvent(pointerEvent('pointerup', 55))
+    dragStart(harness, 'c')
+    elOf(harness, 'a').element.dispatchEvent(overTarget(harness, 'a', 'before'))
+    elOf(harness, 'a').element.dispatchEvent(dragEvent('drop'))
     await flushPromises()
 
-    expect(committed.value).toEqual([])
+    expect(harness.committed.value).toEqual([['c', 'a', 'b']])
   })
 
-  it('影子压到邻居中心才换位，且换完停得住（不来回横跳）', async () => {
-    const { wrapper, committed } = mountHarness()
+  it('列表视图（上下半区）与网格同一套逻辑', async () => {
+    const harness = mountHarness({ axis: 'y' })
 
-    await longPress(wrapper, 'a', 50)
-    // 压到 b 的中心（150）之后才换位
-    cardEl(wrapper, 'a').element.dispatchEvent(pointerEvent('pointermove', 160))
-    await nextTick()   // 真实浏览器里两次 pointermove 之间 DOM 会重排一次
-    // 同一位置再动几次：顺序必须稳定，不能换过去又换回来
-    for (let i = 0; i < 3; i += 1) {
-      cardEl(wrapper, 'a').element.dispatchEvent(pointerEvent('pointermove', 160))
-      await nextTick()
-    }
-    cardEl(wrapper, 'a').element.dispatchEvent(pointerEvent('pointerup', 160))
+    dragStart(harness, 'a')
+    elOf(harness, 'c').element.dispatchEvent(overTarget(harness, 'c', 'before'))
+    elOf(harness, 'c').element.dispatchEvent(dragEvent('drop'))
     await flushPromises()
 
-    expect(committed.value).toEqual([['b', 'a', 'c']])
+    expect(harness.committed.value).toEqual([['b', 'a', 'c']])
   })
 
-  it('提交的只有同组那一段（置顶的卡片不参与）', async () => {
-    const { wrapper, committed } = mountHarness({
+  it('悬停在别的条目上时打落点标记，换目标只留一个', async () => {
+    const harness = mountHarness()
+
+    dragStart(harness, 'a')
+    elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    await nextTick()
+    expect(elOf(harness, 'b').classes()).toContain('is-drop-after')
+
+    elOf(harness, 'c').element.dispatchEvent(overTarget(harness, 'c', 'before'))
+    await nextTick()
+    expect(elOf(harness, 'b').classes()).not.toContain('is-drop-after')
+    expect(elOf(harness, 'c').classes()).toContain('is-drop-before')
+  })
+
+  it('拖到自己身上不算落点（不 preventDefault、不标记）', async () => {
+    const harness = mountHarness()
+
+    dragStart(harness, 'a')
+    const accepted = elOf(harness, 'a').element.dispatchEvent(overTarget(harness, 'a', 'after'))
+
+    // 自身不是合法落点：dragover 未 preventDefault（浏览器默认处理滚动等）
+    expect(accepted).toBe(true)
+    await nextTick()
+    expect(elOf(harness, 'a').classes()).not.toContain('is-drop-after')
+
+    elOf(harness, 'a').element.dispatchEvent(dragEvent('drop'))
+    await flushPromises()
+    expect(harness.committed.value).toEqual([])
+  })
+
+  it('越界夹取：未置顶项拖不进置顶区，提交的 ids 不含置顶项', async () => {
+    const harness = mountHarness({
       items: [card('p', true), card('q', true), card('a'), card('b')],
     })
 
-    // 拖未置顶的 b 到最前面：夹回未置顶组，提交的 ids 不含置顶项
-    await longPress(wrapper, 'b', 350)
-    cardEl(wrapper, 'b').element.dispatchEvent(pointerEvent('pointermove', 10))
-    cardEl(wrapper, 'b').element.dispatchEvent(pointerEvent('pointerup', 10))
+    dragStart(harness, 'b')
+    elOf(harness, 'p').element.dispatchEvent(overTarget(harness, 'p', 'before'))
+    elOf(harness, 'p').element.dispatchEvent(dragEvent('drop'))
     await flushPromises()
 
-    expect(committed.value).toEqual([['b', 'a']])
+    expect(harness.committed.value).toEqual([['b', 'a']])
   })
 
-  it('拖动后位置没变就不落库（唯一置顶项拖不出去）', async () => {
-    const { wrapper, committed } = mountHarness({
+  it('位置没变就不落库（唯一置顶项拖不出去）', async () => {
+    const harness = mountHarness({
       items: [card('p', true), card('a'), card('b')],
     })
 
-    // 拖到最右：最近的是 b，但 p 是置顶组里唯一一项，只能停在原位
-    await longPress(wrapper, 'p', 10)
-    cardEl(wrapper, 'p').element.dispatchEvent(pointerEvent('pointermove', 250))
-    cardEl(wrapper, 'p').element.dispatchEvent(pointerEvent('pointerup', 250))
+    dragStart(harness, 'p')
+    elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    elOf(harness, 'b').element.dispatchEvent(dragEvent('drop'))
     await flushPromises()
 
-    expect(committed.value).toEqual([])
+    expect(harness.committed.value).toEqual([])
   })
 
-  it('不允许拖动时（其它分组 / 检索中）长按没有反应', async () => {
-    const { wrapper, committed } = mountHarness({ enabled: false })
+  it('拖拽期间列表被刷新（被拖项消失）时安全放弃', async () => {
+    const harness = mountHarness()
 
-    await longPress(wrapper, 'c', 250)
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointermove', 10))
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointerup', 10))
+    dragStart(harness, 'c')
+    harness.items.value = [card('a'), card('b')]
+    elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    elOf(harness, 'b').element.dispatchEvent(dragEvent('drop'))
     await flushPromises()
 
-    expect(committed.value).toEqual([])
+    expect(harness.committed.value).toEqual([])
+  })
+
+  it('有 dataTransfer 时写入 move 效果与 id 兜底', async () => {
+    const harness = mountHarness()
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn() }
+
+    dragStart(harness, 'a', dataTransfer)
+
+    expect(dataTransfer.effectAllowed).toBe('move')
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'a')
+    await nextTick()
+    expect(elOf(harness, 'a').classes()).toContain('is-dragging')
+  })
+
+  it('没有 dataTransfer（jsdom 默认）也能正常拖动', async () => {
+    const harness = mountHarness()
+
+    dragStart(harness, 'a')
+    elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    elOf(harness, 'b').element.dispatchEvent(dragEvent('drop'))
+    await flushPromises()
+
+    expect(harness.committed.value).toEqual([['b', 'a', 'c']])
+  })
+
+  it('dragover 只在有拖动时接管（外部拖文件不拦）', () => {
+    const harness = mountHarness()
+
+    // 没有拖拽在途：dragover 未 preventDefault，浏览器按默认处理
+    const accepted = elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    expect(accepted).toBe(true)
+  })
+
+  it('不允许拖动时（其它分组 / 检索中）drag 全链路没有反应', async () => {
+    const harness = mountHarness({ enabled: false })
+
+    const accepted = dragStart(harness, 'c')
+    expect(accepted).toBe(true)
+    expect(elOf(harness, 'c').classes()).not.toContain('is-dragging')
+
+    elOf(harness, 'a').element.dispatchEvent(overTarget(harness, 'a', 'before'))
+    elOf(harness, 'a').element.dispatchEvent(dragEvent('drop'))
+    await flushPromises()
+
+    expect(harness.committed.value).toEqual([])
+  })
+
+  it('dragend 清掉拖动与落点状态', async () => {
+    const harness = mountHarness()
+
+    dragStart(harness, 'a')
+    elOf(harness, 'b').element.dispatchEvent(overTarget(harness, 'b', 'after'))
+    await nextTick()
+    expect(elOf(harness, 'a').classes()).toContain('is-dragging')
+    expect(elOf(harness, 'b').classes()).toContain('is-drop-after')
+
+    elOf(harness, 'a').element.dispatchEvent(dragEvent('dragend'))
+    await nextTick()
+    expect(elOf(harness, 'a').classes()).not.toContain('is-dragging')
+    expect(elOf(harness, 'b').classes()).not.toContain('is-drop-after')
   })
 
   it('拖动后紧随的那次点击被吞掉（不该顺手打开知识库）', async () => {
-    const { wrapper, opened } = mountHarness()
+    vi.useFakeTimers()
+    try {
+      const harness = mountHarness()
 
-    await longPress(wrapper, 'c', 250)
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointermove', 10))
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointerup', 10))
-    await flushPromises()
+      dragStart(harness, 'c')
+      elOf(harness, 'c').element.dispatchEvent(dragEvent('dragend'))
+      elOf(harness, 'c').element.dispatchEvent(dragEvent('click'))
+      expect(harness.opened.value).toEqual([])
 
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('click', 10))
-    expect(opened.value).toEqual([])
-
-    // 下一次点击照常生效
-    cardEl(wrapper, 'a').element.dispatchEvent(pointerEvent('click', 10))
-    expect(opened.value).toEqual(['a'])
-  })
-
-  it('按下后很快移动（当作点击/滚动）不会进入拖动', async () => {
-    const { wrapper, committed } = mountHarness()
-
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointerdown', 250))
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointermove', 220))
-    await vi.advanceTimersByTimeAsync(500)
-    cardEl(wrapper, 'c').element.dispatchEvent(pointerEvent('pointerup', 220))
-    await flushPromises()
-
-    expect(committed.value).toEqual([])
+      // 时间窗过后，点击照常生效
+      await vi.advanceTimersByTimeAsync(300)
+      elOf(harness, 'a').element.dispatchEvent(dragEvent('click'))
+      expect(harness.opened.value).toEqual(['a'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

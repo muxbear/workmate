@@ -72,9 +72,9 @@ function makeKb(overrides: Partial<KB> = {}): KB {
   }
 }
 
-function mountCard(overrides: Partial<KB> = {}, readonly = false) {
+function mountCard(overrides: Partial<KB> = {}, readonly = false, dragHandle = false) {
   return mount(KbCard, {
-    props: { kb: makeKb(overrides), readonly },
+    props: { kb: makeKb(overrides), readonly, dragHandle },
     global: {
       // el-dropdown / el-dialog 在 jsdom 里会因弹层定位触发递归更新（未捕获错误会
       // 污染整轮测试）。这里只断言"入口按钮在不在"，弹层用 stub 隔离。
@@ -145,12 +145,26 @@ describe('KbCard · 组织操作入口', () => {
   })
 
   it('菜单项里不再有上移 / 下移 / 归入分组', () => {
-    // 排序改成「查看更多」页长按拖动；分组归属并入「编辑」弹窗
+    // 排序改成「查看更多」页里拖拽（原生拖拽）；分组归属并入「编辑」弹窗
     const menu = cardMenu(mountCard()).text()
 
     expect(menu).not.toContain('上移')
     expect(menu).not.toContain('下移')
     expect(menu).not.toContain('归入分组')
+  })
+
+  it('默认不渲染六点抓手（概览页看不到拖动提示）', () => {
+    const wrapper = mountCard()
+
+    expect(wrapper.find('.kb-drag-handle').exists()).toBe(false)
+  })
+
+  it('排序页（dragHandle）渲染六点抓手并带提示 title', () => {
+    const wrapper = mountCard({}, false, true)
+
+    const handle = wrapper.find('.kb-drag-handle')
+    expect(handle.exists()).toBe(true)
+    expect(handle.attributes('title')).toBe('拖拽排序')
   })
 
   it('选中「编辑」打开编辑弹窗', async () => {
