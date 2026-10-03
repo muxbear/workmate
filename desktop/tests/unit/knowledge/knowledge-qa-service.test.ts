@@ -87,6 +87,41 @@ describe('KnowledgeQaService.ask', () => {
     expect(resolveModel).toHaveBeenCalledWith('deepseek-chat')
   })
 
+  it('多轮历史：检索收到 role/content 形态的最近几轮（改写侧补全指代用）', async () => {
+    const { service, retrieve } = makeService(result())
+    await service.ask({
+      userId: 'u1',
+      kbId: 'kb',
+      question: '它的缺点呢？',
+      history: [
+        { question: '冷启动优化是什么', answer: '一种启动加速手段' },
+        { question: '还有吗', answer: '还有预热缓存' }
+      ],
+      onChunk: () => {}
+    })
+    expect(retrieve).toHaveBeenCalledWith({
+      userId: 'u1',
+      kbId: 'kb',
+      query: '它的缺点呢？',
+      history: [
+        { role: 'user', content: '冷启动优化是什么' },
+        { role: 'assistant', content: '一种启动加速手段' },
+        { role: 'user', content: '还有吗' },
+        { role: 'assistant', content: '还有预热缓存' }
+      ]
+    })
+  })
+
+  it('无历史时不向检索传 history 键（保持既有调用形态）', async () => {
+    const { service, retrieve } = makeService(result())
+    await service.ask({ userId: 'u1', kbId: 'kb', question: '怎么部署？', onChunk: () => {} })
+    expect(Object.keys(retrieve.mock.calls[0][0] as object).sort()).toEqual([
+      'kbId',
+      'query',
+      'userId'
+    ])
+  })
+
   it('把资料与问题装进 user 消息，system 里带防注入声明', async () => {
     let captured: Array<{ role: string; content: string }> = []
     const model: QaChatModel = {

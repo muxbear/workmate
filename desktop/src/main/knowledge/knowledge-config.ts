@@ -65,6 +65,12 @@ export interface KnowledgeEngineConfig {
   minSimilarity: number
   /** 查询改写（默认关闭；开启后多一次模型调用换召回率） */
   queryRewriteEnabled: boolean
+  /** MMR 去冗余（默认关闭；对融合候选按 token 冗余度贪心重选，压掉近重复切片） */
+  mmrEnabled: boolean
+  /** MMR 相关度权重 λ（0~1，越大越偏相关度、越小越偏多样性） */
+  mmrLambda: number
+  /** 时间衰减半衰期（天，0 = 关闭）：按文档导入时间对最终分数加权 */
+  timeDecayHalfLifeDays: number
   graphEnabled: boolean
   graphModel: string
 }
@@ -88,6 +94,9 @@ const FALLBACK: KnowledgeEngineConfig = {
   topK: 12,
   minSimilarity: 0.53,
   queryRewriteEnabled: false,
+  mmrEnabled: false,
+  mmrLambda: 0.7,
+  timeDecayHalfLifeDays: 0,
   graphEnabled: false,
   graphModel: ''
 }
@@ -95,7 +104,7 @@ const FALLBACK: KnowledgeEngineConfig = {
 /**
  * 把生效配置收成强类型。
  *
- * - `effective`：`getEffective().effective`（17 项按库可覆盖的短 key）；
+ * - `effective`：`getEffective().effective`（22 项按库可覆盖的短 key）；
  * - `global`：全局设置快照（补 4 个端点 key —— 它们不参与按库覆盖）。
  */
 export function toEngineConfig(
@@ -138,6 +147,12 @@ export function toEngineConfig(
     queryRewriteEnabled: bool(
       read('queryRewriteEnabled', FALLBACK.queryRewriteEnabled),
       FALLBACK.queryRewriteEnabled
+    ),
+    mmrEnabled: bool(read('mmrEnabled', FALLBACK.mmrEnabled), FALLBACK.mmrEnabled),
+    mmrLambda: clamp01(num(read('mmrLambda', FALLBACK.mmrLambda), FALLBACK.mmrLambda)),
+    timeDecayHalfLifeDays: nonNegativeInt(
+      read('timeDecayHalfLifeDays', FALLBACK.timeDecayHalfLifeDays),
+      FALLBACK.timeDecayHalfLifeDays
     ),
     graphEnabled: bool(read('graphEnabled', FALLBACK.graphEnabled), FALLBACK.graphEnabled),
     graphModel: str(read('graphModel', FALLBACK.graphModel))

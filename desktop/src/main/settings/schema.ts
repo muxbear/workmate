@@ -51,6 +51,9 @@ export type SettingsKey =
   | 'knowledge.rerankApiKey'
   | 'knowledge.minSimilarity'
   | 'knowledge.queryRewriteEnabled'
+  | 'knowledge.mmrEnabled'
+  | 'knowledge.mmrLambda'
+  | 'knowledge.timeDecayHalfLifeDays'
 
 export interface SettingsSchemaEntry {
   type: 'string' | 'number' | 'boolean'
@@ -284,7 +287,24 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     validate: (v) => (v as number) >= 0 && (v as number) <= 1
   },
   // 查询改写（Hybrid RAG 的 query enhancement）：默认关闭，开启后每次检索多一次模型调用
-  'knowledge.queryRewriteEnabled': { type: 'boolean', default: false, applyTiming: 'instant' }
+  'knowledge.queryRewriteEnabled': { type: 'boolean', default: false, applyTiming: 'instant' },
+  // ── P7 增强层（均为检索期参数：不进索引快照、不影响索引指纹）──
+  // MMR 去冗余：对融合后的候选按「相关度 vs 与已选项的冗余度」贪心重选，压掉近重复切片
+  'knowledge.mmrEnabled': { type: 'boolean', default: false, applyTiming: 'instant' },
+  // MMR 相关度权重 λ：越大越偏相关度、越小越偏多样性
+  'knowledge.mmrLambda': {
+    type: 'number',
+    default: 0.7,
+    applyTiming: 'instant',
+    validate: (v) => (v as number) >= 0 && (v as number) <= 1
+  },
+  // 时间衰减半衰期（天，0 = 关闭）：按文档导入时间对最终分数做 0.5^(年龄/半衰期) 加权
+  'knowledge.timeDecayHalfLifeDays': {
+    type: 'number',
+    default: 0,
+    applyTiming: 'instant',
+    validate: (v) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 3650
+  }
 }
 
 /** settings.json 椤跺眰缁撴瀯鐗堟湰锛堝榻?WorkBuddy workspace-state.json 鐨?version 瀛楁锛?*/

@@ -19,8 +19,8 @@ describe('settings schema', () => {
     expect(isSettingsKey('ui')).toBe(false)
   })
 
-  it('41 项配置全部在 schema 内且类型/默认值合法', () => {
-    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(41)
+  it('44 项配置全部在 schema 内且类型/默认值合法', () => {
+    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(44)
     for (const [key, entry] of Object.entries(SETTINGS_SCHEMA)) {
       expect(isSettingsKey(key)).toBe(true)
       expect(['string', 'number', 'boolean']).toContain(entry.type)

@@ -44,7 +44,7 @@ export const UPLOAD_FIELD_KEYS: readonly KnowledgeOverrideKey[] = [
   'maxFilesPerBatch'
 ]
 
-/** 索引项清单（14 项）：可配置项里除上传项之外的全部 */
+/** 索引项清单：可配置项里除上传项之外的全部（含检索期项，向导内统一展示） */
 export const INDEX_FIELD_KEYS: readonly KnowledgeOverrideKey[] = KNOWLEDGE_FIELD_LIST.map(
   (field) => field.key
 ).filter((key) => !UPLOAD_FIELD_KEYS.includes(key))
@@ -79,7 +79,10 @@ export const KNOWLEDGE_INDEX_STEPS: readonly KnowledgeIndexStep[] = [
       'rerankModel',
       'topK',
       'minSimilarity',
-      'queryRewriteEnabled'
+      'queryRewriteEnabled',
+      'mmrEnabled',
+      'mmrLambda',
+      'timeDecayHalfLifeDays'
     ]
   },
   {

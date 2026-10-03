@@ -36,11 +36,11 @@ describe('KnowledgeSettingsService', () => {
     expect(overridden).toEqual(['chunkSize'])
   })
 
-  it('生效配置覆盖全部可覆盖项（19 项）', () => {
+  it('生效配置覆盖全部可覆盖项（22 项）', () => {
     const service = createService()
     const { effective } = service.getEffective('u1', 'product')
     expect(Object.keys(effective).sort()).toEqual([...KNOWLEDGE_OVERRIDE_KEYS].sort())
-    expect(Object.keys(effective)).toHaveLength(19)
+    expect(Object.keys(effective)).toHaveLength(22)
   })
 
   it('改全局后：未覆盖项立即变，覆盖项不变', () => {

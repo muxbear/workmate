@@ -16,8 +16,8 @@ const ALL_KNOWLEDGE_KEYS = (Object.keys(SETTINGS_SCHEMA) as SettingsKey[]).filte
 )
 
 describe('knowledge-schema 可覆盖项清单', () => {
-  it('派生 19 项：不含存放目录与嵌入/重排端点（全局独占）', () => {
-    expect(KNOWLEDGE_OVERRIDE_KEYS).toHaveLength(19)
+  it('派生 22 项：不含存放目录与嵌入/重排端点（全局独占）', () => {
+    expect(KNOWLEDGE_OVERRIDE_KEYS).toHaveLength(22)
     for (const key of ['directory', 'embeddingBaseUrl', 'embeddingApiKey', 'rerankBaseUrl', 'rerankApiKey']) {
       expect(KNOWLEDGE_OVERRIDE_KEYS).not.toContain(key)
     }

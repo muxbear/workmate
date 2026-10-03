@@ -145,6 +145,10 @@ function settings(): KnowledgeSettingsService {
         hybridWeight: 0.65,
         rerankEnabled: false,
         minSimilarity: 0.3,
+        queryRewriteEnabled: false,
+        mmrEnabled: false,
+        mmrLambda: 0.7,
+        timeDecayHalfLifeDays: 0,
         graphEnabled: true,
         graphModel: 'stub-graph'
       },

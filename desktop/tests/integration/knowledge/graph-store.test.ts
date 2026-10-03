@@ -269,6 +269,97 @@ describe('图谱一跳扩展（检索第三路）', () => {
   })
 })
 
+describe('图谱可视化数据（loadKbGraphView）', () => {
+  /** 关系行构造（测试内多处共用） */
+  function relation(
+    fromEntity: string,
+    toEntity: string,
+    label: string,
+    chunkId: number | null
+  ): {
+    fromEntity: string
+    toEntity: string
+    fromKey: string
+    toKey: string
+    label: string
+    chunkId: number | null
+    description: string | null
+  } {
+    return {
+      fromEntity,
+      toEntity,
+      fromKey: normalizeName(fromEntity),
+      toKey: normalizeName(toEntity),
+      label,
+      chunkId,
+      description: null
+    }
+  }
+
+  it('节点跨文档折叠（mentions 求和、docs 去重）；边按 (from,to) 折平行边并采样 labels', () => {
+    const [chunkA] = seedDoc('doc-a', ['Transformer 由 Vaswani 提出。'])
+    const [chunkB] = seedDoc('doc-b', ['BERT 基于 Transformer，也由 Vaswani 参与。'])
+    store.replaceDocumentGraph({
+      docId: 'doc-a',
+      kbId,
+      userId: 'u1',
+      entities: [entity('Transformer', '产品', chunkA), entity('Vaswani', '人物', chunkA)],
+      relations: [relation('Vaswani', 'Transformer', '提出', chunkA)]
+    })
+    store.replaceDocumentGraph({
+      docId: 'doc-b',
+      kbId,
+      userId: 'u1',
+      entities: [entity('Transformer', '产品', chunkB), entity('BERT', '产品', chunkB), entity('Vaswani', '人物', chunkB)],
+      relations: [
+        relation('BERT', 'Transformer', '基于', chunkB),
+        relation('BERT', 'Transformer', '引用', chunkB)
+      ]
+    })
+
+    const view = store.loadKbGraphView(kbId)
+    expect(view.truncated).toBe(false)
+    expect(view.nodes).toHaveLength(3)
+    const transformer = view.nodes.find((node) => node.key === 'transformer')
+    expect(transformer).toMatchObject({ name: 'Transformer', type: '产品', mentions: 2, docs: 2 })
+    const bert = view.nodes.find((node) => node.key === 'bert')
+    expect(bert).toMatchObject({ mentions: 1, docs: 1 })
+
+    expect(view.links).toHaveLength(2)
+    const bertLink = view.links.find((link) => link.from === 'bert')
+    expect(bertLink).toMatchObject({ to: 'transformer', weight: 2 })
+    expect(bertLink?.labels).toEqual(['基于', '引用'])
+    const vaswaniLink = view.links.find((link) => link.from === 'vaswani')
+    expect(vaswaniLink).toMatchObject({ to: 'transformer', weight: 1, labels: ['提出'] })
+  })
+
+  it('自环与悬挂边被过滤；limit 截断置 truncated', () => {
+    const [chunkA] = seedDoc('doc-a', ['甲乙丙丁'])
+    store.replaceDocumentGraph({
+      docId: 'doc-a',
+      kbId,
+      userId: 'u1',
+      entities: [entity('甲', '概念', chunkA), entity('乙', '概念', chunkA), entity('丙', '概念', chunkA)],
+      relations: [
+        relation('甲', '甲', '自指', chunkA), // 自环
+        relation('甲', '不存在', '悬挂', chunkA) // 该实体没有进节点集
+      ]
+    })
+    const full = store.loadKbGraphView(kbId)
+    expect(full.nodes).toHaveLength(3)
+    expect(full.links).toEqual([])
+
+    const limited = store.loadKbGraphView(kbId, 2)
+    expect(limited.nodes).toHaveLength(2)
+    expect(limited.truncated).toBe(true)
+  })
+
+  it('空图谱（未抽实体）：返回空节点与空边，不报错', () => {
+    const view = store.loadKbGraphView(kbId)
+    expect(view).toEqual({ nodes: [], links: [], truncated: false })
+  })
+})
+
 describe('索引库备份（VACUUM INTO）', () => {
   it('备份副本可独立打开且数据完整；目标已存在时报错', () => {
     const [chunkA] = seedDoc('doc-a', ['备份验证 内容'])

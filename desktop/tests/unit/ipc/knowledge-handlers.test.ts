@@ -155,12 +155,13 @@ describe('knowledge IPC handlers', () => {
       'knowledge:rebuild-communities',
       'knowledge:backup-index',
       'knowledge:search',
+      'knowledge:graph-view',
       'knowledge:ask',
       'knowledge:cancel-ask'
     ]) {
       expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
-    expect(ipc.handlers.size).toBe(28)
+    expect(ipc.handlers.size).toBe(29)
   })
 
   it('set 后 get 拿到已落盘的覆盖项', async () => {
@@ -563,5 +564,98 @@ describe('knowledge IPC handlers', () => {
     )
     expect(badMode.success).toBe(false)
     expect(badMode.error).toContain('检索模式非法')
+
+    // debug 参数：非布尔拒绝；true 时返回分阶段耗时载荷
+    const badDebug = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:search',
+      kbId,
+      '混合检索',
+      { debug: 'yes' }
+    )
+    expect(badDebug.success).toBe(false)
+    expect(badDebug.error).toContain('debug 参数非法')
+
+    const traced = await ipc.invoke<{
+      success: boolean
+      data: { debug?: { timings: Array<{ stage: string; ms: number }> } }
+    }>('knowledge:search', kbId, '混合检索', { debug: true })
+    expect(traced.success).toBe(true)
+    expect(traced.data.debug).toBeTruthy()
+    expect(traced.data.debug!.timings.map((row) => row.stage)).toContain('total')
+  })
+
+  it('graph-view：返回跨文档折叠的节点与边；limit 非法时报错', async () => {
+    const { ipc, knowledgeStore } = createHarness()
+    const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
+      name: '图谱库'
+    })
+    const kbId = created.data.id
+    knowledgeStore.insertDocument({
+      id: 'doc-graph',
+      kbId,
+      userId: 'u1',
+      name: '图谱.md',
+      type: 'MD',
+      sizeBytes: 10,
+      relPath: '图谱.md',
+      storagePath: join(dir, 'files', kbId, 'doc-graph', '图谱.md'),
+      indexState: 'default',
+      contentHash: null
+    })
+    knowledgeStore.replaceDocumentGraph({
+      docId: 'doc-graph',
+      kbId,
+      userId: 'u1',
+      entities: [
+        {
+          name: '缓存预热',
+          nameKey: '缓存预热',
+          type: '概念',
+          chunkId: null,
+          chunkIndex: 0,
+          sourceText: '缓存预热',
+          charStart: 0,
+          charEnd: 4
+        },
+        {
+          name: '冷启动',
+          nameKey: '冷启动',
+          type: '概念',
+          chunkId: null,
+          chunkIndex: 0,
+          sourceText: '冷启动',
+          charStart: 0,
+          charEnd: 3
+        }
+      ],
+      relations: [
+        {
+          fromEntity: '缓存预热',
+          toEntity: '冷启动',
+          fromKey: '缓存预热',
+          toKey: '冷启动',
+          label: '优化',
+          chunkId: null,
+          description: null
+        }
+      ]
+    })
+
+    const view = await ipc.invoke<{
+      success: boolean
+      data: { nodes: unknown[]; links: unknown[]; truncated: boolean }
+    }>('knowledge:graph-view', kbId)
+    expect(view.success).toBe(true)
+    expect(view.data.nodes).toHaveLength(2)
+    expect(view.data.links).toHaveLength(1)
+    expect(view.data.truncated).toBe(false)
+
+    const bad = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:graph-view',
+      kbId,
+      { limit: 'x' }
+    )
+    expect(bad.success).toBe(false)
+    expect(bad.error).toContain('limit 参数非法')
   })
 })

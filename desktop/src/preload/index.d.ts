@@ -486,6 +486,9 @@ export type KnowledgeOverrideKey =
   | 'topK'
   | 'minSimilarity'
   | 'queryRewriteEnabled'
+  | 'mmrEnabled'
+  | 'mmrLambda'
+  | 'timeDecayHalfLifeDays'
   | 'graphEnabled'
   | 'graphModel'
 
@@ -542,6 +545,8 @@ export interface KnowledgeHit {
   source?: 'sparse' | 'dense' | 'graph'
   charStart: number
   charEnd: number
+  /** 文档导入时间（时间衰减的事实源与调试面板展示用） */
+  uploadedAt?: number
 }
 
 /** 问答引用（正文 [n] 对应的来源） */
@@ -577,6 +582,76 @@ export interface KnowledgeSearchResult {
   noRelevantResult: boolean
   /** 图扩展命中的查询实体名（启用知识图谱时才有） */
   graphEntities?: string[]
+  /** 检索调试（仅 searchKnowledge({debug:true}) 返回） */
+  debug?: RetrievalDebugInfo
+}
+
+/** 检索调试：单个阶段耗时（stage 与主进程 RetrievalDebugStage 对齐） */
+export interface RetrievalDebugStage {
+  stage: 'rewrite' | 'recall' | 'fuse' | 'fetch' | 'merge' | 'rerank' | 'decay' | 'mmr' | 'total'
+  ms: number
+}
+
+/** 检索调试：单通道统计（跨改写变体求和） */
+export interface RetrievalDebugChannelStat {
+  candidates: number
+  ms: number
+}
+
+/** 检索调试载荷（面板据此展示各路分数/耗时） */
+export interface RetrievalDebugInfo {
+  mode: 'hybrid' | 'vector' | 'bm25'
+  topK: number
+  candidateLimit: number
+  variants: string[]
+  timings: RetrievalDebugStage[]
+  channels: {
+    sparse: RetrievalDebugChannelStat
+    dense: RetrievalDebugChannelStat
+    graph: RetrievalDebugChannelStat
+  }
+  denseGate: { threshold: number; topScore: number; failed: boolean } | null
+  flags: {
+    vectorSkipped: boolean
+    sparseSkipped: boolean
+    rerankSkipped: boolean
+    mmrApplied: boolean
+    decayApplied: boolean
+  }
+  fusedCount: number
+  hits: Array<{
+    chunkId: number
+    score: number
+    vecScore?: number
+    bm25Score?: number
+    source?: 'sparse' | 'dense' | 'graph'
+    uploadedAt?: number
+    decayFactor?: number
+  }>
+}
+
+/** 图谱可视化节点（跨文档按 name_key 折叠） */
+export interface KnowledgeGraphViewNode {
+  key: string
+  name: string
+  type: string
+  mentions: number
+  docs: number
+}
+
+/** 图谱可视化边（平行边已折叠：weight 求和、labels 采样） */
+export interface KnowledgeGraphViewLink {
+  from: string
+  to: string
+  labels: string[]
+  weight: number
+}
+
+/** 图谱可视化数据（truncated = 节点或边被上限截断） */
+export interface KnowledgeGraphView {
+  nodes: KnowledgeGraphViewNode[]
+  links: KnowledgeGraphViewLink[]
+  truncated: boolean
 }
 
 /** 知识库摘要 */
@@ -732,12 +807,14 @@ export interface KnowledgeAPI {
   rebuildKnowledgeCommunities(
     kbId: string
   ): Promise<IpcResult<{ communities: number; entities: number }>>
-  /** 检索（命中自带引用信息与降级标记） */
+  /** 检索（命中自带引用信息与降级标记；debug 供检索调试面板） */
   searchKnowledge(
     kbId: string,
     query: string,
-    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25' }
+    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25'; debug?: boolean }
   ): Promise<IpcResult<KnowledgeSearchResult>>
+  /** 图谱可视化数据（实体/关系跨文档聚合；只读） */
+  getKnowledgeGraph(kbId: string, options?: { limit?: number }): Promise<IpcResult<KnowledgeGraphView>>
   /** 订阅索引进度事件（返回取消订阅函数） */
   onKnowledgeIndexProgress(callback: (progress: KnowledgeIndexProgress) => void): () => void
   /** 发起知识库问答（流式结果走 onKnowledgeAsk* 事件） */

@@ -8,6 +8,9 @@ import type {
   KnowledgeChunk,
   KnowledgeDocStatus,
   KnowledgeDocumentRow,
+  KnowledgeGraphView,
+  KnowledgeGraphViewLink,
+  KnowledgeGraphViewNode,
   KnowledgeIndexStage,
   KnowledgeIndexState,
   KnowledgeKind,
@@ -20,6 +23,9 @@ export const INDEX_DB_FILE = 'index.db'
 
 /** 索引写入的批次大小（每批一个事务；见 createDocumentIndexWriter 的原子性说明） */
 const INDEX_WRITE_BATCH = 1500
+
+/** 图谱可视化边数上限（SVG 力导向的渲染规模闸门；超出以 truncated 提示） */
+const MAX_GRAPH_VIEW_EDGES = 600
 
 /** 索引写入入参 */
 export interface DocumentIndexWriteInput {
@@ -327,10 +333,11 @@ interface ChunkDbRow {
   char_end: number
 }
 
-/** 切片 + JOIN 文档表后的命中行（docName/relPath 供引用展示） */
+/** 切片 + JOIN 文档表后的命中行（docName/relPath 供引用展示；uploaded_at 供时间衰减） */
 interface ChunkHitDbRow extends ChunkDbRow {
   doc_name: string
   rel_path: string
+  uploaded_at: number
 }
 
 interface ShareDbRow {
@@ -1215,6 +1222,8 @@ export class KnowledgeStore {
     content: string
     charStart: number
     charEnd: number
+    /** 文档导入时间（时间衰减的事实源；见 time-decay.ts 的局限说明） */
+    uploadedAt: number
   }> {
     if (!ids.length) return []
     const db = this.open()
@@ -1222,7 +1231,7 @@ export class KnowledgeStore {
     const rows = db
       .prepare(
         `SELECT c.id AS chunk_id, c.uid, c.doc_id, c.chunk_index, c.heading, c.content, c.char_start, c.char_end,
-                d.name AS doc_name, d.rel_path
+                d.name AS doc_name, d.rel_path, d.uploaded_at
          FROM knowledge_base_chunks c
          JOIN knowledge_base_documents d ON d.id = c.doc_id
          WHERE c.id IN (${placeholders})`
@@ -1238,8 +1247,25 @@ export class KnowledgeStore {
       heading: row.heading,
       content: row.content,
       charStart: row.char_start,
-      charEnd: row.char_end
+      charEnd: row.char_end,
+      uploadedAt: row.uploaded_at
     }))
+  }
+
+  /**
+   * 按 chunk id 批量取 FTS 里的分词串（MMR 的 token 相似度用；与 BM25 同一词表）。
+   * FTS5 不可用时返回空 Map（调用方回退到 SparseIndexer.tokenize 现切）。
+   */
+  getChunkTokens(ids: number[]): Map<number, string> {
+    const out = new Map<number, string>()
+    if (!ids.length || this.getMeta('fts5_ready') !== '1') return out
+    const db = this.open()
+    const placeholders = ids.map(() => '?').join(',')
+    const rows = db
+      .prepare(`SELECT rowid AS chunk_id, text_tokens FROM kb_chunk_fts WHERE rowid IN (${placeholders})`)
+      .all(...ids) as Array<{ chunk_id: number; text_tokens: string }>
+    for (const row of rows) out.set(row.chunk_id, row.text_tokens)
+    return out
   }
 
   /** 某文档的切片（图谱抽取按块进行；按 chunk_index 排序） */
@@ -1498,6 +1524,90 @@ export class KnowledgeStore {
       type: row.type,
       mentions: row.mentions
     }))
+  }
+
+  /**
+   * 图谱可视化数据（只读）：节点按 name_key 折叠（代表名/类型取出现最多的一行——
+   * SQLite 的 min/max 聚合裸列规则），边按 (from,to,label) 分组后由调用侧折平行边。
+   * 悬挂边（端点不在节点集内）与自环在 SQL 后过滤；节点超限则整体截断（truncated）。
+   */
+  loadKbGraphView(kbId: string, limit = 150): KnowledgeGraphView {
+    const db = this.open()
+    const nodeRows = db
+      .prepare(
+        `SELECT name_key, name, type, MAX(cnt) AS mentions, SUM(cnt) AS total
+         FROM (
+           SELECT name_key, name, type, COUNT(*) AS cnt
+           FROM knowledge_base_entities WHERE kb_id = ?
+           GROUP BY name_key, name, type
+         )
+         GROUP BY name_key
+         ORDER BY total DESC, name_key ASC
+         LIMIT ?`
+      )
+      .all(kbId, limit + 1) as Array<{
+      name_key: string
+      name: string
+      type: string
+      mentions: number
+      total: number
+    }>
+    const truncatedNodes = nodeRows.length > limit
+    const kept = nodeRows.slice(0, limit)
+
+    // 文档数（跨文档去重）单独聚合后并入（折叠查询里拿不到 doc_id 明细）
+    const docsRows = db
+      .prepare(
+        `SELECT name_key, COUNT(DISTINCT doc_id) AS docs
+         FROM knowledge_base_entities WHERE kb_id = ?
+         GROUP BY name_key`
+      )
+      .all(kbId) as Array<{ name_key: string; docs: number }>
+    const docsByKey = new Map(docsRows.map((row) => [row.name_key, row.docs]))
+
+    const nodes: KnowledgeGraphViewNode[] = kept.map((row) => ({
+      key: row.name_key,
+      name: row.name,
+      type: row.type,
+      mentions: row.total,
+      docs: docsByKey.get(row.name_key) ?? 0
+    }))
+    const inNodes = new Set(nodes.map((node) => node.key))
+
+    const relationRows = db
+      .prepare(
+        `SELECT from_key, to_key, label, COUNT(*) AS weight
+         FROM knowledge_base_relations WHERE kb_id = ?
+         GROUP BY from_key, to_key, label
+         ORDER BY weight DESC`
+      )
+      .all(kbId) as Array<{ from_key: string; to_key: string; label: string; weight: number }>
+
+    // 折平行边：同一对实体多条关系合并（weight 求和、labels 采样前 3 条）
+    const linkMap = new Map<string, KnowledgeGraphViewLink>()
+    for (const row of relationRows) {
+      if (row.from_key === row.to_key) continue
+      if (!inNodes.has(row.from_key) || !inNodes.has(row.to_key)) continue
+      const id = JSON.stringify([row.from_key, row.to_key])
+      const existing = linkMap.get(id)
+      if (existing) {
+        existing.weight += row.weight
+        if (existing.labels.length < 3 && !existing.labels.includes(row.label)) {
+          existing.labels.push(row.label)
+        }
+      } else {
+        linkMap.set(id, {
+          from: row.from_key,
+          to: row.to_key,
+          labels: [row.label],
+          weight: row.weight
+        })
+      }
+    }
+    const allLinks = [...linkMap.values()].sort((a, b) => b.weight - a.weight)
+    const links = allLinks.slice(0, MAX_GRAPH_VIEW_EDGES)
+
+    return { nodes, links, truncated: truncatedNodes || links.length < allLinks.length }
   }
 
   countGraphEntities(kbId: string): number {

@@ -445,13 +445,17 @@ const api = {
   rebuildKnowledgeCommunities(kbId: string) {
     return ipcRenderer.invoke('knowledge:rebuild-communities', kbId)
   },
-  /** 检索（页面问答与会话工具同源；返回命中与降级标记） */
+  /** 检索（页面问答与会话工具同源；返回命中与降级标记；debug 供检索调试面板） */
   searchKnowledge(
     kbId: string,
     query: string,
-    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25' }
+    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25'; debug?: boolean }
   ) {
     return ipcRenderer.invoke('knowledge:search', kbId, query, options)
+  },
+  /** 图谱可视化数据（实体/关系跨文档聚合；只读） */
+  getKnowledgeGraph(kbId: string, options?: { limit?: number }) {
+    return ipcRenderer.invoke('knowledge:graph-view', kbId, options)
   },
   /** 订阅索引进度事件（返回取消订阅函数） */
   onKnowledgeIndexProgress(callback: (progress: unknown) => void): () => void {

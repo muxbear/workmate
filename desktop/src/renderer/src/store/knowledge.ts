@@ -4,6 +4,7 @@ import type {
   IpcResult,
   KnowledgeBaseSummary,
   KnowledgeDocumentMeta,
+  KnowledgeGraphView,
   KnowledgeIndexState,
   KnowledgeKind,
   KnowledgeAskEvent,
@@ -307,11 +308,11 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     return result.data?.canceled ?? 0
   }
 
-  /** 检索（P0 起可用；命中自带引用与降级标记） */
+  /** 检索（P0 起可用；命中自带引用与降级标记；debug 供检索调试面板） */
   async function search(
     kbId: string,
     query: string,
-    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25' }
+    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25'; debug?: boolean }
   ): Promise<KnowledgeSearchResult | null> {
     const result = await call(
       () => window.api.searchKnowledge(kbId, query, options),
@@ -319,6 +320,19 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     )
     if (!result.success) {
       lastError.value = result.error ?? '检索失败'
+      return null
+    }
+    return result.data ?? null
+  }
+
+  /** 图谱可视化数据（只读；节点/边由主进程跨文档聚合折叠） */
+  async function graphView(
+    kbId: string,
+    options?: { limit?: number }
+  ): Promise<KnowledgeGraphView | null> {
+    const result = await call(() => window.api.getKnowledgeGraph(kbId, options), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '读取图谱失败'
       return null
     }
     return result.data ?? null
@@ -630,6 +644,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     retryDocument,
     cancelIndex,
     search,
+    graphView,
     indexWarning,
     qaRounds,
     askState,

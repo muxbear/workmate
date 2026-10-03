@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { createRequire } from 'module'
 import { tmpdir } from 'os'
@@ -383,5 +383,158 @@ describe('P4 查询改写（Hybrid RAG 的 query enhancement）', () => {
     })
     const result = await service.retrieve({ userId: 'u1', kbId, query: '开机加速怎么做' })
     expect(result.hits).toEqual([])
+  })
+})
+
+describe('P7 增强层（MMR / 时间衰减 / 调试载荷 / 多轮改写）', () => {
+  /** 打开稠密门限：零重叠查询的稠密噪声被挡掉，「空」才是真结论 */
+  const GATED = { minSimilarity: 0.3 }
+
+  async function seedDoc(name: string, content: string): Promise<void> {
+    const imported = files.importDocuments(
+      'u1',
+      kbId,
+      [{ srcPath: srcFile(name, content), relPath: name }],
+      'default'
+    )
+    const service = makeIndexService(
+      new EmbeddingProvider({ store, transport: makeTransport().transport })
+    )
+    service.enqueue('u1', kbId, [imported.accepted[0].id])
+    await waitTerminal(imported.accepted[0].id)
+  }
+
+  it('MMR：近重复切片被压掉，第二位让给不重合的文档；关闭时两条都来自重复对', async () => {
+    // 两篇近似重复（内容哈希不同、token 高度重合）；导入按内容哈希去重，不能写成完全一样
+    await seedDoc('dup-a.md', '# 缓存预热\n缓存 预热 让 首次 请求 命中 内存 中的 数据，避免 重复 计算。')
+    await seedDoc(
+      'dup-b.md',
+      '# 缓存预热\n缓存 预热 让 首次 请求 命中 内存 中的 数据，避免 重复 计算。\n补充：缓存 预热 也 降低 延迟。'
+    )
+    await seedDoc('other.md', '# 数据库\n数据库 索引 重建 需要 先 清空 旧 数据。')
+    const embedder = new EmbeddingProvider({ store, transport: makeTransport().transport })
+    const query = '缓存 预热 内存 命中'
+
+    // 关闭（默认）：top2 全被近重复对占据
+    const off = await makeRetrieval(embedder).retrieve({ userId: 'u1', kbId, query, topK: 2 })
+    expect(off.debug).toBeUndefined()
+    expect(new Set(off.hits.map((hit) => hit.docName))).toEqual(new Set(['dup-a.md', 'dup-b.md']))
+
+    // 开启（低 λ 偏多样性）：重复对只保留一条，第二位换成不重合的 other.md
+    const on = await makeRetrieval(embedder, { mmrEnabled: true, mmrLambda: 0.2 }).retrieve({
+      userId: 'u1',
+      kbId,
+      query,
+      topK: 2
+    })
+    const names = on.hits.map((hit) => hit.docName)
+    expect(names).toContain('other.md')
+    expect(names.filter((name) => name.startsWith('dup-'))).toHaveLength(1)
+  })
+
+  it('时间衰减：半衰期 365 天让新文档反超；关闭时保持原序', async () => {
+    const base = '# 衰减测试\n衰减 测试 词 用于 验证 导入 时间 加权。'
+    const day = 24 * 60 * 60 * 1000
+    const now = Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(now - 365 * day)
+      await seedDoc('old.md', base)
+      vi.setSystemTime(now)
+      // 与老文档近似但哈希不同（导入按内容哈希去重）；多出的标记只影响边缘分数
+      await seedDoc('new.md', `${base}\n（新）`)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const embedder = new EmbeddingProvider({ store, transport: makeTransport().transport })
+    const query = '衰减 测试'
+    // 关闭：同分同序（先导入的在前）
+    const off = await makeRetrieval(embedder).retrieve({ userId: 'u1', kbId, query, topK: 2 })
+    expect(off.hits[0].docName).toBe('old.md')
+    expect(typeof off.hits[0].uploadedAt).toBe('number')
+
+    // 开启：老文档打 0.5 折后让位
+    const on = await makeRetrieval(embedder, { timeDecayHalfLifeDays: 365 }).retrieve({
+      userId: 'u1',
+      kbId,
+      query,
+      topK: 2
+    })
+    expect(on.hits[0].docName).toBe('new.md')
+  })
+
+  it('调试载荷：debug:true 返回分阶段耗时与通道统计；默认不带', async () => {
+    await seedDoc('debug.md', '# 缓存预热\n缓存 预热 让 首次 请求 命中 内存 中的 数据。')
+    const embedder = new EmbeddingProvider({ store, transport: makeTransport().transport })
+    const service = makeRetrieval(embedder)
+    const query = '缓存 预热'
+
+    const plain = await service.retrieve({ userId: 'u1', kbId, query })
+    expect(plain.debug).toBeUndefined()
+
+    const traced = await service.retrieve({ userId: 'u1', kbId, query, debug: true })
+    const debug = traced.debug
+    expect(debug).toBeTruthy()
+    expect(debug!.topK).toBe(12)
+    expect(debug!.timings.map((row) => row.stage)).toEqual([
+      'rewrite',
+      'recall',
+      'fuse',
+      'fetch',
+      'merge',
+      'rerank',
+      'decay',
+      'mmr',
+      'total'
+    ])
+    for (const row of debug!.timings) expect(row.ms).toBeGreaterThanOrEqual(0)
+    expect(debug!.channels.sparse.candidates).toBeGreaterThan(0)
+    expect(debug!.denseGate).toBeNull()
+    expect(debug!.flags.mmrApplied).toBe(false)
+    expect(debug!.flags.decayApplied).toBe(false)
+    expect(debug!.hits.length).toBe(traced.hits.length)
+    expect(debug!.variants).toEqual([query])
+  })
+
+  it('多轮改写：改写器读到 history 才产变体；无历史时追问保持为空', async () => {
+    await seedDoc(
+      'cold-start.md',
+      '# 冷启动优化\n冷启动 预热 机制 可以 显著 降低 首次 打开 的 等待 时间。'
+    )
+    const embedder = new EmbeddingProvider({ store, transport: makeTransport().transport })
+    const rewriter = {
+      available: (config: { queryRewriteEnabled: boolean }) => config.queryRewriteEnabled,
+      rewrite: async (
+        _query: string,
+        _config: unknown,
+        options?: { history?: Array<{ role: string; content: string }> }
+      ): Promise<string[]> => (options?.history?.length ? ['冷启动 预热'] : [])
+    }
+    const service = new RetrievalService({
+      store,
+      sparse,
+      settings: settingsStub({ ...GATED, queryRewriteEnabled: true }),
+      getGlobalSettings: () => GLOBAL,
+      embedder,
+      queryRewriter: rewriter
+    })
+
+    // 无历史：改写器不产变体，原问题（它/的/缺点/呢）零命中
+    const without = await service.retrieve({ userId: 'u1', kbId, query: '它的缺点呢' })
+    expect(without.hits).toEqual([])
+
+    // 带历史：改写器补全指代 → 变体命中
+    const withHistory = await service.retrieve({
+      userId: 'u1',
+      kbId,
+      query: '它的缺点呢',
+      history: [
+        { role: 'user', content: '冷启动优化是什么' },
+        { role: 'assistant', content: '一种降低首次打开等待时间的机制' }
+      ]
+    })
+    expect(withHistory.hits.length).toBeGreaterThan(0)
+    expect(withHistory.hits[0].docName).toBe('cold-start.md')
   })
 })

@@ -547,6 +547,39 @@ function onBooleanChange(key: KnowledgeOverrideKey, value: boolean): void {
           :following="isFollowing('minSimilarity')"
           @update:following="onFollowChange('minSimilarity', $event)"
         />
+        <SettingToggle
+          :model-value="booleanValue('mmrEnabled')"
+          :disabled="isFollowing('mmrEnabled')"
+          @update:model-value="onBooleanChange('mmrEnabled', $event)"
+        />
+        <span class="kb-rerank-label">MMR 去冗余</span>
+        <KnowledgeFollowToggle
+          v-if="props.custom != null"
+          :following="isFollowing('mmrEnabled')"
+          @update:following="onFollowChange('mmrEnabled', $event)"
+        />
+        <span class="kb-inline-label">MMR 相关性权重</span>
+        <input
+          v-model="models.mmrLambda"
+          class="kb-input kb-input--topk"
+          :disabled="isFollowing('mmrLambda') || !booleanValue('mmrEnabled')"
+        />
+        <KnowledgeFollowToggle
+          v-if="props.custom != null"
+          :following="isFollowing('mmrLambda')"
+          @update:following="onFollowChange('mmrLambda', $event)"
+        />
+        <span class="kb-inline-label">时间衰减半衰期</span>
+        <input
+          v-model="models.timeDecayHalfLifeDays"
+          class="kb-input kb-input--topk"
+          :disabled="isFollowing('timeDecayHalfLifeDays')"
+        />
+        <KnowledgeFollowToggle
+          v-if="props.custom != null"
+          :following="isFollowing('timeDecayHalfLifeDays')"
+          @update:following="onFollowChange('timeDecayHalfLifeDays', $event)"
+        />
       </div>
     </section>
 

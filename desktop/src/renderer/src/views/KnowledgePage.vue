@@ -3,7 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import KnowledgeDetailModal from '../components/knowledge/KnowledgeDetailModal.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
+import KnowledgeGraphModal from '../components/knowledge/KnowledgeGraphModal.vue'
 import KnowledgeRenameModal from '../components/knowledge/KnowledgeRenameModal.vue'
+import KnowledgeSearchModal from '../components/knowledge/KnowledgeSearchModal.vue'
 import KnowledgeSettingsModal from '../components/knowledge/KnowledgeSettingsModal.vue'
 import KnowledgeShareModal from '../components/knowledge/KnowledgeShareModal.vue'
 import KnowledgeUploadModal from '../components/knowledge/KnowledgeUploadModal.vue'
@@ -420,6 +422,10 @@ const panelFullscreen = ref(false)
 const fileMenuKey = ref<string | null>(null)
 /** 知识库名字右侧的操作菜单是否展开 */
 const libraryMenuOpen = ref(false)
+/** 检索调试面板开关 */
+const searchOpen = ref(false)
+/** 图谱可视化弹窗开关 */
+const graphOpen = ref(false)
 
 // ── 问答 ──
 const question = ref('')
@@ -1185,6 +1191,18 @@ const reextractGraph = async (node: KnowledgeTreeNode): Promise<void> => {
   if (!selectedKbId.value) return
   const queued = await kbStore.reextractGraph(selectedKbId.value, [node.key])
   notify(queued > 0 ? '已加入图谱抽取队列' : kbStore.lastError || '没有可重抽的文件')
+}
+
+/** 打开检索调试面板（只读：走与问答同源的检索实现，附分阶段耗时与各路分数） */
+const openSearchDebug = (): void => {
+  libraryMenuOpen.value = false
+  searchOpen.value = true
+}
+
+/** 打开图谱可视化（只读：实体-关系图，数据由主进程跨文档聚合） */
+const openGraphView = (): void => {
+  libraryMenuOpen.value = false
+  graphOpen.value = true
 }
 
 /** 重建社区摘要（GraphRAG 全局检索侧；供「整体性提问」用） */
@@ -2284,6 +2302,29 @@ watch(
                       <button
                         v-if="!isCloudView"
                         class="kb-lib-menu-item"
+                        @click="openGraphView"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="18" cy="5" r="3" />
+                          <circle cx="6" cy="12" r="3" />
+                          <circle cx="18" cy="19" r="3" />
+                          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                        </svg>
+                        查看图谱
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item"
                         @click="rebuildCommunities"
                       >
                         <svg
@@ -2307,6 +2348,26 @@ watch(
                           <path d="M17.5 16.5 14 13.5" />
                         </svg>
                         重建社区摘要
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item"
+                        @click="openSearchDebug"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="11" cy="11" r="8" />
+                          <path d="m21 21-4.3-4.3" />
+                        </svg>
+                        检索调试
                       </button>
                       <button
                         v-if="!isCloudView"
@@ -3295,6 +3356,18 @@ watch(
       :title="detailTitle"
       :items="detailItems"
       @close="detailOpen = false"
+    />
+    <KnowledgeSearchModal
+      :open="searchOpen"
+      :kb-id="selectedKbId ?? ''"
+      :library-name="selectedLibrary?.name"
+      @close="searchOpen = false"
+    />
+    <KnowledgeGraphModal
+      :open="graphOpen"
+      :kb-id="selectedKbId ?? ''"
+      :library-name="selectedLibrary?.name"
+      @close="graphOpen = false"
     />
     <KnowledgeRenameModal
       :open="fileRenameOpen"

@@ -418,10 +418,27 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
     }
   })
 
+  ipc.handle('knowledge:graph-view', async (_event, kbId?: unknown, options?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      const raw = (options ?? {}) as { limit?: unknown }
+      let limit: number | undefined
+      if (raw.limit !== undefined) {
+        if (typeof raw.limit !== 'number' || !Number.isFinite(raw.limit)) {
+          throw new Error('limit 参数非法')
+        }
+        limit = Math.floor(raw.limit)
+      }
+      return ok(knowledgeService.graphView(userId, assertKbId(kbId), { limit }))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   ipc.handle('knowledge:search', async (_event, kbId?: unknown, query?: unknown, options?: unknown) => {
     try {
       const userId = session.requireUserId()
-      const raw = (options ?? {}) as { topK?: unknown; mode?: unknown }
+      const raw = (options ?? {}) as { topK?: unknown; mode?: unknown; debug?: unknown }
       const mode = raw.mode === undefined ? undefined : asSearchMode(raw.mode)
       const topK =
         raw.topK === undefined
@@ -432,10 +449,14 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
               }
               return Math.min(100, Math.max(1, Math.floor(raw.topK)))
             })()
+      if (raw.debug !== undefined && typeof raw.debug !== 'boolean') {
+        throw new Error('debug 参数非法')
+      }
       return ok(
         await knowledgeService.search(userId, assertKbId(kbId), asText(query, '检索内容'), {
           topK,
-          mode
+          mode,
+          debug: raw.debug
         })
       )
     } catch (err) {

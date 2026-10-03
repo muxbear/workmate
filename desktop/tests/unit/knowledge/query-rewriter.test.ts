@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  buildRewriteUser,
   parseRewriteResponse,
   QueryRewriter,
   type RewriteChatModel
@@ -27,6 +28,9 @@ function config(overrides: Partial<KnowledgeEngineConfig> = {}): KnowledgeEngine
     topK: 12,
     minSimilarity: 0.53,
     queryRewriteEnabled: true,
+    mmrEnabled: false,
+    mmrLambda: 0.7,
+    timeDecayHalfLifeDays: 0,
     graphEnabled: false,
     graphModel: '',
     ...overrides
@@ -86,6 +90,65 @@ describe('QueryRewriter', () => {
       })
     })
     expect(await boom.rewrite('x', config())).toEqual([])
+  })
+
+  it('多轮：history 进模型请求的 user 文本，输出解析不变', async () => {
+    let capturedUser = ''
+    const model: RewriteChatModel = {
+      complete: async ({ user }) => {
+        capturedUser = user
+        return '冷启动 缺点'
+      }
+    }
+    const rewriter = new QueryRewriter({ resolveModel: async () => model })
+    const variants = await rewriter.rewrite('它的缺点呢', config(), {
+      history: [
+        { role: 'user', content: '冷启动优化是什么' },
+        { role: 'assistant', content: '一种启动加速手段' }
+      ]
+    })
+    expect(capturedUser).toContain('最近对话：')
+    expect(capturedUser).toContain('用户：冷启动优化是什么')
+    expect(capturedUser).toContain('当前问题：它的缺点呢')
+    expect(variants).toEqual(['冷启动 缺点'])
+  })
+})
+
+describe('buildRewriteUser（多轮上下文拼装）', () => {
+  it('无历史（undefined/空数组）：原样返回问题', () => {
+    expect(buildRewriteUser('怎么离线部署？')).toBe('怎么离线部署？')
+    expect(buildRewriteUser('怎么离线部署？', [])).toBe('怎么离线部署？')
+  })
+
+  it('有历史：拼「最近对话 + 当前问题」，角色转中文标签', () => {
+    const text = buildRewriteUser('它的缺点呢', [
+      { role: 'user', content: '冷启动优化是什么' },
+      { role: 'assistant', content: '一种启动加速手段' }
+    ])
+    expect(text).toBe(
+      '最近对话：\n用户：冷启动优化是什么\n助手：一种启动加速手段\n\n当前问题：它的缺点呢'
+    )
+  })
+
+  it('最多带最近 2 轮（4 条），超长条目截断到 400 字', () => {
+    const long = 'x'.repeat(500)
+    const text = buildRewriteUser('追问', [
+      { role: 'user', content: '第一轮问题' },
+      { role: 'assistant', content: '第一轮回答' },
+      { role: 'user', content: long },
+      { role: 'assistant', content: '第二轮回答' },
+      { role: 'user', content: '第三轮问题' },
+      { role: 'assistant', content: '第三轮回答' }
+    ])
+    expect(text).not.toContain('第一轮问题')
+    expect(text).toContain('第三轮回答')
+    expect(text.length).toBeLessThan(long.length)
+    expect(text).toContain('…')
+  })
+
+  it('空白内容条目被丢弃（不产生空角色行）', () => {
+    const text = buildRewriteUser('问题', [{ role: 'user', content: '   ' }])
+    expect(text).toBe('问题')
   })
 })
 

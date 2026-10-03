@@ -1,5 +1,5 @@
 import { estimateTokens } from './ChunkingService'
-import type { KnowledgeHit, KnowledgeSearchResult } from './types'
+import type { KnowledgeHit, KnowledgeSearchResult, RetrievalHistoryTurn } from './types'
 
 /**
  * 知识库问答（2-Step RAG 的生成侧）。
@@ -38,8 +38,15 @@ export interface QaChatModel {
 }
 
 export interface KnowledgeQaDeps {
-  /** 检索（注入收窄接口便于单测；生产为 RetrievalService） */
-  retrieval: { retrieve: (input: { userId: string; kbId: string; query: string }) => Promise<KnowledgeSearchResult> }
+  /** 检索（注入收窄接口便于单测；生产为 RetrievalService）；history 供改写补全指代 */
+  retrieval: {
+    retrieve: (input: {
+      userId: string
+      kbId: string
+      query: string
+      history?: RetrievalHistoryTurn[]
+    }) => Promise<KnowledgeSearchResult>
+  }
   /** 解析聊天模型（渲染层未指定/指定无效时由实现回退默认模型） */
   resolveModel: (modelName: string | undefined) => Promise<QaChatModel>
   /**
@@ -98,10 +105,14 @@ export class KnowledgeQaService {
 
     let search: KnowledgeSearchResult
     try {
+      // 多轮历史：生成侧（formatHistory，下面组装 messages 时用）与改写侧（检索补全指代）同源。
+      // 检索词仍是本轮问题——history 只交给查询改写器，不改写时完全不参与。
+      const retrievalHistory = toRetrievalHistory(input.history)
       search = await this.deps.retrieval.retrieve({
         userId: input.userId,
         kbId: input.kbId,
-        query: question
+        query: question,
+        ...(retrievalHistory.length ? { history: retrievalHistory } : {})
       })
     } catch (err) {
       return {
@@ -235,10 +246,22 @@ export class KnowledgeQaService {
 }
 
 /**
+ * 历史轮 → 检索侧历史（与生成侧同窗口，最多 3 轮；P7 起交给查询改写器补全指代）。
+ * 只在 queryRewriteEnabled 开启时才真正影响检索；关闭时它只是被忽略的入参。
+ */
+export function toRetrievalHistory(history: QaHistoryTurn[] | undefined): RetrievalHistoryTurn[] {
+  return formatHistory(history).map((message) => ({
+    role: message.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+    content: message.content
+  }))
+}
+
+/**
  * 历史轮 → 消息（最多 3 轮、每段截断）。
  *
- * 说明：检索**只用本轮问题**（多轮改写留给后续版本）；历史只影响生成侧——
- * 让「它的缺点呢」这类追问能对上文。资料仍以本轮检索结果为准。
+ * 说明：历史对**生成侧**的作用是让「它的缺点呢」这类追问能对上文；
+ * 对**检索侧**只经查询改写器补全指代（见 toRetrievalHistory），
+ * 资料仍以本轮检索结果为准。
  */
 export function formatHistory(history: QaHistoryTurn[] | undefined): QaMessage[] {
   if (!Array.isArray(history) || !history.length) return []

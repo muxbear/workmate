@@ -143,8 +143,19 @@ export const KNOWLEDGE_FIELD_LIST: readonly KnowledgeFieldDef[] = [
     max: 1,
     integer: false
   },
-  // ── 知识图谱抽取 ──
+  // ── 查询增强与去冗余 ──
   { key: 'queryRewriteEnabled', label: '查询改写', kind: 'boolean' },
+  { key: 'mmrEnabled', label: 'MMR 去冗余', kind: 'boolean' },
+  { key: 'mmrLambda', label: 'MMR 相关性权重', kind: 'number', min: 0, max: 1, integer: false },
+  {
+    key: 'timeDecayHalfLifeDays',
+    label: '时间衰减半衰期',
+    kind: 'number',
+    min: 0,
+    max: 3650,
+    integer: true,
+    unit: '天'
+  },
   // ── 知识图谱抽取 ──
   { key: 'graphEnabled', label: '知识图谱抽取', kind: 'boolean' },
   {
@@ -170,7 +181,7 @@ export const KNOWLEDGE_OVERRIDE_KEYS: readonly KnowledgeOverrideKey[] = KNOWLEDG
   (field) => field.key
 )
 
-/** 由生效值构造表单草稿（18 项齐备；数值转字符串） */
+/** 由生效值构造表单草稿（22 项齐备；数值转字符串） */
 export function createDraft(values: KnowledgeOverrides): KnowledgeDraft {
   const draft = {} as KnowledgeDraft
   for (const field of KNOWLEDGE_FIELD_LIST) {

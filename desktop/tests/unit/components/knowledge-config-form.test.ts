@@ -19,7 +19,7 @@ import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../src/prel
 
 const SETTINGS = defaultSettings() as Record<string, unknown>
 
-/** 全局 18 项（短 key 形态） */
+/** 全局 22 项（短 key 形态） */
 function globalValues(): KnowledgeOverrides {
   const out: KnowledgeOverrides = {}
   for (const [key, value] of Object.entries(SETTINGS)) {
@@ -63,10 +63,10 @@ describe('KnowledgeConfigForm（全局模式：知识库设置页）', () => {
     expect(html).not.toContain('kb-label--row')
   })
 
-  it('渲染全部带标签的字段（15 项；布尔项是卡片头开关，无独立标签）', async () => {
+  it('渲染全部带标签的字段（17 项；布尔项是卡片头开关，无独立标签）', async () => {
     const html = await render({ draft: createDraft(globalValues()) })
     const labelled = KNOWLEDGE_FIELD_LIST.filter((field) => field.kind !== 'boolean')
-    expect(labelled).toHaveLength(15)
+    expect(labelled).toHaveLength(17)
     for (const field of labelled) {
       expect(html).toContain(field.label)
     }
@@ -79,37 +79,38 @@ describe('KnowledgeConfigForm（全局模式：知识库设置页）', () => {
   })
 
   it('布尔项按草稿值渲染开关状态', async () => {
-    // 默认：稀疏检索 / 启用重排 开；知识图谱抽取 / 查询改写 关（全局模式无跟随开关）
+    // 默认：稀疏检索 / 启用重排 开；知识图谱抽取 / 查询改写 / MMR 去冗余 关（全局模式无跟随开关）
     const html = await render({ draft: createDraft(globalValues()) })
-    expect((html.match(/role="switch"/g) ?? []).length).toBe(4)
+    expect((html.match(/role="switch"/g) ?? []).length).toBe(5)
     expect((html.match(/aria-checked="true"/g) ?? []).length).toBe(2)
-    expect((html.match(/aria-checked="false"/g) ?? []).length).toBe(2)
+    expect((html.match(/aria-checked="false"/g) ?? []).length).toBe(3)
   })
 
-  it('业务联动禁用：未启用图谱时抽取模型禁用（全局模式仅此 1 处禁用）', async () => {
+  it('业务联动禁用：未启用图谱/MMR 时对应控件禁用（全局模式仅此 2 处禁用）', async () => {
     const html = await render({ draft: createDraft(globalValues()) })
-    // graphEnabled 默认 false → 抽取模型禁用；sparseRetrieval/rerankEnabled 默认 true
-    expect(disabledCount(html)).toBe(1)
+    // graphEnabled 默认 false → 抽取模型禁用；mmrEnabled 默认 false → MMR 权重禁用；
+    // sparseRetrieval/rerankEnabled 默认 true → 其余控件可用
+    expect(disabledCount(html)).toBe(2)
     expect(html).toContain('value="GLM-5"')
   })
 
   it('未启用稀疏检索时 BM25 两项一起禁用', async () => {
     const values = { ...globalValues(), sparseRetrieval: false }
     const html = await render({ draft: createDraft(values) })
-    expect(disabledCount(html)).toBe(3) // BM25 k1 / BM25 b / 图谱抽取模型
+    expect(disabledCount(html)).toBe(4) // BM25 k1 / BM25 b / 图谱抽取模型 / MMR 权重
   })
 })
 
 describe('KnowledgeConfigForm（按库模式：跟随全局 / 自定义）', () => {
-  it('全部跟随时 19 项都出现跟随开关且控件全部禁用', async () => {
+  it('全部跟随时 22 项都出现跟随开关且控件全部禁用', async () => {
     const html = await render({
       draft: createDraft(globalValues()),
       custom: {} as Record<KnowledgeOverrideKey, boolean>
     })
-    expect((html.match(/跟随全局/g) ?? []).length).toBe(19)
+    expect((html.match(/跟随全局/g) ?? []).length).toBe(22)
     expect(html).not.toContain('>自定义<')
-    // 14 个字段控件 + 3 个布尔开关，全部禁用
-    expect(disabledCount(html)).toBe(19)
+    // 17 个字段控件 + 5 个布尔开关，全部禁用
+    expect(disabledCount(html)).toBe(22)
   })
 
   it('单项自定义后该项解除禁用并显示「自定义」', async () => {
@@ -118,23 +119,23 @@ describe('KnowledgeConfigForm（按库模式：跟随全局 / 自定义）', () 
       custom: customOnly('chunkSize')
     })
     expect((html.match(/自定义/g) ?? []).length).toBe(1)
-    expect((html.match(/跟随全局/g) ?? []).length).toBe(18)
-    expect(disabledCount(html)).toBe(18)
+    expect((html.match(/跟随全局/g) ?? []).length).toBe(21)
+    expect(disabledCount(html)).toBe(21)
   })
 
-  it('自定义项的跟随开关为开态，其余 18 项为关态', async () => {
+  it('自定义项的跟随开关为开态，其余 21 项为关态', async () => {
     const html = await render({
       draft: createDraft(globalValues()),
       custom: customOnly('chunkSize')
     })
-    // 全部 19 个跟随开关均为 sm 尺寸；其中恰好 1 个（chunkSize）处于开态
+    // 全部 22 个跟随开关均为 sm 尺寸；其中恰好 1 个（chunkSize）处于开态
     expect((html.match(/class="s-toggle s-toggle--on s-toggle--sm"/g) ?? []).length).toBe(1)
-    expect((html.match(/class="s-toggle s-toggle--sm"/g) ?? []).length).toBe(18)
+    expect((html.match(/class="s-toggle s-toggle--sm"/g) ?? []).length).toBe(21)
   })
 })
 
 /**
- * 技术前提守护：KnowledgeConfigForm 用「ref 映射 + 模板 v-model」绑定 19 个字段。
+ * 技术前提守护：KnowledgeConfigForm 用「ref 映射 + 模板 v-model」绑定 22 个字段。
  * 模板里读到的是 `$setup.models.<key>`，普通对象**不会**解包 ref —— 值会变成 computed 对象
  * （输入框显示 [object Object]，写回也不触发 setter），必须用 reactive 包裹。
  */

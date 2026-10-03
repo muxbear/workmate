@@ -40,6 +40,9 @@ export type SettingsKey =
   | 'knowledge.topK'
   | 'knowledge.minSimilarity'
   | 'knowledge.queryRewriteEnabled'
+  | 'knowledge.mmrEnabled'
+  | 'knowledge.mmrLambda'
+  | 'knowledge.timeDecayHalfLifeDays'
   | 'knowledge.embeddingBaseUrl'
   | 'knowledge.embeddingApiKey'
   | 'knowledge.rerankBaseUrl'
@@ -128,6 +131,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const knowledgeTopK = ref(12)
   const knowledgeMinSimilarity = ref(0.53)
   const knowledgeQueryRewriteEnabled = ref(false)
+  const knowledgeMmrEnabled = ref(false)
+  const knowledgeMmrLambda = ref(0.7)
+  const knowledgeTimeDecayHalfLifeDays = ref(0)
   const knowledgeEmbeddingBaseUrl = ref('')
   const knowledgeEmbeddingApiKey = ref('')
   const knowledgeRerankBaseUrl = ref('')
@@ -136,7 +142,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const knowledgeGraphModel = ref('GLM-5')
 
   /**
-   * 知识库 18 项全局值（短 key 形态，字段与「按库覆盖」一一对应；不含存放目录）
+   * 知识库 22 项全局值（短 key 形态，字段与「按库覆盖」一一对应；不含存放目录）
    * 「知识库设置」页表单回填与按知识库设置弹窗的「跟随全局」都读它 —— 单一来源，
    * 因此全局值一变，所有未覆盖该项的知识库会自动跟随。
    */
@@ -158,6 +164,9 @@ export const useSettingsStore = defineStore('settings', () => {
     topK: knowledgeTopK.value,
     minSimilarity: knowledgeMinSimilarity.value,
     queryRewriteEnabled: knowledgeQueryRewriteEnabled.value,
+    mmrEnabled: knowledgeMmrEnabled.value,
+    mmrLambda: knowledgeMmrLambda.value,
+    timeDecayHalfLifeDays: knowledgeTimeDecayHalfLifeDays.value,
     graphEnabled: knowledgeGraphEnabled.value,
     graphModel: knowledgeGraphModel.value
   }))
@@ -273,6 +282,15 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'knowledge.queryRewriteEnabled':
         knowledgeQueryRewriteEnabled.value = value as boolean
+        break
+      case 'knowledge.mmrEnabled':
+        knowledgeMmrEnabled.value = value as boolean
+        break
+      case 'knowledge.mmrLambda':
+        knowledgeMmrLambda.value = value as number
+        break
+      case 'knowledge.timeDecayHalfLifeDays':
+        knowledgeTimeDecayHalfLifeDays.value = value as number
         break
       case 'knowledge.embeddingBaseUrl':
         knowledgeEmbeddingBaseUrl.value = value as string
@@ -499,6 +517,9 @@ export const useSettingsStore = defineStore('settings', () => {
     knowledgeTopK,
     knowledgeMinSimilarity,
     knowledgeQueryRewriteEnabled,
+    knowledgeMmrEnabled,
+    knowledgeMmrLambda,
+    knowledgeTimeDecayHalfLifeDays,
     knowledgeEmbeddingBaseUrl,
     knowledgeEmbeddingApiKey,
     knowledgeRerankBaseUrl,

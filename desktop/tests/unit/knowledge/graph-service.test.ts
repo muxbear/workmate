@@ -49,6 +49,9 @@ function config(overrides: Partial<KnowledgeEngineConfig> = {}): KnowledgeEngine
     topK: 12,
     minSimilarity: 0.53,
     queryRewriteEnabled: false,
+    mmrEnabled: false,
+    mmrLambda: 0.7,
+    timeDecayHalfLifeDays: 0,
     graphEnabled: true,
     graphModel: 'GLM-5',
     ...overrides

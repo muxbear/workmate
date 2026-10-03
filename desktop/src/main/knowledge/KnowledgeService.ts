@@ -7,6 +7,7 @@ import type { KnowledgeEngineConfig } from './knowledge-config'
 import type {
   KnowledgeBaseRow,
   KnowledgeDocumentMeta,
+  KnowledgeGraphView,
   KnowledgeImportItem,
   KnowledgeImportResult,
   KnowledgeIndexState,
@@ -256,16 +257,30 @@ export class KnowledgeService {
     return this.indexer.cancel(docs.map((doc) => doc.id))
   }
 
-  /** 检索（页面问答与会话工具共用同一实现；返回降级标记） */
+  /** 检索（页面问答与会话工具共用同一实现；返回降级标记；debug 仅供调试面板） */
   async search(
     userId: string,
     kbId: string,
     query: string,
-    options: { topK?: number; mode?: KnowledgeSearchMode } = {}
+    options: { topK?: number; mode?: KnowledgeSearchMode; debug?: boolean } = {}
   ): Promise<KnowledgeSearchResult> {
     this.requireBase(userId, kbId)
     if (!this.retrieval) throw new Error('检索功能不可用')
-    return this.retrieval.retrieve({ userId, kbId, query, topK: options.topK, mode: options.mode })
+    return this.retrieval.retrieve({
+      userId,
+      kbId,
+      query,
+      topK: options.topK,
+      mode: options.mode,
+      debug: options.debug
+    })
+  }
+
+  /** 图谱可视化数据（只读；节点/边均按跨文档聚合折叠） */
+  graphView(userId: string, kbId: string, options: { limit?: number } = {}): KnowledgeGraphView {
+    this.requireBase(userId, kbId)
+    const limit = Math.min(400, Math.max(10, Math.floor(options.limit ?? 150)))
+    return this.store.loadKbGraphView(kbId, limit)
   }
 
   renameDocument(

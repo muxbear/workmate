@@ -70,10 +70,21 @@ export interface KnowledgeHit {
   source?: 'sparse' | 'dense' | 'graph'
   charStart: number
   charEnd: number
+  /** 文档导入时间（时间衰减的事实源与调试面板展示用） */
+  uploadedAt?: number
 }
 
 /** 检索模式 */
 export type KnowledgeSearchMode = 'hybrid' | 'vector' | 'bm25'
+
+/**
+ * 检索侧对话历史（多轮改写用：代词式追问「它的缺点呢」靠它补全指代）。
+ * 只喂给查询改写器，不改写原文第一路，也不直接进检索词。
+ */
+export interface RetrievalHistoryTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
 
 /** 检索结果（含降级标记，UI 据此轻提示） */
 export interface KnowledgeSearchResult {
@@ -88,6 +99,86 @@ export interface KnowledgeSearchResult {
   noRelevantResult: boolean
   /** 图扩展命中的查询实体名（graphEnabled 且命中时才有；问答据此提示「知识关联」） */
   graphEntities?: string[]
+  /** 检索调试（仅 retrieve({debug:true}) 返回；页面问答与会话工具不带） */
+  debug?: RetrievalDebugInfo
+}
+
+/** 检索调试：单个阶段耗时 */
+export interface RetrievalDebugStage {
+  stage: 'rewrite' | 'recall' | 'fuse' | 'fetch' | 'merge' | 'rerank' | 'decay' | 'mmr' | 'total'
+  ms: number
+}
+
+/** 检索调试：单通道统计（跨改写变体求和） */
+export interface RetrievalDebugChannelStat {
+  /** 通道内候选数（跨变体求和；门限挡掉稠密后为 0，见 denseGate） */
+  candidates: number
+  /** 跨变体的通道耗时（毫秒，求和） */
+  ms: number
+}
+
+/** 检索调试载荷（面板据此展示各路分数/耗时；不影响正常链路） */
+export interface RetrievalDebugInfo {
+  mode: KnowledgeSearchMode
+  topK: number
+  /** 召回候选池上限（topK × 倍数） */
+  candidateLimit: number
+  /** 实际使用的查询（原文第一路 + 改写变体） */
+  variants: string[]
+  timings: RetrievalDebugStage[]
+  channels: {
+    sparse: RetrievalDebugChannelStat
+    dense: RetrievalDebugChannelStat
+    graph: RetrievalDebugChannelStat
+  }
+  /** 稠密门限判定（未启用门限或稠密未跑时为 null） */
+  denseGate: { threshold: number; topScore: number; failed: boolean } | null
+  flags: {
+    vectorSkipped: boolean
+    sparseSkipped: boolean
+    rerankSkipped: boolean
+    mmrApplied: boolean
+    decayApplied: boolean
+  }
+  /** 融合后的候选数（合并相邻块之前） */
+  fusedCount: number
+  /** 命中明细（与 result.hits 对齐；附衰减系数等调试信息） */
+  hits: Array<{
+    chunkId: number
+    score: number
+    vecScore?: number
+    bm25Score?: number
+    source?: KnowledgeHit['source']
+    uploadedAt?: number
+    decayFactor?: number
+  }>
+}
+
+/** 图谱可视化节点（跨文档按 name_key 折叠；mentions/docs 为聚合值） */
+export interface KnowledgeGraphViewNode {
+  /** 归一化实体 key（name_key） */
+  key: string
+  name: string
+  type: string
+  /** 全库出现次数（跨文档） */
+  mentions: number
+  /** 出现该实体的文档数（跨文档） */
+  docs: number
+}
+
+/** 图谱可视化边（按 (from,to) 折叠：平行边累加 weight，labels 采样） */
+export interface KnowledgeGraphViewLink {
+  from: string
+  to: string
+  labels: string[]
+  weight: number
+}
+
+/** 图谱可视化数据（只读；truncated = 节点或边被上限截断） */
+export interface KnowledgeGraphView {
+  nodes: KnowledgeGraphViewNode[]
+  links: KnowledgeGraphViewLink[]
+  truncated: boolean
 }
 
 /** 知识库行（IPC 直接返回，字段名为 camelCase） */
