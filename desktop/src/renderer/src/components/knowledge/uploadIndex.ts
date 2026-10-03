@@ -78,7 +78,8 @@ export const KNOWLEDGE_INDEX_STEPS: readonly KnowledgeIndexStep[] = [
       'rerankEnabled',
       'rerankModel',
       'topK',
-      'minSimilarity'
+      'minSimilarity',
+      'queryRewriteEnabled'
     ]
   },
   {

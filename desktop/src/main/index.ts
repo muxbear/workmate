@@ -77,6 +77,7 @@ import {
   type GraphExtractionPayload
 } from './knowledge/GraphService'
 import { CommunityService, renderCommunityContext } from './knowledge/CommunityService'
+import { QueryRewriter } from './knowledge/QueryRewriter'
 import { resolveDefaultModel } from './agent/ModelFactory'
 import { resolveMainProxy, type MainProxyConfig } from './network/main-proxy'
 import { CloudKnowledgeService } from './knowledge/CloudKnowledgeService'
@@ -708,13 +709,24 @@ app.whenReady().then(() => {
       }
     }
   })
+  // 查询改写（默认关闭）：复用图谱写模型的解析链，未配置时回退默认模型
+  const queryRewriter = new QueryRewriter({
+    resolveModel: async (config) => {
+      const model = await resolveGraphModel(config.graphModel || 'deepseek:deepseek-v4-pro').catch(
+        () => null
+      )
+      if (!model?.complete) return null
+      return { complete: (input) => model.complete!(input) }
+    }
+  })
   const retrievalService = new RetrievalService({
     store: knowledgeStore,
     sparse: sparseIndexer,
     settings: knowledgeSettingsService,
     getGlobalSettings: () => settingsStore.getAll(),
     embedder: embeddingProvider,
-    reranker: rerankProvider
+    reranker: rerankProvider,
+    queryRewriter
   })
   // 向量扩展：能加载就用 sqlite-vec，否则 store 自动降级 JS 余弦（记录在 kb_meta）
   const vectorExtension = resolveSqliteVecExtension()
@@ -859,7 +871,20 @@ app.whenReady().then(() => {
     appDbPath,
     modelService,
     // 自动化任务在后台运行：只复用已授予的凭据，绝不触发交互式授权（McpTokenProvider 不弹窗）
-    { mcpAuth }
+    {
+      mcpAuth,
+      // 后台任务同样需要知识库检索工具（contextMode = knowledge 时由提示词引导调用）
+      knowledgeTools: () => ({
+        retrievalProvider: () => retrievalService,
+        listBases: (userId) =>
+          knowledgeStore.listBases(userId).map((row) => ({
+            id: row.id,
+            name: row.name,
+            docsCount: row.docsCount,
+            chunksCount: row.chunksCount
+          }))
+      })
+    }
   )
   void automationAgentManager.init(mode)
   const automationRunner = new AutomationRunner({
@@ -871,6 +896,12 @@ app.whenReady().then(() => {
     modelService,
     agentManager: automationAgentManager,
     resolveExperts: async () => (await expertSyncService.loadLocal())?.experts ?? [],
+    listKnowledgeBases: (userId) =>
+      knowledgeStore.listBases(userId).map((row) => ({
+        id: row.id,
+        name: row.name,
+        docsCount: row.docsCount
+      })),
     broadcast: (channel, payload) => {
       for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
     },

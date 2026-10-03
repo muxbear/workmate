@@ -42,6 +42,15 @@ export interface RetrievalServiceDeps {
   getGlobalSettings: () => Record<string, unknown>
   embedder?: KnowledgeEmbedder
   reranker?: KnowledgeReranker
+  /** 查询改写（Hybrid RAG 的 query enhancement；默认关闭，开启后多一次模型调用） */
+  queryRewriter?: KnowledgeQueryRewriter
+}
+
+/** 检索侧的查询改写契约（生产为 QueryRewriter；单测注入替身） */
+export interface KnowledgeQueryRewriter {
+  available: (config: KnowledgeEngineConfig) => boolean
+  /** 返回变体列表（不含原问题）；失败返回空数组 */
+  rewrite: (query: string, config: KnowledgeEngineConfig) => Promise<string[]>
 }
 
 /** 召回阶段的一条候选（融合前） */
@@ -107,53 +116,32 @@ export class RetrievalService {
         ? CANDIDATE_MULTIPLIER_RERANK
         : CANDIDATE_MULTIPLIER_PLAIN)
 
-    // 图扩展（第三路，P3）：命中查询里的实体 → 一跳邻居 → 关联切片
-    const wantGraph = mode === 'hybrid' && config.graphEnabled
-    const graphExpansion = wantGraph
-      ? this.deps.store.graphExpand({
-          kbId: input.kbId,
+    // 查询改写：原文永远第一路，变体只做召回扩展（任何失败都退化为只用原问题）
+    const variants = await this.expandQuery(query, config)
+    const perVariant = await Promise.all(
+      variants.map((variant) =>
+        this.collectVariant({
           userId: input.userId,
-          query,
-          limit: candidateLimit
+          kbId: input.kbId,
+          query: variant,
+          mode,
+          sparseAvailable,
+          denseAvailable,
+          candidateLimit,
+          config
         })
-      : { chunkIds: [], seedNames: [] }
-
-    const [sparseHits, denseHits] = await Promise.all([
-      sparseAvailable
-        ? Promise.resolve(
-            this.deps.sparse.search({
-              kbId: input.kbId,
-              userId: input.userId,
-              query,
-              limit: candidateLimit,
-              k1: config.bm25K1,
-              b: config.bm25B
-            })
-          )
-        : Promise.resolve([]),
-      denseAvailable ? this.denseSearch(input.userId, input.kbId, query, candidateLimit, config) : Promise.resolve(null)
-    ])
-
-    // 稠密门限：最大余弦低于门槛视为「没有相关内容」（仅稠密路参与，稀疏命中仍然有效）
-    const denseGateFailed =
-      denseHits !== null && config.minSimilarity > 0 && (denseHits[0]?.score ?? 0) < config.minSimilarity
-    const denseCandidates: Candidate[] = (denseGateFailed ? [] : (denseHits ?? []))
-      .slice(0, candidateLimit)
-      .map((hit, index) => ({ chunkId: hit.chunkId, score: hit.score, rank: index + 1 }))
-    const sparseCandidates: Candidate[] = sparseHits
-      .slice(0, candidateLimit)
-      .map((hit, index) => ({ chunkId: hit.chunkId, score: hit.score, rank: index + 1 }))
-
-    const graphCandidates: Candidate[] = graphExpansion.chunkIds
-      .slice(0, candidateLimit)
-      .map((chunkId, index) => ({ chunkId, score: 1 / (index + 1), rank: index + 1 }))
-
-    const fused = fuse(
-      sparseCandidates,
-      denseCandidates,
-      graphCandidates,
-      config.hybridWeight
+      )
     )
+    const seedNames = [...new Set(perVariant.flatMap((item) => item.seedNames))]
+
+    // 跨变体融合：单路直接用其融合结果；多路按排名做等权 RRF
+    const fused =
+      perVariant.length <= 1
+        ? (perVariant[0]?.candidates ?? [])
+        : fuseVariants(
+            perVariant.map((item) => item.candidates),
+            candidateLimit
+          )
     if (!fused.length) {
       // 召回到此为止就是空：如实标记「没有相关内容」，问答据此不编造
       return {
@@ -223,9 +211,81 @@ export class RetrievalService {
       sparseSkipped: !sparseAvailable,
       rerankSkipped,
       noRelevantResult: finalHits.length === 0,
-      ...(graphExpansion.seedNames.length
-        ? { graphEntities: graphExpansion.seedNames }
-        : {})
+      ...(seedNames.length ? { graphEntities: seedNames } : {})
+    }
+  }
+
+  /** 查询改写：关闭或失败时只返回原问题 */
+  private async expandQuery(query: string, config: KnowledgeEngineConfig): Promise<string[]> {
+    const rewriter = this.deps.queryRewriter
+    if (!rewriter?.available(config)) return [query]
+    const variants = await rewriter.rewrite(query, config)
+    const cleaned = variants
+      .map((item) => item.trim())
+      .filter((item) => item && item !== query)
+      .slice(0, MAX_QUERY_VARIANTS)
+    return [query, ...cleaned]
+  }
+
+  /** 单条查询的三路召回与通道内融合（改写变体各自跑一遍） */
+  private async collectVariant(input: {
+    userId: string
+    kbId: string
+    query: string
+    mode: KnowledgeSearchMode
+    sparseAvailable: boolean
+    denseAvailable: boolean
+    candidateLimit: number
+    config: KnowledgeEngineConfig
+  }): Promise<{ candidates: FusedCandidate[]; seedNames: string[] }> {
+    const { config, candidateLimit } = input
+    // 图扩展（第三路）：命中查询里的实体 → 一跳邻居 → 关联切片
+    const wantGraph = input.mode === 'hybrid' && config.graphEnabled
+    const graphExpansion = wantGraph
+      ? this.deps.store.graphExpand({
+          kbId: input.kbId,
+          userId: input.userId,
+          query: input.query,
+          limit: candidateLimit
+        })
+      : { chunkIds: [], seedNames: [] }
+
+    const [sparseHits, denseHits] = await Promise.all([
+      input.sparseAvailable
+        ? Promise.resolve(
+            this.deps.sparse.search({
+              kbId: input.kbId,
+              userId: input.userId,
+              query: input.query,
+              limit: candidateLimit,
+              k1: config.bm25K1,
+              b: config.bm25B
+            })
+          )
+        : Promise.resolve([]),
+      input.denseAvailable
+        ? this.denseSearch(input.userId, input.kbId, input.query, candidateLimit, config)
+        : Promise.resolve(null)
+    ])
+
+    // 稠密门限：最大余弦低于门槛视为「没有相关内容」（仅稠密路参与，稀疏命中仍然有效）
+    const denseGateFailed =
+      denseHits !== null &&
+      config.minSimilarity > 0 &&
+      (denseHits[0]?.score ?? 0) < config.minSimilarity
+    const denseCandidates: Candidate[] = (denseGateFailed ? [] : (denseHits ?? []))
+      .slice(0, candidateLimit)
+      .map((hit, index) => ({ chunkId: hit.chunkId, score: hit.score, rank: index + 1 }))
+    const sparseCandidates: Candidate[] = sparseHits
+      .slice(0, candidateLimit)
+      .map((hit, index) => ({ chunkId: hit.chunkId, score: hit.score, rank: index + 1 }))
+    const graphCandidates: Candidate[] = graphExpansion.chunkIds
+      .slice(0, candidateLimit)
+      .map((chunkId, index) => ({ chunkId, score: 1 / (index + 1), rank: index + 1 }))
+
+    return {
+      candidates: fuse(sparseCandidates, denseCandidates, graphCandidates, config.hybridWeight),
+      seedNames: graphExpansion.seedNames
     }
   }
 
@@ -257,6 +317,53 @@ export class RetrievalService {
 
 /** 图扩展通道的 RRF 权重（低于主结果：它是「关联召回」，不该压过直接命中） */
 const GRAPH_CHANNEL_WEIGHT = 0.5
+
+/** 查询改写最多采纳的变体数（不含原问题；与 web 的 DEFAULT_MAX_QUERIES 同量级） */
+const MAX_QUERY_VARIANTS = 2
+
+/** 融合后的候选（含来源与两路原始分） */
+type FusedCandidate = {
+  chunkId: number
+  score: number
+  vecScore?: number
+  bm25Score?: number
+  source: KnowledgeHit['source']
+}
+
+/**
+ * 跨变体融合：把每个改写变体的融合结果当一路候选，按**排名**做等权 RRF。
+ * 用排名而非分数：各变体的分数尺度不同（稠密余弦/BM25/RRF 混在一起），RFF 只看位次天然免疫。
+ */
+export function fuseVariants(lists: FusedCandidate[][], candidateLimit: number): FusedCandidate[] {
+  const merged = new Map<number, FusedCandidate & { contribution: number }>()
+  for (const list of lists) {
+    list.forEach((candidate, index) => {
+      const rrf = 1 / (RRF_K + index + 1)
+      const existing = merged.get(candidate.chunkId)
+      if (!existing) {
+        merged.set(candidate.chunkId, { ...candidate, score: rrf, contribution: rrf })
+        return
+      }
+      existing.score += rrf
+      if (candidate.vecScore !== undefined) existing.vecScore = candidate.vecScore
+      if (candidate.bm25Score !== undefined) existing.bm25Score = candidate.bm25Score
+      if (rrf > existing.contribution) {
+        existing.contribution = rrf
+        existing.source = candidate.source
+      }
+    })
+  }
+  return [...merged.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, candidateLimit)
+    .map((item) => ({
+      chunkId: item.chunkId,
+      score: item.score,
+      vecScore: item.vecScore,
+      bm25Score: item.bm25Score,
+      source: item.source
+    }))
+}
 
 /**
  * 融合：多通道加权 RRF；只有单路时直接用归一化分（不做伪 RRF，避免放大单路噪声）。

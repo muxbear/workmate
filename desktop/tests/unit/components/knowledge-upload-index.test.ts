@@ -44,7 +44,7 @@ describe('索引项清单', () => {
     const all = KNOWLEDGE_FIELD_LIST.map((field) => field.key)
     expect(UPLOAD_FIELD_KEYS).toEqual(['maxUploadSize', 'uploadTimeout', 'maxFilesPerBatch'])
     expect(INDEX_FIELD_KEYS).toEqual(all.filter((key) => !UPLOAD_FIELD_KEYS.includes(key)))
-    expect(INDEX_FIELD_KEYS).toHaveLength(15)
+    expect(INDEX_FIELD_KEYS).toHaveLength(16)
     expect(INDEX_FIELD_KEYS.length + UPLOAD_FIELD_KEYS.length).toBe(all.length)
   })
 })

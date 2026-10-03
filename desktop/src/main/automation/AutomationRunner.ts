@@ -11,6 +11,7 @@ import type { AutomationRepository } from './AutomationRepository'
 import type { AutomationRunRepository } from './AutomationRunRepository'
 import type { AutomationService } from './AutomationService'
 import type { AutomationTaskRecord, RunErrorCode, RunStatus, RunTrigger } from './types'
+import { buildContextHint } from './context-hint'
 
 /** 单次执行超时（毫秒） */
 const RUN_TIMEOUT_MS = 10 * 60 * 1000
@@ -63,6 +64,8 @@ export interface AutomationRunnerDeps {
   agentManager: AgentManager
   /** 专家定义来源（缺省时任务不注入专家） */
   resolveExperts?: () => Promise<DesktopExpert[]>
+  /** 本地知识库清单（contextMode = knowledge 时把可用库写进提示词；缺省则该模式不列出库名） */
+  listKnowledgeBases?: (userId: string) => Array<{ id: string; name: string; docsCount: number }>
   /** 事件广播：渲染层据此刷新任务列表与运行记录 */
   broadcast?: (channel: string, payload: unknown) => void
   /** 运行完成通知（由主进程按通知设置决定是否真正弹出） */
@@ -123,6 +126,12 @@ export class AutomationRunner {
       const history = await this.deps.conversationStore.getRawMessages(task.userId, task.id)
       const messages = toLangChainMessages(history)
       const blocks = await expandFileParts(task.promptParts)
+      // 上下文模式提示（知识库模式列出可检索的库；与 web 后端口径一致）
+      const contextHint = buildContextHint({
+        contextMode: task.contextMode,
+        knowledgeBases: this.deps.listKnowledgeBases?.(task.userId) ?? []
+      })
+      if (contextHint) blocks.push({ type: 'text', text: contextHint })
       messages.push(new HumanMessage({ id: 'msg-' + randomUUID(), content: blocks }))
 
       const ws = this.resolveWorkspace(task)

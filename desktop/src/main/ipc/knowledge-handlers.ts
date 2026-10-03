@@ -353,7 +353,10 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
             if (outcome.ok) {
               send('knowledge:ask-done', {
                 canceled: controller.signal.aborted,
-                noRelevantResult: outcome.noRelevantResult === true
+                noRelevantResult: outcome.noRelevantResult === true,
+                ...(outcome.invalidCitations?.length
+                  ? { invalidCitations: outcome.invalidCitations }
+                  : {})
               })
             } else {
               send('knowledge:ask-error', { error: outcome.error ?? '问答失败' })

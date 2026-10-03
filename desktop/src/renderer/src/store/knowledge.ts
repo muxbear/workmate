@@ -318,6 +318,8 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     streaming: boolean
     canceled: boolean
     noRelevantResult: boolean
+    /** 越界引用编号（非空时 UI 提示核对） */
+    invalidCitations: number[]
     error: string
   } | null>(null)
 
@@ -340,6 +342,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
         streaming: false,
         canceled: false,
         noRelevantResult: false,
+        invalidCitations: [],
         error: result.error ?? '提问失败'
       }
       return false
@@ -353,6 +356,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
       streaming: true,
       canceled: false,
       noRelevantResult: false,
+      invalidCitations: [],
       error: ''
     }
     return true
@@ -390,7 +394,8 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
           ...askState.value!,
           streaming: false,
           canceled: payload.canceled === true,
-          noRelevantResult: payload.noRelevantResult === true
+          noRelevantResult: payload.noRelevantResult === true,
+          invalidCitations: payload.invalidCitations ?? []
         }
       }),
       window.api.onKnowledgeAskError((payload) => {

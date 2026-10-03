@@ -63,6 +63,8 @@ export interface KnowledgeEngineConfig {
   topK: number
   /** 稠密检索相似度门限（0 = 关闭） */
   minSimilarity: number
+  /** 查询改写（默认关闭；开启后多一次模型调用换召回率） */
+  queryRewriteEnabled: boolean
   graphEnabled: boolean
   graphModel: string
 }
@@ -85,6 +87,7 @@ const FALLBACK: KnowledgeEngineConfig = {
   rerankApiKey: '',
   topK: 12,
   minSimilarity: 0.53,
+  queryRewriteEnabled: false,
   graphEnabled: false,
   graphModel: ''
 }
@@ -132,6 +135,10 @@ export function toEngineConfig(
     rerankApiKey: str(readGlobal('rerankApiKey')),
     topK: positiveInt(read('topK', FALLBACK.topK), FALLBACK.topK),
     minSimilarity: clamp01(num(read('minSimilarity', FALLBACK.minSimilarity), FALLBACK.minSimilarity)),
+    queryRewriteEnabled: bool(
+      read('queryRewriteEnabled', FALLBACK.queryRewriteEnabled),
+      FALLBACK.queryRewriteEnabled
+    ),
     graphEnabled: bool(read('graphEnabled', FALLBACK.graphEnabled), FALLBACK.graphEnabled),
     graphModel: str(read('graphModel', FALLBACK.graphModel))
   }

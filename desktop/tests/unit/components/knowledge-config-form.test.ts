@@ -79,11 +79,11 @@ describe('KnowledgeConfigForm（全局模式：知识库设置页）', () => {
   })
 
   it('布尔项按草稿值渲染开关状态', async () => {
-    // 默认：稀疏检索 / 启用重排 开，知识图谱抽取 关（全局模式无跟随开关）
+    // 默认：稀疏检索 / 启用重排 开；知识图谱抽取 / 查询改写 关（全局模式无跟随开关）
     const html = await render({ draft: createDraft(globalValues()) })
-    expect((html.match(/role="switch"/g) ?? []).length).toBe(3)
+    expect((html.match(/role="switch"/g) ?? []).length).toBe(4)
     expect((html.match(/aria-checked="true"/g) ?? []).length).toBe(2)
-    expect((html.match(/aria-checked="false"/g) ?? []).length).toBe(1)
+    expect((html.match(/aria-checked="false"/g) ?? []).length).toBe(2)
   })
 
   it('业务联动禁用：未启用图谱时抽取模型禁用（全局模式仅此 1 处禁用）', async () => {
@@ -101,15 +101,15 @@ describe('KnowledgeConfigForm（全局模式：知识库设置页）', () => {
 })
 
 describe('KnowledgeConfigForm（按库模式：跟随全局 / 自定义）', () => {
-  it('全部跟随时 18 项都出现跟随开关且控件全部禁用', async () => {
+  it('全部跟随时 19 项都出现跟随开关且控件全部禁用', async () => {
     const html = await render({
       draft: createDraft(globalValues()),
       custom: {} as Record<KnowledgeOverrideKey, boolean>
     })
-    expect((html.match(/跟随全局/g) ?? []).length).toBe(18)
+    expect((html.match(/跟随全局/g) ?? []).length).toBe(19)
     expect(html).not.toContain('>自定义<')
     // 14 个字段控件 + 3 个布尔开关，全部禁用
-    expect(disabledCount(html)).toBe(18)
+    expect(disabledCount(html)).toBe(19)
   })
 
   it('单项自定义后该项解除禁用并显示「自定义」', async () => {
@@ -118,23 +118,23 @@ describe('KnowledgeConfigForm（按库模式：跟随全局 / 自定义）', () 
       custom: customOnly('chunkSize')
     })
     expect((html.match(/自定义/g) ?? []).length).toBe(1)
-    expect((html.match(/跟随全局/g) ?? []).length).toBe(17)
-    expect(disabledCount(html)).toBe(17)
+    expect((html.match(/跟随全局/g) ?? []).length).toBe(18)
+    expect(disabledCount(html)).toBe(18)
   })
 
-  it('自定义项的跟随开关为开态，其余 17 项为关态', async () => {
+  it('自定义项的跟随开关为开态，其余 18 项为关态', async () => {
     const html = await render({
       draft: createDraft(globalValues()),
       custom: customOnly('chunkSize')
     })
-    // 全部 18 个跟随开关均为 sm 尺寸；其中恰好 1 个（chunkSize）处于开态
+    // 全部 19 个跟随开关均为 sm 尺寸；其中恰好 1 个（chunkSize）处于开态
     expect((html.match(/class="s-toggle s-toggle--on s-toggle--sm"/g) ?? []).length).toBe(1)
-    expect((html.match(/class="s-toggle s-toggle--sm"/g) ?? []).length).toBe(17)
+    expect((html.match(/class="s-toggle s-toggle--sm"/g) ?? []).length).toBe(18)
   })
 })
 
 /**
- * 技术前提守护：KnowledgeConfigForm 用「ref 映射 + 模板 v-model」绑定 18 个字段。
+ * 技术前提守护：KnowledgeConfigForm 用「ref 映射 + 模板 v-model」绑定 19 个字段。
  * 模板里读到的是 `$setup.models.<key>`，普通对象**不会**解包 ref —— 值会变成 computed 对象
  * （输入框显示 [object Object]，写回也不触发 setter），必须用 reactive 包裹。
  */

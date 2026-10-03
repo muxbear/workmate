@@ -50,6 +50,7 @@ export type SettingsKey =
   | 'knowledge.rerankBaseUrl'
   | 'knowledge.rerankApiKey'
   | 'knowledge.minSimilarity'
+  | 'knowledge.queryRewriteEnabled'
 
 export interface SettingsSchemaEntry {
   type: 'string' | 'number' | 'boolean'
@@ -281,7 +282,9 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     default: 0.53,
     applyTiming: 'instant',
     validate: (v) => (v as number) >= 0 && (v as number) <= 1
-  }
+  },
+  // 查询改写（Hybrid RAG 的 query enhancement）：默认关闭，开启后每次检索多一次模型调用
+  'knowledge.queryRewriteEnabled': { type: 'boolean', default: false, applyTiming: 'instant' }
 }
 
 /** settings.json 椤跺眰缁撴瀯鐗堟湰锛堝榻?WorkBuddy workspace-state.json 鐨?version 瀛楁锛?*/

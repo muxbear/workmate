@@ -312,3 +312,76 @@ describe('P1 向量化与混合检索', () => {
     expect(hybrid.hits.length).toBeGreaterThan(0)
   })
 })
+
+describe('P4 查询改写（Hybrid RAG 的 query enhancement）', () => {
+  /** 打开稠密门限：原查询与文档零重叠时稠密路被门限挡掉，「空」才是真结论 */
+  const GATED = { minSimilarity: 0.3 }
+
+  /** 原查询与文档零字面重叠、零语义重叠；改写变体才命中 */
+  function makeRewriter(variants: string[]): {
+    available: (config: { queryRewriteEnabled: boolean }) => boolean
+    rewrite: () => Promise<string[]>
+  } {
+    return {
+      available: (config) => config.queryRewriteEnabled,
+      rewrite: async () => variants
+    }
+  }
+
+  async function seedDoc(): Promise<void> {
+    const content = '# 冷启动优化\n冷启动 预热 机制 可以 显著 降低 首次 打开 的 等待 时间。'
+    const imported = files.importDocuments(
+      'u1',
+      kbId,
+      [{ srcPath: srcFile('cold-start.md', content), relPath: 'cold-start.md' }],
+      'default'
+    )
+    const service = makeIndexService(new EmbeddingProvider({ store, transport: makeTransport().transport }))
+    service.enqueue('u1', kbId, [imported.accepted[0].id])
+    await waitTerminal(imported.accepted[0].id)
+  }
+
+  it('开关关闭：原查询无命中；开启且改写给出变体：变体召回命中该文档', async () => {
+    await seedDoc()
+    const embedder = new EmbeddingProvider({ store, transport: makeTransport().transport })
+
+    // 关闭（或没有改写器）：原查询「开机加速怎么做」与文档零重叠 → 空
+    const off = new RetrievalService({
+      store,
+      sparse,
+      settings: settingsStub({ ...GATED, queryRewriteEnabled: false }),
+      getGlobalSettings: () => GLOBAL,
+      embedder
+    })
+    const before = await off.retrieve({ userId: 'u1', kbId, query: '开机加速怎么做' })
+    expect(before.hits).toEqual([])
+
+    // 开启并注入改写器：变体命中
+    const on = new RetrievalService({
+      store,
+      sparse,
+      settings: settingsStub({ ...GATED, queryRewriteEnabled: true }),
+      getGlobalSettings: () => GLOBAL,
+      embedder,
+      queryRewriter: makeRewriter(['冷启动 预热'])
+    })
+    const after = await on.retrieve({ userId: 'u1', kbId, query: '开机加速怎么做' })
+    expect(after.hits.length).toBeGreaterThan(0)
+    expect(after.hits[0].docName).toBe('cold-start.md')
+  })
+
+  it('改写返回空（模型失败降级）：行为与关闭时一致', async () => {
+    await seedDoc()
+    const embedder = new EmbeddingProvider({ store, transport: makeTransport().transport })
+    const service = new RetrievalService({
+      store,
+      sparse,
+      settings: settingsStub({ ...GATED, queryRewriteEnabled: true }),
+      getGlobalSettings: () => GLOBAL,
+      embedder,
+      queryRewriter: makeRewriter([])
+    })
+    const result = await service.retrieve({ userId: 'u1', kbId, query: '开机加速怎么做' })
+    expect(result.hits).toEqual([])
+  })
+})

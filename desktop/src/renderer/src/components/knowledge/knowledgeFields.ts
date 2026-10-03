@@ -144,6 +144,8 @@ export const KNOWLEDGE_FIELD_LIST: readonly KnowledgeFieldDef[] = [
     integer: false
   },
   // ── 知识图谱抽取 ──
+  { key: 'queryRewriteEnabled', label: '查询改写', kind: 'boolean' },
+  // ── 知识图谱抽取 ──
   { key: 'graphEnabled', label: '知识图谱抽取', kind: 'boolean' },
   {
     key: 'graphModel',

@@ -485,6 +485,7 @@ export type KnowledgeOverrideKey =
   | 'rerankModel'
   | 'topK'
   | 'minSimilarity'
+  | 'queryRewriteEnabled'
   | 'graphEnabled'
   | 'graphModel'
 
@@ -562,6 +563,8 @@ export interface KnowledgeAskEvent {
   text?: string
   canceled?: boolean
   noRelevantResult?: boolean
+  /** 答案里越界的引用编号（如 [5] 但本次只有 3 条命中） */
+  invalidCitations?: number[]
   error?: string
 }
 

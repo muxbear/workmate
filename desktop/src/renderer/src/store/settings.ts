@@ -39,6 +39,7 @@ export type SettingsKey =
   | 'knowledge.rerankModel'
   | 'knowledge.topK'
   | 'knowledge.minSimilarity'
+  | 'knowledge.queryRewriteEnabled'
   | 'knowledge.embeddingBaseUrl'
   | 'knowledge.embeddingApiKey'
   | 'knowledge.rerankBaseUrl'
@@ -126,6 +127,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const knowledgeRerankModel = ref('bge-reranker-v2-m3')
   const knowledgeTopK = ref(12)
   const knowledgeMinSimilarity = ref(0.53)
+  const knowledgeQueryRewriteEnabled = ref(false)
   const knowledgeEmbeddingBaseUrl = ref('')
   const knowledgeEmbeddingApiKey = ref('')
   const knowledgeRerankBaseUrl = ref('')
@@ -155,6 +157,7 @@ export const useSettingsStore = defineStore('settings', () => {
     rerankModel: knowledgeRerankModel.value,
     topK: knowledgeTopK.value,
     minSimilarity: knowledgeMinSimilarity.value,
+    queryRewriteEnabled: knowledgeQueryRewriteEnabled.value,
     graphEnabled: knowledgeGraphEnabled.value,
     graphModel: knowledgeGraphModel.value
   }))
@@ -267,6 +270,9 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'knowledge.minSimilarity':
         knowledgeMinSimilarity.value = value as number
+        break
+      case 'knowledge.queryRewriteEnabled':
+        knowledgeQueryRewriteEnabled.value = value as boolean
         break
       case 'knowledge.embeddingBaseUrl':
         knowledgeEmbeddingBaseUrl.value = value as string
@@ -492,6 +498,7 @@ export const useSettingsStore = defineStore('settings', () => {
     knowledgeRerankModel,
     knowledgeTopK,
     knowledgeMinSimilarity,
+    knowledgeQueryRewriteEnabled,
     knowledgeEmbeddingBaseUrl,
     knowledgeEmbeddingApiKey,
     knowledgeRerankBaseUrl,

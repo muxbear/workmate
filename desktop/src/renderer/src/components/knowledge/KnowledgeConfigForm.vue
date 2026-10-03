@@ -517,6 +517,17 @@ function onBooleanChange(key: KnowledgeOverrideKey, value: boolean): void {
           :following="isFollowing('topK')"
           @update:following="onFollowChange('topK', $event)"
         />
+        <SettingToggle
+          :model-value="booleanValue('queryRewriteEnabled')"
+          :disabled="isFollowing('queryRewriteEnabled')"
+          @update:model-value="onBooleanChange('queryRewriteEnabled', $event)"
+        />
+        <span class="kb-rerank-label">查询改写</span>
+        <KnowledgeFollowToggle
+          v-if="props.custom != null"
+          :following="isFollowing('queryRewriteEnabled')"
+          @update:following="onFollowChange('queryRewriteEnabled', $event)"
+        />
         <span class="kb-inline-label">相关度门槛</span>
         <input
           v-model="models.minSimilarity"

@@ -48,6 +48,7 @@ function config(overrides: Partial<KnowledgeEngineConfig> = {}): KnowledgeEngine
     rerankApiKey: '',
     topK: 12,
     minSimilarity: 0.53,
+    queryRewriteEnabled: false,
     graphEnabled: true,
     graphModel: 'GLM-5',
     ...overrides

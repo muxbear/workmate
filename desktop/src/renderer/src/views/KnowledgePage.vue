@@ -3054,6 +3054,11 @@ watch(
                     {{ askState.answer }}<span v-if="askState.streaming" class="kb-answer-caret"></span>
                   </div>
                   <p v-if="askState.canceled" class="kb-answer-note">已取消</p>
+                  <p v-if="askState.invalidCitations.length" class="kb-answer-note">
+                    回答中的
+                    {{ askState.invalidCitations.map((n) => `[${n}]`).join('、') }}
+                    未对应本次检索来源，请核对原文。
+                  </p>
                   <p v-if="askState.error" class="kb-answer-error">{{ askState.error }}</p>
                   <div v-if="askState.citations.length" class="kb-citations">
                     <p class="kb-citations-title">引用来源</p>

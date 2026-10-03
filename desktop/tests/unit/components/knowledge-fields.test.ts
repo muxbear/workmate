@@ -18,8 +18,8 @@ const ALL_KNOWLEDGE_KEYS = (Object.keys(SETTINGS_SCHEMA) as SettingsKey[]).filte
 )
 
 describe('knowledgeFields 字段表', () => {
-  it('18 项：不含存放目录与嵌入/重排端点（全局独占）', () => {
-    expect(KNOWLEDGE_OVERRIDE_KEYS).toHaveLength(18)
+  it('19 项：不含存放目录与嵌入/重排端点（全局独占）', () => {
+    expect(KNOWLEDGE_OVERRIDE_KEYS).toHaveLength(19)
     for (const key of ['directory', 'embeddingBaseUrl', 'embeddingApiKey', 'rerankBaseUrl', 'rerankApiKey']) {
       expect(KNOWLEDGE_OVERRIDE_KEYS).not.toContain(key)
     }
@@ -74,7 +74,7 @@ describe('createDraft 草稿构造', () => {
     expect(draft.chunkSize).toBe('')
     expect(draft.sparseRetrieval).toBe(false)
     expect(draft.graphModel).toBe('')
-    expect(Object.keys(draft)).toHaveLength(18)
+    expect(Object.keys(draft)).toHaveLength(19)
   })
 
   it('草稿可被全局默认值完整回填', () => {
