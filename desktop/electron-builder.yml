@@ -11,6 +11,11 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  # sqlite-vec 扩展（native 库不能从 asar 内加载；多架构二进制随 resources 分发）
+  - resources/native/sqlite-vec/**
+  # sqlite-vec 平台包（开发态/未 vendor 时从 node_modules 解析）
+  - node_modules/sqlite-vec/**
+  - node_modules/sqlite-vec-*/**
 win:
   executableName: ke-work
 nsis:

@@ -91,7 +91,7 @@ describe('KnowledgeFileService', () => {
     expect(overflow.skipped[0].reason).toContain('超出单批次上限')
   })
 
-  it('导入：源文件不存在 / 路径越界 / 索引方式未开放', () => {
+  it('导入：源文件不存在 / 路径越界被拒绝', () => {
     const missing = files.importDocuments('u1', kbId, [
       { srcPath: join(dir, 'src', 'nope.md'), relPath: 'nope.md' }
     ])
@@ -101,10 +101,29 @@ describe('KnowledgeFileService', () => {
       { srcPath: src('c.md'), relPath: '../escape.md' }
     ])
     expect(escape.failed[0].reason).toContain('非法')
+  })
 
-    expect(() =>
-      files.importDocuments('u1', kbId, [{ srcPath: src('d.md'), relPath: 'd.md' }], 'custom')
-    ).toThrow('索引功能尚未开放')
+  it('导入：自定义索引落库为 queued 并写入配置快照', () => {
+    const snapshot = JSON.stringify({ chunkStrategy: 'fixed', chunkSize: 400 })
+    const result = files.importDocuments(
+      'u1',
+      kbId,
+      [{ srcPath: src('d.md'), relPath: 'd.md' }],
+      'custom',
+      snapshot
+    )
+    expect(result.failed).toEqual([])
+    expect(result.accepted[0].indexState).toBe('custom')
+    expect(result.accepted[0].status).toBe('queued')
+    expect(store.listDocuments('u1', kbId)[0].config).toBe(snapshot)
+  })
+
+  it('导入：默认索引落库为 queued（快照为空时由主进程取生效配置）', () => {
+    const result = files.importDocuments('u1', kbId, [
+      { srcPath: src('e.md'), relPath: 'e.md' }
+    ], 'default')
+    expect(result.accepted[0].status).toBe('queued')
+    expect(result.accepted[0].indexState).toBe('default')
   })
 
   it('重命名：文件改 relPath；文件夹按前缀批量改写；重名报错', () => {

@@ -13,6 +13,8 @@
 export type KnowledgeFileIcon = 'file-text' | 'file-type-2' | 'file-spreadsheet'
 /** 文件建立索引的方式（undefined = 页面初始数据，按「已建立索引」展示） */
 export type KnowledgeFileIndexState = 'default' | 'custom' | 'none'
+/** 文档索引处理状态（与主进程 knowledge/types.ts 的 KnowledgeDocStatus 一致） */
+export type KnowledgeFileStatus = 'none' | 'queued' | 'indexing' | 'indexed' | 'failed'
 /** 文件列表的排序键 */
 export type KnowledgeSortKey = 'name' | 'size' | 'updated'
 
@@ -31,6 +33,17 @@ export interface KnowledgeFileMeta {
   icon: KnowledgeFileIcon
   tint: string
   indexState?: KnowledgeFileIndexState
+  /** 索引处理状态与进度（列表标签/详情/菜单显隐都读它） */
+  status?: KnowledgeFileStatus
+  progress?: number
+  errorMessage?: string | null
+  chunksCount?: number
+  entitiesCount?: number
+  relationsCount?: number
+  charCount?: number
+  truncated?: boolean
+  graphError?: string | null
+  indexedAt?: number | null
 }
 
 /** 列表节点：文件夹或文件 */

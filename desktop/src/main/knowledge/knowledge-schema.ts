@@ -6,27 +6,40 @@ import { isValidSettingsValue, SETTINGS_SCHEMA, type SettingsKey } from '../sett
  * 设计约定：
  * - 可覆盖项 **从 SETTINGS_SCHEMA 运行时派生**，不手写第二份清单 —— schema 增删项时自动纳入，
  *   区间/枚举校验直接委托 isValidSettingsValue，杜绝两处漂移。
- * - 「本地存储 / 存放目录」(knowledge.directory) 不参与按库覆盖：它是整个索引库 index.db 的
- *   机器级位置，按知识库区分没有意义。
+ * - 不参与按库覆盖的项（全局一份）：
+ *   - `knowledge.directory`：整个索引库 index.db 的机器级位置，按知识库区分没有意义；
+ *   - 嵌入/重排端点（baseUrl 与 apiKey）：凭据与内网网关是机器级配置，
+ *     允许按库覆盖会让同一个密钥在多处维护、也放大泄漏面。
  * - 短 key 去掉了 `knowledge.` 前缀，落盘后可直接作为未来 knowledge_bases.config 的字段名。
  */
 
 type KnowledgeSettingsKey = Extract<SettingsKey, `knowledge.${string}`>
 type StripKnowledgePrefix<K extends string> = K extends `knowledge.${infer Rest}` ? Rest : never
 
+/** 全局独占（不可按库覆盖）的知识库配置项：清单与类型同一来源，防止两处漂移 */
+export const NON_OVERRIDABLE_KNOWLEDGE_KEYS = [
+  'knowledge.directory',
+  'knowledge.embeddingBaseUrl',
+  'knowledge.embeddingApiKey',
+  'knowledge.rerankBaseUrl',
+  'knowledge.rerankApiKey'
+] as const
+type NonOverridableKey = (typeof NON_OVERRIDABLE_KNOWLEDGE_KEYS)[number]
+const NON_OVERRIDABLE_KEYS: ReadonlySet<string> = new Set(NON_OVERRIDABLE_KNOWLEDGE_KEYS)
+
 /** 可被单个知识库覆盖的配置项（短 key） */
 export type KnowledgeOverrideKey = StripKnowledgePrefix<
-  Exclude<KnowledgeSettingsKey, 'knowledge.directory'>
+  Exclude<KnowledgeSettingsKey, NonOverridableKey>
 >
 
 /** 某个知识库的覆盖项：**稀疏**，未出现的 key 表示「跟随全局」 */
 export type KnowledgeOverrides = Partial<Record<KnowledgeOverrideKey, unknown>>
 
-/** 可覆盖项清单（17 项；顺序稳定，取自 SETTINGS_SCHEMA 的声明顺序） */
+/** 可覆盖项清单（顺序稳定，取自 SETTINGS_SCHEMA 的声明顺序） */
 export const KNOWLEDGE_OVERRIDE_KEYS: readonly KnowledgeOverrideKey[] = (
   Object.keys(SETTINGS_SCHEMA) as SettingsKey[]
 )
-  .filter((key) => key.startsWith('knowledge.') && key !== 'knowledge.directory')
+  .filter((key) => key.startsWith('knowledge.') && !NON_OVERRIDABLE_KEYS.has(key))
   .map((key) => key.slice('knowledge.'.length) as KnowledgeOverrideKey)
 
 /** 短 key 白名单守卫 */

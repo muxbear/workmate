@@ -5,25 +5,28 @@ import {
   assertKbIdList,
   assertKnowledgeOverrides,
   KNOWLEDGE_OVERRIDE_KEYS,
+  NON_OVERRIDABLE_KNOWLEDGE_KEYS,
   normalizeKnowledgeOverrides,
   toSettingsKey
 } from '../../../src/main/knowledge/knowledge-schema'
 
-/** schema 中全部 knowledge.* key（可覆盖项 = 其减去 directory） */
+/** schema 中全部 knowledge.* key（可覆盖项 = 其减去全局独占项） */
 const ALL_KNOWLEDGE_KEYS = (Object.keys(SETTINGS_SCHEMA) as SettingsKey[]).filter((key) =>
   key.startsWith('knowledge.')
 )
 
 describe('knowledge-schema 可覆盖项清单', () => {
-  it('派生 17 项且不含存放目录', () => {
-    expect(KNOWLEDGE_OVERRIDE_KEYS).toHaveLength(17)
-    expect(KNOWLEDGE_OVERRIDE_KEYS).not.toContain('directory')
+  it('派生 18 项：不含存放目录与嵌入/重排端点（全局独占）', () => {
+    expect(KNOWLEDGE_OVERRIDE_KEYS).toHaveLength(18)
+    for (const key of ['directory', 'embeddingBaseUrl', 'embeddingApiKey', 'rerankBaseUrl', 'rerankApiKey']) {
+      expect(KNOWLEDGE_OVERRIDE_KEYS).not.toContain(key)
+    }
   })
 
   it('与 SETTINGS_SCHEMA 的 knowledge.* 逐项对齐（防漂移）', () => {
-    const expected = ALL_KNOWLEDGE_KEYS.filter((key) => key !== 'knowledge.directory').map((key) =>
-      key.slice('knowledge.'.length)
-    )
+    const expected = ALL_KNOWLEDGE_KEYS.filter(
+      (key) => !(NON_OVERRIDABLE_KNOWLEDGE_KEYS as readonly string[]).includes(key)
+    ).map((key) => key.slice('knowledge.'.length))
     expect([...KNOWLEDGE_OVERRIDE_KEYS]).toEqual(expected)
   })
 

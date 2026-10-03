@@ -34,8 +34,10 @@ const INVALID_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'])
 /** 单张图片读取上限，避免超大图片撑爆渲染层 */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+/** 单篇文档参与索引的文本上限（与转换型文档抽取上限一致） */
+const INDEX_TEXT_LIMIT_CHARS = 2 * 1024 * 1024
 
-/** 文档行 → 渲染层可见元信息（剥掉 storage_path / user_id / hash） */
+/** 文档行 → 渲染层可见元信息（剥掉 storage_path / user_id / hash / config 原文） */
 export function toDocumentMeta(row: KnowledgeDocumentRow): KnowledgeDocumentMeta {
   return {
     id: row.id,
@@ -47,6 +49,15 @@ export function toDocumentMeta(row: KnowledgeDocumentRow): KnowledgeDocumentMeta
     indexState: row.indexState,
     status: row.status,
     errorMessage: row.errorMessage,
+    progress: row.progress,
+    stage: row.stage,
+    charCount: row.charCount,
+    truncated: row.truncated,
+    chunksCount: row.chunksCount,
+    entitiesCount: row.entitiesCount,
+    relationsCount: row.relationsCount,
+    graphError: row.graphError,
+    indexedAt: row.indexedAt,
     uploadedAt: row.uploadedAt,
     updatedAt: row.updatedAt
   }
@@ -78,19 +89,19 @@ export class KnowledgeFileService {
   /**
    * 导入文件（保留上传时的目录结构）。
    *
-   * 本阶段只支持 `indexState = 'none'`（只上传文件）：索引相关能力
-   * （默认索引 / 自定义索引）尚未实现，传其它值直接报错，
-   * 避免出现「以为建了索引其实没有」的假象。
+   * 三种处理方式：
+   * - `none`：只上传文件（不建索引）；
+   * - `default`：用「全局 ← 按库」生效配置建索引（config 可省略，由主进程取生效值）；
+   * - `custom`：用上传弹窗向导里的 14 项快照建索引（config 必传，主进程会再校验一次）。
+   * 需要建索引的文档落库即为 `queued`，由 KnowledgeIndexService 消费队列。
    */
   importDocuments(
     userId: string,
     kbId: string,
     items: KnowledgeImportItem[],
-    indexState: KnowledgeIndexState = 'none'
+    indexState: KnowledgeIndexState = 'none',
+    config: string | null = null
   ): KnowledgeImportResult {
-    if (indexState !== 'none') {
-      throw new Error('索引功能尚未开放，本次仅支持「只上传文件」')
-    }
     if (!this.store.getBase(userId, kbId)) throw new Error('知识库不存在')
     const limits = this.deps.getLimits()
     const maxBytes = Math.max(1, limits.maxUploadSizeMB) * 1024 * 1024
@@ -158,8 +169,10 @@ export class KnowledgeFileService {
           sizeBytes: size,
           relPath,
           storagePath: destPath,
-          indexState: 'none',
-          contentHash: hash
+          indexState,
+          contentHash: hash,
+          config: indexState === 'none' ? null : config,
+          status: indexState === 'none' ? 'none' : 'queued'
         })
         result.accepted.push(toDocumentMeta(doc))
       } catch (err) {
@@ -217,7 +230,7 @@ export class KnowledgeFileService {
     return { relPath: renamedRelPath, renamed: plan.length }
   }
 
-  /** 删除文件或文件夹（文件夹递归删除其下文档与磁盘目录） */
+  /** 删除文件或文件夹（文件夹递归删除其下文档、磁盘目录与索引数据） */
   removeDocuments(userId: string, kbId: string, relPath: string): { removed: number } {
     const safeRel = this.normalizeRelPath(relPath)
     const docs = this.store.listDocumentsByPrefix(userId, kbId, safeRel)
@@ -225,6 +238,8 @@ export class KnowledgeFileService {
 
     const root = resolve(this.kbRoot(kbId))
     for (const doc of docs) {
+      // 先清索引（切片/FTS/向量/图谱），再删文档行——避免留下无法回收的孤儿索引
+      this.store.deleteDocumentIndex(doc.id)
       // 磁盘目录 = 文档所在目录；越界目录一律不动（防御性校验）
       const dir = resolve(dirname(doc.storagePath || join(root, doc.id)))
       if (dir !== root && dir.startsWith(root + sep)) {
@@ -233,8 +248,44 @@ export class KnowledgeFileService {
     }
     this.store.deleteDocuments(docs.map((doc) => doc.id))
     this.store.refreshBaseStats(kbId)
+    this.store.recountBaseIndex(kbId)
     this.store.updateBase(userId, kbId, {})
     return { removed: docs.length }
+  }
+
+  /**
+   * 读取文档全文（索引侧；与预览的 512KB 分页解耦）。
+   *
+   * 循环游标续读直到读完整篇或达到 2MB 上限（与转换型文档的抽取上限一致）；
+   * 超上限时 `truncated = true`，由索引侧落库并在详情里提示「仅索引前 2MB」。
+   * 20MB 以上的源文件与 ppt 旧格式直接拒绝（与预览口径一致）。
+   */
+  async readDocumentFullText(
+    doc: KnowledgeDocumentRow
+  ): Promise<{ text: string; charCount: number; truncated: boolean }> {
+    const target = this.resolveInside(this.kbRoot(doc.kbId), doc.storagePath)
+    if (!existsSync(target) || !statSync(target).isFile()) throw new Error('文件已丢失')
+    const ext = extname(doc.name).toLowerCase().replace(/^\./, '')
+    if (ext === 'ppt') throw new Error('该格式暂不支持索引')
+    if (statSync(target).size > MAX_BINARY_BYTES) throw new Error('文件过大，暂不支持索引')
+
+    let cursor: number | undefined
+    let text = ''
+    for (;;) {
+      const remaining = INDEX_TEXT_LIMIT_CHARS - text.length
+      if (remaining <= 0) break
+      const loaded = await loadFileText(target, ext, {
+        cursor,
+        maxChars: Math.min(PREVIEW_PAGE_CHARS, remaining)
+      })
+      text += loaded.content
+      if (!loaded.truncated) break
+      if (loaded.cursor === undefined || loaded.cursor === cursor) break
+      cursor = loaded.cursor
+    }
+    const truncated = text.length >= INDEX_TEXT_LIMIT_CHARS
+    const finalText = truncated ? text.slice(0, INDEX_TEXT_LIMIT_CHARS) : text
+    return { text: finalText, charCount: finalText.length, truncated }
   }
 
   /** 读取文本或原始字节（预览用；路径必须落在知识库目录内） */

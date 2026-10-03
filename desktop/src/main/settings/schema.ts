@@ -45,6 +45,11 @@ export type SettingsKey =
   | 'knowledge.topK'
   | 'knowledge.graphEnabled'
   | 'knowledge.graphModel'
+  | 'knowledge.embeddingBaseUrl'
+  | 'knowledge.embeddingApiKey'
+  | 'knowledge.rerankBaseUrl'
+  | 'knowledge.rerankApiKey'
+  | 'knowledge.minSimilarity'
 
 export interface SettingsSchemaEntry {
   type: 'string' | 'number' | 'boolean'
@@ -156,95 +161,126 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
   'knowledge.directory': {
     type: 'string',
     default: '',
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => typeof v === 'string' && (v === '' || isAbsolute(v))
   },
   'knowledge.maxUploadSize': {
     type: 'number',
     default: 100,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 10240
   },
   'knowledge.uploadTimeout': {
     type: 'number',
     default: 10,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 600
   },
   'knowledge.maxFilesPerBatch': {
     type: 'number',
     default: 20,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000
   },
   'knowledge.chunkStrategy': {
     type: 'string',
     default: 'semantic',
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => CHUNK_STRATEGIES.includes(v as string)
   },
   'knowledge.chunkSize': {
     type: 'number',
     default: 800,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 100 && (v as number) <= 8192
   },
   'knowledge.chunkOverlap': {
     type: 'number',
     default: 120,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 4096
   },
   'knowledge.vectorDimensions': {
     type: 'number',
     default: 1024,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => VECTOR_DIMENSIONS.includes(v as number)
   },
   'knowledge.embeddingModel': {
     type: 'string',
     default: 'text-embedding-3-large',
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => typeof v === 'string' && v.trim().length > 0
   },
-  'knowledge.sparseRetrieval': { type: 'boolean', default: true, applyTiming: 'pending' },
+  'knowledge.sparseRetrieval': { type: 'boolean', default: true, applyTiming: 'instant' },
   'knowledge.bm25K1': {
     type: 'number',
     default: 1.5,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => (v as number) >= 0 && (v as number) <= 10
   },
   'knowledge.bm25B': {
     type: 'number',
     default: 0.75,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => (v as number) >= 0 && (v as number) <= 1
   },
   'knowledge.hybridWeight': {
     type: 'number',
     default: 0.65,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => (v as number) >= 0 && (v as number) <= 1
   },
-  'knowledge.rerankEnabled': { type: 'boolean', default: true, applyTiming: 'pending' },
+  'knowledge.rerankEnabled': { type: 'boolean', default: true, applyTiming: 'instant' },
   'knowledge.rerankModel': {
     type: 'string',
     default: 'bge-reranker-v2-m3',
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => typeof v === 'string' && v.trim().length > 0
   },
   'knowledge.topK': {
     type: 'number',
     default: 12,
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100
   },
-  'knowledge.graphEnabled': { type: 'boolean', default: false, applyTiming: 'pending' },
+  'knowledge.graphEnabled': { type: 'boolean', default: false, applyTiming: 'instant' },
   'knowledge.graphModel': {
     type: 'string',
     default: 'GLM-5',
-    applyTiming: 'pending',
+    applyTiming: 'instant',
     validate: (v) => typeof v === 'string' && v.trim().length > 0
+  },
+  // ── 嵌入与重排端点（RAG 向量化 / 重排的凭据；全局一份，不参与按库覆盖）──
+  // 留空 = 未启用向量化：索引走纯稀疏链路，检索降级为关键词检索（UI 会提示）。
+  'knowledge.embeddingBaseUrl': {
+    type: 'string',
+    default: '',
+    applyTiming: 'instant',
+    validate: (v) => typeof v === 'string' && (v === '' || /^https?:\/\/\S+$/.test(v))
+  },
+  'knowledge.embeddingApiKey': {
+    type: 'string',
+    default: '',
+    applyTiming: 'instant'
+  },
+  'knowledge.rerankBaseUrl': {
+    type: 'string',
+    default: '',
+    applyTiming: 'instant',
+    validate: (v) => typeof v === 'string' && (v === '' || /^https?:\/\/\S+$/.test(v))
+  },
+  'knowledge.rerankApiKey': {
+    type: 'string',
+    default: '',
+    applyTiming: 'instant'
+  },
+  // 稠密检索相似度门限（0 = 关闭）：低于门限视为「没有相关内容」，问答不编造
+  'knowledge.minSimilarity': {
+    type: 'number',
+    default: 0.53,
+    applyTiming: 'instant',
+    validate: (v) => (v as number) >= 0 && (v as number) <= 1
   }
 }
 

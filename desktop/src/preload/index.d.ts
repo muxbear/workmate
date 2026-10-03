@@ -466,7 +466,7 @@ export interface ConfigAPI {
 /**
  * 知识库「按库覆盖」配置项短 key（去掉了 knowledge. 前缀）。
  * 与主进程 src/main/knowledge/knowledge-schema.ts 的清单一致（由单测钉住）；
- * 不含「本地存储 / 存放目录」——它是整个索引库的机器级位置，不按知识库区分。
+ * 不含全局独占项：「本地存储 / 存放目录」与嵌入/重排端点（凭据是机器级配置）。
  */
 export type KnowledgeOverrideKey =
   | 'maxUploadSize'
@@ -484,6 +484,7 @@ export type KnowledgeOverrideKey =
   | 'rerankEnabled'
   | 'rerankModel'
   | 'topK'
+  | 'minSimilarity'
   | 'graphEnabled'
   | 'graphModel'
 
@@ -496,8 +497,84 @@ export type KnowledgeKind = 'local' | 'shared' | 'cloud'
 /** 文档索引状态：未索引 / 已建立索引 / 自定义索引 */
 export type KnowledgeIndexState = 'none' | 'default' | 'custom'
 
-/** 文档处理状态（索引管线落地前恒为 none） */
+/** 文档处理状态 */
 export type KnowledgeDocStatus = 'none' | 'queued' | 'indexing' | 'indexed' | 'failed'
+
+/** 索引阶段（进度文案依据；与主进程 knowledge/types.ts 一致） */
+export type KnowledgeIndexStage =
+  | 'queued'
+  | 'parsing'
+  | 'chunking'
+  | 'embedding'
+  | 'bm25'
+  | 'extracting'
+  | 'indexed'
+
+/** 文档索引进度事件载荷 */
+export interface KnowledgeIndexProgress {
+  kbId: string
+  docId: string
+  relPath: string
+  status: KnowledgeDocStatus
+  stage: KnowledgeIndexStage
+  progress: number
+  chunks: number
+  entities: number
+  relations: number
+  error?: string
+  warning?: string
+}
+
+/** 检索命中（不含绝对路径） */
+export interface KnowledgeHit {
+  chunkUid: string
+  chunkId: number
+  docId: string
+  docName: string
+  relPath: string
+  chunkIndex: number
+  heading?: string
+  content: string
+  score: number
+  vecScore?: number
+  bm25Score?: number
+  source?: 'sparse' | 'dense' | 'graph'
+  charStart: number
+  charEnd: number
+}
+
+/** 问答引用（正文 [n] 对应的来源） */
+export interface KnowledgeQaCitation {
+  index: number
+  docId: string
+  docName: string
+  relPath: string
+  chunkIndex: number
+  heading?: string
+  score: number
+}
+
+/** 问答事件载荷（kbId + requestId 用于丢弃过期事件） */
+export interface KnowledgeAskEvent {
+  kbId: string
+  requestId: string
+  citations?: KnowledgeQaCitation[]
+  text?: string
+  canceled?: boolean
+  noRelevantResult?: boolean
+  error?: string
+}
+
+/** 检索结果（含降级标记） */
+export interface KnowledgeSearchResult {
+  hits: KnowledgeHit[]
+  vectorSkipped: boolean
+  sparseSkipped: boolean
+  rerankSkipped: boolean
+  noRelevantResult: boolean
+  /** 图扩展命中的查询实体名（启用知识图谱时才有） */
+  graphEntities?: string[]
+}
 
 /** 知识库摘要 */
 export interface KnowledgeBaseSummary {
@@ -529,6 +606,19 @@ export interface KnowledgeDocumentMeta {
   indexState: KnowledgeIndexState
   status: KnowledgeDocStatus
   errorMessage: string | null
+  /** 索引进度 0~100 与当前阶段 */
+  progress: number
+  stage: KnowledgeIndexStage | null
+  /** 抽取的全文长度与是否被 2MB 上限截断 */
+  charCount: number
+  truncated: boolean
+  /** 切片/实体/关系计数（未索引为 0） */
+  chunksCount: number
+  entitiesCount: number
+  relationsCount: number
+  /** 图谱抽取失败原因（文档仍已索引；绝不静默） */
+  graphError: string | null
+  indexedAt: number | null
   uploadedAt: number
   updatedAt: number
 }
@@ -558,6 +648,12 @@ export interface KnowledgeStats {
   docCount: number
   sizeBytes: number
   latestUpdatedAt: number
+  /** 已索引 / 索引中 的文档数 */
+  indexedDocCount: number
+  indexingDocCount: number
+  /** 切片与实体总量 */
+  chunksCount: number
+  entitiesCount: number
 }
 
 /** 共享记录 */
@@ -610,8 +706,45 @@ export interface KnowledgeAPI {
   importKnowledgeDocuments(
     kbId: string,
     items: Array<{ srcPath: string; relPath: string }>,
-    indexState?: KnowledgeIndexState
+    indexState?: KnowledgeIndexState,
+    /** 自定义索引的 14 项快照（默认索引由主进程取生效配置，传 null 即可） */
+    config?: KnowledgeOverrides | null
   ): Promise<IpcResult<KnowledgeImportResult>>
+  /** 重建索引：省略 relPaths = 整库 */
+  reindexKnowledge(kbId: string, relPaths?: string[]): Promise<IpcResult<{ queued: number }>>
+  /** 重试失败文档（仅 status = failed 可重试） */
+  retryKnowledgeDocument(
+    kbId: string,
+    relPath: string
+  ): Promise<IpcResult<{ queued: number }>>
+  /** 取消索引任务：省略 relPaths = 整库 */
+  cancelKnowledgeIndex(kbId: string, relPaths?: string[]): Promise<IpcResult<{ canceled: number }>>
+  /** 重抽图谱（只跑抽取阶段，用已存切片）；省略 relPaths = 整库 */
+  reextractKnowledgeGraph(kbId: string, relPaths?: string[]): Promise<IpcResult<{ queued: number }>>
+  /** 重建社区摘要（GraphRAG 全局检索侧） */
+  rebuildKnowledgeCommunities(
+    kbId: string
+  ): Promise<IpcResult<{ communities: number; entities: number }>>
+  /** 检索（命中自带引用信息与降级标记） */
+  searchKnowledge(
+    kbId: string,
+    query: string,
+    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25' }
+  ): Promise<IpcResult<KnowledgeSearchResult>>
+  /** 订阅索引进度事件（返回取消订阅函数） */
+  onKnowledgeIndexProgress(callback: (progress: KnowledgeIndexProgress) => void): () => void
+  /** 发起知识库问答（流式结果走 onKnowledgeAsk* 事件） */
+  askKnowledge(
+    kbId: string,
+    question: string,
+    modelName?: string
+  ): Promise<IpcResult<{ started: boolean; requestId: string }>>
+  /** 取消本窗口正在进行的问答 */
+  cancelKnowledgeAsk(): Promise<IpcResult<{ aborted: boolean }>>
+  onKnowledgeAskCitation(callback: (payload: KnowledgeAskEvent) => void): () => void
+  onKnowledgeAskChunk(callback: (payload: KnowledgeAskEvent) => void): () => void
+  onKnowledgeAskDone(callback: (payload: KnowledgeAskEvent) => void): () => void
+  onKnowledgeAskError(callback: (payload: KnowledgeAskEvent) => void): () => void
   renameKnowledgeDocument(
     kbId: string,
     relPath: string,

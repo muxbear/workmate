@@ -8,6 +8,7 @@ import { createModelOverrideMiddleware } from './ModelOverrideMiddleware'
 import { createExpertDirectiveMiddleware } from './ExpertDirectiveMiddleware'
 import { createModelFromCredential, resolveDefaultModel, type ChatModel } from './ModelFactory'
 import { buildExpertTools, buildExpertSkills } from './tools/DesktopToolRegistry'
+import { buildKnowledgeTools, type KnowledgeToolDeps } from './tools/KnowledgeTool'
 import { buildExpertMcpTools, type McpLoadFailure } from './tools/McpToolRegistry'
 import type { McpAuthBinding } from '../oauth2/mcpAuth'
 
@@ -48,17 +49,26 @@ async function expertToSubAgent(
   expert: DesktopExpert,
   modelService?: ModelService,
   onMcpError?: (failure: McpLoadFailure) => void,
-  mcpAuth?: McpAuthBinding
+  mcpAuth?: McpAuthBinding,
+  knowledgeTools?: KnowledgeToolDeps
 ): Promise<SubAgent> {
+  const builtinTools = buildExpertTools(
+    expert.tools,
+    modelService,
+    expert.modelName,
+    expert.capabilities ?? [],
+    { knowledge: knowledgeTools }
+  )
+  const mcpTools = await buildExpertMcpTools(expert.mcpConfigs, { onError: onMcpError, mcpAuth })
+  // 同名工具只保留内置那一份：本地 kb_search 与「云知识库检索」MCP 服务同名，
+  // 两份同时挂会让模型撞名（内置优先 = 本地库可直接用，云库仍可换名/另一专家挂载）
+  const builtinNames = new Set(builtinTools.map((tool) => tool.name))
   return {
     name: expert.name,
     description: buildExpertDescription(expert),
     systemPrompt: expert.systemPrompt || '',
     model: await resolveExpertModel(expert, modelService),
-    tools: [
-      ...buildExpertTools(expert.tools, modelService, expert.modelName, expert.capabilities ?? []),
-      ...(await buildExpertMcpTools(expert.mcpConfigs, { onError: onMcpError, mcpAuth }))
-    ],
+    tools: [...builtinTools, ...mcpTools.filter((tool) => !builtinNames.has(tool.name))],
     skills: buildExpertSkills(expert.skills)
   }
 }
@@ -77,6 +87,11 @@ export interface AgentManagerOptions {
   resolveSkillDirs?: (ids: string[]) => Promise<string[]>
   /** MCP 凭据绑定：专家同步下来的平台内 MCP 服务需要它才能带上 OAuth2 token */
   mcpAuth?: McpAuthBinding
+  /**
+   * 本地知识库检索（提供后主智能体获得 kb_search / list_knowledge_bases 工具）。
+   * 用工厂而不是实例：知识库服务晚于 AgentManager 构造（避免启动顺序耦合）。
+   */
+  knowledgeTools?: () => KnowledgeToolDeps
 }
 
 export class AgentManager {
@@ -138,6 +153,11 @@ export class AgentManager {
     // 技能仅本地模式生效（云端 StoreBackend 不含本地技能目录）
     if (this.skills.length > 0 && mode === 'local') this.builder.setSkills(this.skills)
 
+    // 主智能体工具：本地知识库检索（Agentic RAG；身份在调用时从 configurable 取，失败关闭）
+    if (this.options.knowledgeTools) {
+      this.builder.setTools(buildKnowledgeTools(this.options.knowledgeTools()))
+    }
+
     if (this.experts.length > 0 && (this.expertMode === 'selected' || this.expertMode === 'all')) {
       const failures: McpLoadFailure[] = []
       const subagents = await Promise.all(
@@ -148,7 +168,8 @@ export class AgentManager {
             (failure) => {
               failures.push({ ...failure, toolName: `${expert.name} · ${failure.toolName}` })
             },
-            this.options.mcpAuth
+            this.options.mcpAuth,
+            this.options.knowledgeTools?.()
           )
         )
       )

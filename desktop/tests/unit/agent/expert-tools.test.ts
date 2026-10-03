@@ -41,3 +41,32 @@ describe('buildExpertTools（能力声明驱动）', () => {
     expect(buildExpertTools([], undefined, null, ['web.search'])).toHaveLength(0)
   })
 })
+
+describe('buildExpertTools × 本地知识库（knowledge.search）', () => {
+  const knowledge = {
+    retrievalProvider: () => null,
+    listBases: () => []
+  }
+
+  it('声明 knowledge.search 且提供依赖：注册 kb_search 与 list_knowledge_bases', () => {
+    const names = buildExpertTools([], undefined, null, ['knowledge.search'], { knowledge }).map(
+      (tool) => tool.name
+    )
+    expect(names).toContain('kb_search')
+    expect(names).toContain('list_knowledge_bases')
+  })
+
+  it('未提供依赖时不注册（不制造「看起来有、点进去报错」的假能力）', () => {
+    const names = buildExpertTools([], undefined, null, ['knowledge.search']).map(
+      (tool) => tool.name
+    )
+    expect(names).toEqual([])
+  })
+
+  it('存量专家按工具名匹配也能拿到（兼容 toolNames 写法）', () => {
+    const names = buildExpertTools(['kb_search'], undefined, null, [], { knowledge }).map(
+      (tool) => tool.name
+    )
+    expect(names).toContain('kb_search')
+  })
+})

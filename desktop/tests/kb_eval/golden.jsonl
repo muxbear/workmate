@@ -1,0 +1,12 @@
+{"id": "kw-1", "category": "keyword", "query": "重建索引 先清空", "expect_docs": ["知识库生命周期.md"]}
+{"id": "kw-2", "category": "keyword", "query": "BM25 关键词命中", "expect_docs": ["混合检索.md"]}
+{"id": "kw-3", "category": "keyword", "query": "实体类型 受控 人物 组织", "expect_docs": ["图谱抽取.md"]}
+{"id": "kw-4", "category": "keyword", "query": "银河麒麟 UOS", "expect_docs": ["向量存储选型.md"]}
+{"id": "sem-1", "category": "semantic", "query": "动力装置", "expect_docs": ["向量存储选型.md"]}
+{"id": "sem-2", "category": "semantic", "query": "怎么把检索结果重新打分", "expect_docs": ["重排与门槛.md"]}
+{"id": "sem-3", "category": "semantic", "query": "智能体读取命中片段的方式", "expect_docs": ["会话检索工具.md"]}
+{"id": "graph-1", "category": "graph", "query": "sqlite-vec 还有什么用途", "expect_docs": ["向量存储选型.md"]}
+{"id": "multi-1", "category": "multi", "query": "检索时关键词和语义怎么结合", "expect_docs": ["混合检索.md"]}
+{"id": "multi-2", "category": "multi", "query": "索引失败之后怎么补救", "expect_docs": ["图谱抽取.md", "知识库生命周期.md"]}
+{"id": "neg-1", "category": "negative", "query": "股票行情 大盘指数", "expect_docs": []}
+{"id": "neg-2", "category": "negative", "query": "如何做红烧排骨", "expect_docs": []}

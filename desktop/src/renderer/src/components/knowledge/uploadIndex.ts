@@ -77,7 +77,8 @@ export const KNOWLEDGE_INDEX_STEPS: readonly KnowledgeIndexStep[] = [
       'hybridWeight',
       'rerankEnabled',
       'rerankModel',
-      'topK'
+      'topK',
+      'minSimilarity'
     ]
   },
   {

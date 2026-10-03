@@ -12,6 +12,16 @@ import type {
 } from './index.d'
 
 // Custom APIs for renderer
+/** 问答事件订阅（4 个 ask-* 事件同一约定：返回取消订阅函数） */
+function subscribeKnowledgeAskEvent(
+  channel: string,
+  callback: (payload: unknown) => void
+): () => void {
+  const listener = (_event: unknown, payload: unknown): void => callback(payload)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
 const api = {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openWebHome: () => ipcRenderer.invoke('web:open-home'),
@@ -403,8 +413,67 @@ const api = {
     return ipcRenderer.invoke('knowledge:list-docs', kbId)
   },
   /** 导入文件（items 为「源绝对路径 + 库内相对路径」，保留上传目录结构） */
-  importKnowledgeDocuments(kbId: string, items: unknown[], indexState?: string) {
-    return ipcRenderer.invoke('knowledge:import', kbId, items, indexState)
+  importKnowledgeDocuments(
+    kbId: string,
+    items: unknown[],
+    indexState?: string,
+    config?: Record<string, unknown> | null
+  ) {
+    return ipcRenderer.invoke('knowledge:import', kbId, items, indexState, config)
+  },
+  /** 重建索引：省略 relPaths = 整库；传数组 = 这些文件/文件夹（按 relPath 前缀） */
+  reindexKnowledge(kbId: string, relPaths?: string[]) {
+    return ipcRenderer.invoke('knowledge:reindex', kbId, relPaths)
+  },
+  /** 重试失败文档（仅 status = failed 可重试） */
+  retryKnowledgeDocument(kbId: string, relPath: string) {
+    return ipcRenderer.invoke('knowledge:retry-doc', kbId, relPath)
+  },
+  /** 取消索引任务：省略 relPaths = 整库 */
+  cancelKnowledgeIndex(kbId: string, relPaths?: string[]) {
+    return ipcRenderer.invoke('knowledge:cancel-index', kbId, relPaths)
+  },
+  /** 重抽图谱：省略 relPaths = 整库（只跑抽取，用已存切片） */
+  reextractKnowledgeGraph(kbId: string, relPaths?: string[]) {
+    return ipcRenderer.invoke('knowledge:reextract-graph', kbId, relPaths)
+  },
+  /** 重建社区摘要（GraphRAG 全局检索侧；按整库实体图聚类） */
+  rebuildKnowledgeCommunities(kbId: string) {
+    return ipcRenderer.invoke('knowledge:rebuild-communities', kbId)
+  },
+  /** 检索（页面问答与会话工具同源；返回命中与降级标记） */
+  searchKnowledge(
+    kbId: string,
+    query: string,
+    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25' }
+  ) {
+    return ipcRenderer.invoke('knowledge:search', kbId, query, options)
+  },
+  /** 订阅索引进度事件（返回取消订阅函数） */
+  onKnowledgeIndexProgress(callback: (progress: unknown) => void): () => void {
+    const listener = (_event: unknown, progress: unknown): void => callback(progress)
+    ipcRenderer.on('knowledge:import-progress', listener)
+    return () => ipcRenderer.removeListener('knowledge:import-progress', listener)
+  },
+  /** 发起知识库问答（结果走 ask-* 事件流） */
+  askKnowledge(kbId: string, question: string, modelName?: string) {
+    return ipcRenderer.invoke('knowledge:ask', kbId, question, modelName)
+  },
+  /** 取消本窗口正在进行的问答 */
+  cancelKnowledgeAsk() {
+    return ipcRenderer.invoke('knowledge:cancel-ask')
+  },
+  onKnowledgeAskCitation(callback: (payload: unknown) => void): () => void {
+    return subscribeKnowledgeAskEvent('knowledge:ask-citation', callback)
+  },
+  onKnowledgeAskChunk(callback: (payload: unknown) => void): () => void {
+    return subscribeKnowledgeAskEvent('knowledge:ask-chunk', callback)
+  },
+  onKnowledgeAskDone(callback: (payload: unknown) => void): () => void {
+    return subscribeKnowledgeAskEvent('knowledge:ask-done', callback)
+  },
+  onKnowledgeAskError(callback: (payload: unknown) => void): () => void {
+    return subscribeKnowledgeAskEvent('knowledge:ask-error', callback)
   },
   renameKnowledgeDocument(kbId: string, relPath: string, newName: string) {
     return ipcRenderer.invoke('knowledge:rename-doc', kbId, relPath, newName)

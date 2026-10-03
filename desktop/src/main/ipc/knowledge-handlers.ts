@@ -1,14 +1,30 @@
+import { randomUUID } from 'crypto'
 import type { IpcMain } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { KnowledgeSettingsService } from '../knowledge/KnowledgeSettingsService'
 import type { KnowledgeService } from '../knowledge/KnowledgeService'
+import type { KnowledgeQaService } from '../knowledge/KnowledgeQaService'
 import { assertKbId, assertKbIdList } from '../knowledge/knowledge-schema'
-import type { KnowledgeImportItem, KnowledgeIndexState, KnowledgeKind } from '../knowledge/types'
+import {
+  normalizeIndexSnapshot,
+  pickIndexSnapshot,
+  toEngineConfig
+} from '../knowledge/knowledge-config'
+import type {
+  KnowledgeImportItem,
+  KnowledgeIndexState,
+  KnowledgeKind,
+  KnowledgeSearchMode
+} from '../knowledge/types'
 
 export interface KnowledgeHandlerDeps {
   knowledgeSettingsService: KnowledgeSettingsService
   knowledgeService: KnowledgeService
+  /** 知识库问答（2-Step RAG；未注入时 ask 通道返回失败，便于单测） */
+  knowledgeQaService?: KnowledgeQaService
   session: SessionService
+  /** 全局设置快照（补嵌入/重排端点等全局独占项） */
+  getGlobalSettings: () => Record<string, unknown>
   /**
    * 在系统文件管理器中打开目录（返回错误文案，空串表示成功）。
    * 未注入时「打开文件夹」返回失败，便于单测与无 GUI 环境。
@@ -28,6 +44,9 @@ function fail(error: string): { success: false; error: string } {
 
 /** 单批次条目上限（防止单次 IPC 拉爆；真正的批次限制由「知识库设置」决定） */
 const MAX_IMPORT_ITEMS = 5000
+
+/** 正在进行的问答（按窗口隔离；同一窗口同时只跑一个） */
+const activeAsks = new Map<number, AbortController>()
 
 const KINDS: readonly KnowledgeKind[] = ['local', 'shared', 'cloud']
 
@@ -68,6 +87,20 @@ function asIndexState(raw: unknown): KnowledgeIndexState {
   if (raw === undefined || raw === null) return 'none'
   if (raw === 'none' || raw === 'default' || raw === 'custom') return raw
   throw new Error('索引方式非法')
+}
+
+/** 检索模式（缺省由检索服务按 hybrid 处理） */
+function asSearchMode(raw: unknown): KnowledgeSearchMode {
+  if (raw === 'hybrid' || raw === 'vector' || raw === 'bm25') return raw
+  throw new Error('检索模式非法')
+}
+
+/** 可选路径前缀数组（文件/文件夹批量操作） */
+function asRelPaths(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw)) throw new Error('paths 必须为数组')
+  if (raw.length > MAX_IMPORT_ITEMS) throw new Error('路径过多')
+  return raw.map((item) => asText(item, '文件路径'))
 }
 
 /**
@@ -207,22 +240,173 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
 
   ipc.handle(
     'knowledge:import',
-    async (_event, kbId?: unknown, items?: unknown, indexState?: unknown) => {
+    async (_event, kbId?: unknown, items?: unknown, indexState?: unknown, config?: unknown) => {
       try {
         const userId = session.requireUserId()
-        return ok(
-          knowledgeService.importDocuments(
-            userId,
-            assertKbId(kbId),
-            asImportItems(items),
-            asIndexState(indexState)
-          )
-        )
+        const id = assertKbId(kbId)
+        const mode = asIndexState(indexState)
+        // 配置快照（主进程为权威）：
+        // - default：取该库当前生效配置（全局 ← 按库）的 14 个索引项
+        // - custom：校验渲染层传来的向导快照（白名单 + 区间/枚举，非法直接拒绝）
+        // - none：null（只上传文件）
+        let snapshot: string | null = null
+        if (mode === 'default') {
+          const effective = knowledgeSettingsService.getEffective(userId, id).effective
+          snapshot = pickIndexSnapshot(toEngineConfig(effective, deps.getGlobalSettings()))
+        } else if (mode === 'custom') {
+          snapshot = normalizeIndexSnapshot(config)
+          if (!snapshot) throw new Error('自定义索引缺少配置项')
+        }
+        return ok(knowledgeService.importDocuments(userId, id, asImportItems(items), mode, snapshot))
       } catch (err) {
         return fail((err as Error).message)
       }
     }
   )
+
+  // ── 索引管理（重建 / 重试 / 取消 / 检索）──
+
+  ipc.handle('knowledge:reindex', async (_event, kbId?: unknown, relPaths?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      return ok(knowledgeService.reindex(userId, assertKbId(kbId), asRelPaths(relPaths)))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  ipc.handle('knowledge:retry-doc', async (_event, kbId?: unknown, relPath?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      return ok(
+        knowledgeService.retryDocument(userId, assertKbId(kbId), asText(relPath, '文件路径'))
+      )
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  ipc.handle('knowledge:rebuild-communities', async (_event, kbId?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      return ok(await knowledgeService.rebuildCommunities(userId, assertKbId(kbId)))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  ipc.handle('knowledge:reextract-graph', async (_event, kbId?: unknown, relPaths?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      return ok(knowledgeService.reextractGraph(userId, assertKbId(kbId), asRelPaths(relPaths)))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  ipc.handle('knowledge:cancel-index', async (_event, kbId?: unknown, relPaths?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      return ok(knowledgeService.cancelIndex(userId, assertKbId(kbId), asRelPaths(relPaths)))
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  // ── 问答（2-Step RAG；结果走 ask-* 事件，与 agent:stream-* 同一约定）──
+
+  ipc.handle(
+    'knowledge:ask',
+    async (event, kbId?: unknown, question?: unknown, modelName?: unknown) => {
+      try {
+        const userId = session.requireUserId()
+        const id = assertKbId(kbId)
+        const text = asText(question, '问题')
+        const model = asOptionalText(modelName)?.trim() || undefined
+        const qa = deps.knowledgeQaService
+        if (!qa) return fail('问答功能不可用')
+        // 只记长度不记原文（隐私：设计口径「检索/问答日志不落用户查询内容」）
+        console.log(`[main] knowledge:ask kb=${id} questionLen=${text.length}`)
+
+        // 同一窗口同时只允许一个问答：新的提问先取消旧的
+        activeAsks.get(event.sender.id)?.abort()
+        const controller = new AbortController()
+        activeAsks.set(event.sender.id, controller)
+        const requestId = randomUUID()
+
+        const send = (channel: string, payload: Record<string, unknown>): void => {
+          if (event.sender.isDestroyed()) return
+          event.sender.send(channel, { kbId: id, requestId, ...payload })
+        }
+
+        void qa
+          .ask({
+            userId,
+            kbId: id,
+            question: text,
+            modelName: model,
+            signal: controller.signal,
+            onCitations: (citations) => send('knowledge:ask-citation', { citations }),
+            onChunk: (chunk) => send('knowledge:ask-chunk', { text: chunk })
+          })
+          .then((outcome) => {
+            if (outcome.ok) {
+              send('knowledge:ask-done', {
+                canceled: controller.signal.aborted,
+                noRelevantResult: outcome.noRelevantResult === true
+              })
+            } else {
+              send('knowledge:ask-error', { error: outcome.error ?? '问答失败' })
+            }
+          })
+          .catch((err) => send('knowledge:ask-error', { error: (err as Error).message }))
+          .finally(() => {
+            if (activeAsks.get(event.sender.id) === controller) activeAsks.delete(event.sender.id)
+          })
+
+        return ok({ started: true, requestId })
+      } catch (err) {
+        return fail((err as Error).message)
+      }
+    }
+  )
+
+  ipc.handle('knowledge:cancel-ask', async (event) => {
+    try {
+      session.requireUserId()
+      const controller = activeAsks.get(event.sender.id)
+      if (!controller) return ok({ aborted: false })
+      controller.abort()
+      return ok({ aborted: true })
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
+  ipc.handle('knowledge:search', async (_event, kbId?: unknown, query?: unknown, options?: unknown) => {
+    try {
+      const userId = session.requireUserId()
+      const raw = (options ?? {}) as { topK?: unknown; mode?: unknown }
+      const mode = raw.mode === undefined ? undefined : asSearchMode(raw.mode)
+      const topK =
+        raw.topK === undefined
+          ? undefined
+          : (() => {
+              if (typeof raw.topK !== 'number' || !Number.isFinite(raw.topK)) {
+                throw new Error('topK 参数非法')
+              }
+              return Math.min(100, Math.max(1, Math.floor(raw.topK)))
+            })()
+      return ok(
+        await knowledgeService.search(userId, assertKbId(kbId), asText(query, '检索内容'), {
+          topK,
+          mode
+        })
+      )
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
 
   ipc.handle(
     'knowledge:rename-doc',

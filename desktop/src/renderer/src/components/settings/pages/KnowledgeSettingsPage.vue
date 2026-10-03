@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import ConfirmDialog from '../../ConfirmDialog.vue'
 import KnowledgeConfigForm from '../../knowledge/KnowledgeConfigForm.vue'
 import { useSettingsStore, type SettingsKey } from '../../../store/settings'
@@ -26,12 +26,32 @@ const draft = reactive<KnowledgeDraft>(createDraft({}))
 /** 本地存储目录（全局项：索引库位置按机器维度，不参与按知识库覆盖） */
 const directory = ref('')
 
+/**
+ * 嵌入与重排端点（全局独占项：凭据是机器级配置，不参与按库覆盖）
+ *
+ * 留空 = 未启用向量化：索引走纯稀疏链路、检索降级为关键词检索。
+ * 端点必须 OpenAI 兼容：`{baseUrl}/embeddings` 与 `{baseUrl}/rerank`。
+ */
+const endpoints = reactive({
+  embeddingBaseUrl: '',
+  embeddingApiKey: '',
+  rerankBaseUrl: '',
+  rerankApiKey: ''
+})
+
+/** 向量检索是否已配置（用于卡片上的状态提示） */
+const embeddingConfigured = computed(() => endpoints.embeddingBaseUrl.trim().length > 0)
+
 /** 从 store 同步草稿（挂载时、以及主进程设置加载完成后回填） */
 function syncFromStore(): void {
   Object.assign(draft, createDraft(settingsStore.knowledgeGlobalValues))
   // 设置为空时回填主进程解析的默认目录（与设计稿一致：输入框展示具体路径而非占位符）
   directory.value =
     settingsStore.knowledgeDirectory || settingsStore.meta?.defaultKnowledgeDir || ''
+  endpoints.embeddingBaseUrl = settingsStore.knowledgeEmbeddingBaseUrl
+  endpoints.embeddingApiKey = settingsStore.knowledgeEmbeddingApiKey
+  endpoints.rerankBaseUrl = settingsStore.knowledgeRerankBaseUrl
+  endpoints.rerankApiKey = settingsStore.knowledgeRerankApiKey
 }
 
 onMounted(() => {
@@ -63,7 +83,13 @@ function onFieldChange(key: KnowledgeOverrideKey, value: KnowledgeDraftValue): v
 
 /** 组装待写入项；任一数值项非法则提示并返回 null（不保存） */
 function buildPayload(): Array<[SettingsKey, unknown]> | null {
-  const payload: Array<[SettingsKey, unknown]> = [['knowledge.directory', directory.value]]
+  const payload: Array<[SettingsKey, unknown]> = [
+    ['knowledge.directory', directory.value],
+    ['knowledge.embeddingBaseUrl', endpoints.embeddingBaseUrl.trim()],
+    ['knowledge.embeddingApiKey', endpoints.embeddingApiKey.trim()],
+    ['knowledge.rerankBaseUrl', endpoints.rerankBaseUrl.trim()],
+    ['knowledge.rerankApiKey', endpoints.rerankApiKey.trim()]
+  ]
   for (const field of KNOWLEDGE_FIELD_LIST) {
     const result = draftValueToOverride(field, draft[field.key])
     if ('error' in result) {
@@ -122,9 +148,9 @@ async function pickDirectory(): Promise<void> {
       <div>
         <p class="kb-intro">这些配置将用于主页面“知识库”的文件处理、索引构建与问答检索。</p>
         <p class="kb-intro-sub">修改后仅影响后续新增或重新索引的文件。</p>
-        <p class="kb-intro-warn">
-          索引与检索能力开发中：当前「文件上传」「本地存储」配置已生效；「RAG
-          索引」「混合检索与重排」「知识图谱抽取」暂不生效。
+        <p class="kb-intro-ok">
+          已生效：本地存储、文件上传、RAG 索引、混合检索与重排、知识图谱抽取。
+          向量化与重排需要在下方「嵌入与重排端点」配置 OpenAI 兼容端点（未配置时索引与检索自动降级为关键词模式）。
         </p>
       </div>
       <button class="s-btn s-btn--primary kb-save" :disabled="saving" @click="onSave">
@@ -140,6 +166,57 @@ async function pickDirectory(): Promise<void> {
       @update:directory="directory = $event"
       @select-directory="onSelectDirectory"
     />
+
+    <!-- 嵌入与重排端点（全局独占：不进「按知识库设置」弹窗，凭据机器级一份） -->
+    <section class="kb-ep-card">
+      <div class="kb-ep-head">
+        <div>
+          <h2 class="kb-ep-title">嵌入与重排端点</h2>
+          <p class="kb-ep-desc">
+            RAG 向量化与重排调用的服务地址（OpenAI 兼容：/embeddings 与 /rerank）。留空则索引走纯关键词链路、检索降级为 BM25。
+          </p>
+        </div>
+        <span class="kb-ep-status" :class="{ 'kb-ep-status--on': embeddingConfigured }">
+          {{ embeddingConfigured ? '向量检索已启用' : '向量检索未启用' }}
+        </span>
+      </div>
+      <div class="kb-ep-grid">
+        <label class="kb-ep-field">
+          <span class="kb-ep-label">嵌入端点地址</span>
+          <input
+            v-model="endpoints.embeddingBaseUrl"
+            class="kb-ep-input"
+            placeholder="http://内网网关/v1"
+          />
+        </label>
+        <label class="kb-ep-field">
+          <span class="kb-ep-label">嵌入端点密钥</span>
+          <input
+            v-model="endpoints.embeddingApiKey"
+            class="kb-ep-input"
+            type="password"
+            placeholder="sk-..."
+          />
+        </label>
+        <label class="kb-ep-field">
+          <span class="kb-ep-label">重排端点地址</span>
+          <input
+            v-model="endpoints.rerankBaseUrl"
+            class="kb-ep-input"
+            placeholder="http://内网网关/v1"
+          />
+        </label>
+        <label class="kb-ep-field">
+          <span class="kb-ep-label">重排端点密钥</span>
+          <input
+            v-model="endpoints.rerankApiKey"
+            class="kb-ep-input"
+            type="password"
+            placeholder="sk-..."
+          />
+        </label>
+      </div>
+    </section>
 
     <!-- 目录切换二次确认（换目录不迁移旧索引库） -->
     <ConfirmDialog
@@ -183,11 +260,86 @@ async function pickDirectory(): Promise<void> {
   color: var(--kw-color-text-muted);
 }
 
-.kb-intro-warn {
+.kb-intro-ok {
   margin-top: 8px;
   font-size: 12px;
   line-height: 18px;
+  color: #15803d;
+}
+
+/* ═══════════════════ 嵌入与重排端点 ═══════════════════ */
+.kb-ep-card {
+  background: var(--kw-color-surface, #fff);
+  border: 1px solid var(--kw-color-border, #e2e8f0);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.kb-ep-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.kb-ep-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--kw-color-text);
+}
+
+.kb-ep-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--kw-color-text-muted);
+}
+
+.kb-ep-status {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
   color: #b45309;
+  background: rgba(180, 83, 9, 0.1);
+}
+
+.kb-ep-status--on {
+  color: #15803d;
+  background: rgba(21, 128, 61, 0.12);
+}
+
+.kb-ep-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.kb-ep-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-ep-label {
+  font-size: 13px;
+  color: var(--kw-color-text-muted);
+}
+
+.kb-ep-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--kw-color-border, #e2e8f0);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--kw-color-surface, #fff);
+  color: var(--kw-color-text);
+}
+
+.kb-ep-input:focus {
+  outline: none;
+  border-color: var(--kw-color-brand, #168b7a);
 }
 
 .kb-intro-sub {

@@ -323,3 +323,45 @@ describe('AgentManager', () => {
     expect(again.mcpWarnings).toHaveLength(result.mcpWarnings.length)
   }, 30_000)
 })
+
+describe('AgentManager × 知识库工具（Agentic RAG 装配）', () => {
+  let workDir: string
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'kw-am-kb-'))
+    createDeepAgentMock.mockClear()
+    initChatModelMock.mockResolvedValue({ id: 'mock-model' })
+  })
+
+  it('AG-11: 提供 knowledgeTools 时，主智能体注册 kb_search 与 list_knowledge_bases', async () => {
+    const manager = new AgentManager(
+      workDir,
+      join(workDir, 'ke-work.db'),
+      join(workDir, 'ke-work.db'),
+      undefined,
+      {
+        knowledgeTools: () => ({
+          retrievalProvider: () => null,
+          listBases: () => []
+        })
+      }
+    )
+    await manager.init('local')
+
+    const config = createDeepAgentMock.mock.calls.at(-1)?.[0] as { tools?: unknown[] }
+    const names = (config.tools ?? []).map((tool) => (tool as { name?: string }).name)
+    expect(names).toContain('kb_search')
+    expect(names).toContain('list_knowledge_bases')
+  })
+
+  it('AG-12: 未提供 knowledgeTools 时不注册（无知识库依赖的场景保持最小工具面）', async () => {
+    const manager = new AgentManager(
+      workDir,
+      join(workDir, 'ke-work.db'),
+      join(workDir, 'ke-work.db')
+    )
+    await manager.init('local')
+    const config = createDeepAgentMock.mock.calls.at(-1)?.[0] as { tools?: unknown[] }
+    expect(config.tools ?? []).toEqual([])
+  })
+})

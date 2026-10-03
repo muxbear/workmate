@@ -24,7 +24,7 @@
     "能力标识变更必须同步三处镜像，否则两侧契约测试会失败。",
     "交付物统一形态：文档 <title>.md + 与文档同名的资源目录 <title>/；目录内按资源类别命名（图片 figure-N、成片 成片-N）。该命名是约定而非运行时校验项，各端提示词与测试据此对齐。",
     "新增平台（如 mobile 接入完成后）在 platforms 中登记，并在各端实现 WorkspacePort / DeliverablePort。",
-    "knowledge.search 与 image/video.generate 不同：它没有各端本地实现，三端统一走服务端「云知识库检索」MCP 服务（专家用 mcp_configs 关联）。因此声明该能力的专家天然跨端一致，各端无需再实现一份检索。",
+    "knowledge.search：云知识库仍是三端统一的服务端「云知识库检索」MCP 服务（专家用 mcp_configs 关联）；桌面端自 2026-10 起另有**本地知识库**检索的内置实现（声明该能力即注册 kb_search / list_knowledge_bases）。两者同名时桌面端装配层按名字去重、**内置（本地库）优先**；只想要云库的专家不声明本能力、仅挂 MCP 即可。",
     "web.search 与 knowledge.search 同类：三端统一走服务端「联网搜索」MCP 服务（专家用 mcp_configs 关联），各端无需实现本地检索。该服务自带多源回退（Tavily → Bing → DuckDuckGo），单一数据源配额耗尽或网络不可达时仍能出结果；后端内置的 tavily_search 是单源工具，不作为本能力的端侧实现。"
   ]
 }

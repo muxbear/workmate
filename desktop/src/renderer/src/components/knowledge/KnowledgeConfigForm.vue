@@ -517,6 +517,17 @@ function onBooleanChange(key: KnowledgeOverrideKey, value: boolean): void {
           :following="isFollowing('topK')"
           @update:following="onFollowChange('topK', $event)"
         />
+        <span class="kb-inline-label">相关度门槛</span>
+        <input
+          v-model="models.minSimilarity"
+          class="kb-input kb-input--topk"
+          :disabled="isFollowing('minSimilarity') || !booleanValue('rerankEnabled')"
+        />
+        <KnowledgeFollowToggle
+          v-if="props.custom != null"
+          :following="isFollowing('minSimilarity')"
+          @update:following="onFollowChange('minSimilarity', $event)"
+        />
       </div>
     </section>
 

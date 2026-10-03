@@ -8,6 +8,9 @@ import { KnowledgeSettingsStore } from '../../../src/main/knowledge/KnowledgeSet
 import { KnowledgeStore } from '../../../src/main/knowledge/KnowledgeStore'
 import { KnowledgeFileService } from '../../../src/main/knowledge/KnowledgeFileService'
 import { KnowledgeService } from '../../../src/main/knowledge/KnowledgeService'
+import { KnowledgeIndexService } from '../../../src/main/knowledge/KnowledgeIndexService'
+import { RetrievalService } from '../../../src/main/knowledge/RetrievalService'
+import { SparseIndexer } from '../../../src/main/knowledge/SparseIndexer'
 import type { SessionService } from '../../../src/main/services/SessionService'
 import { defaultSettings } from '../../../src/main/settings/schema'
 
@@ -60,7 +63,26 @@ function createHarness(userId: string | null = 'u1') {
       uploadTimeoutMinutes: 10
     })
   })
-  const knowledgeService = new KnowledgeService(knowledgeStore, knowledgeFileService)
+  // 索引服务用桩：单测只验证「入队/取消被正确调用」，真实索引链路由集成测试覆盖
+  const indexer = {
+    enqueue: vi.fn(() => ({ queued: 1 })),
+    cancel: vi.fn(() => ({ canceled: 1 })),
+    pendingCount: vi.fn(() => 0),
+    isActive: vi.fn(() => false),
+    recoverOnStartup: vi.fn(() => 0),
+    dispose: vi.fn()
+  }
+  const sparseIndexer = new SparseIndexer(knowledgeStore)
+  const retrieval = new RetrievalService({
+    store: knowledgeStore,
+    sparse: sparseIndexer,
+    settings: service,
+    getGlobalSettings: () => defaultSettings()
+  })
+  const knowledgeService = new KnowledgeService(knowledgeStore, knowledgeFileService, {
+    indexer: indexer as unknown as KnowledgeIndexService,
+    retrieval
+  })
   const session = {
     requireUserId: vi.fn(() => {
       if (userId === null) throw new Error('未登录，请先登录')
@@ -75,6 +97,7 @@ function createHarness(userId: string | null = 'u1') {
     knowledgeSettingsService: service,
     knowledgeService,
     session: session as unknown as SessionService,
+    getGlobalSettings: () => defaultSettings(),
     openDir: async (target) => {
       openedDirs.push(target)
       return ''
@@ -83,7 +106,16 @@ function createHarness(userId: string | null = 'u1') {
       revealedFiles.push(file)
     }
   })
-  return { ipc, service, knowledgeService, knowledgeStore, openedDirs, revealedFiles }
+  return {
+    ipc,
+    service,
+    knowledgeService,
+    knowledgeStore,
+    indexService: indexer,
+    sparseIndexer,
+    openedDirs,
+    revealedFiles
+  }
 }
 
 /** 造一个真实源文件用于导入 */
@@ -94,7 +126,7 @@ function makeSourceFile(name: string, content = 'hello'): string {
 }
 
 describe('knowledge IPC handlers', () => {
-  it('注册全部通道（配置 2 个 + 知识库本体 17 个）', () => {
+  it('注册全部通道（配置 2 + 知识库本体 17 + 索引/检索/问答/图谱/社区 8）', () => {
     const { ipc } = createHarness()
     for (const channel of [
       'knowledge:get-kb-settings',
@@ -115,11 +147,19 @@ describe('knowledge IPC handlers', () => {
       'knowledge:open-dir',
       'knowledge:create-share',
       'knowledge:list-shares',
-      'knowledge:revoke-share'
+      'knowledge:revoke-share',
+      'knowledge:reindex',
+      'knowledge:retry-doc',
+      'knowledge:cancel-index',
+      'knowledge:reextract-graph',
+      'knowledge:rebuild-communities',
+      'knowledge:search',
+      'knowledge:ask',
+      'knowledge:cancel-ask'
     ]) {
       expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
-    expect(ipc.handlers.size).toBe(19)
+    expect(ipc.handlers.size).toBe(27)
   })
 
   it('set 后 get 拿到已落盘的覆盖项', async () => {
@@ -241,19 +281,24 @@ describe('knowledge IPC handlers', () => {
     expect(after.data).toEqual([])
   })
 
-  it('import 索引方式非 none：明确报错（索引能力未开放）', async () => {
-    const { ipc } = createHarness()
+  it('import 索引方式非 none：落库为 queued 并入队（索引能力已开放）', async () => {
+    const { ipc, indexService } = createHarness()
     const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
       name: '索引测试库'
     })
-    const result = await ipc.invoke<{ success: boolean; error?: string }>(
+    const result = await ipc.invoke<{ success: boolean; data?: { accepted: Array<{ status: string; id: string }> } }>(
       'knowledge:import',
       created.data.id,
       [{ srcPath: makeSourceFile('a.md'), relPath: 'a.md' }],
       'default'
     )
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('索引功能尚未开放')
+    expect(result.success).toBe(true)
+    expect(result.data?.accepted[0].status).toBe('queued')
+    expect(indexService.enqueue).toHaveBeenCalledWith(
+      expect.any(String),
+      created.data.id,
+      [result.data?.accepted[0].id]
+    )
   })
 
   it('路径越界（../）被拒绝', async () => {
@@ -348,5 +393,174 @@ describe('knowledge IPC handlers', () => {
     })
     expect(create.success).toBe(false)
     expect(create.error).toContain('未登录')
+
+    // 索引/检索通道同样要求登录
+    for (const channel of ['knowledge:reindex', 'knowledge:cancel-index', 'knowledge:search', 'knowledge:retry-doc']) {
+      const result = await ipc.invoke<{ success: boolean; error?: string }>(
+        channel,
+        'kb-1',
+        'q'
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('未登录')
+    }
+  })
+
+  it('import default：主进程按生效配置生成快照并落库、入队', async () => {
+    const { ipc, indexService, knowledgeStore } = createHarness()
+    const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
+      name: '默认索引库'
+    })
+    const result = await ipc.invoke<{
+      success: boolean
+      data: { accepted: Array<{ id: string; status: string }> }
+    }>('knowledge:import', created.data.id, [
+      { srcPath: makeSourceFile('d.md', '默认索引'), relPath: 'd.md' }
+    ], 'default')
+    expect(result.success).toBe(true)
+    expect(result.data.accepted[0].status).toBe('queued')
+
+    // 快照落库且包含 14 个索引项（不含上传项与端点）
+    const doc = knowledgeStore.getDocumentById(result.data.accepted[0].id)
+    const snapshot = JSON.parse(doc?.config ?? '{}') as Record<string, unknown>
+    expect(Object.keys(snapshot).sort()).toEqual(
+      ['bm25B', 'bm25K1', 'chunkOverlap', 'chunkSize', 'chunkStrategy', 'embeddingModel', 'graphEnabled', 'graphModel', 'hybridWeight', 'rerankEnabled', 'rerankModel', 'sparseRetrieval', 'topK', 'vectorDimensions'].sort()
+    )
+    expect(snapshot).not.toHaveProperty('maxUploadSize')
+    // 主进程负责入队
+    expect(indexService.enqueue).toHaveBeenCalledWith('u1', created.data.id, [result.data.accepted[0].id])
+  })
+
+  it('import custom：校验渲染层快照，非法值直接拒绝', async () => {
+    const { ipc } = createHarness()
+    const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
+      name: '自定义索引库'
+    })
+    const bad = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:import',
+      created.data.id,
+      [{ srcPath: makeSourceFile('c.md', '自定义'), relPath: 'c.md' }],
+      'custom',
+      { chunkSize: 1 }
+    )
+    expect(bad.success).toBe(false)
+    expect(bad.error).toContain('非法')
+
+    const missing = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:import',
+      created.data.id,
+      [{ srcPath: makeSourceFile('c2.md', '自定义2'), relPath: 'c2.md' }],
+      'custom'
+    )
+    expect(missing.success).toBe(false)
+    expect(missing.error).toContain('缺少配置项')
+
+    const good = await ipc.invoke<{ success: boolean; data: { accepted: Array<{ id: string }> } }>(
+      'knowledge:import',
+      created.data.id,
+      [{ srcPath: makeSourceFile('c3.md', '自定义3'), relPath: 'c3.md' }],
+      'custom',
+      { chunkStrategy: 'fixed', chunkSize: 400 }
+    )
+    expect(good.success).toBe(true)
+  })
+
+  it('reindex / cancel-index / retry-doc：按文档集合驱动索引服务', async () => {
+    const { ipc, indexService } = createHarness()
+    const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
+      name: '重建库'
+    })
+    const imported = await ipc.invoke<{ data: { accepted: Array<{ id: string; relPath: string }> } }>(
+      'knowledge:import',
+      created.data.id,
+      [{ srcPath: makeSourceFile('r.md', '重建'), relPath: 'r.md' }],
+      'default'
+    )
+    const docId = imported.data.accepted[0].id
+
+    const reindex = await ipc.invoke<{ success: boolean; data: { queued: number } }>(
+      'knowledge:reindex',
+      created.data.id,
+      ['r.md']
+    )
+    expect(reindex.success).toBe(true)
+    expect(indexService.enqueue).toHaveBeenCalledWith(
+      'u1',
+      created.data.id,
+      [docId],
+      { refreshConfig: true }
+    )
+
+    const cancel = await ipc.invoke<{ success: boolean }>('knowledge:cancel-index', created.data.id)
+    expect(cancel.success).toBe(true)
+    expect(indexService.cancel).toHaveBeenCalled()
+
+    // 只有 failed 允许重试（刚导入是 queued）
+    const retry = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:retry-doc',
+      created.data.id,
+      'r.md'
+    )
+    expect(retry.success).toBe(false)
+    expect(retry.error).toContain('只有索引失败')
+  })
+
+  it('search：查到已写入的切片并返回引用信息；无数据显示空结果', async () => {
+    const { ipc, knowledgeStore, sparseIndexer } = createHarness()
+    const created = await ipc.invoke<{ data: { id: string } }>('knowledge:create-kb', {
+      name: '检索库'
+    })
+    const kbId = created.data.id
+    knowledgeStore.insertDocument({
+      id: 'doc-search',
+      kbId,
+      userId: 'u1',
+      name: '检索.md',
+      type: 'MD',
+      sizeBytes: 10,
+      relPath: 'notes/检索.md',
+      storagePath: join(dir, 'files', kbId, 'doc-search', '检索.md'),
+      indexState: 'default',
+      contentHash: null
+    })
+    const content = '知识库的混合检索由向量与关键词两路融合。'
+    knowledgeStore.replaceDocumentIndex({
+      docId: 'doc-search',
+      kbId,
+      userId: 'u1',
+      chunks: [{ index: 0, content, tokenCount: 20, charStart: 0, charEnd: content.length }],
+      tokens: [sparseIndexer.tokenize(content)],
+      vectors: null,
+      vectorDim: null,
+      vectorModel: null
+    })
+
+    const hit = await ipc.invoke<{
+      success: boolean
+      data: { hits: Array<{ content: string; relPath: string; docName: string }> }
+    }>('knowledge:search', kbId, '混合检索')
+    expect(hit.success).toBe(true)
+    expect(hit.data.hits.length).toBeGreaterThan(0)
+    expect(hit.data.hits[0].relPath).toBe('notes/检索.md')
+    expect(hit.data.hits[0].docName).toBe('检索.md')
+    expect(hit.data.hits[0].content).toContain('混合检索')
+
+    // 与正文无任何 token 交集的查询：覆盖率过滤后为空（不会拿常见字硬凑命中）
+    const empty = await ipc.invoke<{
+      success: boolean
+      data: { hits: unknown[]; noRelevantResult: boolean }
+    }>('knowledge:search', kbId, '股票行情')
+    expect(empty.success).toBe(true)
+    expect(empty.data.hits).toEqual([])
+    expect(empty.data.noRelevantResult).toBe(true)
+
+    const badMode = await ipc.invoke<{ success: boolean; error?: string }>(
+      'knowledge:search',
+      kbId,
+      '混合',
+      { mode: 'invalid' }
+    )
+    expect(badMode.success).toBe(false)
+    expect(badMode.error).toContain('检索模式非法')
   })
 })

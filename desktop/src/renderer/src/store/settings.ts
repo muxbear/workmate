@@ -38,6 +38,11 @@ export type SettingsKey =
   | 'knowledge.rerankEnabled'
   | 'knowledge.rerankModel'
   | 'knowledge.topK'
+  | 'knowledge.minSimilarity'
+  | 'knowledge.embeddingBaseUrl'
+  | 'knowledge.embeddingApiKey'
+  | 'knowledge.rerankBaseUrl'
+  | 'knowledge.rerankApiKey'
   | 'knowledge.graphEnabled'
   | 'knowledge.graphModel'
 
@@ -120,11 +125,16 @@ export const useSettingsStore = defineStore('settings', () => {
   const knowledgeRerankEnabled = ref(true)
   const knowledgeRerankModel = ref('bge-reranker-v2-m3')
   const knowledgeTopK = ref(12)
+  const knowledgeMinSimilarity = ref(0.53)
+  const knowledgeEmbeddingBaseUrl = ref('')
+  const knowledgeEmbeddingApiKey = ref('')
+  const knowledgeRerankBaseUrl = ref('')
+  const knowledgeRerankApiKey = ref('')
   const knowledgeGraphEnabled = ref(false)
   const knowledgeGraphModel = ref('GLM-5')
 
   /**
-   * 知识库 17 项全局值（短 key 形态，字段与「按库覆盖」一一对应；不含存放目录）
+   * 知识库 18 项全局值（短 key 形态，字段与「按库覆盖」一一对应；不含存放目录）
    * 「知识库设置」页表单回填与按知识库设置弹窗的「跟随全局」都读它 —— 单一来源，
    * 因此全局值一变，所有未覆盖该项的知识库会自动跟随。
    */
@@ -144,6 +154,7 @@ export const useSettingsStore = defineStore('settings', () => {
     rerankEnabled: knowledgeRerankEnabled.value,
     rerankModel: knowledgeRerankModel.value,
     topK: knowledgeTopK.value,
+    minSimilarity: knowledgeMinSimilarity.value,
     graphEnabled: knowledgeGraphEnabled.value,
     graphModel: knowledgeGraphModel.value
   }))
@@ -253,6 +264,21 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'knowledge.topK':
         knowledgeTopK.value = value as number
+        break
+      case 'knowledge.minSimilarity':
+        knowledgeMinSimilarity.value = value as number
+        break
+      case 'knowledge.embeddingBaseUrl':
+        knowledgeEmbeddingBaseUrl.value = value as string
+        break
+      case 'knowledge.embeddingApiKey':
+        knowledgeEmbeddingApiKey.value = value as string
+        break
+      case 'knowledge.rerankBaseUrl':
+        knowledgeRerankBaseUrl.value = value as string
+        break
+      case 'knowledge.rerankApiKey':
+        knowledgeRerankApiKey.value = value as string
         break
       case 'knowledge.graphEnabled':
         knowledgeGraphEnabled.value = value as boolean
@@ -465,6 +491,11 @@ export const useSettingsStore = defineStore('settings', () => {
     knowledgeRerankEnabled,
     knowledgeRerankModel,
     knowledgeTopK,
+    knowledgeMinSimilarity,
+    knowledgeEmbeddingBaseUrl,
+    knowledgeEmbeddingApiKey,
+    knowledgeRerankBaseUrl,
+    knowledgeRerankApiKey,
     knowledgeGraphEnabled,
     knowledgeGraphModel,
     knowledgeGlobalValues,

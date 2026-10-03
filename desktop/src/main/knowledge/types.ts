@@ -12,8 +12,83 @@ export type KnowledgeKind = 'local' | 'shared' | 'cloud'
 /** 文档索引状态（对应列表里的「已建立索引 / 自定义索引 / 未索引」） */
 export type KnowledgeIndexState = 'none' | 'default' | 'custom'
 
-/** 文档处理状态；索引管线落地前恒为 none */
+/** 文档处理状态 */
 export type KnowledgeDocStatus = 'none' | 'queued' | 'indexing' | 'indexed' | 'failed'
+
+/** 索引阶段（进度与文案依据；对齐 web 后端的阶段口径） */
+export type KnowledgeIndexStage =
+  | 'queued'
+  | 'parsing'
+  | 'chunking'
+  | 'embedding'
+  | 'bm25'
+  | 'extracting'
+  | 'indexed'
+
+/** 切片策略（与设置页 knowledge.chunkStrategy 枚举一致） */
+export type KnowledgeChunkStrategy = 'semantic' | 'fixed' | 'markdown' | 'recursive'
+
+/** 单个切片（ChunkingService 输出；charStart/charEnd 可还原原文） */
+export interface KnowledgeChunk {
+  index: number
+  content: string
+  tokenCount: number
+  heading?: string
+  charStart: number
+  charEnd: number
+}
+
+/** 文档索引进度事件载荷（主进程 → 渲染层） */
+export interface KnowledgeIndexProgress {
+  kbId: string
+  docId: string
+  relPath: string
+  status: KnowledgeDocStatus
+  stage: KnowledgeIndexStage
+  progress: number
+  chunks: number
+  entities: number
+  relations: number
+  error?: string
+  /** 非致命告警（如 semantic 降级 recursive、图谱失败但文档已索引） */
+  warning?: string
+}
+
+/** 检索命中（页面问答与会话工具共用；不返回 storage_path） */
+export interface KnowledgeHit {
+  chunkUid: string
+  chunkId: number
+  docId: string
+  docName: string
+  relPath: string
+  chunkIndex: number
+  heading?: string
+  content: string
+  score: number
+  vecScore?: number
+  bm25Score?: number
+  source?: 'sparse' | 'dense' | 'graph'
+  charStart: number
+  charEnd: number
+}
+
+/** 检索模式 */
+export type KnowledgeSearchMode = 'hybrid' | 'vector' | 'bm25'
+
+/** 检索结果（含降级标记，UI 据此轻提示） */
+export interface KnowledgeSearchResult {
+  hits: KnowledgeHit[]
+  /** 稠密路被跳过（未配置嵌入端点或库内无向量） */
+  vectorSkipped: boolean
+  /** 稀疏路被跳过（sparseRetrieval=false） */
+  sparseSkipped: boolean
+  /** 重排被跳过（未启用或端点不可用） */
+  rerankSkipped: boolean
+  /** 稠密路最大相似度低于门限：视为「没有相关内容」，问答据此如实回答 */
+  noRelevantResult: boolean
+  /** 图扩展命中的查询实体名（graphEnabled 且命中时才有；问答据此提示「知识关联」） */
+  graphEntities?: string[]
+}
 
 /** 知识库行（IPC 直接返回，字段名为 camelCase） */
 export interface KnowledgeBaseRow {
@@ -29,6 +104,11 @@ export interface KnowledgeBaseRow {
   sortOrder: number
   /** 是否置顶（置顶始终排在未置顶之前） */
   pinned: boolean
+  /** 索引汇总（由切片/图谱写入后回算；索引能力落地前恒为 0） */
+  chunksCount: number
+  entitiesCount: number
+  indexedDocsCount: number
+  lastIndexedAt: number | null
   createdAt: number
   updatedAt: number
 }
@@ -50,11 +130,27 @@ export interface KnowledgeDocumentRow {
   status: KnowledgeDocStatus
   contentHash: string | null
   errorMessage: string | null
+  /** 索引进度 0~100 与当前阶段 */
+  progress: number
+  stage: KnowledgeIndexStage | null
+  /** 抽取的全文长度与是否被 2MB 上限截断 */
+  charCount: number
+  truncated: boolean
+  /** 本次导入的 14 项索引配置快照（JSON 字符串，null = 仅上传文件） */
+  config: string | null
+  chunksCount: number
+  entitiesCount: number
+  relationsCount: number
+  /** 图谱抽取失败原因（文档仍 indexed；绝不静默） */
+  graphError: string | null
+  /** 索引口径指纹：配置变化才需要重建 */
+  indexSignature: string | null
+  indexedAt: number | null
   uploadedAt: number
   updatedAt: number
 }
 
-/** 渲染层可见的文档元信息（不含 storage_path / user_id / hash） */
+/** 渲染层可见的文档元信息（不含 storage_path / user_id / hash / config 原文） */
 export interface KnowledgeDocumentMeta {
   id: string
   kbId: string
@@ -65,6 +161,15 @@ export interface KnowledgeDocumentMeta {
   indexState: KnowledgeIndexState
   status: KnowledgeDocStatus
   errorMessage: string | null
+  progress: number
+  stage: KnowledgeIndexStage | null
+  charCount: number
+  truncated: boolean
+  chunksCount: number
+  entitiesCount: number
+  relationsCount: number
+  graphError: string | null
+  indexedAt: number | null
   uploadedAt: number
   updatedAt: number
 }
@@ -92,12 +197,18 @@ export interface KnowledgeImportResult {
   failed: KnowledgeImportOutcome[]
 }
 
-/** 概览统计（切片/实体统计随索引能力提供，这里先给出文件维度） */
+/** 概览统计（文件维度 + 索引维度） */
 export interface KnowledgeStats {
   kbCount: number
   docCount: number
   sizeBytes: number
   latestUpdatedAt: number
+  /** 已建立索引的文档数 / 正在索引的文档数 */
+  indexedDocCount: number
+  indexingDocCount: number
+  /** 切片/实体总量（实时聚合，量级为万级时开销可接受） */
+  chunksCount: number
+  entitiesCount: number
 }
 
 /** 共享记录 */

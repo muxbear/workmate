@@ -16,17 +16,31 @@ function resolveWorkspaceDir(config?: RunnableConfig): string {
 import type { ModelService } from '../../model/ModelService'
 import {
   CAPABILITY_DOCUMENT_ASSEMBLE,
-  CAPABILITY_IMAGE_GENERATE
+  CAPABILITY_IMAGE_GENERATE,
+  CAPABILITY_KNOWLEDGE_SEARCH
 } from '../../experts/expertContract'
+import { buildKnowledgeTools, type KnowledgeToolDeps } from './KnowledgeTool'
 import { downloadAssetToWorkspace } from './ArtifactAssetService'
 import { generateImage } from './ImageGenerationService'
+
+export interface ExpertToolExtras {
+  /**
+   * 本地知识库检索依赖（提供且专家声明 knowledge.search 时注册 kb_search /
+   * list_knowledge_bases）。
+   *
+   * 与云端的关系：声明该能力的专家**仍然可以**通过 mcp_configs 挂「云知识库检索」
+   * MCP 服务；两条通道同名时优先本地内置（AgentManager 装配处按名字去重）。
+   */
+  knowledge?: KnowledgeToolDeps
+}
 
 export function buildExpertTools(
   toolNames: string[],
   modelService?: ModelService,
   imageModelName?: string | null,
   /** 专家声明的能力（声明式驱动；缺省或为空时回退到工具名匹配，兼容存量专家） */
-  capabilities: string[] = []
+  capabilities: string[] = [],
+  extras: ExpertToolExtras = {}
 ): DynamicStructuredTool[] {
   const tools: DynamicStructuredTool[] = []
   const enabled = (capability: string, toolName: string): boolean =>
@@ -76,6 +90,11 @@ export function buildExpertTools(
         }
       })
     )
+  }
+
+  if (enabled(CAPABILITY_KNOWLEDGE_SEARCH, 'kb_search') && extras.knowledge) {
+    // 本地知识库检索（与主智能体同一实现；身份取自运行时 configurable，失败关闭）
+    tools.push(...buildKnowledgeTools(extras.knowledge))
   }
 
   return tools

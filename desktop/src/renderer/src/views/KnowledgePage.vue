@@ -41,11 +41,13 @@ import KnowledgeOverviewModal from '../components/knowledge/KnowledgeOverviewMod
 import { useKnowledgeSettingsStore } from '../store/knowledgeSettings'
 import { useCloudKnowledgeStore } from '../store/cloudKnowledge'
 import { useKnowledgeStore } from '../store/knowledge'
+import { useModelStore } from '../store/models'
 import type {
   CloudDocMeta,
   KnowledgeBaseSummary,
   KnowledgeDocumentMeta,
-  KnowledgeKind
+  KnowledgeKind,
+  KnowledgeQaCitation
 } from '../../../preload/index.d'
 
 // ── 知识库数据模型（知识库列表见 components/knowledge/knowledgeList.ts，文件树见 knowledgeTree.ts） ──
@@ -229,7 +231,17 @@ function metaOf(doc: KnowledgeDocumentMeta): KnowledgeFileMeta {
     updated: formatTimestamp(doc.updatedAt),
     icon: pickFileIcon(ext),
     tint: FILE_TINTS[ext] ?? '#64748b',
-    indexState: doc.indexState
+    indexState: doc.indexState,
+    status: doc.status,
+    progress: doc.progress,
+    errorMessage: doc.errorMessage,
+    chunksCount: doc.chunksCount,
+    entitiesCount: doc.entitiesCount,
+    relationsCount: doc.relationsCount,
+    charCount: doc.charCount,
+    truncated: doc.truncated,
+    graphError: doc.graphError,
+    indexedAt: doc.indexedAt
   }
 }
 
@@ -411,7 +423,6 @@ const libraryMenuOpen = ref(false)
 
 // ── 问答 ──
 const question = ref('')
-const answer = ref('')
 
 // ── 左右分栏拖拽 ──
 const filePanelPercent = ref(40)
@@ -551,34 +562,55 @@ const activeNode = computed(() => findNode(activeTree.value, activeTab.value))
 /** 标签页显示名：文件重命名后跟着更新 */
 const tabLabel = (tab: string): string => findNode(activeTree.value, tab)?.name ?? tab
 
-/** 已建立索引的文件数（「只上传文件」的条目不计数） */
+/** 已建立索引的文件数（只上传文件与索引失败的条目不计数） */
 const indexedCount = computed(
-  () => allFiles.value.filter((node) => node.file?.indexState !== 'none').length
+  () => allFiles.value.filter((node) => node.file?.status === 'indexed').length
+)
+/** 正在索引（排队 + 运行中）的文件数 */
+const indexingCount = computed(
+  () =>
+    allFiles.value.filter(
+      (node) => node.file?.status === 'queued' || node.file?.status === 'indexing'
+    ).length
+)
+/** 索引失败的文件数 */
+const failedCount = computed(
+  () => allFiles.value.filter((node) => node.file?.status === 'failed').length
 )
 
-/** 文件区副标题：文件总数与索引情况（索引未开放时不做「0 份已建立索引」的误导表述） */
+/** 文件区副标题：文件总数与索引情况（真实索引状态，不再有「开发中」占位） */
 const fileSummary = computed(() => {
   const total = allFiles.value.length
   if (!total) return '暂无文件'
-  if (indexedCount.value === total) return `${total} 份文件已建立索引`
-  if (indexedCount.value === 0) {
-    // 本地库是"索引功能还没开放"，云库则是"服务端尚未索引"——同一列，说法不同
-    return isCloudView.value ? `${total} 份文件 · 云端只读` : `${total} 份文件 · 索引功能开发中`
-  }
-  return `${total} 份文件 · ${indexedCount.value} 份已建立索引`
+  if (isCloudView.value) return `${total} 份文件 · 云端只读`
+  const parts = [`${total} 份文件`]
+  parts.push(`${indexedCount.value} 份已建立索引`)
+  if (indexingCount.value) parts.push(`${indexingCount.value} 索引中`)
+  if (failedCount.value) parts.push(`${failedCount.value} 失败`)
+  return parts.join(' · ')
 })
 
-/** 列表里的索引标记：只上传的文件与自定义索引的文件需要单独标出 */
+/** 列表里的索引标记：进度中/失败/只上传/自定义索引都单独标出 */
 const indexTagText = (node: KnowledgeTreeNode): string => {
-  if (node.file?.indexState === 'none') return '未索引'
-  if (node.file?.indexState === 'custom') return '自定义索引'
+  const file = node.file
+  if (!file) return ''
+  if (file.status === 'failed') return '索引失败'
+  if (file.status === 'indexing') return `建立索引中 ${Math.round(file.progress ?? 0)}%`
+  if (file.status === 'queued') return '排队中'
+  if (file.indexState === 'none') return '未索引'
+  if (file.indexState === 'custom') return '自定义索引'
   return ''
 }
 
-/** 索引状态文案（详情弹窗用，undefined 视为已建立索引） */
+/** 索引状态文案（详情弹窗用） */
 const indexStateText = (node: KnowledgeTreeNode): string => {
-  if (node.file?.indexState === 'none') return '未建立索引'
-  if (node.file?.indexState === 'custom') return '自定义索引'
+  const file = node.file
+  if (!file) return '未建立索引'
+  if (file.status === 'failed') return `索引失败：${file.errorMessage || '未知原因'}`
+  if (file.status === 'indexing') return `建立索引中 ${Math.round(file.progress ?? 0)}%`
+  if (file.status === 'queued') return '排队中'
+  if (file.indexState === 'none') return '未建立索引'
+  if (file.indexState === 'custom') return '自定义索引'
   return '已建立索引'
 }
 
@@ -676,6 +708,10 @@ async function toggleLibraryPin(library: KnowledgeFolder): Promise<void> {
 // ── 轻量 toast（与页面级 toast 同视觉） ──
 const toast = ref('')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
+/** 索引进度事件退订函数（onMounted 订阅、卸载时退订） */
+let offIndexProgress: (() => void) | null = null
+/** 问答事件退订函数 */
+let offAskEvents: (() => void) | null = null
 const notify = (text: string): void => {
   toast.value = text
   if (toastTimer) clearTimeout(toastTimer)
@@ -834,6 +870,7 @@ const onDocumentMousedown = (event: MouseEvent): void => {
   }
   // 分组菜单现在也能由「点行」打开，因此点空白处同样要关掉它
   if (openGroupMenu.value && !element?.closest('.kb-group')) openGroupMenu.value = null
+  if (qaModelMenuOpen.value && !element?.closest('.kb-model-wrap')) qaModelMenuOpen.value = false
 }
 
 const onDocumentKeydown = (event: KeyboardEvent): void => {
@@ -961,7 +998,11 @@ const addFolderUpload = async (picked: File[]): Promise<void> => {
     notify('未能解析文件路径，请重新选择文件夹')
     return
   }
-  const result = await kbStore.importDocuments(selectedKbId.value, items)
+  // 文件夹直传没有索引方式选择步骤：与上传弹窗的默认项保持一致（创建默认索引）；
+  // 想只留文件或走自定义向导的用户从「上传文件」弹窗进入
+  const result = await kbStore.importDocuments(selectedKbId.value, items, {
+    indexState: 'default'
+  })
   notify(result ? result.message : kbStore.lastError || '上传失败')
 }
 
@@ -974,7 +1015,7 @@ const openUploadModal = (): void => {
  * 上传弹窗确定后的落地：渲染层把 `File` 转成「绝对路径 + 相对路径」交主进程落盘。
  *
  * - Electron 39 起 `File.path` 已移除，必须走 preload 暴露的 `getPathForFile`；
- * - 索引能力未开放，统一按「只上传文件」提交（indexState = 'none'）。
+ * - 三种处理方式（默认索引 / 自定义索引 / 只上传文件）随提交带上索引状态与配置快照。
  */
 const onUploadSubmit = async (payload: KnowledgeUploadPayload): Promise<void> => {
   if (!selectedKbId.value) {
@@ -1001,7 +1042,11 @@ const onUploadSubmit = async (payload: KnowledgeUploadPayload): Promise<void> =>
     notify('未能解析文件路径，请重新选择文件')
     return
   }
-  const result = await kbStore.importDocuments(selectedKbId.value, items)
+  const result = await kbStore.importDocuments(selectedKbId.value, items, {
+    indexState: payload.mode,
+    // 自定义索引提交向导快照（主进程会再校验一次）；默认索引由主进程取生效配置
+    config: payload.mode === 'custom' ? payload.config : null
+  })
   notify(result ? result.message : kbStore.lastError || '上传失败')
 }
 
@@ -1046,14 +1091,30 @@ const detailItems = computed<Array<{ label: string; value: string }>>(() => {
       { label: '索引状态', value: '随其中的文件一起建立索引' }
     ]
   }
-  return [
+  const file = node.file
+  const items: Array<{ label: string; value: string }> = [
     { label: '名称', value: node.name },
-    { label: '类型', value: node.file?.type ?? '文件' },
-    { label: '大小', value: node.file?.size ?? '—' },
-    { label: '更新时间', value: node.file?.updated ?? '—' },
+    { label: '类型', value: file?.type ?? '文件' },
+    { label: '大小', value: file?.size ?? '—' },
+    { label: '更新时间', value: file?.updated ?? '—' },
     { label: '所在位置', value: location },
     { label: '索引状态', value: indexStateText(node) }
   ]
+  if (file?.status === 'indexed' || file?.status === 'failed') {
+    items.push({ label: '切片数', value: `${file.chunksCount ?? 0} 段` })
+    if (file.charCount) {
+      items.push({
+        label: '索引文本',
+        value: `${Math.round(file.charCount / 1000)} 千字${file.truncated ? '（已截断）' : ''}`
+      })
+    }
+    items.push({
+      label: '图谱',
+      value: `${file.entitiesCount ?? 0} 实体 · ${file.relationsCount ?? 0} 关系`
+    })
+    if (file.graphError) items.push({ label: '图谱错误', value: file.graphError })
+  }
+  return items
 })
 
 const openFileDetail = (node: KnowledgeTreeNode): void => {
@@ -1097,10 +1158,55 @@ const submitFileRename = async (name: string): Promise<void> => {
   notify(`已重命名为「${name}」`)
 }
 
-// ── 重建索引（索引能力未开放：明确提示，不再做本地标记假象）──
-const rebuildIndex = (node: KnowledgeTreeNode): void => {
+// ── 重建索引 / 重试 / 取消（真实 IPC；进度走 knowledge:import-progress 事件）──
+const rebuildIndex = async (node: KnowledgeTreeNode): Promise<void> => {
   closeFileMenu()
-  notify(`「${node.name}」的索引功能开发中，敬请期待`)
+  if (!selectedKbId.value) return
+  // node.key 即库内 relPath：文件节点 = 单文件，文件夹节点 = 按前缀批量重建
+  const queued = await kbStore.reindex(selectedKbId.value, [node.key])
+  notify(
+    queued > 0
+      ? `已加入索引队列：${queued} 个文件`
+      : kbStore.lastError || '没有可重建的文件（「只上传文件」的条目不参与索引）'
+  )
+}
+
+/** 失败重试（仅 status = failed 的条目在菜单里出现） */
+const retryIndex = async (node: KnowledgeTreeNode): Promise<void> => {
+  closeFileMenu()
+  if (!selectedKbId.value) return
+  const ok = await kbStore.retryDocument(selectedKbId.value, node.key)
+  notify(ok ? '已重新加入索引队列' : kbStore.lastError || '重试失败')
+}
+
+/** 重抽图谱（只跑抽取；失败过的文档也可以补抽） */
+const reextractGraph = async (node: KnowledgeTreeNode): Promise<void> => {
+  closeFileMenu()
+  if (!selectedKbId.value) return
+  const queued = await kbStore.reextractGraph(selectedKbId.value, [node.key])
+  notify(queued > 0 ? '已加入图谱抽取队列' : kbStore.lastError || '没有可重抽的文件')
+}
+
+/** 重建社区摘要（GraphRAG 全局检索侧；供「整体性提问」用） */
+const rebuildCommunities = async (): Promise<void> => {
+  libraryMenuOpen.value = false
+  const kbId = selectedKbId.value
+  if (!kbId) return
+  notify('正在按实体关系聚类生成主题摘要…')
+  const count = await kbStore.rebuildCommunities(kbId)
+  notify(
+    count > 0
+      ? `已生成 ${count} 条社区主题摘要`
+      : kbStore.lastError || '实体关系不足以形成社区（先在「知识库设置」开启图谱抽取并重建索引）'
+  )
+}
+
+/** 取消该条目正在进行的索引任务 */
+const cancelIndexing = async (node: KnowledgeTreeNode): Promise<void> => {
+  closeFileMenu()
+  if (!selectedKbId.value) return
+  const canceled = await kbStore.cancelIndex(selectedKbId.value, [node.key])
+  notify(canceled > 0 ? '已取消索引' : kbStore.lastError || '没有正在进行的索引任务')
 }
 
 // ── 创建共享（知识库 / 文件夹 / 文件共用同一个弹窗）──
@@ -1275,13 +1381,41 @@ const resizePanels = (event: MouseEvent): void => {
   window.addEventListener('mouseup', onUp)
 }
 
-// ── 问答提交（检索与问答能力尚未实现：明确提示，不做假回答）──
-const ask = (): void => {
-  if (!question.value.trim()) return
-  answer.value =
-    '知识库问答（检索）功能开发中：需要先完成文档解析、切片、向量化与检索链路。' +
-    '当前版本可以先上传并管理资料，索引与问答将在后续版本开放。'
+// ── 知识库问答（2-Step RAG；流式结果由 store 订阅的 ask-* 事件驱动）──
+const askState = computed(() => kbStore.askState)
+
+const ask = async (): Promise<void> => {
+  const text = question.value.trim()
+  if (!text || !selectedKbId.value) return
   question.value = ''
+  const started = await kbStore.askQuestion(selectedKbId.value, text, qaModelName.value || undefined)
+  if (!started) notify(kbStore.askState?.error || '提问失败')
+}
+
+const cancelAsk = (): void => {
+  void kbStore.cancelAsk()
+}
+
+/** 引用点击：在右侧以标签页打开对应文件（与文件树点击同一条路径） */
+const openCitation = (citation: KnowledgeQaCitation): void => {
+  const node = findNode(activeTree.value, citation.relPath)
+  if (node) openFile(node)
+  else notify('引用文件已不在当前库中')
+}
+
+/** 问答模型（models.json 的 id；空 = 用默认模型） */
+const qaModelName = ref('')
+const qaModelMenuOpen = ref(false)
+const qaModelStore = useModelStore()
+onMounted(() => {
+  void qaModelStore.load()
+})
+const qaModelLabel = computed(
+  () => qaModelStore.models.find((item) => item.id === qaModelName.value)?.name ?? '默认模型'
+)
+function pickQaModel(id: string): void {
+  qaModelName.value = id
+  qaModelMenuOpen.value = false
 }
 
 // ── 概览：统计 + 文件维度汇总（切片/实体随索引能力提供）──
@@ -1310,6 +1444,10 @@ onMounted(async () => {
   window.addEventListener('resize', updateTabScroll)
   document.addEventListener('mousedown', onDocumentMousedown)
   document.addEventListener('keydown', onDocumentKeydown)
+  // 索引进度事件：局部 patch 当前库的文档行（终态时 store 会自行全量刷新）
+  offIndexProgress = kbStore.subscribeIndexProgress()
+  // 问答事件：引用/增量/结束/错误（流式回答）
+  offAskEvents = kbStore.subscribeAsk()
   // 首屏拉取知识库列表，并加载当前选中库的文件列表
   await kbStore.loadBases()
   if (selectedKbId.value) await kbStore.loadDocuments(selectedKbId.value)
@@ -1320,11 +1458,23 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateTabScroll)
   document.removeEventListener('mousedown', onDocumentMousedown)
   document.removeEventListener('keydown', onDocumentKeydown)
+  offIndexProgress?.()
+  offAskEvents?.()
   if (toastTimer) clearTimeout(toastTimer)
 })
 watch(openTabs, () => {
   nextTick(updateTabScroll)
 })
+
+// 索引过程的非致命告警（如图谱抽取失败）必须让用户看见——绝不静默
+watch(
+  () => kbStore.indexWarning,
+  (warning) => {
+    if (!warning) return
+    notify(warning)
+    kbStore.indexWarning = ''
+  }
+)
 </script>
 
 <template>
@@ -2134,6 +2284,33 @@ watch(openTabs, () => {
                       <button
                         v-if="!isCloudView"
                         class="kb-lib-menu-item"
+                        @click="rebuildCommunities"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="3" />
+                          <circle cx="5" cy="6" r="2" />
+                          <circle cx="19" cy="6" r="2" />
+                          <circle cx="5" cy="18" r="2" />
+                          <circle cx="19" cy="18" r="2" />
+                          <path d="M6.5 7.5 10 10.5" />
+                          <path d="M17.5 7.5 14 10.5" />
+                          <path d="M6.5 16.5 10 13.5" />
+                          <path d="M17.5 16.5 14 13.5" />
+                        </svg>
+                        重建社区摘要
+                      </button>
+                      <button
+                        v-if="!isCloudView"
+                        class="kb-lib-menu-item"
                         @click="openShare(selectedLibrary.name, 'library')"
                       >
                         <svg
@@ -2575,6 +2752,72 @@ watch(openTabs, () => {
                       重建索引
                     </button>
                     <button
+                      v-if="!isCloudView && row.node.kind === 'file' && row.node.file?.status === 'failed'"
+                      class="kb-lib-menu-item"
+                      @click="retryIndex(row.node)"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                      重试索引
+                    </button>
+                    <button
+                      v-if="
+                        !isCloudView &&
+                        row.node.kind === 'file' &&
+                        (row.node.file?.status === 'queued' || row.node.file?.status === 'indexing')
+                      "
+                      class="kb-lib-menu-item"
+                      @click="cancelIndexing(row.node)"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="m15 9-6 6" />
+                        <path d="m9 9 6 6" />
+                      </svg>
+                      取消索引
+                    </button>
+                    <button
+                      v-if="!isCloudView && row.node.kind === 'file' && row.node.file?.status === 'indexed'"
+                      class="kb-lib-menu-item"
+                      @click="reextractGraph(row.node)"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="6" cy="6" r="3" />
+                        <circle cx="6" cy="18" r="3" />
+                        <path d="M20 4 8.12 15.88" />
+                        <path d="M14.8 14.8 20 20" />
+                      </svg>
+                      重抽图谱
+                    </button>
+                    <button
                       v-if="!isCloudView"
                       class="kb-lib-menu-item"
                       @click="
@@ -2797,10 +3040,39 @@ watch(openTabs, () => {
               <div class="kb-qa-banner">
                 <p class="kb-qa-eyebrow">KNOWLEDGE Q&amp;A</p>
                 <h2 class="kb-qa-title">向 {{ selectedLibrary.name }} 提问</h2>
-                <p class="kb-qa-desc">检索与问答功能开发中，将在索引能力完成后开放。</p>
+                <p class="kb-qa-desc">
+                  基于本库已索引的内容作答；回答中的 [n] 对应下方「引用来源」，可点击定位到文件。
+                </p>
               </div>
 
-              <div v-if="answer" class="kb-answer">{{ answer }}</div>
+              <div v-if="askState" class="kb-answer">
+                <p v-if="askState.noRelevantResult" class="kb-answer-empty">
+                  知识库中没有找到与「{{ askState.question }}」相关的内容。
+                </p>
+                <template v-else>
+                  <div class="kb-answer-text">
+                    {{ askState.answer }}<span v-if="askState.streaming" class="kb-answer-caret"></span>
+                  </div>
+                  <p v-if="askState.canceled" class="kb-answer-note">已取消</p>
+                  <p v-if="askState.error" class="kb-answer-error">{{ askState.error }}</p>
+                  <div v-if="askState.citations.length" class="kb-citations">
+                    <p class="kb-citations-title">引用来源</p>
+                    <button
+                      v-for="citation in askState.citations"
+                      :key="citation.index"
+                      class="kb-citation"
+                      @click="openCitation(citation)"
+                    >
+                      <span class="kb-citation-index">[{{ citation.index }}]</span>
+                      <span class="kb-citation-name">{{ citation.docName }}</span>
+                      <span class="kb-citation-path">
+                        {{ citation.relPath }} › 切片 #{{ citation.chunkIndex + 1 }}
+                        <template v-if="citation.heading"> › {{ citation.heading }}</template>
+                      </span>
+                    </button>
+                  </div>
+                </template>
+              </div>
 
               <div class="kb-question-wrap">
                 <div class="kb-qinput">
@@ -2812,22 +3084,42 @@ watch(openTabs, () => {
                     @keydown.enter.exact.prevent="ask"
                   ></textarea>
                   <div class="kb-qinput-foot">
-                    <button class="kb-model-btn">
-                      DS 快速
-                      <svg
-                        class="kb-model-caret"
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path d="m6 9 6 6 6-6" />
-                      </svg>
-                    </button>
+                    <div class="kb-model-wrap">
+                      <button class="kb-model-btn" @click="qaModelMenuOpen = !qaModelMenuOpen">
+                        {{ qaModelLabel }}
+                        <svg
+                          class="kb-model-caret"
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                      <div v-if="qaModelMenuOpen" class="kb-model-menu">
+                        <button
+                          class="kb-model-item"
+                          :class="{ 'kb-model-item--active': !qaModelName }"
+                          @click="pickQaModel('')"
+                        >
+                          默认模型
+                        </button>
+                        <button
+                          v-for="model in qaModelStore.models"
+                          :key="model.id"
+                          class="kb-model-item"
+                          :class="{ 'kb-model-item--active': qaModelName === model.id }"
+                          @click="pickQaModel(model.id)"
+                        >
+                          {{ model.name }}
+                        </button>
+                      </div>
+                    </div>
                     <div class="kb-qinput-actions">
                       <button class="kb-icon-btn" title="添加附件">
                         <svg
@@ -2865,6 +3157,23 @@ watch(openTabs, () => {
                         </svg>
                       </button>
                       <button
+                        v-if="askState?.streaming"
+                        class="kb-send-btn kb-send-btn--stop"
+                        title="停止生成"
+                        @click="cancelAsk"
+                      >
+                        <svg
+                          width="15"
+                          height="15"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          stroke="none"
+                        >
+                          <rect x="6" y="6" width="12" height="12" rx="2" />
+                        </svg>
+                      </button>
+                      <button
+                        v-else
                         class="kb-send-btn"
                         title="发送问题"
                         :disabled="!question.trim()"
@@ -3872,6 +4181,84 @@ watch(openTabs, () => {
   font-size: 12px;
   line-height: 24px;
   color: #42575a;
+  overflow-y: auto;
+  max-height: 46%;
+}
+.kb-answer-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.kb-answer-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: #16a394;
+  animation: kb-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes kb-caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+.kb-answer-empty {
+  color: #6b7f83;
+}
+.kb-answer-note {
+  margin-top: 6px;
+  color: #98a6a9;
+}
+.kb-answer-error {
+  margin-top: 6px;
+  color: #b45309;
+}
+.kb-citations {
+  margin-top: 12px;
+  border-top: 1px dashed #d6e2e0;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kb-citations-title {
+  font-size: 12px;
+  color: #98a6a9;
+}
+.kb-citation {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  text-align: left;
+  border: 1px solid #dfe9e7;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #42575a;
+}
+.kb-citation:hover {
+  border-color: #16a394;
+  background: #f2fbf9;
+}
+.kb-citation-index {
+  flex-shrink: 0;
+  color: #16a394;
+  font-weight: 600;
+}
+.kb-citation-name {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.kb-citation-path {
+  color: #98a6a9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-send-btn--stop {
+  background: #b45309;
 }
 .kb-question-wrap {
   margin-top: auto;
@@ -3909,6 +4296,42 @@ watch(openTabs, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.kb-model-wrap {
+  position: relative;
+}
+.kb-model-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dfe9e7;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  padding: 4px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+}
+.kb-model-item {
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: #42575a;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.kb-model-item:hover {
+  background: #f2fbf9;
+}
+.kb-model-item--active {
+  color: #16a394;
+  font-weight: 600;
 }
 .kb-model-btn {
   display: flex;

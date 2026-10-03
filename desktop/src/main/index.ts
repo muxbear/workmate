@@ -22,7 +22,7 @@ import { expandFileParts, normalizeMessageInput } from './agent/file-parts'
 import type { MessagePart, DesktopExpert } from '../preload/index.d'
 import { summarizeTitle } from './agent/title-service'
 import { polishText, POLISH_MAX_TEXT_CHARS } from './agent/polish-service'
-import { HumanMessage } from '@langchain/core/messages'
+import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { detectOS } from './platform'
 import { getDataDirectory, initDataDirectory, migrateLegacyConfigFiles } from './data-dir'
 import { WorkModeStore } from './mode/work-mode'
@@ -62,6 +62,23 @@ import { AutomationScheduler } from './automation/AutomationScheduler'
 import { KnowledgeStore } from './knowledge/KnowledgeStore'
 import { KnowledgeFileService } from './knowledge/KnowledgeFileService'
 import { KnowledgeService } from './knowledge/KnowledgeService'
+import { ChunkingService } from './knowledge/ChunkingService'
+import { SparseIndexer } from './knowledge/SparseIndexer'
+import { KnowledgeIndexService } from './knowledge/KnowledgeIndexService'
+import { RetrievalService } from './knowledge/RetrievalService'
+import { resolveSqliteVecExtension } from './knowledge/vector-extension'
+import { EmbeddingProvider } from './knowledge/EmbeddingProvider'
+import { RerankProvider } from './knowledge/RerankProvider'
+import { KnowledgeQaService } from './knowledge/KnowledgeQaService'
+import {
+  GraphService,
+  GRAPH_EXTRACTION_SCHEMA,
+  type GraphChatModel,
+  type GraphExtractionPayload
+} from './knowledge/GraphService'
+import { CommunityService, renderCommunityContext } from './knowledge/CommunityService'
+import { resolveDefaultModel } from './agent/ModelFactory'
+import { resolveMainProxy, type MainProxyConfig } from './network/main-proxy'
 import { CloudKnowledgeService } from './knowledge/CloudKnowledgeService'
 import { registerCloudKnowledgeHandlers } from './ipc/knowledge-cloud-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
@@ -338,7 +355,18 @@ app.whenReady().then(() => {
       skillsDir: dataDir.getDir('skills'),
       resolveSkillDirs: async (ids) =>
         skillInstallServiceRef ? await skillInstallServiceRef.resolveDirNames(ids) : [],
-      mcpAuth
+      mcpAuth,
+      // 知识库服务在下方构造，这里用工厂延迟取（首次 buildAgent 发生在登录后，届时已就绪）
+      knowledgeTools: () => ({
+        retrievalProvider: () => retrievalService,
+        listBases: (userId) =>
+          knowledgeStore.listBases(userId).map((row) => ({
+            id: row.id,
+            name: row.name,
+            docsCount: row.docsCount,
+            chunksCount: row.chunksCount
+          }))
+      })
     }
   )
   agentManager.init(mode).catch((err) => console.error('[main] agent init failed:', err))
@@ -602,11 +630,147 @@ app.whenReady().then(() => {
       uploadTimeoutMinutes: Number(settingsStore.get('knowledge.uploadTimeout')) || 10
     })
   })
-  const knowledgeService = new KnowledgeService(knowledgeStore, knowledgeFileService)
+  // 索引/检索引擎（嵌入与重排端点在「设置 → 知识库」页配置；未配置时自动走纯稀疏链路）
+  // axios 不走 Electron session：按「设置 → 网络」把代理解析出来显式传给两个 provider
+  const resolveKnowledgeProxy = (targetUrl: string): Promise<MainProxyConfig | undefined> =>
+    resolveMainProxy(
+      targetUrl,
+      String(settingsStore.get('network.proxyMode') ?? 'direct'),
+      String(settingsStore.get('network.proxyUrl') ?? '')
+    )
+  const embeddingProvider = new EmbeddingProvider({
+    store: knowledgeStore,
+    getProxy: resolveKnowledgeProxy
+  })
+  const rerankProvider = new RerankProvider({ getProxy: resolveKnowledgeProxy })
+  // 图谱抽取（P3）+ 社区摘要（P4）：同一个 graphModel 解析链
+  const resolveGraphModel = async (modelName: string): Promise<GraphChatModel> => {
+      const resolved = await resolveDefaultModel(
+        modelService,
+        modelName?.trim() || 'deepseek:deepseek-v4-pro'
+      )
+      if (typeof resolved === 'string') throw new Error('图谱抽取模型解析失败')
+      // 显式用 function calling：LangChain 默认会走 response_format=json_schema，
+      // 而内网/信创网关对 function calling 的兼容面更广（json_schema 是较新的能力）
+      const structured = resolved.withStructuredOutput(GRAPH_EXTRACTION_SCHEMA, {
+        name: 'graph_extraction',
+        method: 'functionCalling'
+      })
+    return {
+      extract: async ({ system, user }) =>
+        (await structured.invoke([
+          new SystemMessage(system),
+          new HumanMessage(user)
+        ])) as GraphExtractionPayload,
+      // 社区摘要是纯文本生成（不分词结构化包装）
+      complete: async ({ system, user }) => {
+        const response = await resolved.invoke([
+          new SystemMessage(system),
+          new HumanMessage(user)
+        ])
+        const content = response.content
+        if (typeof content === 'string') return content
+        if (Array.isArray(content)) {
+          return content
+            .map((part) =>
+              typeof part === 'string'
+                ? part
+                : typeof (part as { text?: string }).text === 'string'
+                  ? (part as { text: string }).text
+                  : ''
+            )
+            .join('')
+        }
+        return ''
+      }
+    }
+  }
+  const graphService = new GraphService({ store: knowledgeStore, resolveModel: resolveGraphModel })
+  const communityService = new CommunityService({
+    store: knowledgeStore,
+    resolveModel: resolveGraphModel
+  })
+  const chunkingService = new ChunkingService()
+  const sparseIndexer = new SparseIndexer(knowledgeStore)
+  const knowledgeIndexService = new KnowledgeIndexService({
+    store: knowledgeStore,
+    files: knowledgeFileService,
+    chunking: chunkingService,
+    sparse: sparseIndexer,
+    settings: knowledgeSettingsService,
+    getGlobalSettings: () => settingsStore.getAll(),
+    embedder: embeddingProvider,
+    graph: graphService,
+    // 进度事件广播给所有窗口（窗口可能晚于服务创建；渲染层按 kbId/docId 关联）
+    onProgress: (progress) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('knowledge:import-progress', progress)
+      }
+    }
+  })
+  const retrievalService = new RetrievalService({
+    store: knowledgeStore,
+    sparse: sparseIndexer,
+    settings: knowledgeSettingsService,
+    getGlobalSettings: () => settingsStore.getAll(),
+    embedder: embeddingProvider,
+    reranker: rerankProvider
+  })
+  // 向量扩展：能加载就用 sqlite-vec，否则 store 自动降级 JS 余弦（记录在 kb_meta）
+  const vectorExtension = resolveSqliteVecExtension()
+  if (vectorExtension) {
+    const loaded = knowledgeStore.loadVectorExtension(vectorExtension.path)
+    console.log(
+      `[knowledge] sqlite-vec ${loaded.ok ? `已加载 ${loaded.version}` : '加载失败'}（来源：${vectorExtension.source}）`,
+      loaded.error ?? ''
+    )
+  } else {
+    console.warn('[knowledge] 未找到 sqlite-vec 扩展，向量检索将使用 JS 余弦降级')
+  }
+  // 上次退出时残留的 queued/indexing 置为 failed（「应用退出中断」）
+  const recoveredJobs = knowledgeIndexService.recoverOnStartup()
+  if (recoveredJobs) console.log(`[knowledge] 启动恢复：${recoveredJobs} 个中断的索引任务已置为失败`)
+
+  // 知识库问答（2-Step RAG）：检索复用同一实现，模型走 models.json 凭据
+  const knowledgeQaService = new KnowledgeQaService({
+    retrieval: retrievalService,
+    // 局部检索无命中时的全局主题兜底（社区摘要；没建过则为空 → 保持「未找到」）
+    getGlobalContext: (_userId, kbId) =>
+      renderCommunityContext(knowledgeStore.listCommunities(kbId)),
+    resolveModel: async (modelName) => {
+      const resolved = await resolveDefaultModel(
+        modelService,
+        modelName?.trim() || 'deepseek:deepseek-v4-pro'
+      )
+      // resolveDefaultModel 的返回类型是联合类型（字符串分支仅用于直接透传场景）
+      if (typeof resolved === 'string') throw new Error('模型解析失败：未找到可用凭据')
+      const model = resolved
+      return {
+        stream: async (messages) => {
+          const lcMessages = messages.map((message) =>
+            message.role === 'system'
+              ? new SystemMessage(message.content)
+              : new HumanMessage(message.content)
+          )
+          return (await model.stream(lcMessages)) as unknown as AsyncIterable<{
+            content?: unknown
+          }>
+        }
+      }
+    }
+  })
+  const knowledgeService = new KnowledgeService(knowledgeStore, knowledgeFileService, {
+    indexer: knowledgeIndexService,
+    retrieval: retrievalService,
+    communities: communityService,
+    engineConfig: (userId, kbId) => retrievalService.effectiveConfig(userId, kbId)
+  })
   registerKnowledgeHandlers(ipcMain, {
     knowledgeSettingsService,
     knowledgeService,
+    knowledgeQaService,
     session,
+    getGlobalSettings: () => settingsStore.getAll(),
     // 打开文件夹：主进程执行，渲染层只传 ID 与库内相对路径
     openDir: async (dir) => {
       const error = await shell.openPath(dir)
@@ -736,6 +900,10 @@ app.whenReady().then(() => {
   })
   app.on('before-quit', () => {
     automationScheduler.stop()
+    // 索引队列：中止在跑的任务并停止消费；下次启动时 recoverOnStartup 会把
+    // 残留的 queued/indexing 置为 failed（「应用退出中断」）
+    knowledgeIndexService.dispose()
+    knowledgeStore.close()
   })
 
   // Agent message handler

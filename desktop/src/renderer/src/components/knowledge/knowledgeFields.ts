@@ -3,13 +3,13 @@ import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../prelo
 /**
  * 知识库配置字段描述表与草稿工具
  *
- * 这是渲染层 17 项配置的**唯一来源**：「知识库设置」页（全局）与每个知识库的设置弹窗
+ * 这是渲染层 18 项配置的**唯一来源**：「知识库设置」页（全局）与每个知识库的设置弹窗
  * （按库覆盖）共用同一份字段定义、同一套控件与校验区间，避免两处漂移。
  * 区间/枚举与主进程 src/main/knowledge/knowledge-schema.ts 保持一致（主进程仍是最终权威）。
  */
 
 export type KnowledgeDraftValue = string | number | boolean
-/** 表单草稿：17 项齐备；数值项以字符串承接（保存时统一解析校验） */
+/** 表单草稿：18 项齐备；数值项以字符串承接（保存时统一解析校验） */
 export type KnowledgeDraft = Record<KnowledgeOverrideKey, KnowledgeDraftValue>
 
 export interface KnowledgeFieldDef {
@@ -135,6 +135,14 @@ export const KNOWLEDGE_FIELD_LIST: readonly KnowledgeFieldDef[] = [
     withCustomModels: true
   },
   { key: 'topK', label: '召回 Top', kind: 'number', min: 1, max: 100, integer: true },
+  {
+    key: 'minSimilarity',
+    label: '相关度门槛',
+    kind: 'number',
+    min: 0,
+    max: 1,
+    integer: false
+  },
   // ── 知识图谱抽取 ──
   { key: 'graphEnabled', label: '知识图谱抽取', kind: 'boolean' },
   {
@@ -160,7 +168,7 @@ export const KNOWLEDGE_OVERRIDE_KEYS: readonly KnowledgeOverrideKey[] = KNOWLEDG
   (field) => field.key
 )
 
-/** 由生效值构造表单草稿（17 项齐备；数值转字符串） */
+/** 由生效值构造表单草稿（18 项齐备；数值转字符串） */
 export function createDraft(values: KnowledgeOverrides): KnowledgeDraft {
   const draft = {} as KnowledgeDraft
   for (const field of KNOWLEDGE_FIELD_LIST) {

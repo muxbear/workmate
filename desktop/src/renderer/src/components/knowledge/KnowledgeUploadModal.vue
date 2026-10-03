@@ -32,7 +32,7 @@ import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../prelo
  *    可配置项与「知识库设置」的索引项完全一致（同一份字段表派生）；
  * 3）底部按钮按所选处理方式推进：默认索引与只上传文件直接提交，自定义索引走完向导后提交。
  *
- * 当前只做渲染层：File 对象与索引配置只回到页面内存，字节不落盘（主进程链路待实现）。
+ * 索引配置随提交带回页面：默认索引由主进程取生效配置，自定义索引提交 14 项快照（主进程再校验）。
  */
 const props = defineProps<{
   open: boolean
@@ -67,8 +67,7 @@ type UploadStage = 'files' | 'index'
 const visible = ref(props.open)
 const displayName = ref('')
 const stage = ref<UploadStage>('files')
-// 索引能力未开放：默认且仅支持「只上传文件」
-const mode = ref<KnowledgeUploadMode>('none')
+const mode = ref<KnowledgeUploadMode>('default')
 const queue = ref<UploadQueueItem[]>([])
 const dragging = ref(false)
 const error = ref('')
@@ -366,7 +365,7 @@ watch(
     if (!open) return
     displayName.value = props.library?.name ?? ''
     stage.value = 'files'
-    mode.value = 'none'
+    mode.value = 'default'
     queue.value = []
     error.value = ''
     stepIndex.value = 0
@@ -598,21 +597,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <p v-else class="ku-empty">还没有待上传文件，拖入或选择文件后会显示在这里。</p>
             </section>
 
-            <!-- 上传后处理：三选一（索引未开放时仅「只上传文件」可选） -->
+            <!-- 上传后处理：三选一 -->
             <section class="ku-section">
               <p class="ku-section-title">上传后处理</p>
-              <p class="ku-index-notice">
-                索引功能开发中：本次仅支持「只上传文件」，创建索引与自定义索引将在后续版本开放。
-              </p>
               <div class="ku-options">
                 <label
                   v-for="option in KNOWLEDGE_UPLOAD_OPTIONS"
                   :key="option.value"
                   class="ku-option"
-                  :class="{
-                    'ku-option--active': mode === option.value,
-                    'ku-option--disabled': option.value !== 'none'
-                  }"
+                  :class="{ 'ku-option--active': mode === option.value }"
                 >
                   <input
                     class="ku-radio-input"
@@ -620,7 +613,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                     name="ku-upload-mode"
                     :value="option.value"
                     :checked="mode === option.value"
-                    :disabled="option.value !== 'none'"
                     @change="mode = option.value"
                   />
                   <span class="ku-radio" aria-hidden="true"></span>
@@ -1050,18 +1042,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .ku-option:hover {
   border-color: var(--kw-color-border-strong);
 }
-.ku-option--disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.ku-index-notice {
-  margin: 6px 0 10px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--kw-color-text-muted);
-}
-
 .ku-option--active {
   border-color: var(--kw-color-brand);
   background: var(--kw-color-brand-subtle);

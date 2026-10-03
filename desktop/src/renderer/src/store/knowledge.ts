@@ -4,7 +4,12 @@ import type {
   IpcResult,
   KnowledgeBaseSummary,
   KnowledgeDocumentMeta,
+  KnowledgeIndexState,
   KnowledgeKind,
+  KnowledgeAskEvent,
+  KnowledgeOverrides,
+  KnowledgeQaCitation,
+  KnowledgeSearchResult,
   KnowledgeShare,
   KnowledgeStats
 } from '../../../preload/index.d'
@@ -36,7 +41,8 @@ async function call<T>(run: () => Promise<IpcResult<T>>, fallback: string): Prom
  *
  * - 数据来自主进程（knowledge:* IPC）：渲染层只持 ID 与库内相对路径；
  * - 文件树不在这里构建：页面用 `relPath` 调用 `mergeUploads()` 还原层级（复用既有纯函数）；
- * - 索引与问答尚未实现：文档的 `indexState` 恒为 `none`，`ask` 相关状态暂无。
+ * - 索引进度走 `knowledge:import-progress` 事件做局部 patch，终态再全量刷新；
+ * - 检索入口两条（页面问答 / 会话 kb_search）在主进程共用同一实现。
  */
 export const useKnowledgeStore = defineStore('knowledge', () => {
   const bases = ref<KnowledgeBaseSummary[]>([])
@@ -182,11 +188,18 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
 
   async function importDocuments(
     kbId: string,
-    items: Array<{ srcPath: string; relPath: string }>
+    items: Array<{ srcPath: string; relPath: string }>,
+    options: { indexState?: KnowledgeIndexState; config?: KnowledgeOverrides | null } = {}
   ): Promise<{ accepted: number; skipped: number; failed: number; message: string } | null> {
-    // 索引能力未开放：统一按「只上传文件」提交
+    const indexState = options.indexState ?? 'none'
     const result = await call(
-      () => window.api.importKnowledgeDocuments(kbId, items, 'none'),
+      () =>
+        window.api.importKnowledgeDocuments(
+          kbId,
+          items,
+          indexState,
+          indexState === 'custom' ? (options.config ?? null) : null
+        ),
       IPC_FALLBACK
     )
     if (!result.success) {
@@ -199,6 +212,9 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     const skipped = data?.skipped ?? []
     const failed = data?.failed ?? []
     const parts = [`已上传 ${data?.accepted.length ?? 0} 个文件`]
+    if (indexState !== 'none' && data?.accepted.length) {
+      parts.push('已开始建立索引')
+    }
     if (skipped.length) parts.push(`跳过 ${skipped.length} 个（${skipped[0].reason}）`)
     if (failed.length) parts.push(`失败 ${failed.length} 个（${failed[0].reason}）`)
     lastError.value = ''
@@ -208,6 +224,217 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
       failed: failed.length,
       message: parts.join('，')
     }
+  }
+
+  /** 重建索引：省略 relPaths = 整库（含文件夹前缀） */
+  async function reindex(kbId: string, relPaths?: string[]): Promise<number> {
+    const result = await call(() => window.api.reindexKnowledge(kbId, relPaths), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '重建索引失败'
+      return 0
+    }
+    await loadDocuments(kbId)
+    return result.data?.queued ?? 0
+  }
+
+  /** 重试失败文档 */
+  async function retryDocument(kbId: string, relPath: string): Promise<boolean> {
+    const result = await call(
+      () => window.api.retryKnowledgeDocument(kbId, relPath),
+      IPC_FALLBACK
+    )
+    if (!result.success) {
+      lastError.value = result.error ?? '重试失败'
+      return false
+    }
+    await loadDocuments(kbId)
+    return true
+  }
+
+  /** 重抽图谱（只跑抽取，用已存切片）；省略 relPaths = 整库 */
+  async function reextractGraph(kbId: string, relPaths?: string[]): Promise<number> {
+    const result = await call(
+      () => window.api.reextractKnowledgeGraph(kbId, relPaths),
+      IPC_FALLBACK
+    )
+    if (!result.success) {
+      lastError.value = result.error ?? '重抽图谱失败'
+      return 0
+    }
+    await loadDocuments(kbId)
+    return result.data?.queued ?? 0
+  }
+
+  /** 重建社区摘要（GraphRAG 全局检索侧）：返回生成的社区数 */
+  async function rebuildCommunities(kbId: string): Promise<number> {
+    const result = await call(() => window.api.rebuildKnowledgeCommunities(kbId), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '重建社区摘要失败'
+      return 0
+    }
+    return result.data?.communities ?? 0
+  }
+
+  /** 取消索引任务：省略 relPaths = 整库 */
+  async function cancelIndex(kbId: string, relPaths?: string[]): Promise<number> {
+    const result = await call(() => window.api.cancelKnowledgeIndex(kbId, relPaths), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '取消失败'
+      return 0
+    }
+    await loadDocuments(kbId)
+    return result.data?.canceled ?? 0
+  }
+
+  /** 检索（P0 起可用；命中自带引用与降级标记） */
+  async function search(
+    kbId: string,
+    query: string,
+    options?: { topK?: number; mode?: 'hybrid' | 'vector' | 'bm25' }
+  ): Promise<KnowledgeSearchResult | null> {
+    const result = await call(
+      () => window.api.searchKnowledge(kbId, query, options),
+      IPC_FALLBACK
+    )
+    if (!result.success) {
+      lastError.value = result.error ?? '检索失败'
+      return null
+    }
+    return result.data ?? null
+  }
+
+  // ── 知识库问答（2-Step RAG，流式）──
+
+  /** 最近一次索引进度里的非致命告警（图谱抽取失败等）；页面消费后清空 */
+  const indexWarning = ref('')
+
+  /** 当前问答状态（null = 从未提问） */
+  const askState = ref<{
+    kbId: string
+    requestId: string
+    question: string
+    answer: string
+    citations: KnowledgeQaCitation[]
+    streaming: boolean
+    canceled: boolean
+    noRelevantResult: boolean
+    error: string
+  } | null>(null)
+
+  /** 发起提问（同一窗口先取消上一次）；返回 false 表示未发起（错误已写进 state） */
+  async function askQuestion(
+    kbId: string,
+    question: string,
+    modelName?: string
+  ): Promise<boolean> {
+    const text = question.trim()
+    if (!text) return false
+    const result = await call(() => window.api.askKnowledge(kbId, text, modelName), IPC_FALLBACK)
+    if (!result.success) {
+      askState.value = {
+        kbId,
+        requestId: '',
+        question: text,
+        answer: '',
+        citations: [],
+        streaming: false,
+        canceled: false,
+        noRelevantResult: false,
+        error: result.error ?? '提问失败'
+      }
+      return false
+    }
+    askState.value = {
+      kbId,
+      requestId: result.data?.requestId ?? '',
+      question: text,
+      answer: '',
+      citations: [],
+      streaming: true,
+      canceled: false,
+      noRelevantResult: false,
+      error: ''
+    }
+    return true
+  }
+
+  /** 取消当前问答（流式停止，保留已产出内容） */
+  async function cancelAsk(): Promise<void> {
+    await call(() => window.api.cancelKnowledgeAsk(), IPC_FALLBACK)
+  }
+
+  function clearAsk(): void {
+    askState.value = null
+  }
+
+  /** 订阅问答事件（幂等；返回退订函数）。requestId 不匹配的事件直接丢弃。 */
+  function subscribeAsk(): () => void {
+    const match = (payload: KnowledgeAskEvent): boolean => {
+      const state = askState.value
+      if (!state || state.kbId !== payload.kbId) return false
+      if (payload.requestId && state.requestId && payload.requestId !== state.requestId) return false
+      return true
+    }
+    const offs = [
+      window.api.onKnowledgeAskCitation((payload) => {
+        if (!match(payload)) return
+        askState.value = { ...askState.value!, citations: payload.citations ?? [] }
+      }),
+      window.api.onKnowledgeAskChunk((payload) => {
+        if (!match(payload) || !payload.text) return
+        askState.value = { ...askState.value!, answer: askState.value!.answer + payload.text }
+      }),
+      window.api.onKnowledgeAskDone((payload) => {
+        if (!match(payload)) return
+        askState.value = {
+          ...askState.value!,
+          streaming: false,
+          canceled: payload.canceled === true,
+          noRelevantResult: payload.noRelevantResult === true
+        }
+      }),
+      window.api.onKnowledgeAskError((payload) => {
+        if (!match(payload)) return
+        askState.value = {
+          ...askState.value!,
+          streaming: false,
+          error: payload.error ?? '问答失败'
+        }
+      })
+    ]
+    return () => {
+      for (const off of offs) off()
+    }
+  }
+
+  /**
+   * 订阅索引进度事件（幂等；返回退订函数）。
+   * 进度事件只做局部 patch，避免每个阶段都全量拉文档列表。
+   */
+  function subscribeIndexProgress(): () => void {
+    return window.api.onKnowledgeIndexProgress((progress) => {
+      const list = documentsByKb.value[progress.kbId]
+      if (!list) return
+      const index = list.findIndex((doc) => doc.id === progress.docId)
+      if (index < 0) return
+      const doc = list[index]
+      list[index] = {
+        ...doc,
+        status: progress.status,
+        stage: progress.stage,
+        progress: progress.progress,
+        chunksCount: progress.chunks || doc.chunksCount,
+        entitiesCount: progress.entities || doc.entitiesCount,
+        relationsCount: progress.relations || doc.relationsCount,
+        errorMessage: progress.error ?? (progress.status === 'failed' ? doc.errorMessage : null)
+      }
+      if (progress.warning) indexWarning.value = progress.warning
+      if (progress.status === 'indexed' || progress.status === 'failed') {
+        // 终态：拉一次最新列表与库汇总（计数/排序可能变化）
+        void loadDocuments(progress.kbId)
+        void loadBases()
+      }
+    })
   }
 
   async function renameDocument(
@@ -341,6 +568,19 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     reorderBases,
     setPinned,
     importDocuments,
+    reindex,
+    reextractGraph,
+    rebuildCommunities,
+    retryDocument,
+    cancelIndex,
+    search,
+    indexWarning,
+    askState,
+    askQuestion,
+    cancelAsk,
+    clearAsk,
+    subscribeAsk,
+    subscribeIndexProgress,
     renameDocument,
     removeDocument,
     openBaseDir,

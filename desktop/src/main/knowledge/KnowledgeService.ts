@@ -1,5 +1,9 @@
 import { KnowledgeFileService, toDocumentMeta } from './KnowledgeFileService'
 import type { KnowledgeStore } from './KnowledgeStore'
+import type { KnowledgeIndexService } from './KnowledgeIndexService'
+import type { RetrievalService } from './RetrievalService'
+import type { CommunityService } from './CommunityService'
+import type { KnowledgeEngineConfig } from './knowledge-config'
 import type {
   KnowledgeBaseRow,
   KnowledgeDocumentMeta,
@@ -7,6 +11,8 @@ import type {
   KnowledgeImportResult,
   KnowledgeIndexState,
   KnowledgeKind,
+  KnowledgeSearchMode,
+  KnowledgeSearchResult,
   KnowledgeShareRow,
   KnowledgeStats
 } from './types'
@@ -16,6 +22,14 @@ const NAME_MAX_LEN = 60
 /** 描述上限（与页面弹窗一致） */
 const DESC_MAX_LEN = 120
 const KINDS: readonly KnowledgeKind[] = ['local', 'shared', 'cloud']
+
+export interface KnowledgeServiceDeps {
+  indexer?: KnowledgeIndexService
+  retrieval?: RetrievalService
+  communities?: CommunityService
+  /** 取生效配置（社区摘要要用 graphModel） */
+  engineConfig?: (userId: string, kbId: string) => KnowledgeEngineConfig
+}
 
 export interface CreateKnowledgeBaseInput {
   name: string
@@ -35,10 +49,22 @@ export interface CreateKnowledgeBaseInput {
 export class KnowledgeService {
   private readonly store: KnowledgeStore
   private readonly files: KnowledgeFileService
+  private readonly indexer: KnowledgeIndexService | null
+  private readonly retrieval: RetrievalService | null
+  private readonly communities: CommunityService | null
+  private readonly engineConfig: ((userId: string, kbId: string) => KnowledgeEngineConfig) | null
 
-  constructor(store: KnowledgeStore, files: KnowledgeFileService) {
+  constructor(
+    store: KnowledgeStore,
+    files: KnowledgeFileService,
+    deps: KnowledgeServiceDeps = {}
+  ) {
     this.store = store
     this.files = files
+    this.indexer = deps.indexer ?? null
+    this.retrieval = deps.retrieval ?? null
+    this.communities = deps.communities ?? null
+    this.engineConfig = deps.engineConfig ?? null
   }
 
   // ── 知识库 ──
@@ -110,11 +136,13 @@ export class KnowledgeService {
     return this.store.listBases(userId)
   }
 
-  /** 删除知识库：级联清理文档记录、磁盘目录与共享链接（按库配置由 IPC 层一并清理） */
+  /** 删除知识库：级联清理文档记录、磁盘目录、索引数据与共享链接（按库配置由 IPC 层一并清理） */
   deleteBase(userId: string, id: string): { removedDocs: number } {
     const base = this.store.getBase(userId, id)
     if (!base) throw new Error('知识库不存在')
+    if (this.indexer) this.indexer.cancel() // 先停掉该库在跑的任务，避免删库后继续写
     const removedDocs = this.files.removeKnowledgeBaseFiles(userId, id)
+    this.store.deleteBaseIndex(id)
     this.store.deleteSharesForTarget(userId, id)
     this.store.deleteBase(userId, id)
     return { removedDocs }
@@ -135,9 +163,109 @@ export class KnowledgeService {
     userId: string,
     kbId: string,
     items: KnowledgeImportItem[],
-    indexState: KnowledgeIndexState = 'none'
+    indexState: KnowledgeIndexState = 'none',
+    config: string | null = null
   ): KnowledgeImportResult {
-    return this.files.importDocuments(userId, kbId, items, indexState)
+    const result = this.files.importDocuments(userId, kbId, items, indexState, config)
+    // 需要建索引的文档落库即 queued，这里统一入队（幂等：同 docId 不会重复入队）
+    if (indexState !== 'none' && this.indexer && result.accepted.length) {
+      this.indexer.enqueue(
+        userId,
+        kbId,
+        result.accepted.map((doc) => doc.id)
+      )
+    }
+    return result
+  }
+
+  /**
+   * 重建索引：整库（省略 relPaths）或按路径前缀（文件/文件夹）。
+   * 只重建「不是只上传文件」的文档，且用**当前生效配置**刷新快照。
+   */
+  reindex(userId: string, kbId: string, relPaths?: string[]): { queued: number } {
+    this.requireBase(userId, kbId)
+    if (!this.indexer) return { queued: 0 }
+    const docs = (relPaths?.length ? relPaths : [''])
+      .flatMap((prefix) => this.store.listDocumentsByPrefix(userId, kbId, prefix))
+      .filter((doc) => doc.indexState !== 'none')
+    const queued = this.indexer.enqueue(userId, kbId, [...new Set(docs.map((doc) => doc.id))], {
+      refreshConfig: true
+    }).queued
+    return { queued }
+  }
+
+  /** 重试失败文档（仅 failed 可重试），用当前生效配置重跑 */
+  retryDocument(userId: string, kbId: string, relPath: string): { queued: number } {
+    this.requireBase(userId, kbId)
+    if (!this.indexer) return { queued: 0 }
+    const doc = this.store.findDocument(userId, kbId, relPath)
+    if (!doc) throw new Error('文件不存在')
+    if (doc.status !== 'failed') throw new Error('只有索引失败的文件可以重试')
+    return this.indexer.enqueue(userId, kbId, [doc.id], { refreshConfig: true })
+  }
+
+  /**
+   * 重抽图谱（单文件/文件夹/整库）：只跑抽取阶段，用已存切片。
+   * 要求文档已建立索引（没有切片就没得抽）。
+   */
+  reextractGraph(userId: string, kbId: string, relPaths?: string[]): { queued: number } {
+    this.requireBase(userId, kbId)
+    if (!this.indexer) return { queued: 0 }
+    const docs = (relPaths?.length ? relPaths : [''])
+      .flatMap((prefix) => this.store.listDocumentsByPrefix(userId, kbId, prefix))
+      .filter((doc) => doc.status === 'indexed' || doc.status === 'failed')
+    if (!docs.length) throw new Error('没有可重抽图谱的文件（需先建立索引）')
+    return this.indexer.enqueue(
+      userId,
+      kbId,
+      [...new Set(docs.map((doc) => doc.id))],
+      { graphOnly: true }
+    )
+  }
+
+  /**
+   * 重建社区摘要（GraphRAG 全局检索侧）：按整库实体图跑 Louvain 并逐社区生成摘要。
+   * 失败时把原因写进 KB 级 meta（`communities_error:<kbId>`），不静默。
+   */
+  async rebuildCommunities(
+    userId: string,
+    kbId: string
+  ): Promise<{ communities: number; entities: number }> {
+    this.requireBase(userId, kbId)
+    if (!this.communities) throw new Error('社区摘要功能不可用')
+    const config = this.engineConfig
+      ? this.engineConfig(userId, kbId)
+      : ({} as KnowledgeEngineConfig)
+    try {
+      const result = await this.communities.buildCommunities({ userId, kbId, config })
+      this.store.setMeta(`communities_error:${kbId}`, '')
+      return result
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.store.setMeta(`communities_error:${kbId}`, message)
+      throw err
+    }
+  }
+
+  /** 取消索引任务：按路径前缀（文件/文件夹）或整库 */
+  cancelIndex(userId: string, kbId: string, relPaths?: string[]): { canceled: number } {
+    this.requireBase(userId, kbId)
+    if (!this.indexer) return { canceled: 0 }
+    if (!relPaths?.length) return this.indexer.cancel()
+    const docs = relPaths.flatMap((prefix) => this.store.listDocumentsByPrefix(userId, kbId, prefix))
+    return this.indexer.cancel(docs.map((doc) => doc.id))
+  }
+
+  /** 检索（页面问答与会话工具共用同一实现；返回降级标记） */
+  async search(
+    userId: string,
+    kbId: string,
+    query: string,
+    options: { topK?: number; mode?: KnowledgeSearchMode } = {}
+  ): Promise<KnowledgeSearchResult> {
+    this.requireBase(userId, kbId)
+    if (!this.retrieval) throw new Error('检索功能不可用')
+    return this.retrieval.retrieve({ userId, kbId, query, topK: options.topK, mode: options.mode })
   }
 
   renameDocument(
