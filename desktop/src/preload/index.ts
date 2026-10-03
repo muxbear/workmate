@@ -437,6 +437,10 @@ const api = {
   reextractKnowledgeGraph(kbId: string, relPaths?: string[]) {
     return ipcRenderer.invoke('knowledge:reextract-graph', kbId, relPaths)
   },
+  /** 备份整个索引库到用户选择的位置（VACUUM INTO 一致性快照） */
+  backupKnowledgeIndex() {
+    return ipcRenderer.invoke('knowledge:backup-index')
+  },
   /** 重建社区摘要（GraphRAG 全局检索侧；按整库实体图聚类） */
   rebuildKnowledgeCommunities(kbId: string) {
     return ipcRenderer.invoke('knowledge:rebuild-communities', kbId)
@@ -456,8 +460,13 @@ const api = {
     return () => ipcRenderer.removeListener('knowledge:import-progress', listener)
   },
   /** 发起知识库问答（结果走 ask-* 事件流） */
-  askKnowledge(kbId: string, question: string, modelName?: string) {
-    return ipcRenderer.invoke('knowledge:ask', kbId, question, modelName)
+  askKnowledge(
+    kbId: string,
+    question: string,
+    modelName?: string,
+    history?: Array<{ question: string; answer: string }>
+  ) {
+    return ipcRenderer.invoke('knowledge:ask', kbId, question, modelName, history)
   },
   /** 取消本窗口正在进行的问答 */
   cancelKnowledgeAsk() {

@@ -32,6 +32,8 @@ export interface KnowledgeHandlerDeps {
   openDir?: (dir: string) => Promise<string>
   /** 在系统文件管理器中定位并选中文件（优先于 openDir） */
   showItemInFolder?: (file: string) => void
+  /** 选索引库备份的保存位置（系统另存为对话框；取消返回 null） */
+  chooseBackupPath?: () => Promise<string | null>
 }
 
 function ok<T>(data: T): { success: true; data: T } {
@@ -87,6 +89,22 @@ function asIndexState(raw: unknown): KnowledgeIndexState {
   if (raw === undefined || raw === null) return 'none'
   if (raw === 'none' || raw === 'default' || raw === 'custom') return raw
   throw new Error('索引方式非法')
+}
+
+/** 多轮历史：数组、最多 5 轮、每段字符串截断（主进程为权威闸门） */
+function asHistory(raw: unknown): Array<{ question: string; answer: string }> {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) throw new Error('history 必须为数组')
+  return raw
+    .slice(-5)
+    .map((item) => {
+      const row = item as { question?: unknown; answer?: unknown }
+      return {
+        question: String(row?.question ?? '').slice(0, 2000),
+        answer: String(row?.answer ?? '').slice(0, 4000)
+      }
+    })
+    .filter((item) => item.question && item.answer)
 }
 
 /** 检索模式（缺省由检索服务按 hybrid 处理） */
@@ -286,6 +304,19 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
     }
   })
 
+  ipc.handle('knowledge:backup-index', async () => {
+    try {
+      const userId = session.requireUserId()
+      if (!deps.chooseBackupPath) return fail('当前环境不支持选择保存位置')
+      const dest = await deps.chooseBackupPath()
+      if (!dest) return ok({ canceled: true })
+      const result = knowledgeService.backupIndex(userId, dest)
+      return ok({ canceled: false, path: dest, sizeBytes: result.sizeBytes })
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })
+
   ipc.handle('knowledge:rebuild-communities', async (_event, kbId?: unknown) => {
     try {
       const userId = session.requireUserId()
@@ -317,7 +348,7 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
 
   ipc.handle(
     'knowledge:ask',
-    async (event, kbId?: unknown, question?: unknown, modelName?: unknown) => {
+    async (event, kbId?: unknown, question?: unknown, modelName?: unknown, history?: unknown) => {
       try {
         const userId = session.requireUserId()
         const id = assertKbId(kbId)
@@ -345,6 +376,7 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
             kbId: id,
             question: text,
             modelName: model,
+            history: asHistory(history),
             signal: controller.signal,
             onCitations: (citations) => send('knowledge:ask-citation', { citations }),
             onChunk: (chunk) => send('knowledge:ask-chunk', { text: chunk })

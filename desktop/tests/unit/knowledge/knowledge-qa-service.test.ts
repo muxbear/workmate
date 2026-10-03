@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildContext,
   extractText,
+  formatHistory,
   KnowledgeQaService,
   type QaChatModel
 } from '../../../src/main/knowledge/KnowledgeQaService'
@@ -242,6 +243,55 @@ describe('buildContext', () => {
     expect(citations.map((c) => c.index)).toEqual([1, 2])
     expect(context).toContain('切片 #3 › 离线部署')
     expect(context).toContain('切片 #3\n')
+  })
+})
+
+describe('formatHistory（多轮上下文）', () => {
+  it('交替产出 user/assistant 消息，最多带最近 3 轮', () => {
+    const rounds = Array.from({ length: 5 }, (_, index) => ({
+      question: `问题${index}`,
+      answer: `答案${index}`
+    }))
+    const messages = formatHistory(rounds)
+    expect(messages).toHaveLength(6)
+    expect(messages[0]).toEqual({ role: 'user', content: '问题2' })
+    expect(messages[1]).toEqual({ role: 'assistant', content: '答案2' })
+    expect(messages.at(-1)).toEqual({ role: 'assistant', content: '答案4' })
+  })
+
+  it('空历史 / 缺字段的轮次被跳过；每段截断', () => {
+    expect(formatHistory(undefined)).toEqual([])
+    expect(formatHistory([])).toEqual([])
+    const messages = formatHistory([
+      { question: '', answer: 'x' },
+      { question: '有效问题', answer: '有效答案' },
+      { question: '长问题' + '啊'.repeat(2000), answer: 'y' }
+    ])
+    expect(messages).toHaveLength(4)
+    expect(messages[2].content.length).toBeLessThanOrEqual(1200)
+  })
+
+  it('ask 时历史被拼进模型消息（在 system 之后、本轮问题之前）', async () => {
+    let captured: Array<{ role: string; content: string }> = []
+    const model: QaChatModel = {
+      stream: async (messages) => {
+        captured = messages
+        return (async function* () {
+          yield { content: 'ok' }
+        })()
+      }
+    }
+    const { service } = makeService(result(), model)
+    await service.ask({
+      userId: 'u1',
+      kbId: 'kb',
+      question: '它的缺点呢',
+      history: [{ question: '什么是 RRF', answer: 'RRF 是排名融合' }],
+      onChunk: () => {}
+    })
+    expect(captured.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'user'])
+    expect(captured[1].content).toBe('什么是 RRF')
+    expect(captured[3].content).toContain('问题：它的缺点呢')
   })
 })
 

@@ -357,6 +357,12 @@ export class KnowledgeService {
     return { revoked: this.store.revokeShare(userId, String(token ?? '')) > 0 }
   }
 
+  /** 备份索引库到指定文件（一致性快照；调用方负责选路径与覆盖确认） */
+  backupIndex(userId: string, destPath: string): { sizeBytes: number } {
+    void userId // 机器级备份：只要已登录即可（索引库本身按 machine 维度）
+    return this.store.backupTo(destPath)
+  }
+
   /** 退出/换目录前关闭索引库连接 */
   close(): void {
     this.store.close()

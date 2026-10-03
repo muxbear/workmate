@@ -111,6 +111,11 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
 
   /** 选中知识库：切换后按需拉取文件列表 */
   async function selectBase(id: string): Promise<void> {
+    if (selectedKbId.value !== id) {
+      // 换库：问答历史随之失效（不同库的上下文不能串）
+      qaRounds.value = []
+      askState.value = null
+    }
     selectedKbId.value = id
     await loadDocuments(id)
   }
@@ -265,6 +270,22 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     return result.data?.queued ?? 0
   }
 
+  /** 备份索引库（另存为对话框在主进程；取消返回 null） */
+  async function backupIndex(): Promise<{ canceled: boolean; path?: string; size?: string } | null> {
+    const result = await call(() => window.api.backupKnowledgeIndex(), IPC_FALLBACK)
+    if (!result.success) {
+      lastError.value = result.error ?? '备份失败'
+      return null
+    }
+    if (result.data?.canceled) return { canceled: true }
+    const size = result.data?.sizeBytes ?? 0
+    return {
+      canceled: false,
+      path: result.data?.path,
+      size: size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.round(size / 1024)} KB`
+    }
+  }
+
   /** 重建社区摘要（GraphRAG 全局检索侧）：返回生成的社区数 */
   async function rebuildCommunities(kbId: string): Promise<number> {
     const result = await call(() => window.api.rebuildKnowledgeCommunities(kbId), IPC_FALLBACK)
@@ -308,6 +329,12 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   /** 最近一次索引进度里的非致命告警（图谱抽取失败等）；页面消费后清空 */
   const indexWarning = ref('')
 
+  /** 已完成的问答轮次（多轮上下文 + 面板列表；按库切换时清空） */
+  const qaRounds = ref<Array<{ question: string; answer: string }>>([])
+
+  /** 最多带入模型的历史轮数（与主进程闸门一致） */
+  const QA_HISTORY_TURNS = 3
+
   /** 当前问答状态（null = 从未提问） */
   const askState = ref<{
     kbId: string
@@ -331,7 +358,16 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   ): Promise<boolean> {
     const text = question.trim()
     if (!text) return false
-    const result = await call(() => window.api.askKnowledge(kbId, text, modelName), IPC_FALLBACK)
+    // 必须**显式拷成普通对象**：qaRounds 里的元素是 Vue 响应式代理，
+    // 直接丢给 ipcRenderer.invoke 会被 structuredClone 拒绝（"An object could not be cloned"），
+    // 表现为多轮提问的第二问直接失败
+    const history = qaRounds.value
+      .slice(-QA_HISTORY_TURNS)
+      .map((round) => ({ question: String(round.question), answer: String(round.answer) }))
+    const result = await call(
+      () => window.api.askKnowledge(kbId, text, modelName, history),
+      IPC_FALLBACK
+    )
     if (!result.success) {
       askState.value = {
         kbId,
@@ -371,6 +407,12 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     askState.value = null
   }
 
+  /** 清空多轮历史（「新对话」按钮 / 切换知识库时） */
+  function clearQaHistory(): void {
+    qaRounds.value = []
+    askState.value = null
+  }
+
   /** 订阅问答事件（幂等；返回退订函数）。requestId 不匹配的事件直接丢弃。 */
   function subscribeAsk(): () => void {
     const match = (payload: KnowledgeAskEvent): boolean => {
@@ -390,12 +432,20 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
       }),
       window.api.onKnowledgeAskDone((payload) => {
         if (!match(payload)) return
-        askState.value = {
+        const finished = {
           ...askState.value!,
           streaming: false,
           canceled: payload.canceled === true,
           noRelevantResult: payload.noRelevantResult === true,
           invalidCitations: payload.invalidCitations ?? []
+        }
+        askState.value = finished
+        // 有实际答案才进历史（「未找到」不进：它对后续追问没有上下文价值）
+        if (finished.answer.trim() && !finished.error) {
+          qaRounds.value = [
+            ...qaRounds.value,
+            { question: finished.question, answer: finished.answer }
+          ].slice(-10)
         }
       }),
       window.api.onKnowledgeAskError((payload) => {
@@ -576,14 +626,17 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     reindex,
     reextractGraph,
     rebuildCommunities,
+    backupIndex,
     retryDocument,
     cancelIndex,
     search,
     indexWarning,
+    qaRounds,
     askState,
     askQuestion,
     cancelAsk,
     clearAsk,
+    clearQaHistory,
     subscribeAsk,
     subscribeIndexProgress,
     renameDocument,

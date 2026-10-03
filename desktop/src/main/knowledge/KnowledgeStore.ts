@@ -1,4 +1,4 @@
-import { mkdirSync } from 'fs'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import Database from 'better-sqlite3'
@@ -17,6 +17,30 @@ import type {
 
 /** 索引库文件名（位于「知识库设置 → 本地存储」目录内） */
 export const INDEX_DB_FILE = 'index.db'
+
+/** 索引写入的批次大小（每批一个事务；见 createDocumentIndexWriter 的原子性说明） */
+const INDEX_WRITE_BATCH = 1500
+
+/** 索引写入入参 */
+export interface DocumentIndexWriteInput {
+  docId: string
+  kbId: string
+  userId: string
+  chunks: KnowledgeChunk[]
+  /** 与 chunks 等长的分词文本（SparseIndexer.tokenize 输出）；FTS 不可用时传 null */
+  tokens: string[] | null
+  /** 与 chunks 等长的向量（未向量化传 null） */
+  vectors: Float32Array[] | null
+  vectorDim: number | null
+  vectorModel: string | null
+}
+
+/** 按批推进的索引写入器（批间由 async 调用方让出事件循环） */
+export interface DocumentIndexWriter {
+  done: boolean
+  written: number
+  writeNextBatch: () => void
+}
 
 /** 某维度的向量表名（维度一表：不同库的 vectorDimensions 可以不同） */
 function vectorTableName(dim: number): string {
@@ -913,24 +937,36 @@ export class KnowledgeStore {
   /**
    * 用一批切片替换某文档的全部索引数据（幂等重建的落点）。
    *
-   * 单事务内完成：清旧（FTS/向量/切片/图谱）→ 插切片 → 插 FTS 行 → 写向量。
+   * **原子性口径（2026-10-03 调整）**：旧数据的清理是独立事务（先清后写，
+   * 保证不出现「新旧混存」）；新数据按 `INDEX_WRITE_BATCH` 分批、**每批一个事务**。
+   * 大文档（2MB ≈ 6500 切片）单事务写入会让主进程 0.7s 不回到事件循环，分批后
+   * 每批阻塞降一个数量级。批间崩溃只会留下「该文档不完整」的中间态——文档此时仍是
+   * `indexing`，启动恢复会把它置为 failed，重建也会先清空再写，不会污染检索
+   * （检索只返回已提交批次的数据，用户看到的计数在写完后才回写）。
+   *
+   * 单批内完成：插切片 → 插 FTS 行（rowid 对齐）→ 写向量。
    * - 向量后端为 sqlite-vec 时写入 `kb_chunk_vec_<dim>`（chunk_id 主键必须
    *   用 BigInt 绑定：better-sqlite3 默认把 number 绑成 REAL，vec0 会拒绝）；
    * - 降级模式写入 `knowledge_base_chunks.embedding` BLOB。
    * 返回写入的切片数。
    */
-  replaceDocumentIndex(input: {
-    docId: string
-    kbId: string
-    userId: string
-    chunks: KnowledgeChunk[]
-    /** 与 chunks 等长的分词文本（SparseIndexer.tokenize 输出）；FTS 不可用时传 null */
-    tokens: string[] | null
-    /** 与 chunks 等长的向量（未向量化传 null） */
-    vectors: Float32Array[] | null
-    vectorDim: number | null
-    vectorModel: string | null
-  }): number {
+  replaceDocumentIndex(input: DocumentIndexWriteInput): number {
+    const writer = this.createDocumentIndexWriter(input)
+    while (!writer.done) writer.writeNextBatch()
+    return writer.written
+  }
+
+  /**
+   * 创建「按批推进」的索引写入器。
+   *
+   * 引出它的原因（性能基准实测）：2MB 单文档 ≈ 6500 切片的写入是一次同步调用，
+   * 主进程会有 ~700ms 不回到事件循环。写入器把写入切成批次，**由 async 调用方
+   * 在批间 `await` 让出**（store 自身保持同步 API）。
+   *
+   * 调用约定：`while (!writer.done) writer.writeNextBatch()` 循环，每批之后让出。
+   * 便利方法 `replaceDocumentIndex` 就是「一次同步跑完」（单测/小文档用）。
+   */
+  createDocumentIndexWriter(input: DocumentIndexWriteInput): DocumentIndexWriter {
     const db = this.open()
     const now = Date.now()
     const hasFts = this.getMeta('fts5_ready') === '1'
@@ -950,52 +986,71 @@ export class KnowledgeStore {
       ? db.prepare('INSERT INTO kb_chunk_fts(rowid, text_tokens, kb_id, user_id) VALUES (?, ?, ?, ?)')
       : null
 
-    const run = db.transaction((): number => {
-      // 1. 清旧
-      this.clearDocumentIndexTx(db, input.docId)
-      // 2. 插切片
-      const ids: number[] = []
-      input.chunks.forEach((chunk, i) => {
-        const vector = input.vectors?.[i] ?? null
-        const blob = vector && !useVec ? Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength) : null
-        const info = insertChunk.run(
-          chunkUid(input.docId, chunk.index),
-          input.kbId,
-          input.docId,
-          input.userId,
-          chunk.index,
-          chunk.content,
-          chunk.tokenCount,
-          chunk.heading ?? null,
-          chunk.charStart,
-          chunk.charEnd,
-          blob,
-          vector ? dim : null,
-          vector ? input.vectorModel : null,
-          now
-        )
-        ids.push(Number(info.lastInsertRowid))
-      })
-      // 3. 稀疏行
-      if (insertFts && tokens) {
-        ids.forEach((id, i) => insertFts.run(id, tokens[i] ?? '', input.kbId, input.userId))
-      }
-      // 4. 向量行（vec0 主键必须 BigInt）
-      if (vecTable && vectors) {
-        this.ensureVectorTable(dim as number)
-        const insertVec = db.prepare(
+    // 清旧（独立事务，先落地：分批写入时不会把旧数据留到中途）
+    db.transaction(() => this.clearDocumentIndexTx(db, input.docId))()
+
+    // 向量表按需惰性创建（首次写入该维度时建；测试里预建表会掩盖这一步，别删）
+    if (useVec && typeof dim === 'number') this.ensureVectorTable(dim)
+    const insertVec = vecTable
+      ? db.prepare(
           `INSERT INTO ${vecTable}(chunk_id, embedding, kb_id, user_id, doc_id) VALUES (?, ?, ?, ?, ?)`
         )
-        ids.forEach((id, i) => {
-          const vector = vectors[i]
-          if (!vector) return
-          insertVec.run(BigInt(id), vector, input.kbId, input.userId, input.docId)
-        })
-      }
-      return ids.length
-    })
+      : null
 
-    return run()
+    let offset = 0
+    let writtenCount = 0
+    const writeNextBatch = (): void => {
+      const end = Math.min(offset + INDEX_WRITE_BATCH, input.chunks.length)
+      const runBatch = db.transaction((): number => {
+        const ids: number[] = []
+        for (let i = offset; i < end; i += 1) {
+          const chunk = input.chunks[i]
+          const vector = vectors?.[i] ?? null
+          const blob =
+            vector && !useVec ? Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength) : null
+          const info = insertChunk.run(
+            chunkUid(input.docId, chunk.index),
+            input.kbId,
+            input.docId,
+            input.userId,
+            chunk.index,
+            chunk.content,
+            chunk.tokenCount,
+            chunk.heading ?? null,
+            chunk.charStart,
+            chunk.charEnd,
+            blob,
+            vector ? dim : null,
+            vector ? input.vectorModel : null,
+            now
+          )
+          ids.push(Number(info.lastInsertRowid))
+        }
+        if (insertFts && tokens) {
+          ids.forEach((id, i) => insertFts.run(id, tokens[offset + i] ?? '', input.kbId, input.userId))
+        }
+        if (insertVec && vectors) {
+          ids.forEach((id, i) => {
+            const vector = vectors[offset + i]
+            if (!vector) return
+            insertVec.run(BigInt(id), vector, input.kbId, input.userId, input.docId)
+          })
+        }
+        return ids.length
+      })
+      writtenCount += runBatch()
+      offset = end
+    }
+
+    return {
+      get done(): boolean {
+        return offset >= input.chunks.length
+      },
+      get written(): number {
+        return writtenCount
+      },
+      writeNextBatch
+    }
   }
 
   /** 清某文档的索引数据（切片/FTS/向量/图谱）；在事务内调用或独立调用均可 */
@@ -1639,6 +1694,23 @@ export class KnowledgeStore {
       .prepare('SELECT COUNT(*) AS c FROM knowledge_base_communities WHERE kb_id = ?')
       .get(kbId) as { c: number }
     return row.c
+  }
+
+  // ── 备份 ──
+
+  /**
+   * 备份整个索引库到指定文件（`VACUUM INTO`：一致性快照 + 顺带整理碎片）。
+   *
+   * - 目标文件必须不存在（SQLite 要求；由调用方选路径并确认覆盖）；
+   * - 备份的是**整台机器的 index.db**（含所有库与用户的数据），不是单库导出——
+   *   单库导出需要过滤复制，收益低、易与主库结构漂移，不做。
+   */
+  backupTo(destPath: string): { sizeBytes: number } {
+    if (existsSync(destPath)) throw new Error('目标文件已存在，请换一个文件名或先删除')
+    const db = this.open()
+    db.prepare('VACUUM INTO ?').run(destPath)
+    const { size } = statSync(destPath)
+    return { sizeBytes: size }
   }
 
   /** 重算某库的索引汇总计数（切片/实体/已索引文档数/最近索引时间） */

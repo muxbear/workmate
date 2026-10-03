@@ -29,7 +29,7 @@ export interface QaCitation {
 }
 
 export interface QaMessage {
-  role: 'system' | 'user'
+  role: 'system' | 'user' | 'assistant'
   content: string
 }
 
@@ -49,11 +49,22 @@ export interface KnowledgeQaDeps {
   getGlobalContext?: (userId: string, kbId: string) => string
 }
 
+/** 多轮上下文：最近几轮的问答（渲染层喂进来，主进程只做长度闸门） */
+export interface QaHistoryTurn {
+  question: string
+  answer: string
+}
+
+/** 最多采纳的历史轮数（多轮的价值集中在最近一两轮，多了只烧 token） */
+const MAX_HISTORY_TURNS = 3
+const MAX_HISTORY_CHARS = 1200
+
 export interface QaAskInput {
   userId: string
   kbId: string
   question: string
   modelName?: string
+  history?: QaHistoryTurn[]
   signal?: AbortSignal
   /** 引用列表（开始时一次性回调） */
   onCitations?: (citations: QaCitation[]) => void
@@ -132,6 +143,8 @@ export class KnowledgeQaService {
 
     const messages: QaMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
+      // 多轮历史只影响生成侧（检索仍以本轮问题为准）
+      ...formatHistory(input.history),
       { role: 'user', content: `${context}${graphHint}\n\n问题：${question}` }
     ]
 
@@ -219,6 +232,26 @@ export class KnowledgeQaService {
     }
     return { ok: true, citations: [], answer, usedGlobalContext: true }
   }
+}
+
+/**
+ * 历史轮 → 消息（最多 3 轮、每段截断）。
+ *
+ * 说明：检索**只用本轮问题**（多轮改写留给后续版本）；历史只影响生成侧——
+ * 让「它的缺点呢」这类追问能对上文。资料仍以本轮检索结果为准。
+ */
+export function formatHistory(history: QaHistoryTurn[] | undefined): QaMessage[] {
+  if (!Array.isArray(history) || !history.length) return []
+  const turns = history.slice(-MAX_HISTORY_TURNS)
+  const messages: QaMessage[] = []
+  for (const turn of turns) {
+    const question = String(turn?.question ?? '').trim()
+    const answer = String(turn?.answer ?? '').trim()
+    if (!question || !answer) continue
+    messages.push({ role: 'user', content: question.slice(0, MAX_HISTORY_CHARS) })
+    messages.push({ role: 'assistant', content: answer.slice(0, MAX_HISTORY_CHARS) })
+  }
+  return messages
 }
 
 const SYSTEM_PROMPT = [

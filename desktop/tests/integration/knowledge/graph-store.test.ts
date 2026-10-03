@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, renameSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { KnowledgeStore } from '../../../src/main/knowledge/KnowledgeStore'
@@ -266,5 +266,34 @@ describe('图谱一跳扩展（检索第三路）', () => {
     expect(
       store.graphExpand({ kbId, userId: 'u2', query: 'Transformer', limit: 10 }).chunkIds
     ).toEqual([])
+  })
+})
+
+describe('索引库备份（VACUUM INTO）', () => {
+  it('备份副本可独立打开且数据完整；目标已存在时报错', () => {
+    const [chunkA] = seedDoc('doc-a', ['备份验证 内容'])
+    store.replaceDocumentGraph({
+      docId: 'doc-a',
+      kbId,
+      userId: 'u1',
+      entities: [entity('实体甲', '概念', chunkA)],
+      relations: []
+    })
+    const dest = join(dir, 'backup', `index-${Date.now()}.db`)
+    mkdirSync(join(dir, 'backup'), { recursive: true })
+
+    const result = store.backupTo(dest)
+    expect(result.sizeBytes).toBeGreaterThan(0)
+
+    // 副本可独立打开，切片/实体/文档行数与原库一致（改名成 index.db 才能被 store 打开）
+    renameSync(dest, join(dir, 'backup', 'index.db'))
+    const copyStore = new KnowledgeStore(() => join(dir, 'backup'))
+    expect(copyStore.countChunks(kbId)).toBe(store.countChunks(kbId))
+    expect(copyStore.countGraphEntities(kbId)).toBe(1)
+    expect(copyStore.listDocuments('u1', kbId)).toHaveLength(1)
+    copyStore.close()
+
+    // 目标文件已存在：明确报错（SQLite 的 VACUUM INTO 要求目标不存在）
+    expect(() => store.backupTo(join(dir, 'backup', 'index.db'))).toThrow('目标文件已存在')
   })
 })

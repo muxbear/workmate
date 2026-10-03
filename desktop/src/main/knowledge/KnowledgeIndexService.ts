@@ -42,6 +42,20 @@ const STAGE_PROGRESS: Record<KnowledgeIndexStage, number> = {
 /** 进度事件节流窗口（同一文档 200ms 内只推一次） */
 const PROGRESS_THROTTLE_MS = 200
 
+/**
+ * 每处理多少个切片让出一次事件循环。
+ *
+ * 必要性（性能基准实测）：大文档（2MB ≈ 6500 切片）的「分词 + 写库」若一口气跑完，
+ * 主进程会有数秒不回到事件循环 —— 定时器、IPC 与界面交互全部被挡住。
+ * 让出用 `setTimeout(0)` 而不是 `setImmediate`：要让**定时器阶段**也能跑
+ * （Electron 主进程的很多调度走定时器）。
+ */
+const YIELD_EVERY_CHUNKS = 256
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 export interface KnowledgeEmbedder {
   /** 该配置下嵌入端点是否可用（不可用则跳过向量化，走纯稀疏） */
   available: (config: KnowledgeEngineConfig) => boolean
@@ -278,6 +292,7 @@ export class KnowledgeIndexService {
         truncated: full.truncated
       })
 
+      await yieldToEventLoop()
       // ── chunking ──
       this.enterStage(doc.id, 'chunking')
       emit('chunking')
@@ -312,11 +327,22 @@ export class KnowledgeIndexService {
         this.assertNotAborted(controller)
       }
 
+      await yieldToEventLoop()
       // ── bm25（写库：切片 + 稀疏 + 向量，单事务）──
       this.enterStage(doc.id, 'bm25')
       emit('bm25')
-      const tokens = chunkResult.chunks.map((chunk) => this.deps.sparse.tokenize(chunk.content))
-      const written = store.replaceDocumentIndex({
+      // 分词是大文档里最长的纯 CPU 段：分批算、批间让出，避免整段霸占主进程
+      const tokens: string[] = []
+      for (let index = 0; index < chunkResult.chunks.length; index += 1) {
+        tokens.push(this.deps.sparse.tokenize(chunkResult.chunks[index].content))
+        if ((index + 1) % YIELD_EVERY_CHUNKS === 0) {
+          this.assertNotAborted(controller)
+          await yieldToEventLoop()
+        }
+      }
+      // 写入器逐批推进：每批之后让出事件循环（2MB 单文档 ≈ 6500 切片，
+      // 一口气写会让主进程 ~700ms 不响应）
+      const writer = store.createDocumentIndexWriter({
         docId: doc.id,
         kbId: doc.kbId,
         userId: doc.userId,
@@ -326,6 +352,12 @@ export class KnowledgeIndexService {
         vectorDim: vectors ? config.vectorDimensions : null,
         vectorModel: vectors ? config.embeddingModel : null
       })
+      while (!writer.done) {
+        writer.writeNextBatch()
+        this.assertNotAborted(controller)
+        await yieldToEventLoop()
+      }
+      const written = writer.written
       store.updateDocumentIndexState(doc.id, { chunksCount: written })
       this.assertNotAborted(controller)
 

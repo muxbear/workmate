@@ -36,6 +36,8 @@ const emit = defineEmits<{
   'update:custom': [key: KnowledgeOverrideKey, value: boolean]
   'update:directory': [value: string]
   'select-directory': []
+  /** 备份索引库（仅全局页使用：目录卡片不出现时自然不会有此事件） */
+  backup: []
 }>()
 
 const modelStore = useModelStore()
@@ -143,7 +145,13 @@ function onBooleanChange(key: KnowledgeOverrideKey, value: boolean): void {
           选择目录
         </button>
       </div>
-      <p class="kb-hint">建议使用本地 SSD 目录，并预留至少 5 GB 可用空间。</p>
+      <p class="kb-hint">
+        建议使用本地 SSD 目录，并预留至少 5 GB 可用空间。索引数据都在该目录的 index.db
+        中，可导出一致性备份（VACUUM INTO，备份期间不影响使用）。
+      </p>
+      <div class="kb-backup-row">
+        <button class="kb-btn" type="button" @click="emit('backup')">备份索引库</button>
+      </div>
     </section>
 
     <!-- 文件上传 -->
@@ -662,6 +670,10 @@ function onBooleanChange(key: KnowledgeOverrideKey, value: boolean): void {
 }
 
 /* ═══════════════════ 目录行 ═══════════════════ */
+.kb-backup-row {
+  margin-top: 10px;
+}
+
 .kb-dir-row {
   display: flex;
   align-items: center;

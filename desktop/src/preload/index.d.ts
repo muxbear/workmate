@@ -724,6 +724,10 @@ export interface KnowledgeAPI {
   cancelKnowledgeIndex(kbId: string, relPaths?: string[]): Promise<IpcResult<{ canceled: number }>>
   /** 重抽图谱（只跑抽取阶段，用已存切片）；省略 relPaths = 整库 */
   reextractKnowledgeGraph(kbId: string, relPaths?: string[]): Promise<IpcResult<{ queued: number }>>
+  /** 备份整个索引库到用户选择的位置；取消时 data.canceled = true */
+  backupKnowledgeIndex(): Promise<
+    IpcResult<{ canceled: boolean; path?: string; sizeBytes?: number }>
+  >
   /** 重建社区摘要（GraphRAG 全局检索侧） */
   rebuildKnowledgeCommunities(
     kbId: string
@@ -740,7 +744,9 @@ export interface KnowledgeAPI {
   askKnowledge(
     kbId: string,
     question: string,
-    modelName?: string
+    modelName?: string,
+    /** 最近几轮问答（多轮上下文；主进程会再截断一次） */
+    history?: Array<{ question: string; answer: string }>
   ): Promise<IpcResult<{ started: boolean; requestId: string }>>
   /** 取消本窗口正在进行的问答 */
   cancelKnowledgeAsk(): Promise<IpcResult<{ aborted: boolean }>>

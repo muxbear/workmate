@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import ConfirmDialog from '../../ConfirmDialog.vue'
 import KnowledgeConfigForm from '../../knowledge/KnowledgeConfigForm.vue'
 import { useSettingsStore, type SettingsKey } from '../../../store/settings'
+import { useKnowledgeStore } from '../../../store/knowledge'
 import {
   createDraft,
   draftValueToOverride,
@@ -20,6 +21,7 @@ import type { KnowledgeOverrideKey } from '../../../../../preload/index.d'
  */
 
 const settingsStore = useSettingsStore()
+const kbStore = useKnowledgeStore()
 
 /** 表单草稿：进入页面时由 store 回填，点「保存设置」才写回主进程 */
 const draft = reactive<KnowledgeDraft>(createDraft({}))
@@ -41,6 +43,8 @@ const endpoints = reactive({
 
 /** 向量检索是否已配置（用于卡片上的状态提示） */
 const embeddingConfigured = computed(() => endpoints.embeddingBaseUrl.trim().length > 0)
+
+const backingUp = ref(false)
 
 /** 从 store 同步草稿（挂载时、以及主进程设置加载完成后回填） */
 function syncFromStore(): void {
@@ -129,6 +133,20 @@ async function onConfirmSelectDirectory(): Promise<void> {
   await pickDirectory()
 }
 
+/** 备份索引库：主进程弹「另存为」，用 VACUUM INTO 落一致性快照 */
+async function onBackupIndex(): Promise<void> {
+  backingUp.value = true
+  const result = await kbStore.backupIndex().finally(() => {
+    backingUp.value = false
+  })
+  if (!result) {
+    showToast(`备份失败：${kbStore.lastError || '未知原因'}`)
+    return
+  }
+  if (result.canceled) return
+  showToast(`已备份到 ${result.path}（${result.size}）`)
+}
+
 /** 选择知识库目录（系统原生对话框；取消不改动） */
 async function pickDirectory(): Promise<void> {
   try {
@@ -165,6 +183,7 @@ async function pickDirectory(): Promise<void> {
       @change="onFieldChange"
       @update:directory="directory = $event"
       @select-directory="onSelectDirectory"
+      @backup="onBackupIndex"
     />
 
     <!-- 嵌入与重排端点（全局独占：不进「按知识库设置」弹窗，凭据机器级一份） -->
@@ -335,6 +354,10 @@ async function pickDirectory(): Promise<void> {
   font-size: 13px;
   background: var(--kw-color-surface, #fff);
   color: var(--kw-color-text);
+}
+
+.kb-backup-row {
+  margin-top: 10px;
 }
 
 .kb-ep-input:focus {

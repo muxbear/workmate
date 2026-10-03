@@ -396,3 +396,45 @@ describe('KnowledgeIndexService 全链路（导入 → 索引 → 检索）', ()
     expect(doc?.errorMessage).toContain('中断')
   })
 })
+
+describe('写入器自建向量表（不预建表的回归）', () => {
+  it('首次写入某维度向量时自动建表，不需要调用方先 ensureVectorTable', () => {
+    // 单独开一个库目录：加载扩展但**不预建**向量表（真实应用启动时就是这样）
+    const freshDir = mkdtempSync(join(tmpdir(), 'ke-kb-vecauto-'))
+    const freshStore = new KnowledgeStore(() => freshDir)
+    try {
+      freshStore.loadVectorExtension(sqliteVec.getLoadablePath())
+      const freshKb = freshStore.createBase('u1', { name: '自建表', description: '', kind: 'local' }).id
+      freshStore.insertDocument({
+        id: 'doc-auto',
+        kbId: freshKb,
+        userId: 'u1',
+        name: 'auto.md',
+        type: 'MD',
+        sizeBytes: 1,
+        relPath: 'auto.md',
+        storagePath: join(freshDir, 'auto.md'),
+        indexState: 'default',
+        contentHash: null
+      })
+      const written = freshStore.replaceDocumentIndex({
+        docId: 'doc-auto',
+        kbId: freshKb,
+        userId: 'u1',
+        chunks: [{ index: 0, content: '内容', tokenCount: 2, charStart: 0, charEnd: 2 }],
+        tokens: null,
+        vectors: [fakeEmbed('内容')],
+        vectorDim: DIM,
+        vectorModel: 'fake-embed'
+      })
+      expect(written).toBe(1)
+      // 建完即可检索
+      expect(
+        freshStore.searchDense({ kbId: freshKb, userId: 'u1', vector: fakeEmbed('内容'), dim: DIM, limit: 5 })
+      ).toHaveLength(1)
+    } finally {
+      freshStore.close()
+      rmSync(freshDir, { recursive: true, force: true })
+    }
+  })
+})

@@ -128,6 +128,8 @@ export class EmbeddingProvider implements KnowledgeEmbedder {
         })
       })
       this.deps.store.putEmbeddingCache(cacheEntries)
+      // 批间让出：大文档动辄上百批，不让出会把主进程的定时器/交互一起挡住
+      await new Promise((resolve) => setTimeout(resolve, 0))
     }
     return vectors
   }

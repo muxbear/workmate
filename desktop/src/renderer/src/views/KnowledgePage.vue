@@ -3045,6 +3045,18 @@ watch(
                 </p>
               </div>
 
+              <!-- 多轮历史：最近几轮已完成问答（换库/点「新对话」清空） -->
+              <div v-if="kbStore.qaRounds.length" class="kb-qa-history">
+                <div class="kb-qa-history-head">
+                  <span>对话历史 · {{ kbStore.qaRounds.length }} 轮</span>
+                  <button class="kb-qa-clear" @click="kbStore.clearQaHistory()">新对话</button>
+                </div>
+                <div v-for="(round, index) in kbStore.qaRounds" :key="index" class="kb-qa-round">
+                  <p class="kb-qa-round-q">{{ round.question }}</p>
+                  <p class="kb-qa-round-a">{{ round.answer }}</p>
+                </div>
+              </div>
+
               <div v-if="askState" class="kb-answer">
                 <p v-if="askState.noRelevantResult" class="kb-answer-empty">
                   知识库中没有找到与「{{ askState.question }}」相关的内容。
@@ -4177,6 +4189,50 @@ watch(
   font-size: 12px;
   line-height: 20px;
   color: #55716a;
+}
+.kb-qa-history {
+  margin-top: 16px;
+  border-radius: 12px;
+  background: #fbfdfc;
+  border: 1px solid #e6efed;
+  padding: 12px 14px;
+  max-height: 34%;
+  overflow-y: auto;
+}
+.kb-qa-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #98a6a9;
+  margin-bottom: 8px;
+}
+.kb-qa-clear {
+  border: none;
+  background: transparent;
+  color: #16a394;
+  font-size: 12px;
+  cursor: pointer;
+}
+.kb-qa-round {
+  padding: 8px 0;
+  border-top: 1px dashed #e6efed;
+}
+.kb-qa-round:first-of-type {
+  border-top: none;
+}
+.kb-qa-round-q {
+  font-size: 12px;
+  font-weight: 600;
+  color: #42575a;
+  margin-bottom: 4px;
+}
+.kb-qa-round-a {
+  font-size: 12px;
+  line-height: 20px;
+  color: #6b7f83;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .kb-answer {
   margin-top: 20px;
