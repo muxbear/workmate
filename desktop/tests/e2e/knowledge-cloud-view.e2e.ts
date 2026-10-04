@@ -129,13 +129,14 @@ describe('E2E 云知识库展示', () => {
   })
 
   it('KC-01: 云分组列出同步来的知识库', async () => {
-    const cloudGroup = page.locator('.kb-group').nth(1) // 云个人知识库
+    // 按分组名定位（不按序号）：自有的库语义上属于「云个人知识库」，桩对 personal/public 返回同一份列表
+    const cloudGroup = page.locator('.kb-group', { hasText: '云个人知识库' })
     await cloudGroup.getByText('LangChain 技术文档').waitFor({ state: 'visible', timeout: 10_000 })
     expect(await cloudGroup.locator('.kb-lib-name').allTextContents()).toEqual(['LangChain 技术文档'])
   }, 90_000)
 
   it('KC-02: 点云库后仍在同一工作台里展示（左栏分组栏保持可见）', async () => {
-    await page.locator('.kb-group').nth(1).getByText('LangChain 技术文档').click()
+    await page.locator('.kb-group', { hasText: '云个人知识库' }).getByText('LangChain 技术文档').click()
 
     // 关键回归：云库不再替换整页——分组栏与工作台都还在
     await page.locator('.kb-workbench').waitFor({ state: 'visible', timeout: 10_000 })

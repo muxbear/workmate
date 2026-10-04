@@ -62,8 +62,10 @@ type ShareKind = 'library' | 'folder' | 'file'
 
 // ── 知识库分组（本地两组 + 云端三组）──
 /**
- * 五个固定分组：前两个来源是本地 index.db（按 kind 过滤），后三个来源是云端接口
- * （按 scope 拉取），分组只决定展示位置。
+ * 五个固定分组：两组本地来源（本地知识库 / 我的共享知识，按 kind 过滤 index.db），
+ * 三组云端来源（按 scope 拉取），分组只决定展示位置。
+ *
+ * 云分组顺序对齐 Web 版侧栏：公共在个人之前（web/frontend 的 stores/knowledgeBase.ts）。
  *
  * id 刻意与 kind 区分开（`cloud-personal` 而非 `personal`）：分组 id 一旦与
  * `KnowledgeKind` 同名，就又会有人把它当 kind 传给主进程。
@@ -78,19 +80,19 @@ const KNOWLEDGE_GROUPS: KnowledgeGroup[] = [
     items: []
   },
   {
-    id: 'cloud-personal',
-    label: '云个人知识库',
-    icon: 'cloud',
-    source: 'cloud',
-    scope: 'personal',
-    items: []
-  },
-  {
     id: 'cloud-public',
     label: '云公共知识库',
     icon: 'cloud',
     source: 'cloud',
     scope: 'public',
+    items: []
+  },
+  {
+    id: 'cloud-personal',
+    label: '云个人知识库',
+    icon: 'cloud',
+    source: 'cloud',
+    scope: 'personal',
     items: []
   },
   {
@@ -583,6 +585,10 @@ const indexingCount = computed(
 const failedCount = computed(
   () => allFiles.value.filter((node) => node.file?.status === 'failed').length
 )
+/** 图谱抽取失败的文件数（文档本身已可检索，但实体/关系为空；错误在 graph_error 里） */
+const graphFailedCount = computed(
+  () => allFiles.value.filter((node) => node.file?.graphError).length
+)
 
 /** 文件区副标题：文件总数与索引情况（真实索引状态，不再有「开发中」占位） */
 const fileSummary = computed(() => {
@@ -593,18 +599,29 @@ const fileSummary = computed(() => {
   parts.push(`${indexedCount.value} 份已建立索引`)
   if (indexingCount.value) parts.push(`${indexingCount.value} 索引中`)
   if (failedCount.value) parts.push(`${failedCount.value} 失败`)
+  if (graphFailedCount.value) parts.push(`${graphFailedCount.value} 图谱失败`)
   return parts.join(' · ')
 })
 
-/** 列表里的索引标记：进度中/失败/只上传/自定义索引都单独标出 */
+/** 列表里的索引标记：进度中/失败/图谱失败/只上传/自定义索引都单独标出 */
 const indexTagText = (node: KnowledgeTreeNode): string => {
   const file = node.file
   if (!file) return ''
   if (file.status === 'failed') return '索引失败'
   if (file.status === 'indexing') return `建立索引中 ${Math.round(file.progress ?? 0)}%`
   if (file.status === 'queued') return '排队中'
+  if (file.graphError) return '图谱失败'
   if (file.indexState === 'none') return '未索引'
   if (file.indexState === 'custom') return '自定义索引'
+  return ''
+}
+
+/** 索引标记的悬停提示：失败/图谱失败的完整原因（列表行放不下全文；详情弹窗里也有） */
+const indexTagTitle = (node: KnowledgeTreeNode): string => {
+  const file = node.file
+  if (!file) return ''
+  if (file.status === 'failed') return `索引失败：${file.errorMessage || '未知原因'}`
+  if (file.graphError) return `图谱抽取失败：${file.graphError}`
   return ''
 }
 
@@ -2680,7 +2697,12 @@ watch(
                   <span
                     v-if="indexTagText(row.node)"
                     class="kb-file-tag"
-                    :class="{ 'kb-file-tag--none': row.node.file?.indexState === 'none' }"
+                    :class="{
+                      'kb-file-tag--none': row.node.file?.indexState === 'none',
+                      'kb-file-tag--warn':
+                        row.node.file?.status === 'failed' || !!row.node.file?.graphError
+                    }"
+                    :title="indexTagTitle(row.node)"
                   >
                     {{ indexTagText(row.node) }}
                   </span>
@@ -3917,6 +3939,10 @@ watch(
 .kb-file-tag--none {
   background: #f1f3f4;
   color: #8a969a;
+}
+.kb-file-tag--warn {
+  background: #fdf3e2;
+  color: #a5670a;
 }
 .kb-file-meta {
   font-size: 11px;

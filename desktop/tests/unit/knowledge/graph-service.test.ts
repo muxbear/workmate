@@ -5,6 +5,8 @@ import {
   convertExtraction,
   GraphExtractionError,
   GraphService,
+  isToolChoiceRejection,
+  parseExtractionText,
   type GraphChatModel
 } from '../../../src/main/knowledge/GraphService'
 import type { KnowledgeStore } from '../../../src/main/knowledge/KnowledgeStore'
@@ -281,5 +283,74 @@ describe('GraphService.extract', () => {
     ).rejects.toThrow('已取消')
     expect(written).toHaveLength(0)
     expect(model.extract).not.toHaveBeenCalled()
+  })
+})
+
+describe('parseExtractionText（思考模式降级的纯文本解析）', () => {
+  it('直出 JSON：正常解析实体与关系', () => {
+    const payload = parseExtractionText(
+      '{"entities":[{"name":"Transformer","type":"产品","source_text":"Transformer"}],' +
+        '"relations":[{"from":"Vaswani","to":"Transformer","label":"提出","description":""}]}'
+    )
+    expect(payload.entities).toEqual([
+      { name: 'Transformer', type: '产品', source_text: 'Transformer' }
+    ])
+    expect(payload.relations).toHaveLength(1)
+  })
+
+  it('容忍 ```json 围栏与前后说明文字（取第一个配平的 JSON 对象）', () => {
+    const text = [
+      '好的，以下是抽取结果：',
+      '```json',
+      '{"entities":[{"name":"BERT","type":"产品"}],"relations":[]}',
+      '```',
+      '如需调整请告诉我。'
+    ].join('\n')
+    const payload = parseExtractionText(text)
+    expect(payload.entities[0]).toMatchObject({ name: 'BERT', type: '产品' })
+  })
+
+  it('字符串值里的花括号 / 转义引号不影响括号配平', () => {
+    const text = '{"entities":[{"name":"含{括号}的\\"名字\\"","type":"概念"}],"relations":[]}'
+    const payload = parseExtractionText(text)
+    expect(payload.entities[0].name).toBe('含{括号}的"名字"')
+  })
+
+  it('宽容归一：缺字段补默认、非数组容错、空名丢弃（类型留给下游折叠）', () => {
+    const payload = parseExtractionText(
+      '{"entities":[{"name":"甲"},{"type":"概念"}],"relations":[{"from":"甲","to":"乙"}]}'
+    )
+    expect(payload.entities).toEqual([{ name: '甲', type: '概念', source_text: '' }])
+    expect(payload.relations[0]).toMatchObject({ from: '甲', to: '乙', label: '相关' })
+    expect(parseExtractionText('{"entities":"oops","relations":null}')).toEqual({
+      entities: [],
+      relations: []
+    })
+  })
+
+  it('空文本 / 无 JSON / 截断 JSON：抛出可读错误（走窗口失败计数）', () => {
+    expect(() => parseExtractionText('')).toThrow('空文本')
+    expect(() => parseExtractionText('抱歉，我无法完成')).toThrow('未返回 JSON')
+    expect(() => parseExtractionText('{"entities":[')).toThrow('不完整')
+  })
+})
+
+describe('isToolChoiceRejection（思考模式拒收强制 tool_choice 的判定）', () => {
+  it('命中：DeepSeek 思考模式 400 原文', () => {
+    expect(
+      isToolChoiceRejection(
+        new Error('400 Thinking mode does not support this tool_choice (request_id: d223362c)')
+      )
+    ).toBe(true)
+  })
+
+  it('命中：任何提到 tool_choice 的错误', () => {
+    expect(isToolChoiceRejection(new Error('Invalid parameter: tool_choice'))).toBe(true)
+  })
+
+  it('不误伤：超时 / 额度 / 空错误不触发降级', () => {
+    expect(isToolChoiceRejection(new Error('Request timed out'))).toBe(false)
+    expect(isToolChoiceRejection(new Error('402 Insufficient Balance'))).toBe(false)
+    expect(isToolChoiceRejection(undefined)).toBe(false)
   })
 })

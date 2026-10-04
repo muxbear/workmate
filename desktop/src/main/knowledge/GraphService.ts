@@ -59,6 +59,97 @@ export interface GraphExtractionPayload {
 }
 
 /**
+ * 判断错误是否为「思考模式不接受强制 tool_choice」类拒绝。
+ *
+ * 实测：`deepseek-v4-flash`（思考模式）对 function calling 的**强制 tool_choice**
+ * 返回 400 `Thinking mode does not support this tool_choice`（模型库里却标着
+ * supportsToolCall=true）。命中即降级为纯文本 JSON 抽取（见 index.ts 的调用侧）。
+ */
+export function isToolChoiceRejection(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '')
+  if (/tool[_ ]?choice/i.test(message)) return true
+  return /thinking mode/i.test(message) && /tool/i.test(message)
+}
+
+/**
+ * 纯文本抽取结果的容错解析（降级路径用；提示词本来就要求「只输出 JSON」）。
+ * 容忍 ```json 围栏与前后夹带的说明文字：取第一个「括号配平」的 JSON 对象；
+ * 结构做宽松归一（缺字段补默认、非数组容错），**语义校验仍在 convertExtraction**
+ * （实体名/原文子串/关系两端一致性）——这里不重复做。
+ */
+export function parseExtractionText(text: string): GraphExtractionPayload {
+  const raw = String(text ?? '').trim()
+  if (!raw) throw new Error('抽取模型返回了空文本')
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced ? fenced[1] : raw
+  const start = candidate.indexOf('{')
+  if (start < 0) throw new Error('抽取模型未返回 JSON 对象')
+  const end = findBalancedBraceEnd(candidate, start)
+  if (end < 0) throw new Error('抽取模型返回的 JSON 不完整')
+  let value: unknown
+  try {
+    value = JSON.parse(candidate.slice(start, end + 1))
+  } catch (err) {
+    throw new Error(`抽取模型返回的 JSON 无法解析：${(err as Error).message}`)
+  }
+  if (typeof value !== 'object' || value === null) throw new Error('抽取结果不是 JSON 对象')
+  const record = value as Record<string, unknown>
+  const entities = toArray(record.entities)
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      name: str(item.name),
+      type: str(item.type) || '概念',
+      source_text: str(item.source_text)
+    }))
+    .filter((item) => item.name)
+  const relations = toArray(record.relations)
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      from: str(item.from),
+      to: str(item.to),
+      label: str(item.label) || '相关',
+      description: str(item.description)
+    }))
+    .filter((item) => item.from && item.to)
+  return { entities, relations }
+}
+
+/** 从 start 处的 `{` 起找括号配平（跳过字符串内的花括号与转义）的闭合位置；找不到返回 -1 */
+function findBalancedBraceEnd(text: string, start: number): number {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') inString = true
+    else if (char === '{') depth += 1
+    else if (char === '}') {
+      depth -= 1
+      if (depth === 0) return index
+    }
+  }
+  return -1
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/**
  * 聊天模型适配（生产注入真实模型；单测注入替身）。
  * - `extract`：结构化抽取（withStructuredOutput + function calling）；
  * - `complete`：纯文本生成（社区摘要用；缺省时社区摘要给出明确的失败，不静默）。

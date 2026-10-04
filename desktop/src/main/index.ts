@@ -73,6 +73,8 @@ import { KnowledgeQaService } from './knowledge/KnowledgeQaService'
 import {
   GraphService,
   GRAPH_EXTRACTION_SCHEMA,
+  isToolChoiceRejection,
+  parseExtractionText,
   type GraphChatModel,
   type GraphExtractionPayload
 } from './knowledge/GraphService'
@@ -657,18 +659,8 @@ app.whenReady().then(() => {
         name: 'graph_extraction',
         method: 'functionCalling'
       })
-    return {
-      extract: async ({ system, user }) =>
-        (await structured.invoke([
-          new SystemMessage(system),
-          new HumanMessage(user)
-        ])) as GraphExtractionPayload,
-      // 社区摘要是纯文本生成（不分词结构化包装）
-      complete: async ({ system, user }) => {
-        const response = await resolved.invoke([
-          new SystemMessage(system),
-          new HumanMessage(user)
-        ])
+      const invokePlain = async (system: string, user: string): Promise<string> => {
+        const response = await resolved.invoke([new SystemMessage(system), new HumanMessage(user)])
         const content = response.content
         if (typeof content === 'string') return content
         if (Array.isArray(content)) {
@@ -684,7 +676,34 @@ app.whenReady().then(() => {
         }
         return ''
       }
-    }
+      /**
+       * 思考模式模型（实测 deepseek-v4-flash）会 400 拒收**强制 tool_choice**，
+       * 尽管模型库标着 supportsToolCall=true。命中即**进程内降级**为纯文本 JSON 抽取
+       * （提示词本就要求「只输出 JSON」，解析侧容错；降级后不再回头试 function calling）。
+       */
+      let preferFunctionCalling = true
+      return {
+        extract: async ({ system, user }) => {
+          if (preferFunctionCalling) {
+            try {
+              return (await structured.invoke([
+                new SystemMessage(system),
+                new HumanMessage(user)
+              ])) as GraphExtractionPayload
+            } catch (err) {
+              if (!isToolChoiceRejection(err)) throw err
+              preferFunctionCalling = false
+              console.warn(
+                '[knowledge] 抽取模型不接受强制 tool_choice（思考模式？），自本次起降级为纯文本 JSON 抽取：',
+                err instanceof Error ? err.message : err
+              )
+            }
+          }
+          return parseExtractionText(await invokePlain(system, user))
+        },
+        // 社区摘要是纯文本生成（不分词结构化包装）
+        complete: async ({ system, user }) => invokePlain(system, user)
+      }
   }
   const graphService = new GraphService({ store: knowledgeStore, resolveModel: resolveGraphModel })
   const communityService = new CommunityService({

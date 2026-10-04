@@ -18,8 +18,8 @@ import { execFileSync } from 'child_process'
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
 
-/** 侧栏应有且仅有的五个分组（顺序即展示顺序） */
-const EXPECTED_GROUPS = ['本地知识库', '云个人知识库', '云公共知识库', '我的共享知识', '共享给我的']
+/** 侧栏应有且仅有的五个分组（顺序即展示顺序；云分组与 Web 版一致：公共在个人之前） */
+const EXPECTED_GROUPS = ['本地知识库', '云公共知识库', '云个人知识库', '我的共享知识', '共享给我的']
 
 describe('E2E 知识库侧栏', () => {
   let dataHome: string
@@ -109,7 +109,8 @@ describe('E2E 知识库侧栏', () => {
   }, 90_000)
 
   it('KS-04: 未绑定 Web 账号时云分组给出可读提示，且不给「去授权」按钮', async () => {
-    const cloudGroup = page.locator('.kb-group').nth(1)
+    // 按分组名定位（不按序号），顺序调整不影响本用例
+    const cloudGroup = page.locator('.kb-group', { hasText: '云公共知识库' })
     const hint = cloudGroup.locator('.kb-group-hint')
     await hint.waitFor({ state: 'visible', timeout: 10_000 })
     expect(await hint.textContent()).toContain('Web 账号')
