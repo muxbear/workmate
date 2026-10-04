@@ -144,13 +144,17 @@ describe('E2E 云知识库展示', () => {
     expect((await page.locator('.kb-files-title').textContent())?.trim()).toBe('LangChain 技术文档')
   }, 90_000)
 
-  it('KC-03: 文件区与本地同一套表格（含目录层级与状态标签）', async () => {
+  it('KC-03: 文件区与本地同一套表格（列对齐 web 文档页签，含目录层级与状态标签）', async () => {
     const table = page.locator('.kb-table')
     await table.locator('.kb-table-row').first().waitFor({ state: 'visible', timeout: 10_000 })
 
-    // 表头与本地一致
+    // 表头与本地一致（文档/大小/分片/实体关系/状态 + 桌面操作列）
     const heads = (await table.locator('.kb-sort-btn').allTextContents()).map((text) => text.trim())
-    expect(heads).toEqual(expect.arrayContaining(['名称', '大小', '更新时间']))
+    expect(heads).toEqual(['文档', '大小'])
+    const allHeads = (await table.locator('.kb-table-head > *').allTextContents()).map((text) =>
+      text.trim()
+    )
+    expect(allHeads).toEqual(['文档', '大小', '分片', '实体/关系', '状态', '操作'])
 
     // 根级：文件夹 + 文件（guide.md 在「手册」目录下，文件夹默认折叠——与本地一致）
     const names = (await table.locator('.kb-file-name').allTextContents()).map((t) => t.trim())
@@ -158,6 +162,11 @@ describe('E2E 云知识库展示', () => {
     const tags = (await table.locator('.kb-file-tag').allTextContents()).map((t) => t.trim())
     expect(tags).toEqual(expect.arrayContaining(['1 项']))
     expect(names).not.toContain('guide.md')
+
+    // 行级：分片列取云端 chunksCount；实体/关系云端不提供，显示 — / —
+    const introRow = table.locator('.kb-table-row', { hasText: 'intro.md' })
+    expect((await introRow.locator('.kb-col-chunks').textContent())?.trim()).toBe('3')
+    expect((await introRow.locator('.kb-col-er').textContent())?.trim()).toBe('— / —')
 
     // 展开文件夹：云端层级与本地同款，且未索引文档带本地同款标签
     await table.getByText('手册').click()

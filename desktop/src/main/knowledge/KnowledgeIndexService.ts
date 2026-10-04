@@ -39,7 +39,7 @@ const STAGE_PROGRESS: Record<KnowledgeIndexStage, number> = {
   indexed: 100
 }
 
-/** 进度事件节流窗口（同一文档 200ms 内只推一次） */
+/** 同阶段进度事件的节流窗口（阶段切换永不节流，见 emit） */
 const PROGRESS_THROTTLE_MS = 200
 
 /**
@@ -236,10 +236,16 @@ export class KnowledgeIndexService {
 
     const controller = new AbortController()
     this.running.set(job.docId, { controller, previousStatus: doc.status })
+    // 记录当前阶段：失败时要知道中断在哪个阶段（此前清成 null，渲染层无法标出失败阶段）
+    let currentStage: KnowledgeIndexStage = 'queued'
     const emit = (stage: KnowledgeIndexStage, extra: Partial<KnowledgeIndexProgress> = {}): void => {
-      const now = Date.now()
       const isTerminal = stage === 'indexed'
-      if (!isTerminal && now - this.lastEmitAt < PROGRESS_THROTTLE_MS) return
+      // 阶段切换永不节流：流水线/徽标按事件推进，丢一条就少一段（如「实体抽取」整段消失）；
+      // 节流只用于合并同一阶段的重复进度（现阶段 emit 都在阶段入口，不受影响）
+      const stageChanged = stage !== currentStage
+      currentStage = stage
+      const now = Date.now()
+      if (!isTerminal && !stageChanged && now - this.lastEmitAt < PROGRESS_THROTTLE_MS) return
       this.lastEmitAt = now
       this.deps.onProgress?.({
         kbId: job.kbId,
@@ -417,9 +423,12 @@ export class KnowledgeIndexService {
           progress: 0
         })
       } else {
+        // 失败保留中断阶段与对应进度：渲染层据此在状态徽标/流水线里标出失败位置
+        // （老数据 stage 为 null 时，渲染层按进度区间反查兜底）
         store.updateDocumentIndexState(doc.id, {
           status: 'failed',
-          stage: null,
+          stage: currentStage,
+          progress: STAGE_PROGRESS[currentStage],
           errorMessage: message
         })
         this.deps.onProgress?.({
@@ -427,8 +436,8 @@ export class KnowledgeIndexService {
           docId: doc.id,
           relPath: doc.relPath,
           status: 'failed',
-          stage: 'queued',
-          progress: 0,
+          stage: currentStage,
+          progress: STAGE_PROGRESS[currentStage],
           chunks: 0,
           entities: 0,
           relations: 0,

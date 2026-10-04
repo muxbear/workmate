@@ -323,6 +323,16 @@ describe('KnowledgeIndexService 全链路（导入 → 索引 → 检索）', ()
     expect(doc.indexedAt).toBeTruthy()
     expect(doc.charCount).toBeGreaterThan(0)
     expect(progress).toContain('indexed:indexed')
+    // 阶段切换事件不节流：相邻阶段的切换都要到达渲染层（此前 200ms 节流会吞掉，流水线少一段）
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        'parsing:indexing',
+        'chunking:indexing',
+        'embedding:indexing',
+        'bm25:indexing',
+        'indexed:indexed'
+      ])
+    )
 
     const hits = sparse.search({ kbId, userId: 'u1', query: '向量检索', limit: 5, k1: 1.5, b: 0.75 })
     expect(hits.length).toBeGreaterThan(0)
@@ -352,8 +362,8 @@ describe('KnowledgeIndexService 全链路（导入 → 索引 → 检索）', ()
     expect(sparse.search({ kbId, userId: 'u1', query: '关键词', limit: 5, k1: 1.5, b: 0.75 }).length).toBeGreaterThan(0)
   })
 
-  it('解析不出文本（二进制嗅探拒绝）→ failed 且带原因', async () => {
-    const { service } = createService(false)
+  it('解析不出文本（二进制嗅探拒绝）→ failed 且带中断阶段与原因', async () => {
+    const { service, progress } = createService(false)
     const binary = srcFile('blob.md', 'NUL\u0000\u0000binary')
     const result = files.importDocuments('u1', kbId, [{ srcPath: binary, relPath: 'blob.md' }], 'default')
     const docId = result.accepted[0].id
@@ -361,6 +371,10 @@ describe('KnowledgeIndexService 全链路（导入 → 索引 → 检索）', ()
     const doc = await waitForTerminal(docId)
     expect(doc.status).toBe('failed')
     expect(doc.errorMessage).toBeTruthy()
+    // 失败保留中断阶段：解析阶段失败、进度为解析基准 3，失败事件不谎报 queued
+    expect(doc.stage).toBe('parsing')
+    expect(doc.progress).toBe(3)
+    expect(progress.at(-1)).toBe('parsing:failed')
   })
 
   it('取消：运行中取消后状态回退且不写半截索引', async () => {

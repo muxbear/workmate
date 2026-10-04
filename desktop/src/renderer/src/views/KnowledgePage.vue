@@ -4,6 +4,7 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import KnowledgeDetailModal from '../components/knowledge/KnowledgeDetailModal.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
 import KnowledgeGraphModal from '../components/knowledge/KnowledgeGraphModal.vue'
+import KnowledgeIndexPipeline from '../components/knowledge/KnowledgeIndexPipeline.vue'
 import KnowledgeRenameModal from '../components/knowledge/KnowledgeRenameModal.vue'
 import KnowledgeSearchModal from '../components/knowledge/KnowledgeSearchModal.vue'
 import KnowledgeSettingsModal from '../components/knowledge/KnowledgeSettingsModal.vue'
@@ -33,6 +34,7 @@ import {
   type KnowledgeSortKey
 } from '../components/knowledge/knowledgeTree'
 import type { KnowledgeUploadPayload } from '../components/knowledge/uploadIndex'
+import { DOC_BADGE, resolveDocBadgeKind } from '../components/knowledge/indexStages'
 import KnowledgeCreateModal from '../components/knowledge/KnowledgeCreateModal.vue'
 import FilePreviewPane from '../components/file-preview/FilePreviewPane.vue'
 import {
@@ -237,6 +239,7 @@ function metaOf(doc: KnowledgeDocumentMeta): KnowledgeFileMeta {
     tint: FILE_TINTS[ext] ?? '#64748b',
     indexState: doc.indexState,
     status: doc.status,
+    stage: doc.stage,
     progress: doc.progress,
     errorMessage: doc.errorMessage,
     chunksCount: doc.chunksCount,
@@ -322,7 +325,9 @@ function cloudMetaOf(doc: CloudDocMeta): KnowledgeFileMeta {
     icon: pickFileIcon(ext),
     tint: FILE_TINTS[ext] ?? '#64748b',
     // 云端文档没有「自定义索引」这回事：已索引 / 未索引两态
-    indexState: doc.status === 'indexed' ? 'default' : 'none'
+    indexState: doc.status === 'indexed' ? 'default' : 'none',
+    // 「分片」列与本地同源；实体/关系云端接口不提供，列表里显示 —
+    chunksCount: doc.chunksCount
   }
 }
 
@@ -408,6 +413,7 @@ watch(
     // 云库是只读浏览：没有问答标签，标签从零开始（点文档再生成）
     openTabs.value = []
     activeTab.value = ''
+    pipelineTarget.value = null
     await loadCloudDocs(false)
   }
 )
@@ -416,6 +422,13 @@ const ascending = ref(false)
 /** 标签页以文件 key 标识（'问答' 是常驻标签） */
 const openTabs = ref<string[]>(['问答'])
 const activeTab = ref('问答')
+/**
+ * 「索引进度」伪标签：key 与显示名同为该字符串（tabLabel 对此 key 早退）。
+ * 与根目录中恰好同名的文件共享 key 的碰撞可接受，不做额外编码。
+ */
+const INDEX_TAB = '索引进度'
+/** 流水线面板指向的文档（kbId + relPath）；组件按此从 store 实时取行 */
+const pipelineTarget = ref<{ kbId: string; relPath: string } | null>(null)
 /** 问答区域是否收起（默认收起：整个问答区域不显示） */
 const panelCollapsed = ref(true)
 /** 问答区域是否全屏 */
@@ -567,8 +580,11 @@ const allFiles = computed(() => collectFileNodes(activeTree.value))
 /** 当前标签对应的节点（'问答' 不是节点，返回 null） */
 const activeNode = computed(() => findNode(activeTree.value, activeTab.value))
 
-/** 标签页显示名：文件重命名后跟着更新 */
-const tabLabel = (tab: string): string => findNode(activeTree.value, tab)?.name ?? tab
+/** 标签页显示名：文件重命名后跟着更新（索引进度伪标签直接用标签名） */
+const tabLabel = (tab: string): string => {
+  if (tab === INDEX_TAB) return INDEX_TAB
+  return findNode(activeTree.value, tab)?.name ?? tab
+}
 
 /** 已建立索引的文件数（只上传文件与索引失败的条目不计数） */
 const indexedCount = computed(
@@ -603,27 +619,48 @@ const fileSummary = computed(() => {
   return parts.join(' · ')
 })
 
-/** 列表里的索引标记：进度中/失败/图谱失败/只上传/自定义索引都单独标出 */
-const indexTagText = (node: KnowledgeTreeNode): string => {
+/** 状态列的徽标：文案对齐 web（排队/解析中/切片中/向量化/BM25 倒排/实体抽取/已索引/失败） */
+interface StatusCellBadge {
+  label: string
+  cls: string
+}
+const statusBadgeOf = (node: KnowledgeTreeNode): StatusCellBadge | null => {
   const file = node.file
-  if (!file) return ''
-  if (file.status === 'failed') return '索引失败'
-  if (file.status === 'indexing') return `建立索引中 ${Math.round(file.progress ?? 0)}%`
-  if (file.status === 'queued') return '排队中'
-  if (file.graphError) return '图谱失败'
-  if (file.indexState === 'none') return '未索引'
-  if (file.indexState === 'custom') return '自定义索引'
-  return ''
+  if (!file) return null
+  const kind = resolveDocBadgeKind({
+    status: file.status,
+    stage: file.stage,
+    progress: file.progress
+  })
+  if (kind) return { label: DOC_BADGE[kind].label, cls: `kb-doc-badge ${DOC_BADGE[kind].cls}` }
+  // 解析不到状态（只上传 / 自定义索引）时落回桌面自己的标签；云行（无 status）也走这里
+  if (file.indexState === 'none') return { label: '未索引', cls: 'kb-file-tag kb-file-tag--none' }
+  if (file.indexState === 'custom') return { label: '自定义索引', cls: 'kb-file-tag' }
+  return null
 }
 
-/** 索引标记的悬停提示：失败/图谱失败的完整原因（列表行放不下全文；详情弹窗里也有） */
-const indexTagTitle = (node: KnowledgeTreeNode): string => {
+/** 徽标悬停提示：失败原因 / 正在索引的百分比（列表行放不下全文） */
+const statusCellTitle = (node: KnowledgeTreeNode): string => {
   const file = node.file
   if (!file) return ''
   if (file.status === 'failed') return `索引失败：${file.errorMessage || '未知原因'}`
-  if (file.graphError) return `图谱抽取失败：${file.graphError}`
+  if (file.status === 'indexing') return `正在索引（${Math.round(file.progress ?? 0)}%）`
   return ''
 }
+
+/** 图谱失败警示图标的悬停提示（web 同款文案） */
+const graphWarnTitle = (node: KnowledgeTreeNode): string =>
+  `图谱未生成：${node.file?.graphError ?? '未知原因'}`
+
+/** 分片列：无分片显示 —（web 同款） */
+const chunksText = (node: KnowledgeTreeNode): string => {
+  const count = node.file?.chunksCount ?? 0
+  return count > 0 ? String(count) : '—'
+}
+
+/** 实体/关系列：0 与缺失都显示 —（web 同款） */
+const erText = (node: KnowledgeTreeNode): string =>
+  `${node.file?.entitiesCount || '—'} / ${node.file?.relationsCount || '—'}`
 
 /** 索引状态文案（详情弹窗用） */
 const indexStateText = (node: KnowledgeTreeNode): string => {
@@ -804,6 +841,8 @@ const selectLibrary = (library: KnowledgeFolder): void => {
     return
   }
   cloudKb.value = null
+  // 切库时关掉指向旧库的索引进度标签（面板按 kbId 从 store 取行，留着会指错库）
+  if (pipelineTarget.value && pipelineTarget.value.kbId !== library.id) closeTab(INDEX_TAB)
   void kbStore.selectBase(library.id)
   activeTab.value = '问答'
 }
@@ -876,6 +915,7 @@ const confirmDeleteLibrary = async (): Promise<void> => {
   await knowledgeSettingsStore.saveOverrides(target.id, {})
   openTabs.value = ['问答']
   activeTab.value = '问答'
+  pipelineTarget.value = null
   notify(`已删除「${target.name}」`)
 }
 
@@ -945,10 +985,31 @@ const previewSource = computed(() => {
 const closeTab = (tab: string): void => {
   openTabs.value = openTabs.value.filter((item) => item !== tab)
   if (activeTab.value === tab) activeTab.value = '问答'
+  // 关闭流水线标签时同步清目标，避免下次打开时残留旧文档
+  if (tab === INDEX_TAB) pipelineTarget.value = null
 }
 
 /** 节点自身或它的子孙是否对应这个标签 */
 const tabBelongsTo = (tab: string, key: string): boolean => tab === key || tab.startsWith(`${key}/`)
+
+// ── 索引进度流水线（点状态单元格 → 右侧「索引进度」标签页）──
+/** 只有本地文件行能打开（云行只读、文件夹无索引；云行状态格保持惰性） */
+const canOpenPipeline = (node: KnowledgeTreeNode): boolean =>
+  !isCloudView.value && node.kind === 'file' && !!selectedKbId.value
+
+/** 打开/关闭某文档的索引进度标签（与 web 一致：同文档再点一次 = 关闭） */
+const openPipeline = (node: KnowledgeTreeNode): void => {
+  if (!canOpenPipeline(node)) return
+  if (activeTab.value === INDEX_TAB && pipelineTarget.value?.relPath === node.key) {
+    closeTab(INDEX_TAB)
+    return
+  }
+  // 与 openFile 一致：确保右侧面板展开，否则标签藏在收起的面板里
+  panelCollapsed.value = false
+  pipelineTarget.value = { kbId: selectedKbId.value, relPath: node.key }
+  if (!openTabs.value.includes(INDEX_TAB)) openTabs.value = [...openTabs.value, INDEX_TAB]
+  activeTab.value = INDEX_TAB
+}
 
 const changeSort = (key: SortKey): void => {
   if (sortKey.value === key) {
@@ -1178,6 +1239,10 @@ const submitFileRename = async (name: string): Promise<void> => {
   const remap = (tab: string): string => remapKey(tab, target.key, result.relPath)
   openTabs.value = openTabs.value.map(remap)
   if (activeTab.value !== '问答') activeTab.value = remap(activeTab.value)
+  // 流水线目标同库才重映射（跨库的旧目标已在切库时关闭）
+  if (pipelineTarget.value && pipelineTarget.value.kbId === selectedKbId.value) {
+    pipelineTarget.value = { ...pipelineTarget.value, relPath: remap(pipelineTarget.value.relPath) }
+  }
   notify(`已重命名为「${name}」`)
 }
 
@@ -1284,6 +1349,10 @@ const confirmDeleteFile = async (): Promise<void> => {
   }
   openTabs.value = openTabs.value.filter((tab) => !tabBelongsTo(tab, target.key))
   if (tabBelongsTo(activeTab.value, target.key)) activeTab.value = '问答'
+  // 被删的是流水线指向的文档（或它的祖先文件夹）时一并关闭
+  if (pipelineTarget.value && tabBelongsTo(pipelineTarget.value.relPath, target.key)) {
+    closeTab(INDEX_TAB)
+  }
   notify(`已删除「${target.name}」`)
 }
 
@@ -2527,9 +2596,10 @@ watch(
             </div>
 
             <div class="kb-table">
+              <!-- 列与 web 版「文档」页签一致（文档/大小/分片/实体关系/状态），操作列是桌面自己的 -->
               <div class="kb-table-head">
                 <button class="kb-sort-btn" @click="changeSort('name')">
-                  名称
+                  文档
                   <svg
                     v-if="sortKey === 'name'"
                     width="12"
@@ -2560,22 +2630,9 @@ watch(
                     <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
                   </svg>
                 </button>
-                <button class="kb-sort-btn" @click="changeSort('updated')">
-                  更新时间
-                  <svg
-                    v-if="sortKey === 'updated'"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path :d="ascending ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
-                  </svg>
-                </button>
+                <span class="kb-col-chunks">分片</span>
+                <span class="kb-col-er">实体/关系</span>
+                <span class="kb-col-status">状态</span>
                 <span class="kb-table-head-ops">操作</span>
               </div>
 
@@ -2694,21 +2751,66 @@ watch(
                     </svg>
                   </span>
                   <span class="kb-file-name">{{ row.node.name }}</span>
-                  <span
-                    v-if="indexTagText(row.node)"
-                    class="kb-file-tag"
-                    :class="{
-                      'kb-file-tag--none': row.node.file?.indexState === 'none',
-                      'kb-file-tag--warn':
-                        row.node.file?.status === 'failed' || !!row.node.file?.graphError
-                    }"
-                    :title="indexTagTitle(row.node)"
-                  >
-                    {{ indexTagText(row.node) }}
-                  </span>
                 </button>
                 <span class="kb-file-meta">{{ row.node.file?.size ?? '—' }}</span>
-                <span class="kb-file-meta">{{ row.node.file?.updated ?? '—' }}</span>
+                <span class="kb-file-meta kb-col-chunks">{{ chunksText(row.node) }}</span>
+                <span class="kb-file-meta kb-col-er">
+                  {{ row.node.kind === 'file' ? erText(row.node) : '—' }}
+                </span>
+
+                <!-- 状态列：徽标 + 图谱失败警示 + 行内细进度条；点格打开索引进度标签 -->
+                <div
+                  class="kb-col-status"
+                  :class="{
+                    'kb-status-cell': row.node.kind === 'file',
+                    'kb-status-cell--clickable': canOpenPipeline(row.node)
+                  }"
+                  :role="canOpenPipeline(row.node) ? 'button' : undefined"
+                  :tabindex="canOpenPipeline(row.node) ? 0 : undefined"
+                  :aria-label="
+                    canOpenPipeline(row.node) ? `查看《${row.node.name}》的索引情况` : undefined
+                  "
+                  @click="openPipeline(row.node)"
+                  @keydown.enter="openPipeline(row.node)"
+                >
+                  <template v-if="row.node.kind === 'file'">
+                    <div class="kb-status-line">
+                      <span
+                        v-if="statusBadgeOf(row.node)"
+                        :class="statusBadgeOf(row.node)?.cls"
+                        :title="statusCellTitle(row.node)"
+                      >
+                        {{ statusBadgeOf(row.node)?.label }}
+                      </span>
+                      <span
+                        v-if="row.node.file?.graphError"
+                        class="kb-graph-warn"
+                        :title="graphWarnTitle(row.node)"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="10" />
+                          <line x1="12" x2="12" y1="8" y2="12" />
+                          <line x1="12" x2="12.01" y1="16" y2="16" />
+                        </svg>
+                      </span>
+                    </div>
+                    <div v-if="row.node.file?.status === 'indexing'" class="kb-inline-progress">
+                      <span
+                        class="kb-inline-progress-bar"
+                        :style="{ width: `${Math.round(row.node.file?.progress ?? 0)}%` }"
+                      ></span>
+                    </div>
+                  </template>
+                </div>
 
                 <!-- 操作列：三个点，鼠标移上去滑出下拉菜单 -->
                 <div
@@ -3301,6 +3403,16 @@ watch(
               </div>
             </div>
 
+            <!-- 索引进度标签：7 阶段流水线，数据从 store 按 kbId+relPath 实时取 -->
+            <div v-else-if="activeTab === INDEX_TAB" class="kb-tab-content kb-tab-content--pipe">
+              <KnowledgeIndexPipeline
+                v-if="pipelineTarget"
+                :kb-id="pipelineTarget.kbId"
+                :rel-path="pipelineTarget.relPath"
+                @close="closeTab(INDEX_TAB)"
+              />
+            </div>
+
             <!-- 文件预览标签：只渲染文件内容本身（文件名/图标/元信息不在此处重复展示） -->
             <div v-else class="kb-file-tab">
               <FilePreviewPane v-if="previewSource" :source="previewSource" />
@@ -3862,7 +3974,8 @@ watch(
 .kb-table-head {
   border-radius: 16px 16px 0 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px 100px 36px;
+  /* 文档 / 大小 / 分片 / 实体关系 / 状态 / 操作（前五列与 web 文档页签一致） */
+  grid-template-columns: minmax(0, 1fr) 76px 56px 104px 168px 36px;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid #edf2f0;
@@ -3889,7 +4002,7 @@ watch(
 
 .kb-table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px 100px 36px;
+  grid-template-columns: minmax(0, 1fr) 76px 56px 104px 168px 36px;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid #f0f4f2;
@@ -3940,9 +4053,91 @@ watch(
   background: #f1f3f4;
   color: #8a969a;
 }
-.kb-file-tag--warn {
-  background: #fdf3e2;
-  color: #a5670a;
+/* ── 状态列：web 口径徽标 + 图谱失败警示图标 + 行内细进度条（点格打开索引进度标签）── */
+.kb-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.kb-status-cell--clickable {
+  cursor: pointer;
+}
+.kb-status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.kb-doc-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* 配色抄 web KbDocStatusBadge.vue（同色系、桌面调色板） */
+.kb-doc-badge--queued {
+  background: rgba(100, 116, 139, 0.15);
+  border-color: rgba(100, 116, 139, 0.3);
+  color: #64748b;
+}
+.kb-doc-badge--parsing {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #3b82f6;
+}
+.kb-doc-badge--chunking {
+  background: rgba(6, 182, 212, 0.15);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: #0891b2;
+}
+.kb-doc-badge--embedding {
+  background: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.3);
+  color: #8b5cf6;
+}
+.kb-doc-badge--bm25 {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #d97706;
+}
+.kb-doc-badge--extracting {
+  background: rgba(236, 72, 153, 0.15);
+  border-color: rgba(236, 72, 153, 0.3);
+  color: #db2777;
+}
+.kb-doc-badge--indexed {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #147967;
+}
+.kb-doc-badge--failed {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: rgba(244, 63, 94, 0.3);
+  color: #e05561;
+}
+.kb-inline-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: #e8efec;
+  overflow: hidden;
+}
+.kb-inline-progress-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #168b7a;
+  transition: width 0.2s ease;
+}
+.kb-graph-warn {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: #d97706;
 }
 .kb-file-meta {
   font-size: 11px;
@@ -4263,6 +4458,10 @@ watch(
   flex: 1;
   flex-direction: column;
   padding: 20px;
+}
+/* 索引进度面板：内容可能长于面板高度，允许滚动 */
+.kb-tab-content--pipe {
+  overflow-y: auto;
 }
 .kb-qa-banner {
   border-radius: 12px;
@@ -4960,11 +5159,13 @@ watch(
 @media (max-width: 1699px) {
   .kb-table-head,
   .kb-table-row {
-    grid-template-columns: minmax(132px, 1fr) 64px 84px 32px;
+    grid-template-columns: minmax(120px, 1fr) 56px 44px 80px 132px 30px;
+    column-gap: 10px;
   }
-  /* 文件区至少容纳「文件名 + 大小 + 更新时间 + 删除」四列，避免横向溢出 */
+  /* 文件区至少容纳「文档 + 大小 + 分片 + 实体关系 + 状态 + 操作」六列：
+     552（列+间距+行内边距）+ 56（.kb-files 左右内边距），避免操作列溢出卡片 */
   .kb-files {
-    min-width: 456px;
+    min-width: 610px;
   }
   /* 问答区改为随剩余空间收缩，不再撑破 .kb-detail 被裁切 */
   .kb-panel {
@@ -4975,10 +5176,16 @@ watch(
 @media (max-width: 1199px) {
   .kb-table-head,
   .kb-table-row {
-    grid-template-columns: minmax(88px, 1fr) 52px 72px 28px;
+    grid-template-columns: minmax(72px, 1fr) 44px 40px 120px 28px;
+    column-gap: 8px;
   }
+  /* 极窄下隐藏最不常用的「实体/关系」列（沿用「查看更多」表在窄窗口收列的做法） */
+  .kb-col-er {
+    display: none;
+  }
+  /* 376（五列+间距+行内边距）+ 56（.kb-files 左右内边距），刚好落在 440 内 */
   .kb-files {
-    min-width: 372px;
+    min-width: 440px;
   }
   /* 极窄下输入框底部按钮改为换行，避免撑出问答区 */
   .kb-qinput-foot {
