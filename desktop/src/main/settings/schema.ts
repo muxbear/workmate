@@ -358,7 +358,7 @@ export function flattenSettings(obj: Record<string, unknown>, prefix = ''): Reco
   return out
 }
 
-/** 鎵佸钩 key 鏄犲皠杩樺師涓哄祵濂楀璞★紙persist 鍐欑洏鐢紝瀵归綈 WorkBuddy 宓屽鍩熸牸寮忥級 */
+/** 扁平 key 映射还原为嵌套对象（persist 写盘用，对齐 WorkBuddy 嵌套域格式） */
 export function unflattenSettings(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [path, value] of Object.entries(flat)) {
@@ -377,7 +377,9 @@ export function unflattenSettings(flat: Record<string, unknown>): Record<string,
 }
 
 /**
- * 榛樿鍊煎悎骞讹紙VS Code 妯″紡锛夛細榛樿鍊?鈭?鏂囦欢鍐呭€硷紝閫愬瓧娈电被鍨?鏋氫妇鏍￠獙锛岄潪娉曞€煎洖閫€榛樿銆? * 杈撳叆涓虹鐩樺祵濂楀璞★紙鍚?version 绛夐潪璁剧疆瀛楁浼氳 flatten 鍚庡拷鐣ワ級銆? */
+ * 默认值合并（VS Code 模式）：默认值 ∪ 文件内值，逐字段类型/枚举校验，非法值回退默认。
+ * 输入为磁盘嵌套对象（含 version 等非设置字段会被 flatten 后忽略）。
+ */
 export function normalizeSettings(raw: Record<string, unknown>): Record<SettingsKey, unknown> {
   const flat = flattenSettings(raw)
   const out = defaultSettings()
@@ -390,3 +392,9 @@ export function normalizeSettings(raw: Record<string, unknown>): Record<Settings
   }
   return out
 }
+
+/** 需要路由到安全存储（secrets.bin）而非明文写 settings.json 的键（SettingsStore 消费） */
+export const SECRET_SETTINGS_KEYS: readonly SettingsKey[] = [
+  'knowledge.embeddingApiKey',
+  'knowledge.rerankApiKey'
+]

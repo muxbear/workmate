@@ -103,7 +103,7 @@ describe('E2E 「默认权限」菜单', () => {
   it('点击开关弹出风险确认：未勾选时不可确认；取消后开关保持关闭', async () => {
     await openPermMenu()
     await page.locator('.perm-switch').click()
-    await page.locator('.perm-confirm-card').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.ms-card').waitFor({ state: 'visible', timeout: 5_000 })
     expect(await page.locator('.perm-confirm-message').innerText()).toContain(
       '仅建议在您信任当前任务时使用'
     )
@@ -114,7 +114,7 @@ describe('E2E 「默认权限」菜单', () => {
     expect(await confirmBtn.isDisabled()).toBe(false)
     // 取消：弹窗关闭；重开菜单验证开关保持关闭
     await page.getByRole('button', { name: '取消' }).click()
-    await page.locator('.perm-confirm-card').waitFor({ state: 'hidden', timeout: 5_000 })
+    await page.locator('.ms-card').waitFor({ state: 'hidden', timeout: 5_000 })
     await openPermMenu()
     expect(await page.locator('.perm-switch').getAttribute('aria-checked')).toBe('false')
   }, 60_000)
@@ -122,10 +122,10 @@ describe('E2E 「默认权限」菜单', () => {
   it('勾选风险须知后确认开启：开关打开并持久化到 localStorage', async () => {
     await openPermMenu()
     await page.locator('.perm-switch').click()
-    await page.locator('.perm-confirm-card').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.ms-card').waitFor({ state: 'visible', timeout: 5_000 })
     await page.locator('.perm-risk-checkbox').check()
     await page.getByRole('button', { name: '允许完全访问' }).click()
-    await page.locator('.perm-confirm-card').waitFor({ state: 'hidden', timeout: 5_000 })
+    await page.locator('.ms-card').waitFor({ state: 'hidden', timeout: 5_000 })
     // 重开菜单验证开关已打开
     await openPermMenu()
     expect(await page.locator('.perm-switch').getAttribute('aria-checked')).toBe('true')
@@ -140,7 +140,7 @@ describe('E2E 「默认权限」菜单', () => {
     await openPermMenu()
     await page.locator('.perm-switch').click()
     // 无确认弹窗出现（detached：DOM 中不存在即通过）
-    await page.locator('.perm-confirm-card').waitFor({ state: 'detached', timeout: 5_000 })
+    await page.locator('.ms-card').waitFor({ state: 'detached', timeout: 5_000 })
     expect(await page.locator('.perm-switch').getAttribute('aria-checked')).toBe('false')
     expect(await page.evaluate((k) => localStorage.getItem(k), FULL_ACCESS_KEY)).toBe('0')
   }, 60_000)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
 import SettingToggle from '../settings/SettingToggle.vue'
 import {
   BUILTIN_MODEL_OPTIONS,
@@ -439,22 +440,16 @@ function finish(): void {
   emit('close')
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
-
 onMounted(() => {
-  window.addEventListener('keydown', onKeydown)
+  // 模型列表（自定义索引的嵌入模型下拉）
   void modelStore.load()
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="ku-modal">
-    <div v-if="visible" class="ku-mask" @click.self="closeModal">
-      <div class="ku-card" role="dialog" aria-modal="true" aria-label="上传文件">
-        <header class="ku-header">
+<ModalShell :visible="visible" width="min(720px, calc(100vw - 48px))" aria-label="上传文件" max-height="calc(100vh - 96px)" footer-bordered @close="closeModal">
+    <template #header>
+
           <div class="ku-header-text">
             <h2 class="ku-title">{{ stage === 'files' ? '上传文件' : '自定义索引' }}</h2>
             <p class="ku-subtitle">
@@ -465,20 +460,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               }}
             </p>
           </div>
-          <button class="ku-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
+    </template>
 
         <div class="ku-body">
           <template v-if="stage === 'files'">
@@ -740,7 +722,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </template>
         </div>
 
-        <footer class="ku-footer">
+    <template #footer>
           <div class="ku-footer-left">
             <button v-if="stage === 'files'" class="ku-btn" type="button" @click="closeModal">
               取消
@@ -778,46 +760,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               完成并上传
             </button>
           </div>
-        </footer>
-      </div>
-    </div>
-  </Transition>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.ku-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.ku-card {
-  display: flex;
-  width: min(720px, calc(100vw - 48px));
-  max-height: calc(100vh - 96px);
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: var(--kw-shadow-card);
-}
-
-.ku-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .ku-title {
   margin: 0;
   font-size: 14px;
@@ -829,17 +776,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--kw-color-text-muted);
-}
-
-.ku-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-.ku-close:hover {
-  color: var(--kw-color-text);
 }
 
 .ku-body {
@@ -1322,72 +1258,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 /* ── 底部操作 ── */
-.ku-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 16px 24px;
-  border-top: 1px solid var(--kw-color-border-brand);
-}
-.ku-footer-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.ku-footer-hint {
-  font-size: 12px;
-  color: var(--kw-color-text-placeholder);
-}
-.ku-btn {
-  padding: 9px 18px;
-  border-radius: 12px;
-  border: 1px solid var(--kw-color-border);
-  background: var(--kw-color-surface);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--kw-color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-.ku-btn:hover {
-  background: var(--kw-color-bg-soft);
-  color: var(--kw-color-text);
-}
-.ku-btn--primary {
-  border-color: transparent;
-  background: var(--kw-color-brand);
-  color: var(--kw-color-on-accent);
-}
-.ku-btn--primary:hover {
-  background: var(--kw-color-brand);
-  color: var(--kw-color-on-accent);
-  opacity: 0.92;
-}
-.ku-btn--primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.ku-modal-enter-active,
-.ku-modal-leave-active {
-  transition: opacity 0.2s;
-}
-.ku-modal-enter-active .ku-card,
-.ku-modal-leave-active .ku-card {
-  transition: transform 0.2s;
-}
-.ku-modal-enter-from,
-.ku-modal-leave-to {
-  opacity: 0;
-}
-.ku-modal-enter-from .ku-card,
-.ku-modal-leave-to .ku-card {
-  transform: scale(0.94);
-}
 
 /* 窄窗口下三选一恢复竖排，避免三列文案被挤压 */
 @media (max-width: 659px) {

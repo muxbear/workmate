@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
 import { useKnowledgeStore } from '../../store/knowledge'
 import { layoutGraph } from './graphLayout'
 import type { KnowledgeGraphView } from '../../../../preload/index.d'
@@ -247,19 +248,13 @@ function closeModal(): void {
   emit('close')
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="kg-modal">
-    <div v-if="visible" class="kg-mask" @click.self="closeModal">
-      <div class="kg-card" role="dialog" aria-modal="true" aria-label="知识图谱">
-        <header class="kg-header">
+<ModalShell :visible="visible" width="min(880px, calc(100vw - 48px))" aria-label="知识图谱" max-height="min(88vh, 800px)" footer-bordered @close="closeModal">
+    <template #header>
+
           <div class="kg-heading">
             <h2 class="kg-title">知识图谱</h2>
             <p class="kg-subtitle">
@@ -267,20 +262,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               {{ nodes.length }} 实体 · {{ links.length }} 关系（跨文档聚合）
             </p>
           </div>
-          <button class="kg-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
+    </template>
 
         <div class="kg-body">
           <p v-if="loading" class="kg-status">正在读取图谱…</p>
@@ -383,48 +365,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </template>
         </div>
 
-        <footer class="kg-footer">
+    <template #footer>
           <button class="kg-btn" type="button" @click="closeModal">关闭</button>
-        </footer>
-      </div>
-    </div>
-  </Transition>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.kg-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.kg-card {
-  display: flex;
-  flex-direction: column;
-  width: min(880px, calc(100vw - 48px));
-  max-height: min(88vh, 800px);
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.kg-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .kg-heading {
   min-width: 0;
 }
@@ -440,18 +387,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--kw-color-text-muted);
-}
-
-.kg-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.kg-close:hover {
-  color: var(--kw-color-text);
 }
 
 .kg-body {
@@ -638,12 +573,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: var(--kw-color-text-faint);
 }
 
-.kg-footer {
-  display: flex;
-  padding: 12px 24px 16px;
-  border-top: 1px solid var(--kw-color-border-brand);
-}
-
 .kg-btn {
   flex: 1;
   padding: 10px;
@@ -661,23 +590,4 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   opacity: 0.92;
 }
 
-.kg-modal-enter-active,
-.kg-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.kg-modal-enter-active .kg-card,
-.kg-modal-leave-active .kg-card {
-  transition: transform 0.2s;
-}
-
-.kg-modal-enter-from,
-.kg-modal-leave-to {
-  opacity: 0;
-}
-
-.kg-modal-enter-from .kg-card,
-.kg-modal-leave-to .kg-card {
-  transform: scale(0.96);
-}
 </style>

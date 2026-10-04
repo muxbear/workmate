@@ -3,10 +3,13 @@ const openExternal = (url: string): void => {
   void window.api.openExternal(url)
 }
 
+/** 官网地址（各条目目标地址的当前占位；产品补充后逐项替换 url 即可） */
+const OFFICIAL_SITE = 'https://www.ke-work.cn'
+
 const items = [
-  { title: '帮助文档', icon: 'doc', external: true },
-  { title: '意见反馈', icon: 'feedback', external: false },
-  { title: '联系我们', icon: 'contact', external: true },
+  { title: '帮助文档', icon: 'doc', url: OFFICIAL_SITE },
+  { title: '意见反馈', icon: 'feedback', url: OFFICIAL_SITE },
+  { title: '联系我们', icon: 'contact', url: OFFICIAL_SITE },
 ]
 </script>
 
@@ -17,7 +20,7 @@ const items = [
         v-for="item in items"
         :key="item.title"
         class="s-item"
-        @click="openExternal('https://www.ke-work.cn')"
+        @click="openExternal(item.url)"
       >
         <span class="s-item-name">
           <span class="s-item-icon">
@@ -87,7 +90,6 @@ const items = [
           {{ item.title }}
         </span>
         <svg
-          v-if="item.external"
           width="20"
           height="20"
           viewBox="0 0 24 24"

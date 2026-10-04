@@ -140,24 +140,43 @@ export class KnowledgeQaService {
       : ''
     input.onCitations?.(citations)
 
-    let model: QaChatModel
-    try {
-      model = await this.deps.resolveModel(input.modelName)
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        citations,
-        answer: ''
-      }
-    }
-
     const messages: QaMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
       // 多轮历史只影响生成侧（检索仍以本轮问题为准）
       ...formatHistory(input.history),
       { role: 'user', content: `${context}${graphHint}\n\n问题：${question}` }
     ]
+
+    const generated = await this.streamAnswer(input, messages)
+    if (!generated.ok) {
+      // 已经吐出的部分保留，错误如实上报
+      return { ok: false, error: generated.error, citations, answer: generated.answer }
+    }
+
+    const invalidCitations = validateCitations(generated.answer, citations.length)
+    return {
+      ok: true,
+      citations,
+      answer: generated.answer,
+      ...(invalidCitations.length ? { invalidCitations } : {})
+    }
+  }
+
+  /**
+   * 流式生成骨架（问答与全局兜底两条路径共用）：
+   * 解析模型（失败返回错误信息）→ 消费流（中止即断、逐段累积并上报 chunk）。
+   * 不组装 citations —— 由调用方按各自场景提供。
+   */
+  private async streamAnswer(
+    input: QaAskInput,
+    messages: QaMessage[]
+  ): Promise<{ ok: true; answer: string } | { ok: false; error: string; answer: string }> {
+    let model: QaChatModel
+    try {
+      model = await this.deps.resolveModel(input.modelName)
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), answer: '' }
+    }
 
     let answer = ''
     try {
@@ -171,21 +190,9 @@ export class KnowledgeQaService {
       }
     } catch (err) {
       // 已经吐出的部分保留，错误如实上报
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        citations,
-        answer
-      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err), answer }
     }
-
-    const invalidCitations = validateCitations(answer, citations.length)
-    return {
-      ok: true,
-      citations,
-      answer,
-      ...(invalidCitations.length ? { invalidCitations } : {})
-    }
+    return { ok: true, answer }
   }
 
   /**
@@ -197,17 +204,6 @@ export class KnowledgeQaService {
     globalContext: string
   }): Promise<QaAskResult> {
     const { input } = ctx
-    let model: QaChatModel
-    try {
-      model = await this.deps.resolveModel(input.modelName)
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        citations: [],
-        answer: ''
-      }
-    }
     const messages: QaMessage[] = [
       {
         role: 'system',
@@ -223,25 +219,11 @@ export class KnowledgeQaService {
         content: `${ctx.globalContext}\n\n问题：${input.question}`
       }
     ]
-    let answer = ''
-    try {
-      const stream = await model.stream(messages)
-      for await (const chunk of stream) {
-        if (input.signal?.aborted) break
-        const text = extractText(chunk)
-        if (!text) continue
-        answer += text
-        input.onChunk(text)
-      }
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        citations: [],
-        answer
-      }
+    const generated = await this.streamAnswer(input, messages)
+    if (!generated.ok) {
+      return { ok: false, error: generated.error, citations: [], answer: generated.answer }
     }
-    return { ok: true, citations: [], answer, usedGlobalContext: true }
+    return { ok: true, citations: [], answer: generated.answer, usedGlobalContext: true }
   }
 }
 

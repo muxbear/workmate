@@ -3,8 +3,12 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWorkspaceStore } from '@store/workspace'
 import { useAgentStore } from '@store/agent'
 import FileList from './FileList.vue'
-import FilePreview from './FilePreview.vue'
 import FilePreviewPane from './file-preview/FilePreviewPane.vue'
+import {
+  isHtmlFile,
+  pickPreviewKind,
+  prefersBrowserPreview
+} from './file-preview/previewKind'
 import BrowserPanel from './BrowserPanel.vue'
 import type { Workspace, WorkspaceFileEntry } from '../../../preload/index.d'
 
@@ -61,19 +65,6 @@ const browserPanelRef = ref<{
   openWorkspaceFile: (workspaceId: string, relPath: string) => Promise<void>
 } | null>(null)
 
-/** 由内嵌浏览器直接预览的工作空间文件类型。 */
-const BROWSER_EXTENSIONS = new Set([
-  'html',
-  'htm',
-  'svg',
-  'pdf',
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'bmp'
-])
 
 const viewLabels: Record<ViewKey, string> = {
   overview: '概览',
@@ -100,11 +91,6 @@ const sourceLabel: Record<Workspace['source'], string> = {
 }
 
 /** 会话概要 */
-function getExt(name: string): string {
-  const parts = name.split('.')
-  return parts.length > 1 ? parts.pop()!.toLowerCase() : ''
-}
-
 const conversationSummary = computed(() => {
   const conv = agentStore.currentConversation
   const createAt = conv?.createAt ? formatDateTime(conv.createAt) : ''
@@ -173,14 +159,13 @@ async function openInBrowser(entry: WorkspaceFileEntry): Promise<void> {
 }
 
 async function openFile(entry: WorkspaceFileEntry): Promise<void> {
-  const ext = getExt(entry.name)
-  if (BROWSER_EXTENSIONS.has(ext)) {
+  if (prefersBrowserPreview(entry.name)) {
     try {
       await openInBrowser(entry)
       return
     } catch (err) {
       console.error('[ChatSidePanel] open in browser failed:', err)
-      if (ext === 'pdf') {
+      if (pickPreviewKind(entry.name) === 'pdf') {
         await openLegacyFile(entry)
         return
       }
@@ -211,12 +196,10 @@ async function openLegacyFile(entry: WorkspaceFileEntry): Promise<void> {
     const tab = fileTabs.value.find((t) => t.key === entry.relPath)
     if (!tab) return
 
-    if (getExt(entry.name) === 'doc' || getExt(entry.name) === 'docx') {
-      tab.kind = 'word'
-      const result = await workspaceStore.readFileBytes(panelWorkspaceId.value!, entry.relPath)
-      tab.document = result.bytes
-    } else if (getExt(entry.name) === 'pdf') {
-      tab.kind = 'pdf'
+    // 读取方式与渲染分发共用同一套分类（previewKind）：字节类（word/pdf）读原始字节，其余读文本
+    const previewKind = pickPreviewKind(entry.name)
+    if (previewKind === 'word' || previewKind === 'pdf') {
+      tab.kind = previewKind
       const result = await workspaceStore.readFileBytes(panelWorkspaceId.value!, entry.relPath)
       tab.document = result.bytes
     } else {
@@ -416,8 +399,7 @@ async function finishArtifact(artifactId: string, ok: boolean, error?: string): 
     return
   }
   const entry = tab.entry
-  const ext = getExt(entry.name)
-  if (ext === 'html' || ext === 'htm') {
+  if (isHtmlFile(entry.name)) {
     // 源码已流式展示完毕，切换到浏览器渲染（与工作空间模式下打开 html 一致）
     fileTabs.value.splice(idx, 1)
     if (activeTabKey.value === tab.key) {
@@ -720,11 +702,13 @@ defineExpose({
         <Transition name="space-collapse">
           <div v-show="artifactsOpen" class="csp-artifact-body">
             <div v-if="artifactsSelection" class="csp-view-body csp-view-body--artifacts">
-              <FilePreview
+              <FilePreviewPane
+                :show-header="true"
                 :name="artifactsSelection.entry.name"
                 :rel-path="artifactsSelection.entry.relPath"
                 :content="artifactsSelection.content"
                 :truncated="artifactsSelection.truncated"
+                :loading="artifactsSelection.loading ?? false"
                 :workspace-id="panelWorkspaceId ?? undefined"
                 @back="closeArtifactsSelection"
               />

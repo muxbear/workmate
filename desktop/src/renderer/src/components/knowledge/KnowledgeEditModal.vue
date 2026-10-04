@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
+import { KB_DESC_MAX, KB_NAME_MAX, validateKbDesc, validateKbName } from './knowledgeNaming'
 
 /**
  * 知识库编辑弹窗（名称 + 描述）
@@ -16,9 +18,6 @@ const emit = defineEmits<{
   close: []
   saved: [name: string, description: string]
 }>()
-
-const NAME_MAX = 60
-const DESC_MAX = 120
 
 /** 窗口可见性：由父组件 open prop 驱动，保证关闭时有退出动画 */
 const visible = ref(props.open)
@@ -40,136 +39,67 @@ watch(
 )
 
 function onSave(): void {
-  const trimmedName = name.value.trim()
-  if (!trimmedName) {
-    error.value = '知识库名称不能为空'
+  const nameError = validateKbName(name.value)
+  if (nameError) {
+    error.value = nameError
     return
   }
-  if (trimmedName.length > NAME_MAX) {
-    error.value = `名称不能超过 ${NAME_MAX} 个字符`
+  const descError = validateKbDesc(description.value)
+  if (descError) {
+    error.value = descError
     return
   }
-  const trimmedDesc = description.value.trim()
-  if (trimmedDesc.length > DESC_MAX) {
-    error.value = `描述不能超过 ${DESC_MAX} 个字符`
-    return
-  }
-  emit('saved', trimmedName, trimmedDesc)
+  emit('saved', name.value.trim(), description.value.trim())
   emit('close')
 }
 
 function closeModal(): void {
   emit('close')
 }
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="ke-modal">
-    <div v-if="visible" class="ke-mask" @click.self="closeModal">
-      <div class="ke-card" role="dialog" aria-modal="true" aria-label="编辑知识库">
-        <header class="ke-header">
-          <span class="ke-title">知识库编辑</span>
-          <button class="ke-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
+  <ModalShell :visible="visible" aria-label="编辑知识库" @close="closeModal">
+    <template #header>
+      <span class="ke-title">知识库编辑</span>
+    </template>
 
-        <div class="ke-body">
-          <label class="ke-field">
-            <span class="ke-label">名称</span>
-            <input
-              v-model="name"
-              class="ke-input"
-              :maxlength="NAME_MAX"
-              placeholder="请输入知识库名称"
-            />
-          </label>
-          <label class="ke-field">
-            <span class="ke-label">描述</span>
-            <textarea
-              v-model="description"
-              class="ke-input ke-textarea"
-              :maxlength="DESC_MAX"
-              rows="3"
-              placeholder="简单说明这个知识库的用途"
-            />
-          </label>
-          <p v-if="error" class="ke-error">
-            {{ error }}
-          </p>
-        </div>
-
-        <footer class="ke-footer">
-          <button class="ke-btn" type="button" @click="closeModal">取消</button>
-          <button class="ke-btn ke-btn--primary" type="button" @click="onSave">保存</button>
-        </footer>
-      </div>
+    <div class="ke-body">
+      <label class="ke-field">
+        <span class="ke-label">名称</span>
+        <input
+          v-model="name"
+          class="ke-input"
+          :maxlength="KB_NAME_MAX"
+          placeholder="请输入知识库名称"
+        />
+      </label>
+      <label class="ke-field">
+        <span class="ke-label">描述</span>
+        <textarea
+          v-model="description"
+          class="ke-input ke-textarea"
+          :maxlength="KB_DESC_MAX"
+          rows="3"
+          placeholder="简单说明这个知识库的用途"
+        />
+      </label>
+      <p v-if="error" class="ke-error">
+        {{ error }}
+      </p>
     </div>
-  </Transition>
+
+    <template #footer>
+      <button class="ke-btn" type="button" @click="closeModal">取消</button>
+      <button class="ke-btn ke-btn--primary" type="button" @click="onSave">保存</button>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.ke-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.ke-card {
-  width: min(440px, calc(100vw - 48px));
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.ke-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .ke-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-.ke-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.ke-close:hover {
   color: var(--kw-color-text);
 }
 
@@ -224,12 +154,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: #cf625b;
 }
 
-.ke-footer {
-  display: flex;
-  gap: 8px;
-  padding: 0 24px 20px;
-}
-
 .ke-btn {
   flex: 1;
   padding: 10px;
@@ -262,25 +186,5 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   background: var(--kw-color-brand);
   color: var(--kw-color-on-accent);
   opacity: 0.92;
-}
-
-.ke-modal-enter-active,
-.ke-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.ke-modal-enter-active .ke-card,
-.ke-modal-leave-active .ke-card {
-  transition: transform 0.2s;
-}
-
-.ke-modal-enter-from,
-.ke-modal-leave-to {
-  opacity: 0;
-}
-
-.ke-modal-enter-from .ke-card,
-.ke-modal-leave-to .ke-card {
-  transform: scale(0.92);
 }
 </style>

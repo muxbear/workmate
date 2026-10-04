@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { showToast as showToastBase } from '@renderer/composables/useToast'
 import { useCatalogStore, type SkillItem } from '@store/catalog'
 import { useSkillSyncStore } from '@store/skillSync'
 import { useSettingsStore } from '@store/settings'
@@ -9,17 +10,8 @@ const search = ref('')
 const catalog = useCatalogStore()
 const skillSync = useSkillSyncStore()
 
-/** 技能操作提示（轻量 toast） */
-const skillToast = ref('')
-let skillToastTimer: ReturnType<typeof setTimeout> | null = null
-
-const showToast = (text: string): void => {
-  skillToast.value = text
-  if (skillToastTimer) clearTimeout(skillToastTimer)
-  skillToastTimer = setTimeout(() => {
-    skillToast.value = ''
-  }, 2200)
-}
+/** 技能操作提示：全局 toast（沿用历史 2.2s 时长） */
+const showToast = (text: string): void => showToastBase(text, 2200)
 
 /** 页面是否已有可展示技能（本地优先：本地有数据就不显示同步空态） */
 const hasSkills = computed(() => catalog.skillItems.length > 0)
@@ -235,9 +227,6 @@ onMounted(() => {
       </template>
     </div>
 
-    <Transition name="toast">
-      <div v-if="skillToast" class="skill-toast">{{ skillToast }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -576,34 +565,6 @@ onMounted(() => {
 .skill-delete-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.skill-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(6px);
 }
 
 @media (max-width: 1200px) {

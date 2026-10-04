@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { showToast } from '@renderer/composables/useToast'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import KnowledgeDetailModal from '../components/knowledge/KnowledgeDetailModal.vue'
 import KnowledgeEditModal from '../components/knowledge/KnowledgeEditModal.vue'
@@ -765,23 +766,12 @@ async function toggleLibraryPin(library: KnowledgeFolder): Promise<void> {
   notify((pinned ? '已取消置顶「' : '已置顶「') + library.name + '」')
 }
 
-// ── 轻量 toast（与页面级 toast 同视觉） ──
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
+// ── 轻量提示：全局 toast（notify 保留原调用点，走统一实现） ──
 /** 索引进度事件退订函数（onMounted 订阅、卸载时退订） */
 let offIndexProgress: (() => void) | null = null
 /** 问答事件退订函数 */
 let offAskEvents: (() => void) | null = null
-const notify = (text: string): void => {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toast.value = ''
-  }, 1800)
-}
-onBeforeUnmount(() => {
-  if (toastTimer) clearTimeout(toastTimer)
-})
+const notify = (text: string): void => showToast(text)
 
 // ── 分组操作 ──
 /** 分组是否展开：缺省展开（新增分组不必再去初值里补一笔） */
@@ -1564,7 +1554,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onDocumentKeydown)
   offIndexProgress?.()
   offAskEvents?.()
-  if (toastTimer) clearTimeout(toastTimer)
 })
 watch(openTabs, () => {
   nextTick(updateTabScroll)
@@ -3546,9 +3535,6 @@ watch(
       :libraries="kbStore.bases"
       @close="overviewOpen = false"
     />
-
-    <!-- 轻量 toast -->
-    <div v-if="toast" class="kb-toast">{{ toast }}</div>
   </div>
 </template>
 
@@ -3569,21 +3555,6 @@ watch(
   min-width: 0;
   display: flex;
   overflow: hidden;
-}
-
-.kb-toast {
-  position: absolute;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

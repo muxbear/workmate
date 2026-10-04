@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
 import KnowledgeConfigForm from './KnowledgeConfigForm.vue'
 import {
   createDraft,
@@ -143,107 +144,46 @@ function closeModal(): void {
   emit('close')
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="ks-modal">
-    <div v-if="visible" class="ks-mask" @click.self="closeModal">
-      <div
-        class="ks-card"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="`「${displayName}」知识库设置`"
-      >
-        <header class="ks-header">
-          <div>
-            <h2 class="ks-title">知识库设置</h2>
-            <p class="ks-subtitle">「{{ displayName }}」——未开启自定义的项跟随全局「知识库设置」</p>
-          </div>
-          <button class="ks-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
-
-        <div class="ks-body">
-          <KnowledgeConfigForm
-            :draft="displayDraft"
-            :custom="custom"
-            @change="onFieldChange"
-            @update:custom="onCustomChange"
-          />
-        </div>
-
-        <footer class="ks-footer">
-          <div class="ks-footer-left">
-            <button class="ks-btn" type="button" :disabled="saving" @click="resetToGlobal">
-              全部恢复跟随全局
-            </button>
-            <span v-if="error" class="ks-error">{{ error }}</span>
-          </div>
-          <div class="ks-footer-right">
-            <button class="ks-btn" type="button" :disabled="saving" @click="closeModal">
-              取消
-            </button>
-            <button class="ks-btn ks-btn--primary" type="button" :disabled="saving" @click="onSave">
-              保存设置
-            </button>
-          </div>
-        </footer>
+  <ModalShell :visible="visible" width="min(960px, calc(100vw - 48px))" :aria-label="`「${displayName}」知识库设置`" footer-bordered @close="closeModal">
+    <template #header>
+      <div>
+        <h2 class="ks-title">知识库设置</h2>
+        <p class="ks-subtitle">「{{ displayName }}」——未开启自定义的项跟随全局「知识库设置」</p>
       </div>
+    </template>
+
+    <div class="ks-body">
+      <KnowledgeConfigForm
+        :draft="displayDraft"
+        :custom="custom"
+        @change="onFieldChange"
+        @update:custom="onCustomChange"
+      />
     </div>
-  </Transition>
+
+    <template #footer>
+      <div class="ks-footer-left">
+        <button class="ks-btn" type="button" :disabled="saving" @click="resetToGlobal">
+          全部恢复跟随全局
+        </button>
+        <span v-if="error" class="ks-error">{{ error }}</span>
+      </div>
+      <div class="ks-footer-right">
+        <button class="ks-btn" type="button" :disabled="saving" @click="closeModal">
+          取消
+        </button>
+        <button class="ks-btn ks-btn--primary" type="button" :disabled="saving" @click="onSave">
+          保存设置
+        </button>
+      </div>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.ks-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.ks-card {
-  display: flex;
-  flex-direction: column;
-  width: min(960px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.ks-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .ks-title {
   font-size: 16px;
   font-weight: 600;
@@ -256,33 +196,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: var(--kw-color-text-faint);
 }
 
-.ks-close {
-  flex-shrink: 0;
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.ks-close:hover {
-  color: var(--kw-color-text);
-}
-
 .ks-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 20px 24px;
-}
-
-.ks-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 24px;
-  border-top: 1px solid var(--kw-color-border-brand);
 }
 
 .ks-footer-left,
@@ -335,20 +253,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   opacity: 0.92;
 }
 
-.ks-modal-enter-active,
-.ks-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.ks-modal-enter-active .ks-card,
-.ks-modal-leave-active .ks-card {
-  transition: transform 0.2s;
-}
-
-.ks-modal-enter-from,
-.ks-modal-leave-to {
-  opacity: 0;
-}
 
 .ks-modal-enter-from .ks-card,
 .ks-modal-leave-to .ks-card {

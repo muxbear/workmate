@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
+import { showToast as showToastBase } from '@renderer/composables/useToast'
 import QRCode from 'qrcode'
 import { useAgentStore } from '@store/agent'
 import { useModelStore } from '@store/models'
@@ -172,15 +173,8 @@ watch(panelFullscreen, () => {
 })
 
 // ── AI 消息操作栏 ──
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-const showToast = (text: string): void => {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toast.value = ''
-  }, 1500)
-}
+// 轻量提示：全局 toast（本页沿用历史 1.5s 短时长；欢迎态/对话态由全局宿主统一覆盖）
+const showToast = (text: string): void => showToastBase(text, 1500)
 
 // ── 文档右侧栏：5:5 比例态 + 产物流同步 ──
 const sidePanelRef = ref<InstanceType<typeof ChatSidePanel> | null>(null)
@@ -702,14 +696,10 @@ const scrollChips = (dir: 'left' | 'right'): void => {
   el.scrollBy({ left: dir === 'right' ? 120 : -120, behavior: 'smooth' })
 }
 
-/** 失败回填：把文本段写回输入卡（文件 token 不恢复，与发送失败路径一致） */
+/** 失败回填：文本段与文件 token 一并写回输入卡（与自动化编辑回填同用 setParts；重试无需重选文件） */
 const restorePromptText = (parts: PromptPayload['parts']): void => {
-  const text = parts
-    .filter((p) => p.type === 'text')
-    .map((p) => p.text)
-    .join('')
-  promptRef.value?.setText(text)
-  taskInput.value = text
+  promptRef.value?.setParts(parts)
+  taskInput.value = parts.map((p) => (p.type === 'text' ? p.text : '')).join('')
 }
 
 /** 发送消息：注入专家 → 调 agent → 清空输入卡（失败回填） */
@@ -1846,11 +1836,6 @@ watch(
         @ratio-exit="sideRatioMode = false"
       />
     </div>
-    <!-- Toast（页面级共享：位于 welcome-area / chat-area 两个互斥分支之外，
-         欢迎态与对话态均需渲染——文件校验反馈（不支持类型/文件过大等）两种状态都不可缺失） -->
-    <Transition name="dropdown">
-      <div v-if="toast" class="chat-toast">{{ toast }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -3145,21 +3130,6 @@ watch(
 }
 
 /* Toast */
-.chat-toast {
-  position: absolute;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
 .chat-input-bar {
   /* 与对话区同宽居中（max-width 与 margin auto 必须同写） */
   width: 100%;

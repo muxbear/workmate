@@ -142,175 +142,115 @@ export const useSettingsStore = defineStore('settings', () => {
   const knowledgeGraphModel = ref('GLM-5')
 
   /**
+   * key → 响应式字段 的单一映射表。
+   *
+   * `satisfies Record<SettingsKey, …>` 提供穷举校验：SettingsKey 新增一项而此处漏配
+   * （或配了不存在的 key）都会变成编译错误 —— 历史实现是 44 case 的无 default switch，
+   * 漏配即静默 no-op（写库成功但 UI 不生效）。
+   */
+  const FIELDS = {
+    'ui.language': language,
+    'ui.fontSize': fontSize,
+    'ui.theme': theme,
+    'ui.systemName': systemName,
+    'ui.brandLogo': brandLogoFileName,
+    'skills.autoUpdate': skillAutoUpdate,
+    'skills.safeInstall': safeSkillInstall,
+    'lockScreen.remoteLock': remoteLock,
+    'network.proxyMode': proxyMode,
+    'network.proxyUrl': proxyUrl,
+    'workspace.defaultWorkspaceDir': defaultWorkspaceDir,
+    'notification.clientNotifications': clientNotifications,
+    'notification.sound': notificationSound,
+    'runtime.enabled': runtimeEnabled,
+    'runtime.python.enabled': runtimePythonEnabled,
+    'runtime.node.enabled': runtimeNodeEnabled,
+    'runtime.git.enabled': runtimeGitEnabled,
+    'knowledge.directory': knowledgeDirectory,
+    'knowledge.maxUploadSize': knowledgeMaxUploadSize,
+    'knowledge.uploadTimeout': knowledgeUploadTimeout,
+    'knowledge.maxFilesPerBatch': knowledgeMaxFilesPerBatch,
+    'knowledge.chunkStrategy': knowledgeChunkStrategy,
+    'knowledge.chunkSize': knowledgeChunkSize,
+    'knowledge.chunkOverlap': knowledgeChunkOverlap,
+    'knowledge.vectorDimensions': knowledgeVectorDimensions,
+    'knowledge.embeddingModel': knowledgeEmbeddingModel,
+    'knowledge.sparseRetrieval': knowledgeSparseRetrieval,
+    'knowledge.bm25K1': knowledgeBm25K1,
+    'knowledge.bm25B': knowledgeBm25B,
+    'knowledge.hybridWeight': knowledgeHybridWeight,
+    'knowledge.rerankEnabled': knowledgeRerankEnabled,
+    'knowledge.rerankModel': knowledgeRerankModel,
+    'knowledge.topK': knowledgeTopK,
+    'knowledge.minSimilarity': knowledgeMinSimilarity,
+    'knowledge.queryRewriteEnabled': knowledgeQueryRewriteEnabled,
+    'knowledge.mmrEnabled': knowledgeMmrEnabled,
+    'knowledge.mmrLambda': knowledgeMmrLambda,
+    'knowledge.timeDecayHalfLifeDays': knowledgeTimeDecayHalfLifeDays,
+    'knowledge.embeddingBaseUrl': knowledgeEmbeddingBaseUrl,
+    'knowledge.embeddingApiKey': knowledgeEmbeddingApiKey,
+    'knowledge.rerankBaseUrl': knowledgeRerankBaseUrl,
+    'knowledge.rerankApiKey': knowledgeRerankApiKey,
+    'knowledge.graphEnabled': knowledgeGraphEnabled,
+    'knowledge.graphModel': knowledgeGraphModel
+  } satisfies Record<SettingsKey, { value: unknown }>
+
+  /** 知识库短 key（KnowledgeOverrides 字段）→ 全局设置 key；satisfies 保证 22 项穷举 */
+  const KNOWLEDGE_OVERRIDE_KEYS = {
+    maxUploadSize: 'knowledge.maxUploadSize',
+    uploadTimeout: 'knowledge.uploadTimeout',
+    maxFilesPerBatch: 'knowledge.maxFilesPerBatch',
+    chunkStrategy: 'knowledge.chunkStrategy',
+    chunkSize: 'knowledge.chunkSize',
+    chunkOverlap: 'knowledge.chunkOverlap',
+    vectorDimensions: 'knowledge.vectorDimensions',
+    embeddingModel: 'knowledge.embeddingModel',
+    sparseRetrieval: 'knowledge.sparseRetrieval',
+    bm25K1: 'knowledge.bm25K1',
+    bm25B: 'knowledge.bm25B',
+    hybridWeight: 'knowledge.hybridWeight',
+    rerankEnabled: 'knowledge.rerankEnabled',
+    rerankModel: 'knowledge.rerankModel',
+    topK: 'knowledge.topK',
+    minSimilarity: 'knowledge.minSimilarity',
+    queryRewriteEnabled: 'knowledge.queryRewriteEnabled',
+    mmrEnabled: 'knowledge.mmrEnabled',
+    mmrLambda: 'knowledge.mmrLambda',
+    timeDecayHalfLifeDays: 'knowledge.timeDecayHalfLifeDays',
+    graphEnabled: 'knowledge.graphEnabled',
+    graphModel: 'knowledge.graphModel'
+  } satisfies Record<keyof KnowledgeOverrides, SettingsKey>
+
+  /**
    * 知识库 22 项全局值（短 key 形态，字段与「按库覆盖」一一对应；不含存放目录）
    * 「知识库设置」页表单回填与按知识库设置弹窗的「跟随全局」都读它 —— 单一来源，
    * 因此全局值一变，所有未覆盖该项的知识库会自动跟随。
    */
-  const knowledgeGlobalValues = computed<KnowledgeOverrides>(() => ({
-    maxUploadSize: knowledgeMaxUploadSize.value,
-    uploadTimeout: knowledgeUploadTimeout.value,
-    maxFilesPerBatch: knowledgeMaxFilesPerBatch.value,
-    chunkStrategy: knowledgeChunkStrategy.value,
-    chunkSize: knowledgeChunkSize.value,
-    chunkOverlap: knowledgeChunkOverlap.value,
-    vectorDimensions: knowledgeVectorDimensions.value,
-    embeddingModel: knowledgeEmbeddingModel.value,
-    sparseRetrieval: knowledgeSparseRetrieval.value,
-    bm25K1: knowledgeBm25K1.value,
-    bm25B: knowledgeBm25B.value,
-    hybridWeight: knowledgeHybridWeight.value,
-    rerankEnabled: knowledgeRerankEnabled.value,
-    rerankModel: knowledgeRerankModel.value,
-    topK: knowledgeTopK.value,
-    minSimilarity: knowledgeMinSimilarity.value,
-    queryRewriteEnabled: knowledgeQueryRewriteEnabled.value,
-    mmrEnabled: knowledgeMmrEnabled.value,
-    mmrLambda: knowledgeMmrLambda.value,
-    timeDecayHalfLifeDays: knowledgeTimeDecayHalfLifeDays.value,
-    graphEnabled: knowledgeGraphEnabled.value,
-    graphModel: knowledgeGraphModel.value
-  }))
+  const knowledgeGlobalValues = computed<KnowledgeOverrides>(() => {
+    const entries = Object.entries(KNOWLEDGE_OVERRIDE_KEYS).map(([shortKey, settingsKey]) => [
+      shortKey,
+      FIELDS[settingsKey].value
+    ])
+    return Object.fromEntries(entries) as KnowledgeOverrides
+  })
 
   const meta = ref<SettingsMeta>()
   const storageStats = ref<StorageStats | null>(null)
   const loaded = ref(false)
 
+  /** 判断 IPC 载荷中的 key 是否为已知设置项（load 遍历主进程快照时过滤未知项） */
+  function isSettingsKey(key: string): key is SettingsKey {
+    return key in FIELDS
+  }
+
   /** key → 响应式字段 映射（set/load 统一入口；主进程已校验，此处直接强转） */
-  function applyToField(key: string, value: unknown): void {
-    switch (key) {
-      case 'ui.language':
-        language.value = value as Language
-        break
-      case 'ui.fontSize':
-        fontSize.value = value as number
-        break
-      case 'ui.theme':
-        theme.value = value as ThemeName
-        break
-      case 'ui.systemName':
-        systemName.value = typeof value === 'string' && value.trim() ? value : DEFAULT_SYSTEM_NAME
-        break
-      case 'ui.brandLogo':
-        brandLogoFileName.value = (value as string) ?? ''
-        break
-      case 'skills.autoUpdate':
-        skillAutoUpdate.value = value as boolean
-        break
-      case 'skills.safeInstall':
-        safeSkillInstall.value = value as boolean
-        break
-      case 'lockScreen.remoteLock':
-        remoteLock.value = value as boolean
-        break
-      case 'network.proxyMode':
-        proxyMode.value = value as ProxyMode
-        break
-      case 'network.proxyUrl':
-        proxyUrl.value = value as string
-        break
-      case 'workspace.defaultWorkspaceDir':
-        defaultWorkspaceDir.value = value as string
-        break
-      case 'notification.clientNotifications':
-        clientNotifications.value = value as boolean
-        break
-      case 'notification.sound':
-        notificationSound.value = value as NotificationSound
-        break
-      case 'runtime.enabled':
-        runtimeEnabled.value = value as boolean
-        break
-      case 'runtime.python.enabled':
-        runtimePythonEnabled.value = value as boolean
-        break
-      case 'runtime.node.enabled':
-        runtimeNodeEnabled.value = value as boolean
-        break
-      case 'runtime.git.enabled':
-        runtimeGitEnabled.value = value as boolean
-        break
-      case 'knowledge.directory':
-        knowledgeDirectory.value = value as string
-        break
-      case 'knowledge.maxUploadSize':
-        knowledgeMaxUploadSize.value = value as number
-        break
-      case 'knowledge.uploadTimeout':
-        knowledgeUploadTimeout.value = value as number
-        break
-      case 'knowledge.maxFilesPerBatch':
-        knowledgeMaxFilesPerBatch.value = value as number
-        break
-      case 'knowledge.chunkStrategy':
-        knowledgeChunkStrategy.value = value as ChunkStrategy
-        break
-      case 'knowledge.chunkSize':
-        knowledgeChunkSize.value = value as number
-        break
-      case 'knowledge.chunkOverlap':
-        knowledgeChunkOverlap.value = value as number
-        break
-      case 'knowledge.vectorDimensions':
-        knowledgeVectorDimensions.value = value as VectorDimensions
-        break
-      case 'knowledge.embeddingModel':
-        knowledgeEmbeddingModel.value = value as string
-        break
-      case 'knowledge.sparseRetrieval':
-        knowledgeSparseRetrieval.value = value as boolean
-        break
-      case 'knowledge.bm25K1':
-        knowledgeBm25K1.value = value as number
-        break
-      case 'knowledge.bm25B':
-        knowledgeBm25B.value = value as number
-        break
-      case 'knowledge.hybridWeight':
-        knowledgeHybridWeight.value = value as number
-        break
-      case 'knowledge.rerankEnabled':
-        knowledgeRerankEnabled.value = value as boolean
-        break
-      case 'knowledge.rerankModel':
-        knowledgeRerankModel.value = value as string
-        break
-      case 'knowledge.topK':
-        knowledgeTopK.value = value as number
-        break
-      case 'knowledge.minSimilarity':
-        knowledgeMinSimilarity.value = value as number
-        break
-      case 'knowledge.queryRewriteEnabled':
-        knowledgeQueryRewriteEnabled.value = value as boolean
-        break
-      case 'knowledge.mmrEnabled':
-        knowledgeMmrEnabled.value = value as boolean
-        break
-      case 'knowledge.mmrLambda':
-        knowledgeMmrLambda.value = value as number
-        break
-      case 'knowledge.timeDecayHalfLifeDays':
-        knowledgeTimeDecayHalfLifeDays.value = value as number
-        break
-      case 'knowledge.embeddingBaseUrl':
-        knowledgeEmbeddingBaseUrl.value = value as string
-        break
-      case 'knowledge.embeddingApiKey':
-        knowledgeEmbeddingApiKey.value = value as string
-        break
-      case 'knowledge.rerankBaseUrl':
-        knowledgeRerankBaseUrl.value = value as string
-        break
-      case 'knowledge.rerankApiKey':
-        knowledgeRerankApiKey.value = value as string
-        break
-      case 'knowledge.graphEnabled':
-        knowledgeGraphEnabled.value = value as boolean
-        break
-      case 'knowledge.graphModel':
-        knowledgeGraphModel.value = value as string
-        break
+  function applyToField(key: SettingsKey, value: unknown): void {
+    // 特例：系统名称做非空回退（其余字段直接写入，主进程已按 schema 校验类型）
+    if (key === 'ui.systemName') {
+      systemName.value = typeof value === 'string' && value.trim() ? value : DEFAULT_SYSTEM_NAME
+      return
     }
+    ;(FIELDS[key] as { value: unknown }).value = key === 'ui.brandLogo' ? (value ?? '') : value
   }
 
   /** 运行时效果：字体缩放（默认 17 → 1.0）+ 主题根节点 + 窗口标题（系统名称） */
@@ -346,7 +286,7 @@ export const useSettingsStore = defineStore('settings', () => {
     }
     const { settings, meta: snapshotMeta } = result.data
     for (const [key, value] of Object.entries(settings)) {
-      applyToField(key, value)
+      if (isSettingsKey(key)) applyToField(key, value)
     }
     meta.value = snapshotMeta
     loaded.value = true

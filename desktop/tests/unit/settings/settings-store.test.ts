@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsStore } from '../../../src/main/settings/SettingsStore'
 import { defaultSettings, SETTINGS_VERSION } from '../../../src/main/settings/schema'
+import { InMemorySecureStorage } from '../../../src/main/security/secure-storage'
 
 let baseDir: string
 
@@ -132,5 +133,72 @@ describe('SettingsStore', () => {
     const store = new SettingsStore(baseDir)
     store.set('ui.fontSize', 18)
     expect(existsSync(join(baseDir, 'settings.json.tmp'))).toBe(false)
+  })
+})
+
+describe('SettingsStore · 密钥路由安全存储', () => {
+  const KEY = 'knowledge.embeddingApiKey' as const
+
+  it('接入安全存储：密钥不落 settings.json，读写与重启回显正常', () => {
+    const secrets = new InMemorySecureStorage()
+    const store = new SettingsStore(baseDir, secrets)
+    store.set(KEY, 'sk-secret')
+    expect(store.get(KEY)).toBe('sk-secret')
+    expect(secrets.get(KEY)).toBe('sk-secret')
+    expect(JSON.stringify(readSettingsFile())).not.toContain('sk-secret')
+    // 重启（新实例 + 同一安全存储）仍可读回
+    const reloaded = new SettingsStore(baseDir, secrets)
+    expect(reloaded.get(KEY)).toBe('sk-secret')
+  })
+
+  it('旧格式迁移：文件中明文密钥搬入安全存储、从主文件与 .bak 移除', () => {
+    writeFileSync(
+      join(baseDir, 'settings.json'),
+      JSON.stringify({ version: 1, knowledge: { embeddingApiKey: 'sk-plain' }, ui: { language: 'en' } }),
+      'utf-8'
+    )
+    writeFileSync(
+      join(baseDir, 'settings.json.bak'),
+      JSON.stringify({ version: 1, knowledge: { embeddingApiKey: 'sk-plain-bak' } }),
+      'utf-8'
+    )
+    const secrets = new InMemorySecureStorage()
+    const store = new SettingsStore(baseDir, secrets)
+    expect(store.get(KEY)).toBe('sk-plain')
+    expect(secrets.get(KEY)).toBe('sk-plain')
+    expect(JSON.stringify(readSettingsFile())).not.toContain('sk-plain')
+    // 历史 .bak 中的明文同步清洗
+    const bak = readFileSync(join(baseDir, 'settings.json.bak'), 'utf-8')
+    expect(bak).not.toContain('sk-plain-bak')
+  })
+
+  it('迁移冲突：安全存储已有值时以其为准（仅清掉文件明文）', () => {
+    writeFileSync(
+      join(baseDir, 'settings.json'),
+      JSON.stringify({ version: 1, knowledge: { embeddingApiKey: 'sk-old' } }),
+      'utf-8'
+    )
+    const secrets = new InMemorySecureStorage()
+    secrets.set(KEY, 'sk-live')
+    const store = new SettingsStore(baseDir, secrets)
+    expect(store.get(KEY)).toBe('sk-live')
+    expect(JSON.stringify(readSettingsFile())).not.toContain('sk-old')
+  })
+
+  it('清空密钥：安全存储删除、文件不留明文', () => {
+    const secrets = new InMemorySecureStorage()
+    const store = new SettingsStore(baseDir, secrets)
+    store.set(KEY, 'sk-secret')
+    store.set(KEY, '')
+    expect(secrets.get(KEY)).toBeNull()
+    expect(store.get(KEY)).toBe('')
+    expect(JSON.stringify(readSettingsFile())).not.toContain('sk-secret')
+  })
+
+  it('未接安全存储：保持旧行为（明文落盘，兼容测试与无安全存储环境）', () => {
+    const store = new SettingsStore(baseDir)
+    store.set(KEY, 'sk-legacy')
+    expect(store.get(KEY)).toBe('sk-legacy')
+    expect(JSON.stringify(readSettingsFile())).toContain('sk-legacy')
   })
 })

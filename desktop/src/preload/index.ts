@@ -1,27 +1,35 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
+  AgentArtifactMeta,
   AgentDelegateEnd,
   AgentDelegateStart,
+  AutomationChangedEvent,
   AutomationTemplateSyncProgress,
   BrandLogoUploadPayload,
   DesktopExpert,
   ExpertSyncProgress,
+  KeWorkWindowApi,
+  KnowledgeAskEvent,
+  KnowledgeIndexProgress,
+  RuntimeProgress,
   SkillInstallProgress,
   SkillSyncProgress
 } from './index.d'
 
 // Custom APIs for renderer
 /** 问答事件订阅（4 个 ask-* 事件同一约定：返回取消订阅函数） */
-function subscribeKnowledgeAskEvent(
+function subscribeKnowledgeAskEvent<T>(
   channel: string,
-  callback: (payload: unknown) => void
+  callback: (payload: T) => void
 ): () => void {
-  const listener = (_event: unknown, payload: unknown): void => callback(payload)
+  const listener = (_event: unknown, payload: T): void => callback(payload)
   ipcRenderer.on(channel, listener)
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
+// 不要将 api 注解成 KeWorkWindowApi：注解会让 typeof api 退化为契约本身，
+// 下方的"缺成员检查"随之失效（历史缺陷 openWeChatAuth 只在 d.ts 声明、实现缺失却 typecheck 全绿）
 const api = {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openWebHome: () => ipcRenderer.invoke('web:open-home'),
@@ -85,27 +93,8 @@ const api = {
     ipcRenderer.on('agent:delegate-end', handler)
     return () => ipcRenderer.removeListener('agent:delegate-end', handler)
   },
-  onAgentArtifactStart(
-    callback: (meta: {
-      artifactId: string
-      name: string
-      relPath: string
-      workspaceId: string | null
-      ext: string
-      preview: string
-    }) => void
-  ): () => void {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      meta: {
-        artifactId: string
-        name: string
-        relPath: string
-        workspaceId: string | null
-        ext: string
-        preview: string
-      }
-    ): void => {
+  onAgentArtifactStart(callback: (meta: AgentArtifactMeta) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, meta: AgentArtifactMeta): void => {
       callback(meta)
     }
     ipcRenderer.on('agent:artifact-start', handler)
@@ -203,6 +192,13 @@ const api = {
   },
   loginByWechat(code: string) {
     return ipcRenderer.invoke('auth:login-wechat', code)
+  },
+  /** 打开微信扫码授权窗口：主进程打开授权页并等待回跳，返回 code（或 error） */
+  openWeChatAuth(authUrl: string, redirectUri: string) {
+    return ipcRenderer.invoke('auth:wechat-open', authUrl, redirectUri) as Promise<{
+      code?: string
+      error?: string
+    }>
   },
   loginByOAuth2() {
     return ipcRenderer.invoke('auth:login-oauth2')
@@ -458,8 +454,9 @@ const api = {
     return ipcRenderer.invoke('knowledge:graph-view', kbId, options)
   },
   /** 订阅索引进度事件（返回取消订阅函数） */
-  onKnowledgeIndexProgress(callback: (progress: unknown) => void): () => void {
-    const listener = (_event: unknown, progress: unknown): void => callback(progress)
+  onKnowledgeIndexProgress(callback: (progress: KnowledgeIndexProgress) => void): () => void {
+    const listener = (_event: unknown, progress: KnowledgeIndexProgress): void =>
+      callback(progress)
     ipcRenderer.on('knowledge:import-progress', listener)
     return () => ipcRenderer.removeListener('knowledge:import-progress', listener)
   },
@@ -476,16 +473,16 @@ const api = {
   cancelKnowledgeAsk() {
     return ipcRenderer.invoke('knowledge:cancel-ask')
   },
-  onKnowledgeAskCitation(callback: (payload: unknown) => void): () => void {
+  onKnowledgeAskCitation(callback: (payload: KnowledgeAskEvent) => void): () => void {
     return subscribeKnowledgeAskEvent('knowledge:ask-citation', callback)
   },
-  onKnowledgeAskChunk(callback: (payload: unknown) => void): () => void {
+  onKnowledgeAskChunk(callback: (payload: KnowledgeAskEvent) => void): () => void {
     return subscribeKnowledgeAskEvent('knowledge:ask-chunk', callback)
   },
-  onKnowledgeAskDone(callback: (payload: unknown) => void): () => void {
+  onKnowledgeAskDone(callback: (payload: KnowledgeAskEvent) => void): () => void {
     return subscribeKnowledgeAskEvent('knowledge:ask-done', callback)
   },
-  onKnowledgeAskError(callback: (payload: unknown) => void): () => void {
+  onKnowledgeAskError(callback: (payload: KnowledgeAskEvent) => void): () => void {
     return subscribeKnowledgeAskEvent('knowledge:ask-error', callback)
   },
   renameKnowledgeDocument(kbId: string, relPath: string, newName: string) {
@@ -535,27 +532,8 @@ const api = {
   detectRuntime(id: string) {
     return ipcRenderer.invoke('runtime:detect', id)
   },
-  onRuntimeProgress(
-    callback: (data: {
-      id: string
-      phase: 'downloading' | 'extracting' | 'verifying' | 'done' | 'error'
-      percent: number
-      receivedBytes: number
-      totalBytes: number
-      message?: string
-    }) => void
-  ): () => void {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      data: {
-        id: string
-        phase: 'downloading' | 'extracting' | 'verifying' | 'done' | 'error'
-        percent: number
-        receivedBytes: number
-        totalBytes: number
-        message?: string
-      }
-    ): void => {
+  onRuntimeProgress(callback: (data: RuntimeProgress) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, data: RuntimeProgress): void => {
       callback(data)
     }
     ipcRenderer.on('runtime:progress', handler)
@@ -795,8 +773,11 @@ const api = {
     runStats(since?: number) {
       return ipcRenderer.invoke('automation:run-stats', since)
     },
-    onChanged(callback: (payload: unknown) => void): () => void {
-      const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+    onChanged(callback: (payload: AutomationChangedEvent) => void): () => void {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: AutomationChangedEvent
+      ): void => {
         callback(payload)
       }
       ipcRenderer.on('automation:changed', handler)
@@ -804,6 +785,15 @@ const api = {
     }
   }
 }
+
+// ── 编译期契约校验：KeWorkWindowApi（index.d.ts）与 api 实现的双向一致性 ──
+// ① 成员类型兼容：不兼容的成员在本行报错
+const apiContractCheck: KeWorkWindowApi = api
+// ② 无"声明了未实现"：缺成员在本行报错并列出成员名
+type MissingApiMembers = Exclude<keyof KeWorkWindowApi, keyof typeof api>
+const missingApiMembersCheck: [MissingApiMembers] extends [never] ? true : MissingApiMembers = true
+void apiContractCheck
+void missingApiMembersCheck
 
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise

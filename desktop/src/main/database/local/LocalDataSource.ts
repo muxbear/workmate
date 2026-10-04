@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { runMigrations } from './migrations'
-import { runSqlMigrations, seedMigrationFiles } from './SqlMigrationRunner'
+import { runSqlMigrations } from './SqlMigrationRunner'
 
 /**
  * 本地 SQLite 数据源：封装连接生命周期与迁移
@@ -33,7 +33,7 @@ export class LocalDataSource {
 
   runMigrations(): void {
     if (this.migrationsDir) {
-      seedMigrationFiles(this.migrationsDir)
+      // 种子由 runSqlMigrations 内部完成（单次入口，避免双重种子）
       runSqlMigrations(this.db, this.migrationsDir)
     } else {
       runMigrations(this.db)

@@ -41,8 +41,10 @@ export function seedMigrationFiles(dir: string): void {
 /**
  * 从迁移目录应用未执行的迁移：
  * - 按 NNNN 序号排序，文件序号 NNNN 对应 user_version = NNNN + 1
- * - 跳过 user_version 已应用的部分；每文件执行成功后推进 user_version
- * - 文件内按 --> statement-breakpoint 拆句执行（无分隔符则整体执行）
+ * - 同一序号下的多个文件属于同一次升级（例如用户手动追加的文件与内置同名版本共存），
+ *   按文件名顺序全部执行后才推进 user_version —— 旧实现逐文件「版本已到则跳过」，
+ *   排序靠后的同序号文件会被静默丢弃（升级迁移丢失）
+ * - 跳过 user_version 已应用的部分；文件内按 --> statement-breakpoint 拆句执行
  */
 export function runSqlMigrations(db: Database, dir: string): void {
   // 无条件补种缺失迁移文件（幂等：不存在才写，不覆盖磁盘已有文件）
@@ -51,18 +53,32 @@ export function runSqlMigrations(db: Database, dir: string): void {
   const files = readdirSync(dir)
     .filter((f) => /^\d{4}_[\w-]+\.sql$/.test(f))
     .sort()
+  // 按 user_version 分组（文件序号 = version - 1）
+  const groups = new Map<number, string[]>()
   for (const file of files) {
     const version = Number(file.slice(0, 4)) + 1
+    const group = groups.get(version)
+    if (group) group.push(file)
+    else groups.set(version, [file])
+  }
+  for (const [version, group] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
     if (version <= current) continue
-    const sql = readFileSync(join(dir, file), 'utf-8')
-    const statements = sql
-      .split(STATEMENT_BREAKPOINT)
-      .map((s) => s.trim())
-      .filter(Boolean)
-    for (const stmt of statements) {
-      db.exec(stmt)
+    if (group.length > 1) {
+      console.warn(
+        `[sql-migrations] 序号 ${String(version - 1).padStart(4, '0')} 下有多个迁移文件，按文件名顺序全部执行: ${group.join(', ')}`
+      )
+    }
+    for (const file of group) {
+      const sql = readFileSync(join(dir, file), 'utf-8')
+      const statements = sql
+        .split(STATEMENT_BREAKPOINT)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      for (const stmt of statements) {
+        db.exec(stmt)
+      }
     }
     db.pragma(`user_version = ${version}`)
-    console.log(`[sql-migrations] applied: ${file} (user_version=${version})`)
+    console.log(`[sql-migrations] applied: ${group.join(', ')} (user_version=${version})`)
   }
 }

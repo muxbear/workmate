@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
+import { cp, mkdir, readFile, readdir, rename, rmdir, rm, writeFile } from 'fs/promises'
 import {
   basename,
   dirname,
@@ -222,6 +222,8 @@ export class WorkspaceService {
     await mkdir(to, { recursive: true })
     if (existsSync(from)) {
       await this.moveDirectoryContents(from, to)
+      // 内容已搬空：尽力移除空壳源目录（rmdir 仅在目录为空时成功，非空/被占用则保留）
+      await rmdir(from).catch(() => undefined)
     }
     const moves: WorkspacePathMove[] = affected.map((row) => {
       const next = row.path === from ? to : join(to, relative(from, row.path))

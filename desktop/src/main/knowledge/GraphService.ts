@@ -237,14 +237,14 @@ export class GraphService {
     }
 
     // 去重（同文档内同键只留一条；mentions 语义由查询侧 COUNT 聚合）
-    const uniqueEntities = dedupeBy(entities, (item) => `${item.nameKey}|${item.type}`)
-    const validKeys = new Set(uniqueEntities.map((item) => `${item.nameKey}|${item.type}`))
+    const uniqueEntities = dedupeBy(entities, entityKey)
+    // 关系两端必须存在于本次抽出的实体（按 nameKey 建索引：同名可能对应多种类型；
+    // 历史实现对实体键逐条 startsWith 扫描，实体/关系上千时为 O(n²)）
+    const validNameKeys = new Set(uniqueEntities.map((item) => item.nameKey))
     const uniqueRelations = dedupeBy(
-      relations.filter((relation) => {
-        // 关系两端必须在本次抽出的实体里（避免指向不存在实体的悬挂边）
-        // 两端都必须在本次抽出的实体里（悬挂边不入库；自环已在 convertExtraction 过滤）
-        return hasKey(validKeys, relation.fromKey) && hasKey(validKeys, relation.toKey)
-      }),
+      relations.filter(
+        (relation) => validNameKeys.has(relation.fromKey) && validNameKeys.has(relation.toKey)
+      ),
       (item) => `${item.fromKey}|${item.toKey}|${item.label}`
     )
 
@@ -397,11 +397,9 @@ function pickSourceText(text: string, name: string, candidate: unknown): string 
   return name
 }
 
-function hasKey(keys: Set<string>, nameKey: string): boolean {
-  for (const key of keys) {
-    if (key.startsWith(`${nameKey}|`)) return true
-  }
-  return false
+/** 实体唯一键：`nameKey|type`（同文档内同键只留一条） */
+function entityKey(item: { nameKey: string; type: string }): string {
+  return `${item.nameKey}|${item.type}`
 }
 
 function dedupeBy<T>(items: T[], keyOf: (item: T) => string): T[] {

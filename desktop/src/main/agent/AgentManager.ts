@@ -232,6 +232,11 @@ export class AgentManager {
       this.initPromise = (async () => {
         const dirs = await resolve(skills)
         this.skills = dirs.map((dir) => normalizeSkillPath(dir))
+        if (dirs.length < skills.length) {
+          console.warn(
+            `[agent] ${skills.length - dirs.length}/${skills.length} 个技能 id 未能解析到本地目录，已跳过（技能可能未安装）`
+          )
+        }
         await this.buildAgent(this.currentMode)
       })()
     } else {

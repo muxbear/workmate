@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { showToast as showToastBase } from '@renderer/composables/useToast'
 import ConfirmDialog from '@components/ConfirmDialog.vue'
 import { experts, useCatalogStore, type Expert } from '@store/catalog'
 import { useExpertSyncStore } from '@store/expertSync'
@@ -13,17 +14,8 @@ const expertSync = useExpertSyncStore()
 /** 待删除专家（删除确认弹窗依据；取消/确认后置空） */
 const pendingDelete = ref<Expert | null>(null)
 
-/** 操作提示（轻量 toast，与技能页一致） */
-const pageToast = ref('')
-let pageToastTimer: ReturnType<typeof setTimeout> | null = null
-
-const showToast = (text: string): void => {
-  pageToast.value = text
-  if (pageToastTimer) clearTimeout(pageToastTimer)
-  pageToastTimer = setTimeout(() => {
-    pageToast.value = ''
-  }, 2200)
-}
+/** 操作提示：全局 toast（沿用历史 2.2s 时长） */
+const showToast = (text: string): void => showToastBase(text, 2200)
 
 const expertFilter = ref('全部')
 const sort = ref<'综合' | '最新'>('综合')
@@ -267,9 +259,6 @@ const confirmDelete = async (): Promise<void> => {
       @cancel="cancelDelete"
     />
 
-    <Transition name="toast">
-      <div v-if="pageToast" class="expert-toast">{{ pageToast }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -718,32 +707,4 @@ const confirmDelete = async (): Promise<void> => {
   opacity: 0;
 }
 
-/* 同步 / 删除操作提示（与技能页 toast 一致） */
-.expert-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(6px);
-}
 </style>

@@ -65,7 +65,7 @@ describe('右栏视图切换回归（标签页 → 文件树 → 概览）', () 
     // 打开工作空间选择器 → 新建工作空间（自动选中）
     await page.locator('[data-workspace-menu-trigger]').click()
     await page.getByText('新建工作空间').click()
-    await page.locator('#ws-create-name').fill(wsName)
+    await page.locator('#prompt-ws-create-name').fill(wsName)
     await page.getByRole('button', { name: '创建', exact: true }).click()
     await page
       .locator('[data-workspace-menu-trigger]')
@@ -104,14 +104,14 @@ describe('右栏视图切换回归（标签页 → 文件树 → 概览）', () 
     await gridIcon.click()
     await page.locator('.fl-file-name', { hasText: 'demo.txt' }).first().waitFor({ state: 'visible', timeout: WAIT })
     expect(await page.locator('.csp-card').count()).toBe(0)
-    // ② 点击文件 → 标签页打开，展示文件内容（.fp-code 限定右栏预览；聊天区引用的同名文本不干扰）
+    // ② 点击文件 → 标签页打开，展示文件内容（.fpp-code 限定右栏预览；聊天区引用的同名文本不干扰）
     await page.locator('.fl-file-name', { hasText: 'demo.txt' }).first().click()
     await page.locator('.csp-tab', { hasText: 'demo.txt' }).waitFor({ state: 'visible', timeout: WAIT })
-    await page.locator('.fp-code', { hasText: 'hello from e2e panel test' }).waitFor({ state: 'visible', timeout: WAIT })
+    await page.locator('.fpp-code', { hasText: 'hello from e2e panel test' }).waitFor({ state: 'visible', timeout: WAIT })
     // ③ 再点网格图标 → 回到文件树（标签页保留在顶栏，内容预览收起）
     await gridIcon.click()
     await page.locator('.fl-file-name', { hasText: 'demo.txt' }).first().waitFor({ state: 'visible', timeout: WAIT })
-    expect(await page.locator('.fp-code', { hasText: 'hello from e2e panel test' }).count()).toBe(0)
+    expect(await page.locator('.fpp-code', { hasText: 'hello from e2e panel test' }).count()).toBe(0)
     expect(await page.locator('.csp-card').count()).toBe(0)
     expect(await page.locator('.csp-tab', { hasText: 'demo.txt' }).count()).toBe(1)
     // ④ 再点网格图标 → 回到概览（进入文件视图前的视图）
@@ -120,7 +120,7 @@ describe('右栏视图切换回归（标签页 → 文件树 → 概览）', () 
     // ⑤ 再次进入文件视图 → 应显示文件树，不残留上一个标签页内容
     await gridIcon.click()
     await page.locator('.fl-file-name', { hasText: 'demo.txt' }).first().waitFor({ state: 'visible', timeout: WAIT })
-    expect(await page.locator('.fp-code', { hasText: 'hello from e2e panel test' }).count()).toBe(0)
+    expect(await page.locator('.fpp-code', { hasText: 'hello from e2e panel test' }).count()).toBe(0)
     console.error('[panel-toggle] 全流程断言通过：文件树 → 标签页 → 文件树 → 概览 → 文件树')
   }, 90_000)
 })

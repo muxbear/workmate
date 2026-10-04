@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { showToast as showToastBase } from '@renderer/composables/useToast'
 import ConfirmDialog from '@components/ConfirmDialog.vue'
 import { useAutomationStore } from '@store/automation'
 import { useAutomationTemplateSyncStore } from '@store/automationTemplateSync'
@@ -15,17 +16,8 @@ const templateSync = useAutomationTemplateSyncStore()
 /** 待删除模板（删除确认弹窗依据；取消/确认后置空） */
 const pendingDelete = ref<DesktopAutomationTemplate | null>(null)
 
-/** 操作提示（轻量 toast，与专家/技能页一致） */
-const pageToast = ref('')
-let pageToastTimer: ReturnType<typeof setTimeout> | null = null
-
-const showToast = (text: string): void => {
-  pageToast.value = text
-  if (pageToastTimer) clearTimeout(pageToastTimer)
-  pageToastTimer = setTimeout(() => {
-    pageToast.value = ''
-  }, 2200)
-}
+/** 操作提示：全局 toast（沿用历史 2.2s 时长） */
+const showToast = (text: string): void => showToastBase(text, 2200)
 
 /** 已添加过的模板 id 集合：任务的 templateId 即模板 id（UUID 字符串） */
 const addedTemplateIds = computed(
@@ -281,9 +273,6 @@ onMounted(() => {
       @cancel="cancelDelete"
     />
 
-    <Transition name="toast">
-      <div v-if="pageToast" class="tpl-toast">{{ pageToast }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -555,33 +544,6 @@ onMounted(() => {
 .sync-fade-enter-from,
 .sync-fade-leave-to {
   opacity: 0;
-}
-
-/* 同步 / 删除操作提示（与专家页 toast 一致） */
-.tpl-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
-}
-.toast-enter-active,
-.toast-leave-active {
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-}
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(6px);
 }
 
 @media (max-width: 1024px) {

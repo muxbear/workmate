@@ -81,8 +81,8 @@ describe('E2E 登录全流程', () => {
     // 从 Home 新建任务进入会话页
     await page.getByText('新建任务').first().click()
     await page.waitForTimeout(1_000)
-    // 发送一条消息（聊天输入框）
-    const input = page.locator('.chat-input, textarea, input[type="text"]').last()
+    // 发送一条消息（聊天输入框：contenteditable 富文本卡片，非 textarea）
+    const input = page.locator('.task-textarea').last()
     await input.fill('E2E 持久化测试消息')
     await page.keyboard.press('Enter')
     // 用户消息出现在对话区
@@ -106,8 +106,9 @@ describe('E2E 登录全流程', () => {
     await page.locator('.home-layout').waitFor({ state: 'visible', timeout: WAIT })
     await app.close()
     // 模拟主进程会话丢失（删除 session.json），localStorage token 残留
+    // 注：session.json 在数据目录顶层（旧 config/ 布局已由 migrateLegacyConfigFiles 迁移）
     const { rmSync } = await import('fs')
-    rmSync(join(dataHome, 'config', 'session.json'), { force: true })
+    rmSync(join(dataHome, 'session.json'), { force: true })
     // 重启：路由守卫校验主进程会话失败 → 清除本地登录态 → 回登录页
     await launchApp()
     await page.locator('.login-card').waitFor({ state: 'visible', timeout: WAIT })
@@ -133,8 +134,10 @@ describe('E2E 登录全流程', () => {
   }, 90_000)
 
   it('E2E-04: 退出登录——确认弹窗后回登录页，token 与主进程会话清除', async () => {
-    // 自包含登录（前序用例已清 localStorage）
+    // 自包含登录（前序用例已清 localStorage）；前序用例切到云端后模式已持久化，先切回本地
     await launchApp()
+    await page.getByText('本地工作').click()
+    await page.waitForTimeout(300)
     await page.getByRole('button', { name: '密码登录' }).click()
     await page.getByPlaceholder('手机号 / 用户名').fill('e2euser')
     await page.getByPlaceholder('请输入密码（至少6位）').fill('Secret123!')
@@ -145,7 +148,7 @@ describe('E2E 登录全流程', () => {
     await page.locator('[data-usermenu-trigger]').click()
     await page.locator('.user-menu').waitFor({ state: 'visible', timeout: 15_000 })
     await page.getByRole('button', { name: '退出登录' }).click()
-    await page.locator('.confirm-card').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.locator('.ms-card').waitFor({ state: 'visible', timeout: 15_000 })
     await page.getByText('登出后会停止所有正在执行中的任务（包括后台会话），确认要登出吗？').waitFor({
       state: 'visible',
       timeout: 15_000
@@ -159,9 +162,9 @@ describe('E2E 登录全流程', () => {
     const token = await page.evaluate(() => localStorage.getItem('user_token'))
     expect(token).toBeNull()
 
-    // 主进程会话已清（session.json 持久化 userId=null）
+    // 主进程会话已清（session.json 持久化 userId=null；位于数据目录顶层）
     const { readFileSync } = await import('fs')
-    const raw = JSON.parse(readFileSync(join(dataHome, 'config', 'session.json'), 'utf-8'))
+    const raw = JSON.parse(readFileSync(join(dataHome, 'session.json'), 'utf-8'))
     expect(raw.userId).toBeNull()
 
     // 手动导航 /home 被守卫拦截（主进程 session 为权威）

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { showToast } from '@renderer/composables/useToast'
 import ConfirmDialog from '../../ConfirmDialog.vue'
 import KnowledgeConfigForm from '../../knowledge/KnowledgeConfigForm.vue'
 import { useSettingsStore, type SettingsKey } from '../../../store/settings'
@@ -70,16 +71,7 @@ watch(
   }
 )
 
-/** 轻量 toast（保存反馈） */
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(text: string): void {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toast.value = ''
-  }, 1800)
-}
+/** 保存反馈：全局 toast（composables/useToast） */
 
 function onFieldChange(key: KnowledgeOverrideKey, value: KnowledgeDraftValue): void {
   draft[key] = value
@@ -247,12 +239,6 @@ async function pickDirectory(): Promise<void> {
       @cancel="dirConfirmOpen = false"
     />
 
-    <!-- 保存反馈 -->
-    <Transition name="kb-toast">
-      <div v-if="toast" class="kb-toast">
-        {{ toast }}
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -383,31 +369,4 @@ async function pickDirectory(): Promise<void> {
   cursor: not-allowed;
 }
 
-/* ═══════════════════ 保存 toast ═══════════════════ */
-.kb-toast {
-  position: fixed;
-  bottom: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #2c3337;
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: 999px;
-  font-size: 14px;
-  z-index: 9999;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.kb-toast-enter-active,
-.kb-toast-leave-active {
-  transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
-}
-
-.kb-toast-enter-from,
-.kb-toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
-}
 </style>

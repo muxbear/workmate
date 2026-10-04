@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   getFileExt,
+  isHtmlFile,
   needsBytes,
   pickPreviewKind,
+  prefersBrowserPreview,
   unsupportedHint,
   videoMimeType
 } from '../../../src/renderer/src/components/file-preview/previewKind'
@@ -49,5 +51,23 @@ describe('文件预览类型判定（知识库与工作空间共用）', () => {
   it('不支持预览时给出带扩展名的提示', () => {
     expect(unsupportedHint('a.bin')).toContain('.bin')
     expect(unsupportedHint('noext')).toContain('该文件类型')
+  })
+
+  it('浏览器路由判定（ChatSidePanel 文件打开路径的单一来源）', () => {
+    expect(prefersBrowserPreview('页面.html')).toBe(true)
+    expect(prefersBrowserPreview('图.SVG')).toBe(true)
+    expect(prefersBrowserPreview('方案.pdf')).toBe(true)
+    expect(prefersBrowserPreview('照片.png')).toBe(true)
+    // 非浏览器类 → FilePreviewPane
+    expect(prefersBrowserPreview('说明.md')).toBe(false)
+    expect(prefersBrowserPreview('数据.csv')).toBe(false)
+    expect(prefersBrowserPreview('教案.docx')).toBe(false)
+  })
+
+  it('HTML 判定（流式产物完成后切浏览器渲染）', () => {
+    expect(isHtmlFile('报告.html')).toBe(true)
+    expect(isHtmlFile('报告.HTM')).toBe(true)
+    expect(isHtmlFile('报告.svg')).toBe(false)
+    expect(isHtmlFile('无扩展名')).toBe(false)
   })
 })

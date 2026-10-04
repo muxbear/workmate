@@ -1,8 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { useUserStore } from '../store/user'
-import { useSkillSyncStore } from '../store/skillSync'
-import { useExpertSyncStore } from '../store/expertSync'
-import { useAutomationTemplateSyncStore } from '../store/automationTemplateSync'
+import { resetUserSession } from '../store/sessionReset'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -35,9 +33,8 @@ router.beforeEach(async (to, _from, next) => {
   if (to.meta.requiresAuth && !mainLoggedIn) {
     // 主进程未登录：清除本地残留登录态（token 可能过期/伪造），回登录页
     userStore.logout()
-    useSkillSyncStore().resetLocal()
-    useExpertSyncStore().resetLocal()
-    useAutomationTemplateSyncStore().resetLocal()
+    // 清各域残留状态（已加载的 store 自注册进 session-reset 注册表；未加载的域无状态可清）
+    resetUserSession()
     next({ path: '/' })
     return
   }

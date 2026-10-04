@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 const emit = defineEmits<{
   (e: 'verified'): void
@@ -52,6 +52,8 @@ const position = ref(0)
 const status = ref<'idle' | 'success' | 'error'>('idle')
 const startX = ref(0)
 const maxMove = ref(0)
+/** 验证反馈延时句柄（成功延时 emit / 失败延时复位；卸载与重置时清理，防泄漏与误触发） */
+let feedbackTimer: number | null = null
 
 const thumbStyle = computed(() => ({
   transform: `translateX(${position.value}px)`
@@ -67,6 +69,10 @@ const close = () => {
 }
 
 const reset = () => {
+  if (feedbackTimer !== null) {
+    window.clearTimeout(feedbackTimer)
+    feedbackTimer = null
+  }
   position.value = 0
   status.value = 'idle'
   dragging.value = false
@@ -109,10 +115,10 @@ const onPointerUp = () => {
   if (position.value >= maxMove.value - tolerance) {
     status.value = 'success'
     position.value = maxMove.value
-    window.setTimeout(() => emit('verified'), 500)
+    feedbackTimer = window.setTimeout(() => emit('verified'), 500)
   } else {
     status.value = 'error'
-    window.setTimeout(reset, 600)
+    feedbackTimer = window.setTimeout(reset, 600)
   }
 }
 
@@ -121,6 +127,18 @@ onMounted(() => {
   window.addEventListener('pointerup', onPointerUp)
   window.addEventListener('touchmove', onTouchMove, { passive: false })
   window.addEventListener('touchend', onPointerUp)
+})
+
+// 登录页以 v-if 反复挂载本组件：卸载必须摘除 window 监听并清理延时，否则每次挂载泄漏 4 个监听
+onUnmounted(() => {
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('touchmove', onTouchMove)
+  window.removeEventListener('touchend', onPointerUp)
+  if (feedbackTimer !== null) {
+    window.clearTimeout(feedbackTimer)
+    feedbackTimer = null
+  }
 })
 </script>
 

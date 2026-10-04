@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
 import type { KnowledgeBaseSummary, KnowledgeStats } from '../../../../preload/index.d'
 
 /**
@@ -57,96 +58,47 @@ function closeModal(): void {
   emit('close')
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="ko-modal">
-    <div v-if="visible" class="ko-mask" @click.self="closeModal">
-      <div class="ko-card" role="dialog" aria-modal="true" aria-label="知识库概览">
-        <header class="ko-header">
-          <div>
-            <h2 class="ko-title">知识库概览</h2>
-            <p class="ko-subtitle">文件维度统计；切片与实体随索引能力提供</p>
-          </div>
-          <button class="ko-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
-
-        <div class="ko-body">
-          <div class="ko-cards">
-            <div v-for="card in cards" :key="card.label" class="ko-stat">
-              <span class="ko-stat-value">{{ card.value }}</span>
-              <span class="ko-stat-label">{{ card.label }}</span>
-            </div>
-          </div>
-
-          <section class="ko-section">
-            <p class="ko-section-title">按文件数排序</p>
-            <ul class="ko-list">
-              <li v-for="item in ranked" :key="item.id" class="ko-item">
-                <span class="ko-item-name">{{ item.name }}</span>
-                <span class="ko-item-desc">{{ item.description || '—' }}</span>
-                <span class="ko-item-meta">
-                  {{ item.docsCount }} 份 · {{ formatSize(item.sizeBytes) }} · {{ formatTime(item.updatedAt) }}
-                </span>
-              </li>
-              <li v-if="!ranked.length" class="ko-empty">还没有知识库</li>
-            </ul>
-          </section>
-        </div>
-
-        <footer class="ko-footer">
-          <button class="ko-btn" type="button" @click="closeModal">关闭</button>
-        </footer>
+  <ModalShell :visible="visible" width="min(560px, calc(100vw - 48px))" aria-label="知识库概览" @close="closeModal">
+    <template #header>
+      <div>
+        <h2 class="ko-title">知识库概览</h2>
+        <p class="ko-subtitle">文件维度统计；切片与实体随索引能力提供</p>
       </div>
+    </template>
+
+    <div class="ko-body">
+      <div class="ko-cards">
+        <div v-for="card in cards" :key="card.label" class="ko-stat">
+          <span class="ko-stat-value">{{ card.value }}</span>
+          <span class="ko-stat-label">{{ card.label }}</span>
+        </div>
+      </div>
+
+      <section class="ko-section">
+        <p class="ko-section-title">按文件数排序</p>
+        <ul class="ko-list">
+          <li v-for="item in ranked" :key="item.id" class="ko-item">
+            <span class="ko-item-name">{{ item.name }}</span>
+            <span class="ko-item-desc">{{ item.description || '—' }}</span>
+            <span class="ko-item-meta">
+              {{ item.docsCount }} 份 · {{ formatSize(item.sizeBytes) }} · {{ formatTime(item.updatedAt) }}
+            </span>
+          </li>
+          <li v-if="!ranked.length" class="ko-empty">还没有知识库</li>
+        </ul>
+      </section>
     </div>
-  </Transition>
+
+    <template #footer>
+      <button class="ko-btn" type="button" @click="closeModal">关闭</button>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.ko-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.ko-card {
-  display: flex;
-  width: min(560px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.ko-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .ko-title {
   font-size: 15px;
   font-weight: 600;
@@ -157,18 +109,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin-top: 6px;
   font-size: 12px;
   color: var(--kw-color-text-faint);
-}
-
-.ko-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.ko-close:hover {
-  color: var(--kw-color-text);
 }
 
 .ko-body {
@@ -258,11 +198,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: var(--kw-color-text-faint);
 }
 
-.ko-footer {
-  display: flex;
-  padding: 0 24px 20px;
-}
-
 .ko-btn {
   flex: 1;
   padding: 10px;
@@ -280,13 +215,4 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   opacity: 0.92;
 }
 
-.ko-modal-enter-active,
-.ko-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.ko-modal-enter-from,
-.ko-modal-leave-to {
-  opacity: 0;
-}
 </style>

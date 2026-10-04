@@ -44,6 +44,7 @@ describe('ModelService', () => {
       name: 'DeepSeek Chat',
       vendor: 'DeepSeek',
       url: 'https://api.deepseek.com/chat/completions',
+      protocol: 'openai-chat',
       apiKey: 'sk-test',
       supportsToolCall: true,
       supportsImages: false,
@@ -73,6 +74,7 @@ describe('ModelService', () => {
     expect(reloaded.getCredential('deepseek-chat')).toEqual({
       id: 'deepseek-chat',
       name: 'DeepSeek Chat',
+      protocol: 'openai-chat',
       apiKey: 'sk-test',
       url: 'https://api.deepseek.com/chat/completions'
     })

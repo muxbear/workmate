@@ -17,6 +17,8 @@ interface AuthHandlerDeps {
   /** OAuth2 客户端（登出时撤销 refresh token） */
   oauth2Client?: OAuth2ClientService
   secureStorage?: ISecureStorage
+  /** 微信扫码授权窗口（主进程实现，见 services/wechatAuthWindow） */
+  openWeChatAuth?: (authUrl: string, redirectUri: string) => Promise<{ code?: string; error?: string }>
 }
 
 /** 统一的 IPC 结果包裹：成功返回 data，失败返回 { success:false, error } */
@@ -61,6 +63,21 @@ export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void 
       return ok(null)
     } catch (err) {
       return { success: false, error: (err as Error).message }
+    }
+  })
+
+  // 微信扫码授权窗口：打开授权页并等待回跳 code（渲染层拿 code 后走 auth:login-wechat 换登录态）
+  ipc.handle('auth:wechat-open', async (_event, authUrl?: unknown, redirectUri?: unknown) => {
+    if (typeof authUrl !== 'string' || !authUrl || typeof redirectUri !== 'string' || !redirectUri) {
+      return { error: '参数错误' }
+    }
+    if (!deps.openWeChatAuth) {
+      return { error: '微信授权未启用' }
+    }
+    try {
+      return await deps.openWeChatAuth(authUrl, redirectUri)
+    } catch (err) {
+      return { error: (err as Error).message || '微信授权失败' }
     }
   })
 

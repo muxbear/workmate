@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
+import { validateName } from './knowledgeNaming'
 
 /**
  * 通用重命名弹窗（知识库 / 文件夹 / 文件共用）
@@ -46,125 +48,56 @@ watch(
 const limit = computed(() => props.maxlength ?? 60)
 
 function onSubmit(): void {
-  const trimmed = name.value.trim()
-  if (!trimmed) {
-    error.value = '名称不能为空'
+  const nameError = validateName(name.value, { max: limit.value })
+  if (nameError) {
+    error.value = nameError
     return
   }
-  if (trimmed.length > limit.value) {
-    error.value = `名称不能超过 ${limit.value} 个字符`
-    return
-  }
-  if (trimmed.includes('/') || trimmed.includes('\\')) {
-    error.value = '名称不能包含斜杠'
-    return
-  }
-  emit('submit', trimmed)
+  emit('submit', name.value.trim())
   emit('close')
 }
 
 function closeModal(): void {
   emit('close')
 }
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="kr-modal">
-    <div v-if="visible" class="kr-mask" @click.self="closeModal">
-      <div class="kr-card" role="dialog" aria-modal="true" :aria-label="title || '重命名'">
-        <header class="kr-header">
-          <span class="kr-title">{{ title || '重命名' }}</span>
-          <button class="kr-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
+  <ModalShell
+    :visible="visible"
+    :aria-label="title || '重命名'"
+    @close="closeModal"
+  >
+    <template #header>
+      <span class="kr-title">{{ title || '重命名' }}</span>
+    </template>
 
-        <div class="kr-body">
-          <p v-if="hint" class="kr-hint">{{ hint }}</p>
-          <label class="kr-field">
-            <span class="kr-label">{{ label || '名称' }}</span>
-            <input
-              v-model="name"
-              class="kr-input"
-              :maxlength="limit"
-              placeholder="请输入新的名称"
-              @keydown.enter.prevent="onSubmit"
-            />
-          </label>
-          <p v-if="error" class="kr-error">{{ error }}</p>
-        </div>
-
-        <footer class="kr-footer">
-          <button class="kr-btn" type="button" @click="closeModal">取消</button>
-          <button class="kr-btn kr-btn--primary" type="button" @click="onSubmit">保存</button>
-        </footer>
-      </div>
+    <div class="kr-body">
+      <p v-if="hint" class="kr-hint">{{ hint }}</p>
+      <label class="kr-field">
+        <span class="kr-label">{{ label || '名称' }}</span>
+        <input
+          v-model="name"
+          class="kr-input"
+          :maxlength="limit"
+          placeholder="请输入新的名称"
+          @keydown.enter.prevent="onSubmit"
+        />
+      </label>
+      <p v-if="error" class="kr-error">{{ error }}</p>
     </div>
-  </Transition>
+
+    <template #footer>
+      <button class="kr-btn" type="button" @click="closeModal">取消</button>
+      <button class="kr-btn kr-btn--primary" type="button" @click="onSubmit">保存</button>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.kr-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.kr-card {
-  width: min(440px, calc(100vw - 48px));
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.kr-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .kr-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-.kr-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.kr-close:hover {
   color: var(--kw-color-text);
 }
 
@@ -215,12 +148,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: #cf625b;
 }
 
-.kr-footer {
-  display: flex;
-  gap: 8px;
-  padding: 0 24px 20px;
-}
-
 .kr-btn {
   flex: 1;
   padding: 10px;
@@ -253,25 +180,5 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   background: var(--kw-color-brand);
   color: var(--kw-color-on-accent);
   opacity: 0.92;
-}
-
-.kr-modal-enter-active,
-.kr-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.kr-modal-enter-active .kr-card,
-.kr-modal-leave-active .kr-card {
-  transition: transform 0.2s;
-}
-
-.kr-modal-enter-from,
-.kr-modal-leave-to {
-  opacity: 0;
-}
-
-.kr-modal-enter-from .kr-card,
-.kr-modal-leave-to .kr-card {
-  transform: scale(0.92);
 }
 </style>

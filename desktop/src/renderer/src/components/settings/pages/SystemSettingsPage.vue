@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { showToast } from '@renderer/composables/useToast'
 import SettingToggle from '../SettingToggle.vue'
 import BrandMark from '../../brand/BrandMark.vue'
 import {
@@ -66,16 +67,7 @@ const logoPreview = computed(() => logoPreviewSrc(logoDraft.value, settingsStore
 /** 「恢复默认」可见性：还有已存自定义 LOGO，或刚选了新文件（可退回默认）时才显示 */
 const canResetLogo = computed(() => showsResetLogo(logoDraft.value, settingsStore.hasCustomLogo))
 
-/** 保存反馈 toast（设置窗口无全局 toast 组件，「知识库设置」页同款局部实现） */
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(text: string): void {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toast.value = ''
-  }, 1800)
-}
+/** 保存反馈：全局 toast（composables/useToast，由 App 的 ToastHost 统一渲染） */
 
 /** 替换 LOGO 草稿：先释放上一个本地预览地址，避免 objectURL 泄漏 */
 function setLogoDraft(next: LogoDraft): void {
@@ -628,15 +620,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- 保存反馈 -->
-    <Transition name="s-toast">
-      <div
-        v-if="toast"
-        class="s-toast"
-      >
-        {{ toast }}
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -712,34 +695,6 @@ onUnmounted(() => {
 .s-brand-footer .s-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-/* ── 保存反馈 toast（与「知识库设置」页同款局部实现，设置窗口无全局 toast）── */
-.s-toast {
-  position: fixed;
-  bottom: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #2c3337;
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: 999px;
-  font-size: 14px;
-  z-index: 9999;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.s-toast-enter-active,
-.s-toast-leave-active {
-  transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
-}
-
-.s-toast-enter-from,
-.s-toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
 }
 
 .s-select--lang {

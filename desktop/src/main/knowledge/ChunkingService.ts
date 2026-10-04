@@ -64,7 +64,55 @@ export interface ChunkResult {
   warning?: string
 }
 
+/** 策略分派上下文（由 split 骨架传入的固定参数） */
+interface SplitContext {
+  text: string
+  chunkSize: number
+  chunkOverlap: number
+  embedSentences?: (sentences: string[]) => Promise<Float32Array[]>
+}
+
+/** 策略输出：块 + 可选降级告警（由骨架汇总进 ChunkResult.warning） */
+interface SplitOutcome {
+  chunks: KnowledgeChunk[]
+  warning?: string
+}
+
+type SplitFn = (ctx: SplitContext) => SplitOutcome | Promise<SplitOutcome>
+
 export class ChunkingService {
+  /**
+   * 策略注册表：`split` 只负责固定骨架（归一化 → 钳制/告警 → 分派 → 索引重排），
+   * 各策略实现独立注册。`satisfies` 保证新增策略漏注册即编译错误。
+   */
+  private readonly strategies = {
+    recursive: async (ctx: SplitContext): Promise<SplitOutcome> => ({
+      chunks: await this.splitRecursive(ctx.text, ctx.chunkSize, ctx.chunkOverlap)
+    }),
+    fixed: (ctx: SplitContext): SplitOutcome => ({
+      chunks: this.splitFixed(ctx.text, ctx.chunkSize, ctx.chunkOverlap)
+    }),
+    markdown: async (ctx: SplitContext): Promise<SplitOutcome> => ({
+      chunks: await this.splitMarkdown(ctx.text, ctx.chunkSize, ctx.chunkOverlap)
+    }),
+    semantic: async (ctx: SplitContext): Promise<SplitOutcome> => {
+      if (!ctx.embedSentences) {
+        return {
+          chunks: await this.splitRecursive(ctx.text, ctx.chunkSize, ctx.chunkOverlap),
+          warning: '未配置嵌入端点，语义切片降级为递归切片'
+        }
+      }
+      return {
+        chunks: await this.splitSemantic(
+          ctx.text,
+          ctx.chunkSize,
+          ctx.chunkOverlap,
+          ctx.embedSentences
+        )
+      }
+    }
+  } satisfies Record<KnowledgeChunkStrategy, SplitFn>
+
   async split(text: string, options: ChunkOptions): Promise<ChunkResult> {
     const normalized = normalizeText(text)
     if (!normalized.trim()) return { chunks: [] }
@@ -77,27 +125,17 @@ export class ChunkingService {
       warnings.push(`重叠(${options.chunkOverlap})不小于块长(${chunkSize})，已钳制为 ${chunkOverlap}`)
     }
 
-    let chunks: KnowledgeChunk[]
-    switch (options.strategy) {
-      case 'fixed':
-        chunks = this.splitFixed(normalized, chunkSize, chunkOverlap)
-        break
-      case 'markdown':
-        chunks = await this.splitMarkdown(normalized, chunkSize, chunkOverlap)
-        break
-      case 'semantic':
-        if (!options.embedSentences) {
-          warnings.push('未配置嵌入端点，语义切片降级为递归切片')
-          chunks = await this.splitRecursive(normalized, chunkSize, chunkOverlap)
-        } else {
-          chunks = await this.splitSemantic(normalized, chunkSize, chunkOverlap, options.embedSentences)
-        }
-        break
-      case 'recursive':
-      default:
-        chunks = await this.splitRecursive(normalized, chunkSize, chunkOverlap)
-        break
-    }
+    // 兼容存量脏数据：未知策略名按 recursive 兜底（与原 switch 的 default 分支一致）
+    const splitFn =
+      (this.strategies as Record<string, SplitFn>)[options.strategy] ?? this.strategies.recursive
+    const outcome = await splitFn({
+      text: normalized,
+      chunkSize,
+      chunkOverlap,
+      embedSentences: options.embedSentences
+    })
+    const chunks = outcome.chunks
+    if (outcome.warning) warnings.push(outcome.warning)
 
     // 统一重排 chunk.index（0 起连续），保证 (doc_id, chunk_index) 唯一
     chunks.forEach((chunk, index) => {

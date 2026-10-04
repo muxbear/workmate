@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import ModalShell from '@components/ModalShell.vue'
 import { useModelStore } from '@store/models'
 import type { CustomModel, ModelProtocol } from '../../../../../preload/index.d'
 import ProviderLogo from './ProviderLogo.vue'
@@ -194,51 +195,14 @@ const saveModel = async (): Promise<void> => {
 </script>
 
 <template>
-  <Transition name="am-modal">
-    <div
-      v-if="visible"
-      class="am-mask"
-      @click.self="closeModal"
-    >
-      <div class="am-card">
-        <!-- 头部 -->
-        <div class="am-header">
-          <div class="am-header-left">
-            <h2 class="am-title">
-              {{ editing ? '编辑模型' : '添加模型' }}
-            </h2>
-            <span class="am-badge">支持 OpenAI Chat / Response 与 Anthropic</span>
-          </div>
-          <button
-            class="am-close"
-            aria-label="关闭添加模型"
-            @click="closeModal"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <line
-                x1="18"
-                y1="6"
-                x2="6"
-                y2="18"
-              />
-              <line
-                x1="6"
-                y1="6"
-                x2="18"
-                y2="18"
-              />
-            </svg>
-          </button>
-        </div>
+  <ModalShell :visible="visible" width="700px" aria-label="添加模型" footer-bordered @close="closeModal">
+    <template #header>
+      <div class="am-header-left">
+        <h2 class="am-title">{{ editing ? '编辑模型' : '添加模型' }}</h2>
+        <span class="am-badge">支持 OpenAI Chat / Response 与 Anthropic</span>
+      </div>
+    </template>
+
 
         <!-- 表单 -->
         <div class="am-body">
@@ -522,57 +486,21 @@ const saveModel = async (): Promise<void> => {
         </div>
 
         <!-- 底部 -->
-        <div class="am-footer">
-          <button
-            class="am-btn-cancel"
-            @click="closeModal"
-          >
-            取消
-          </button>
-          <button
-            class="am-btn-save"
-            :disabled="saving"
-            @click="saveModel"
-          >
-            {{ saving ? '保存中…' : '保存' }}
-          </button>
-        </div>
+
+    <template #footer>
+      <div class="am-footer-actions">
+        <button class="am-btn-cancel" @click="closeModal">取消</button>
+        <button class="am-btn-save" :disabled="saving" @click="saveModel">
+          {{ saving ? '保存中…' : '保存' }}
+        </button>
       </div>
-    </div>
-  </Transition>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
 /* ═══════════════════ 添加模型弹窗（对齐 Figma 设计稿精确规格） ═══════════════════ */
-.am-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(2, 6, 23, 0.35);
-}
-
-.am-card {
-  width: 100%;
-  max-width: 700px;
-  background: var(--kw-color-surface);
-  border-radius: 16px;
-  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.24);
-  overflow: hidden;
-}
-
 /* 头部 */
-.am-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid #e8eaeb;
-}
-
 .am-header-left {
   display: flex;
   align-items: center;
@@ -591,23 +519,6 @@ const saveModel = async (): Promise<void> => {
   background: #f6f7f8;
   font-size: 14px;
   color: #5e666c;
-}
-
-.am-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: #59636b;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.am-close:hover {
-  background: #f2f4f4;
 }
 
 /* 表单 */
@@ -941,14 +852,6 @@ const saveModel = async (): Promise<void> => {
 }
 
 /* 底部按钮 */
-.am-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 24px;
-  border-top: 1px solid #e8eaeb;
-}
-
 .am-btn-cancel {
   padding: 8px 20px;
   border: 1px solid #dfe3e4;
@@ -984,25 +887,6 @@ const saveModel = async (): Promise<void> => {
 }
 
 /* 弹层动画（对齐设置窗口：遮罩 0.18s 淡入，卡片回弹缩放） */
-.am-modal-enter-active,
-.am-modal-leave-active {
-  transition: opacity 0.18s ease;
-}
-
-.am-modal-enter-active .am-card,
-.am-modal-leave-active .am-card {
-  transition: transform 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
-}
-
-.am-modal-enter-from,
-.am-modal-leave-to {
-  opacity: 0;
-}
-
-.am-modal-enter-from .am-card,
-.am-modal-leave-to .am-card {
-  transform: scale(0.98) translateY(10px);
-}
 
 /* 模型下拉展开动画 */
 .dropdown-enter-active,
@@ -1016,5 +900,10 @@ const saveModel = async (): Promise<void> => {
 .dropdown-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+.am-footer-actions {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
 }
 </style>

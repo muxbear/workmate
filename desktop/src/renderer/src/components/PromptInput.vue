@@ -31,11 +31,13 @@ export interface PromptPayload {
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { showToast } from '@renderer/composables/useToast'
 import { useCatalogStore, type CatalogTab, type Mode, type SkillItem } from '@store/catalog'
 import { useWorkspaceStore } from '@store/workspace'
 import { useModelStore } from '@store/models'
 import { useSettingsStore } from '@store/settings'
 import PlusMenu from './PlusMenu.vue'
+import ModalShell from './ModalShell.vue'
 import type { MessagePart } from '../../../preload/index.d'
 import {
   MAX_ATTACH_FILES,
@@ -663,16 +665,7 @@ const cancelFullAccess = (): void => {
   showPermConfirm.value = false
 }
 
-// ── 轻量 toast（文件校验 / 改写失败的即时提示） ──
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-const showToast = (text: string): void => {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toast.value = ''
-  }, 1800)
-}
+// ── 轻量提示：全局 toast（composables/useToast，由 App 的 ToastHost 渲染） ──
 
 // ── 提交 ──
 /** 组装输入快照（正文 + 文件段 + 选中模型 / 专家 / 模式 / 工作空间 / 权限） */
@@ -785,7 +778,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', handleDocumentClick)
-  if (toastTimer) clearTimeout(toastTimer)
   // 卸载时丢弃未提交草稿的技能勾选，避免污染下一次挂载（弹窗 / 欢迎态输入框不复用）
   if (props.cleanupOnUnmount && taskInput.value.trim()) catalog.clearSkills()
 })
@@ -1210,31 +1202,17 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <!-- 允许完全访问风险确认 Modal -->
-    <Transition name="modal">
-      <div v-if="showPermConfirm" class="perm-mask" @click.self="cancelFullAccess">
-        <div class="perm-confirm-card">
-          <div class="perm-confirm-header">
-            <span>开启允许完全访问</span>
-            <button
-              class="perm-confirm-close"
-              type="button"
-              aria-label="关闭"
-              @click="cancelFullAccess"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
+    <ModalShell
+      :visible="showPermConfirm"
+      width="420px"
+      :z-index="200"
+      aria-label="开启允许完全访问"
+      @close="cancelFullAccess"
+    >
+      <template #header>
+        <span>开启允许完全访问</span>
+      </template>
+
           <div class="perm-confirm-body">
             <p class="perm-confirm-message">
               开启允许完全访问后，AI
@@ -1245,7 +1223,8 @@ onBeforeUnmount(() => {
               <span>我已了解风险，并愿意继续</span>
             </label>
           </div>
-          <div class="perm-confirm-footer">
+
+      <template #footer>
             <button
               class="perm-confirm-btn perm-confirm-btn--cancel"
               type="button"
@@ -1261,31 +1240,20 @@ onBeforeUnmount(() => {
             >
               允许完全访问
             </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+      </template>
+    </ModalShell>
     <!-- 新建工作空间 Modal -->
-    <Transition name="modal">
-      <div v-if="showCreateModal" class="ws-modal-mask" @click.self="showCreateModal = false">
-        <div class="ws-modal-card">
-          <div class="ws-modal-header">
-            <span>新建工作空间</span>
-            <button class="ws-modal-close" aria-label="关闭" @click="showCreateModal = false">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
+    <ModalShell
+      :visible="showCreateModal"
+      width="360px"
+      :z-index="200"
+      aria-label="新建工作空间"
+      @close="showCreateModal = false"
+    >
+      <template #header>
+        <span>新建工作空间</span>
+      </template>
+
           <div class="ws-modal-body">
             <label class="ws-modal-label" for="prompt-ws-create-name">工作空间名称</label>
             <input
@@ -1299,7 +1267,8 @@ onBeforeUnmount(() => {
             <p v-if="createError" class="ws-modal-error">{{ createError }}</p>
             <p class="ws-modal-hint">将在系统家目录的 KeWork/ 下创建同名文件夹</p>
           </div>
-          <div class="ws-modal-footer">
+
+      <template #footer>
             <button class="ws-modal-btn ws-modal-btn--cancel" @click="showCreateModal = false">
               取消
             </button>
@@ -1310,15 +1279,9 @@ onBeforeUnmount(() => {
             >
               创建
             </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+      </template>
+    </ModalShell>
 
-    <!-- 轻量提示 -->
-    <Transition name="dropdown">
-      <div v-if="toast" class="input-toast">{{ toast }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -1868,51 +1831,6 @@ onBeforeUnmount(() => {
 }
 
 /* 风险确认弹窗 */
-.perm-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
-.perm-confirm-card {
-  width: 420px;
-  background: var(--kw-color-surface);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-  overflow: hidden;
-}
-
-.perm-confirm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px 12px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-.perm-confirm-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.perm-confirm-close:hover {
-  background: var(--kw-color-bg-muted);
-}
-
 .perm-confirm-body {
   padding: 0 20px 12px;
 }
@@ -1942,13 +1860,6 @@ onBeforeUnmount(() => {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-}
-
-.perm-confirm-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 12px 20px 16px;
 }
 
 .perm-confirm-btn {
@@ -2098,51 +2009,6 @@ onBeforeUnmount(() => {
 }
 
 /* 新建工作空间弹窗 */
-.ws-modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
-.ws-modal-card {
-  width: 360px;
-  background: var(--kw-color-surface);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-  overflow: hidden;
-}
-
-.ws-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px 12px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-.ws-modal-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.ws-modal-close:hover {
-  background: var(--kw-color-bg-muted);
-}
-
 .ws-modal-body {
   padding: 0 20px 8px;
   display: flex;
@@ -2187,13 +2053,6 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 11px;
   color: var(--kw-color-text-subtle);
-}
-
-.ws-modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 12px 20px 16px;
 }
 
 .ws-modal-btn {
@@ -2252,32 +2111,7 @@ onBeforeUnmount(() => {
 }
 
 /* 轻量提示 */
-.input-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
 /* 过渡动画 */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition:

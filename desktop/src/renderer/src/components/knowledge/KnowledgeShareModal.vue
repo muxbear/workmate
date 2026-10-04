@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
 import { useKnowledgeStore } from '../../store/knowledge'
 
 /**
@@ -94,105 +95,53 @@ function closeModal(): void {
   emit('close')
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="ksh-modal">
-    <div v-if="visible" class="ksh-mask" @click.self="closeModal">
-      <div class="ksh-card" role="dialog" aria-modal="true" aria-label="创建共享">
-        <header class="ksh-header">
-          <div>
-            <h2 class="ksh-title">创建共享</h2>
-            <p class="ksh-subtitle">{{ kindLabel }}「{{ targetName }}」</p>
-          </div>
-          <button class="ksh-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
-
-        <div class="ksh-body">
-          <p class="ksh-hint">
-            拿到链接的成员可以查看并下载该{{ kindLabel }}中的内容，随时都能在共享列表里取消。
-          </p>
-          <p v-if="error" class="ksh-error">{{ error }}</p>
-          <label class="ksh-field">
-            <span class="ksh-label">共享链接</span>
-            <div class="ksh-link-row">
-              <input
-                v-model="link"
-                class="ksh-input"
-                readonly
-                :placeholder="creating ? '生成中…' : '链接生成失败'"
-              />
-              <button class="ksh-copy" type="button" @click="copyLink">
-                {{ copied ? '已复制' : '复制' }}
-              </button>
-            </div>
-          </label>
-        </div>
-
-        <footer class="ksh-footer">
-          <button class="ksh-btn" type="button" @click="closeModal">取消</button>
-          <button
-            class="ksh-btn ksh-btn--primary"
-            type="button"
-            :disabled="creating || !link"
-            @click="onConfirm"
-          >
-            创建共享
-          </button>
-        </footer>
+  <ModalShell :visible="visible" width="min(460px, calc(100vw - 48px))" aria-label="创建共享" @close="closeModal">
+    <template #header>
+      <div>
+        <h2 class="ksh-title">创建共享</h2>
+        <p class="ksh-subtitle">{{ kindLabel }}「{{ targetName }}」</p>
       </div>
+    </template>
+
+    <div class="ksh-body">
+      <p class="ksh-hint">
+        拿到链接的成员可以查看并下载该{{ kindLabel }}中的内容，随时都能在共享列表里取消。
+      </p>
+      <p v-if="error" class="ksh-error">{{ error }}</p>
+      <label class="ksh-field">
+        <span class="ksh-label">共享链接</span>
+        <div class="ksh-link-row">
+          <input
+            v-model="link"
+            class="ksh-input"
+            readonly
+            :placeholder="creating ? '生成中…' : '链接生成失败'"
+          />
+          <button class="ksh-copy" type="button" @click="copyLink">
+            {{ copied ? '已复制' : '复制' }}
+          </button>
+        </div>
+      </label>
     </div>
-  </Transition>
+
+    <template #footer>
+      <button class="ksh-btn" type="button" @click="closeModal">取消</button>
+      <button
+        class="ksh-btn ksh-btn--primary"
+        type="button"
+        :disabled="creating || !link"
+        @click="onConfirm"
+      >
+        创建共享
+      </button>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.ksh-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.ksh-card {
-  width: min(460px, calc(100vw - 48px));
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.ksh-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .ksh-title {
   margin: 0;
   font-size: 14px;
@@ -204,18 +153,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--kw-color-text-muted);
-}
-
-.ksh-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.ksh-close:hover {
-  color: var(--kw-color-text);
 }
 
 .ksh-body {
@@ -288,12 +225,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: var(--kw-color-brand);
 }
 
-.ksh-footer {
-  display: flex;
-  gap: 8px;
-  padding: 0 24px 20px;
-}
-
 .ksh-btn {
   flex: 1;
   padding: 10px;
@@ -324,23 +255,4 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   opacity: 0.92;
 }
 
-.ksh-modal-enter-active,
-.ksh-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.ksh-modal-enter-active .ksh-card,
-.ksh-modal-leave-active .ksh-card {
-  transition: transform 0.2s;
-}
-
-.ksh-modal-enter-from,
-.ksh-modal-leave-to {
-  opacity: 0;
-}
-
-.ksh-modal-enter-from .ksh-card,
-.ksh-modal-leave-to .ksh-card {
-  transform: scale(0.92);
-}
 </style>

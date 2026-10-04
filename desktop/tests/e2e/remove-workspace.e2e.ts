@@ -95,7 +95,7 @@ describe('E2E 移除工作空间确认与级联删除', () => {
     await page.waitForTimeout(800)
     await page.locator('[data-workspace-menu-trigger]').click()
     await page.getByText('新建工作空间').click()
-    await page.locator('#ws-create-name').fill(wsName)
+    await page.locator('#prompt-ws-create-name').fill(wsName)
     await page.getByRole('button', { name: '创建', exact: true }).click()
     await page
       .locator('[data-workspace-menu-trigger]')
@@ -116,13 +116,13 @@ describe('E2E 移除工作空间确认与级联删除', () => {
     await openSpaceMenu(group)
     await page.getByRole('button', { name: '从列表中删除' }).click()
     // 确认框出现且文案含任务数与「确认移除？」
-    await page.locator('.confirm-mask').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'visible', timeout: 5_000 })
     const message = (await page.locator('.confirm-message').textContent()) ?? ''
     expect(message).toContain('2 个任务')
     expect(message).toContain('确认移除？')
     // 点取消 → 确认框关闭，空间与会话仍在
     await page.locator('.confirm-btn--cancel').click()
-    await page.locator('.confirm-mask').waitFor({ state: 'hidden', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'hidden', timeout: 5_000 })
     expect(await page.locator('.space-group').filter({ hasText: wsName }).count()).toBe(1)
     expect(await page.locator('.space-chat').count()).toBe(before)
   }, 90_000)
@@ -132,7 +132,7 @@ describe('E2E 移除工作空间确认与级联删除', () => {
     const group = page.locator('.space-group').filter({ hasText: wsName })
     await openSpaceMenu(group)
     await page.getByRole('button', { name: '从列表中删除' }).click()
-    await page.locator('.confirm-mask').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'visible', timeout: 5_000 })
     await page.locator('.confirm-btn--danger').click()
     // 轮询等待删除完成：空间组消失 + 会话数减少 2
     await expect

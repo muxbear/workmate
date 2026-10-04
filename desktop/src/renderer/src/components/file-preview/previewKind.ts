@@ -63,6 +63,33 @@ const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', '
 const VIDEO_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'avi'])
 const PDF_EXTS = new Set(['pdf'])
 const WORD_EXTS = new Set(['doc', 'docx'])
+const HTML_EXTS = new Set(['html', 'htm'])
+
+/**
+ * 由内嵌浏览器直接打开的文件类型（ChatSidePanel 工作空间文件的路由依据：
+ * 命中走 BrowserPanel，其余走 FilePreviewPane）。
+ */
+const BROWSER_EXTS = new Set([
+  ...HTML_EXTS,
+  'svg',
+  'pdf',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp'
+])
+
+/** 是否 HTML 类文件（流式产物完成后切浏览器渲染的判定） */
+export function isHtmlFile(name: string): boolean {
+  return HTML_EXTS.has(getFileExt(name))
+}
+
+/** 是否优先用内嵌浏览器预览 */
+export function prefersBrowserPreview(name: string): boolean {
+  return BROWSER_EXTS.has(getFileExt(name))
+}
 
 /** 取小写扩展名（不带点）；无扩展名返回空串 */
 export function getFileExt(name: string): string {

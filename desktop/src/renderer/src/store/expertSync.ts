@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { nextTick, ref } from 'vue'
+import { registerResettable } from './sessionReset'
 import type { ExpertSyncStats, WebUser } from '../../../preload/index.d'
 import { useCatalogStore } from './catalog'
 
@@ -173,3 +174,6 @@ export const useExpertSyncStore = defineStore('expertSync', () => {
     resetLocal
   }
 })
+
+// 登出 / 会话失效时重置本域（session-reset 注册表；惰性取实例）
+registerResettable(() => useExpertSyncStore().resetLocal())

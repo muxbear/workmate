@@ -29,6 +29,7 @@ import { WorkModeStore } from './mode/work-mode'
 import { DataSourceFactory } from './database/DataSourceFactory'
 import { AuthService } from './services/AuthService'
 import { SessionService } from './services/SessionService'
+import { openWeChatAuthWindow } from './services/wechatAuthWindow'
 import { ElectronSafeStorage } from './security/secure-storage'
 import { registerAuthHandlers } from './ipc/auth-handlers'
 import { AgentManager } from './agent/AgentManager'
@@ -255,8 +256,19 @@ app.whenReady().then(() => {
   const dataDir = getDataDirectory()
   migrateLegacyConfigFiles(dataDir.getBaseDir())
 
+  // ── 初始化安全存储与 JWT 密钥（提前构造：系统设置需要把密钥类配置路由到安全存储）──
+  const secureStorage = new ElectronSafeStorage(
+    join(dataDir.getBaseDir(), 'secrets.bin'),
+    safeStorage
+  )
+  let jwtSecret = secureStorage.get('jwt-secret')
+  if (!jwtSecret) {
+    jwtSecret = randomBytes(32).toString('hex')
+    secureStorage.set('jwt-secret', jwtSecret)
+  }
+
   // 系统设置存储：提前构造，供 OAuth 回调页等主进程侧品牌展示读取系统名称
-  const settingsStore = new SettingsStore(dataDir.getBaseDir())
+  const settingsStore = new SettingsStore(dataDir.getBaseDir(), secureStorage)
   /** 当前系统名称（主进程侧读取；设置缺失/异常时回退默认值） */
   const readSystemName = (): string => {
     const name = settingsStore.get('ui.systemName')
@@ -283,20 +295,11 @@ app.whenReady().then(() => {
   })
   dataSourceFactory.setMode(mode)
 
-  // ── 初始化安全存储与 JWT 密钥 ──
-  const secureStorage = new ElectronSafeStorage(
-    join(dataDir.getBaseDir(), 'secrets.bin'),
-    safeStorage
-  )
-  let jwtSecret = secureStorage.get('jwt-secret')
-  if (!jwtSecret) {
-    jwtSecret = randomBytes(32).toString('hex')
-    secureStorage.set('jwt-secret', jwtSecret)
-  }
-
   // ── 初始化认证服务与会话 ──
+  // 登录凭据校验始终走本地 users 表（与工作模式无关）：云端身份经 OAuth2 关联本地账号；
+  // CloudAuthRepository 的用户查询为空实现，若按模式注入会导致 cloud 模式登录必然失败
   const authService = new AuthService({
-    repository: dataSourceFactory.createAuthRepository(),
+    repository: dataSourceFactory.createLocalAuthRepository(),
     localAuthRepository: dataSourceFactory.createLocalAuthRepository(),
     jwtSecret,
     secureStorage
@@ -363,7 +366,8 @@ app.whenReady().then(() => {
       knowledgeTools: () => ({
         retrievalProvider: () => retrievalService,
         listBases: (userId) =>
-          knowledgeStore.listBases(userId).map((row) => ({
+          // 经门面取数（不再直连 knowledgeStore；工厂延迟执行，构造顺序无碍）
+          knowledgeService.listBases(userId).map((row) => ({
             id: row.id,
             name: row.name,
             docsCount: row.docsCount,
@@ -454,7 +458,8 @@ app.whenReady().then(() => {
     cancelAllAgents,
     onLogout: cleanupBrowserOnLogout,
     oauth2Client,
-    secureStorage
+    secureStorage,
+    openWeChatAuth: openWeChatAuthWindow
   })
 
   // ── 注册会话 IPC（基于 LangGraph checkpointer 的会话读写；自定义标题落本地业务表）──
@@ -892,11 +897,16 @@ app.whenReady().then(() => {
     // 自动化任务在后台运行：只复用已授予的凭据，绝不触发交互式授权（McpTokenProvider 不弹窗）
     {
       mcpAuth,
+      // 技能挂载与交互式同源：任务按技能 id 引用时经 resolveSkillDirs 解析为目录名，
+      // 缺失该项会导致技能 id 被当作目录名直拼、整链静默失效
+      skillsDir: dataDir.getDir('skills'),
+      resolveSkillDirs: async (ids) => skillInstallService.resolveDirNames(ids),
       // 后台任务同样需要知识库检索工具（contextMode = knowledge 时由提示词引导调用）
       knowledgeTools: () => ({
         retrievalProvider: () => retrievalService,
         listBases: (userId) =>
-          knowledgeStore.listBases(userId).map((row) => ({
+          // 经门面取数（不再直连 knowledgeStore；工厂延迟执行，构造顺序无碍）
+          knowledgeService.listBases(userId).map((row) => ({
             id: row.id,
             name: row.name,
             docsCount: row.docsCount,
@@ -905,7 +915,9 @@ app.whenReady().then(() => {
       })
     }
   )
-  void automationAgentManager.init(mode)
+  void automationAgentManager
+    .init(mode)
+    .catch((err) => console.error('[main] automation agent init failed:', err))
   const automationRunner = new AutomationRunner({
     tasks: automationRepository,
     runs: automationRunRepository,
@@ -916,7 +928,8 @@ app.whenReady().then(() => {
     agentManager: automationAgentManager,
     resolveExperts: async () => (await expertSyncService.loadLocal())?.experts ?? [],
     listKnowledgeBases: (userId) =>
-      knowledgeStore.listBases(userId).map((row) => ({
+      // 经门面取数（不再直连 knowledgeStore；工厂延迟执行，构造顺序无碍）
+      knowledgeService.listBases(userId).map((row) => ({
         id: row.id,
         name: row.name,
         docsCount: row.docsCount

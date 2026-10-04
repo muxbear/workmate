@@ -47,6 +47,7 @@ const validInput = {
   name: 'gpt-4o',
   vendor: 'DeepSeek',
   url: 'https://api.deepseek.com/chat/completions',
+  protocol: 'openai-chat',
   apiKey: 'sk-test'
 }
 

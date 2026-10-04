@@ -184,7 +184,6 @@ export interface AuthAPI {
   loginByWechat(code: string): Promise<IpcResult<AuthResult>>
   loginByOAuth2(): Promise<IpcResult<OAuth2LoginResponse>>
   confirmOAuth2Link(action: OAuth2LoginAction): Promise<IpcResult<OAuth2LoginResponse>>
-  getOAuth2Status(): Promise<IpcResult<OAuth2StatusResponse>>
   logout(account: string): Promise<IpcResult<null>>
 }
 

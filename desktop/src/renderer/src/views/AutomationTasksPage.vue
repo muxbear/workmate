@@ -604,8 +604,10 @@ onBeforeUnmount(() => {
                       ></span
                     >
                     <div class="task-status">
-                      <span class="status-dot status-dot--green"></span>
-                      运行中
+                      <span
+                        :class="['status-dot', task.enabled ? 'status-dot--green' : 'status-dot--paused']"
+                      ></span>
+                      {{ task.enabled ? '运行中' : '已暂停' }}
                     </div>
                     <div class="task-actions">
                       <button
@@ -1262,6 +1264,9 @@ onBeforeUnmount(() => {
 
 .status-dot--green {
   background: #10b981;
+}
+.status-dot--paused {
+  background: #9ca3af;
 }
 .logs-header {
   display: flex;

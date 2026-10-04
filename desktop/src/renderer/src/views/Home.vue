@@ -18,7 +18,7 @@ import { useWorkspaceStore } from '@renderer/store/workspace'
 import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
 import { useSkillSyncStore } from '@renderer/store/skillSync'
 import { useExpertSyncStore } from '@renderer/store/expertSync'
-import { useAutomationTemplateSyncStore } from '@renderer/store/automationTemplateSync'
+import { resetUserSession } from '@renderer/store/sessionReset'
 import type { ThemeName } from '@renderer/store/settings'
 import type { NavIconName } from '../components/navIcon'
 import type { Conversation } from '@renderer/store/agent'
@@ -31,7 +31,6 @@ const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
 const skillSyncStore = useSkillSyncStore()
 const expertSyncStore = useExpertSyncStore()
-const automationTemplateSyncStore = useAutomationTemplateSyncStore()
 
 // ── 当前登录用户展示 ──
 /** 显示名：用户名 → 手机号 → 兜底文案 */
@@ -408,10 +407,8 @@ const handleLogout = async (): Promise<void> => {
     showLogoutConfirm.value = false
     userMenuOpen.value = false
     userStore.logout() // 清渲染层 pinia + localStorage
-    skillSyncStore.resetLocal() // 清 Web 技能同步状态，避免切换账号残留
-    expertSyncStore.resetLocal() // 清 Web 专家同步状态与本地列表，避免切换账号残留
-    automationTemplateSyncStore.resetLocal() // 清 Web 定时模板同步状态与本地列表
-    workspaceStore.reset() // 清工作空间列表/选中态，防切换账号残留
+    // 清各域残留状态（技能/专家/模板同步、工作空间等，注册表统一收敛，防切换账号残留）
+    resetUserSession()
     await router.push('/') // 此时主进程 session 已清，守卫放行至登录页
   } catch (err: unknown) {
     // 主进程登出失败：保留本地登录态并提示，避免被守卫弹回 /home 的残缺态

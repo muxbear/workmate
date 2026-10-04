@@ -96,11 +96,11 @@ describe('E2E 删除任务确认对话框', () => {
     await openChatMenu()
     await page.getByRole('button', { name: '删除任务' }).click()
     // 确认框出现且文案正确
-    await page.locator('.confirm-mask').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'visible', timeout: 5_000 })
     expect((await page.locator('.confirm-message').textContent())?.trim()).toBe(CONFIRM_MESSAGE)
     // 点取消 → 确认框关闭，会话仍在
     await page.locator('.confirm-btn--cancel').click()
-    await page.locator('.confirm-mask').waitFor({ state: 'hidden', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'hidden', timeout: 5_000 })
     expect(await page.locator('.space-chat').count()).toBe(before)
   }, 90_000)
 
@@ -108,10 +108,10 @@ describe('E2E 删除任务确认对话框', () => {
     const before = await page.locator('.space-chat').count()
     await openChatMenu()
     await page.getByRole('button', { name: '删除任务' }).click()
-    await page.locator('.confirm-mask').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'visible', timeout: 5_000 })
     await page.locator('.confirm-btn--danger').click()
     // 确认框关闭，会话减少一个（轮询等待删除完成，避免固定延时 flake）
-    await page.locator('.confirm-mask').waitFor({ state: 'hidden', timeout: 5_000 })
+    await page.locator('.ms-mask').waitFor({ state: 'hidden', timeout: 5_000 })
     await expect
       .poll(() => page.locator('.space-chat').count(), { timeout: 5_000 })
       .toBe(before - 1)

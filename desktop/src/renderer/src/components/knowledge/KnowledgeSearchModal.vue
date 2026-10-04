@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import ModalShell from '../ModalShell.vue'
 import { useKnowledgeStore } from '../../store/knowledge'
 import type { KnowledgeSearchResult } from '../../../../preload/index.d'
 
@@ -76,12 +77,7 @@ function closeModal(): void {
   emit('close')
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && visible.value) closeModal()
-}
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 /** 阶段名（与主进程 RetrievalDebugStage 对齐） */
 const STAGE_LABELS: Record<string, string> = {
@@ -145,30 +141,16 @@ function snippet(content: string): string {
 </script>
 
 <template>
-  <Transition name="ks-modal">
-    <div v-if="visible" class="ks-mask" @click.self="closeModal">
-      <div class="ks-card" role="dialog" aria-modal="true" aria-label="检索调试">
-        <header class="ks-header">
+<ModalShell :visible="visible" width="min(720px, calc(100vw - 48px))" aria-label="检索调试" max-height="min(82vh, 760px)" footer-bordered @close="closeModal">
+    <template #header>
+
           <div class="ks-heading">
             <h2 class="ks-title">检索调试</h2>
             <p class="ks-subtitle">
               {{ libraryName || '知识库' }} · 各路分数与阶段耗时可观测（只读，不影响索引）
             </p>
           </div>
-          <button class="ks-close" type="button" aria-label="关闭" @click="closeModal">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
+    </template>
 
         <div class="ks-body">
           <div class="ks-form">
@@ -280,48 +262,13 @@ function snippet(content: string): string {
           </template>
         </div>
 
-        <footer class="ks-footer">
+    <template #footer>
           <button class="ks-btn" type="button" @click="closeModal">关闭</button>
-        </footer>
-      </div>
-    </div>
-  </Transition>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.ks-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-}
-
-.ks-card {
-  display: flex;
-  flex-direction: column;
-  width: min(720px, calc(100vw - 48px));
-  max-height: min(82vh, 760px);
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--kw-color-border-brand);
-  background: var(--kw-color-surface);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-
-.ks-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--kw-color-border-brand);
-}
-
 .ks-heading {
   min-width: 0;
 }
@@ -337,18 +284,6 @@ function snippet(content: string): string {
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--kw-color-text-muted);
-}
-
-.ks-close {
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-}
-
-.ks-close:hover {
-  color: var(--kw-color-text);
 }
 
 .ks-body {
@@ -603,12 +538,6 @@ function snippet(content: string): string {
   color: var(--kw-color-text-secondary);
 }
 
-.ks-footer {
-  display: flex;
-  padding: 12px 24px 16px;
-  border-top: 1px solid var(--kw-color-border-brand);
-}
-
 .ks-btn {
   flex: 1;
   padding: 10px;
@@ -626,23 +555,4 @@ function snippet(content: string): string {
   opacity: 0.92;
 }
 
-.ks-modal-enter-active,
-.ks-modal-leave-active {
-  transition: opacity 0.2s;
-}
-
-.ks-modal-enter-active .ks-card,
-.ks-modal-leave-active .ks-card {
-  transition: transform 0.2s;
-}
-
-.ks-modal-enter-from,
-.ks-modal-leave-to {
-  opacity: 0;
-}
-
-.ks-modal-enter-from .ks-card,
-.ks-modal-leave-to .ks-card {
-  transform: scale(0.96);
-}
 </style>

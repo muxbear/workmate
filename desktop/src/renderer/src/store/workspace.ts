@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { registerResettable } from './sessionReset'
 // 渲染层 window.api 类型（preload 的全局声明）
 import type {
   Workspace,
@@ -204,3 +205,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     saveFile
   }
 })
+
+// 登出 / 会话失效时重置本域（session-reset 注册表；惰性取实例）
+registerResettable(() => useWorkspaceStore().reset())

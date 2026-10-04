@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { nextTick, ref } from 'vue'
+import { registerResettable } from './sessionReset'
 import type {
   DesktopSkill,
   SkillInstallProgress,
@@ -21,7 +22,6 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
   const catalog = useCatalogStore()
 
   const status = ref<SkillSyncState>('unknown')
-  const skills = ref<DesktopSkill[]>([])
   const lastSyncedAt = ref<number | null>(null)
   const error = ref<string | null>(null)
   const webUser = ref<WebUser | null>(null)
@@ -37,9 +37,8 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
   const removingId = ref<string | null>(null)
   const installMessage = ref('')
 
-  /** 用新列表替换技能页数据（同时同步 catalog store） */
+  /** 用新列表替换技能页数据（单一事实源在 catalog.skillItems，本 store 不自持副本） */
   function applySkills(items: DesktopSkill[]): void {
-    skills.value = items
     catalog.setSkills(items)
   }
 
@@ -177,7 +176,7 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
     try {
       const result = await window.api.skillSync.delete(skillId)
       if (!result.success) throw new Error(result.error || '删除失败')
-      applySkills(skills.value.filter((item) => item.id !== skillId))
+      applySkills(catalog.skillItems.filter((item) => item.id !== skillId))
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : '删除失败'
@@ -209,13 +208,12 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
   /** 局部更新单个技能（安装 / 卸载后避免整页刷新） */
   function patchSkill(updated: DesktopSkill): void {
     applySkills(
-      skills.value.map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
+      catalog.skillItems.map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
     )
   }
 
   function resetLocal(): void {
     status.value = 'unknown'
-    skills.value = []
     lastSyncedAt.value = null
     error.value = null
     webUser.value = null
@@ -232,7 +230,6 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
 
   return {
     status,
-    skills,
     lastSyncedAt,
     error,
     webUser,
@@ -255,3 +252,6 @@ export const useSkillSyncStore = defineStore('skillSync', () => {
     resetLocal
   }
 })
+
+// 登出 / 会话失效时重置本域（session-reset 注册表；惰性取实例）
+registerResettable(() => useSkillSyncStore().resetLocal())

@@ -195,12 +195,12 @@ describe('E2E 专家版本同步与本地删除', () => {
         // ② 删除：二次确认 → 取消不删
         await cardOf(page, '甲专家').hover()
         await cardOf(page, '甲专家').locator('.expert-delete-btn').click()
-        await page.locator('.confirm-card').waitFor({ state: 'visible', timeout: 5_000 })
+        await page.locator('.ms-card').waitFor({ state: 'visible', timeout: 5_000 })
         expect((await page.locator('.confirm-message').textContent()) ?? '').toContain(
           '仅从本机移除'
         )
         await page.locator('.confirm-btn--cancel').click()
-        await page.locator('.confirm-card').waitFor({ state: 'hidden', timeout: 5_000 })
+        await page.locator('.ms-card').waitFor({ state: 'hidden', timeout: 5_000 })
         expect(await page.locator('.expert-card').count()).toBe(2)
 
         // ③ 删除：确认 → 卡片消失、磁盘少一条、其余保留

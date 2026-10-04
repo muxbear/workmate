@@ -1,5 +1,7 @@
 ﻿﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { showToast as showToastBase } from '@renderer/composables/useToast'
+import ModalShell from '@components/ModalShell.vue'
 import SettingToggle from '../SettingToggle.vue'
 import { useRuntimeStore } from '@store/runtime'
 import { useSettingsStore } from '@store/settings'
@@ -17,13 +19,9 @@ const runtimeEnabled = computed({
   set: (val: boolean) => { void settingsStore.set('runtime.enabled', val) }
 })
 
-/** 轻量 toast（安装/卸载反馈） */
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
+/** 安装/卸载反馈：全局 toast（沿用历史 3s 长时长，安装结果需要阅读） */
 function showToast(text: string): void {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toast.value = '' }, 3000)
+  showToastBase(text, 3000)
 }
 
 /** 错误弹框（不自动关闭，需手动关闭） */
@@ -730,39 +728,43 @@ const dataRows = [
         </template>
       </div>
     </section>
-    <!-- 错误弹框（不自动关闭） -->
-    <Transition name="s-modal">
-      <div v-if="errorDialog" class="s-error-overlay" @click.self="closeError">
-        <div class="s-error-modal">
-          <div class="s-error-modal-head">
-            <svg
-              class="s-error-icon"
-              width="28"
-              height="28"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <span class="s-error-title">{{ errorDialog.title }}</span>
-          </div>
-          <p class="s-error-message">{{ errorDialog.message }}</p>
-          <div class="s-error-actions">
-            <button class="s-error-close-btn" @click="closeError">知道了</button>
-          </div>
+    <!-- 错误弹框（不自动关闭；遮罩/X/Escape 手动关闭） -->
+    <ModalShell
+      :visible="!!errorDialog"
+      width="420px"
+      :z-index="10000"
+      :aria-label="errorDialog?.title || '提示'"
+      @close="closeError"
+    >
+      <template #header>
+        <div class="s-error-modal-head">
+          <svg
+            class="s-error-icon"
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span class="s-error-title">{{ errorDialog?.title }}</span>
         </div>
+      </template>
+      <div class="s-error-body">
+        <p class="s-error-message">{{ errorDialog?.message }}</p>
       </div>
-    </Transition>
-    <!-- 安装/卸载成功 toast -->
-    <Transition name="s-toast">
-      <div v-if="toast" class="s-rt-toast">{{ toast }}</div>
-    </Transition>
+      <template #footer>
+        <div class="s-error-actions">
+          <button class="s-error-close-btn" @click="closeError">知道了</button>
+        </div>
+      </template>
+    </ModalShell>
   </div>
 </template>
 
@@ -1245,57 +1247,11 @@ const dataRows = [
   color: #757575;
   white-space: nowrap;
 }
-/* 安装/卸载反馈 toast */
-.s-rt-toast {
-  position: fixed;
-  bottom: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #2c3337;
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: 999px;
-  font-size: 14px;
-  z-index: 9999;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.s-toast-enter-active,
-.s-toast-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.s-toast-enter-from,
-.s-toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
-}
-
-/* 错误弹框 */
-.s-error-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
-
-.s-error-modal {
-  width: 420px;
-  max-width: 90vw;
-  background: #fff;
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
-}
-
+/* 错误弹框（外壳由 ModalShell 提供，仅保留头部/正文/按钮内容样式） */
 .s-error-modal-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
 }
 
 .s-error-icon {
@@ -1309,11 +1265,15 @@ const dataRows = [
   color: #1a1f23;
 }
 
+.s-error-body {
+  padding: 20px 24px;
+}
+
 .s-error-message {
   font-size: 14px;
   line-height: 1.6;
   color: #5f676d;
-  margin: 0 0 20px 0;
+  margin: 0;
   word-break: break-word;
   white-space: pre-wrap;
 }
@@ -1321,6 +1281,7 @@ const dataRows = [
 .s-error-actions {
   display: flex;
   justify-content: flex-end;
+  margin-left: auto;
 }
 
 .s-error-close-btn {
@@ -1337,15 +1298,5 @@ const dataRows = [
 
 .s-error-close-btn:hover {
   opacity: 0.85;
-}
-
-.s-modal-enter-active,
-.s-modal-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.s-modal-enter-from,
-.s-modal-leave-to {
-  opacity: 0;
 }
 </style>

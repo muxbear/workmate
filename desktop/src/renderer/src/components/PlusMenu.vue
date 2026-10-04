@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { showToast as showToastBase } from '@renderer/composables/useToast'
 import { useCatalogStore, type CatalogTab, type Mode } from '@store/catalog'
 
 /**
@@ -27,16 +28,8 @@ const toggleSubmenu = (key: string): void => {
   activeSubmenu.value = activeSubmenu.value === key ? null : key
 }
 
-// ── 轻量 toast（占位提示用，样式与页面级 toast 一致） ──
-const toast = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-const showToast = (text: string): void => {
-  toast.value = text
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toast.value = ''
-  }, 1500)
-}
+// ── 轻量提示：全局 toast（本页沿用历史 1.5s 短时长） ──
+const showToast = (text: string): void => showToastBase(text, 1500)
 
 // ── 模式选项 ──
 const modeOptions = [
@@ -630,10 +623,6 @@ const onNavigate = (tab: CatalogTab): void => {
       @change="onFilesSelected"
     />
 
-    <!-- 轻量 toast -->
-    <Transition name="dropdown">
-      <div v-if="toast" class="plus-toast">{{ toast }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -886,21 +875,6 @@ const onNavigate = (tab: CatalogTab): void => {
 }
 
 /* Toast（固定视口底部居中，与页面级 toast 同视觉） */
-.plus-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--kw-color-on-accent);
-  font-size: 12px;
-  z-index: 150;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
 /* Submenu pop transition */
 .submenu-pop-enter-active {
   transition:
