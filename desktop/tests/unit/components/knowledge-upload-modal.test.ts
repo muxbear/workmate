@@ -40,7 +40,7 @@ describe('KnowledgeUploadModal（首屏）', () => {
   it('渲染拖入区域、空列表提示与三个上传后处理选项', async () => {
     stubWindow()
     const html = await render(true)
-    expect(html).toContain('拖拽文件到此处')
+    expect(html).toContain('拖拽文件或文件夹到此处')
     expect(html).toContain('点击选择文件')
     expect(html).toContain('还没有待上传文件')
     expect(html).toContain('创建默认索引')
@@ -51,8 +51,17 @@ describe('KnowledgeUploadModal（首屏）', () => {
     expect(html).toContain('确定')
   })
 
+  it('渲染「选择文件夹」入口（webkitdirectory 目录选择器）', async () => {
+    stubWindow()
+    const html = await render(true)
+    expect(html).toContain('选择文件夹')
+    expect(html).toContain('webkitdirectory')
+    // 未发生跳过后不显示跳过提示
+    expect(html).not.toContain('已跳过')
+  })
+
   it('关闭时不渲染内容', async () => {
     stubWindow()
-    expect(await render(false)).not.toContain('拖拽文件到此处')
+    expect(await render(false)).not.toContain('拖拽文件或文件夹到此处')
   })
 })

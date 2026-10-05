@@ -19,15 +19,17 @@ import {
   type KnowledgeUploadMode,
   type KnowledgeUploadPayload
 } from './uploadIndex'
+import { isExcludedRelPath } from './uploadFilter'
 import { useKnowledgeSettingsStore } from '../../store/knowledgeSettings'
 import { useModelStore } from '../../store/models'
 import { useSettingsStore } from '../../store/settings'
 import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../shared/contracts'
 
 /**
- * 上传文件弹窗
+ * 上传文件/文件夹弹窗
  *
- * 1）拖入/选择文件 → 待上传列表（可逐个删除）→ 单选处理方式：
+ * 1）拖入/选择文件、选择文件夹（webkitRelativePath 还原目录结构）→ 待上传列表
+ *    （可逐个删除；常见非文档目录会被跳过并提示）→ 单选处理方式：
  *    创建默认索引 / 自定义索引 / 只上传文件；
  * 2）「自定义索引」在点确定后进入配置向导，逐步配置切片、向量化、检索与图谱，
  *    可配置项与「知识库设置」的索引项完全一致（同一份字段表派生）；
@@ -54,8 +56,9 @@ const modelStore = useModelStore()
 interface UploadQueueItem {
   id: number
   file: File
-  /** 相对上传根目录的路径：拖入文件夹时保留目录结构（缺省为文件名） */
+  /** 相对上传根目录的路径：文件夹来源保留目录结构（缺省为文件名） */
   relPath: string
+  /** 列表显示用：含目录结构时即相对路径（如 docs/intro.md），否则为文件名 */
   name: string
   typeText: string
   sizeText: string
@@ -74,6 +77,7 @@ const dragging = ref(false)
 const error = ref('')
 const stepIndex = ref(0)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const folderInputRef = ref<HTMLInputElement | null>(null)
 /** 向导草稿：数值项以字符串承接（与设置页一致，保存时统一解析校验） */
 const draft = reactive<KnowledgeDraft>(createDraft({}))
 
@@ -82,6 +86,9 @@ let dragDepth = 0
 let prepareToken = 0
 
 // ── 待上传文件队列 ──
+/** 本次弹窗内被跳过（命中排除目录）的文件数，队列区提示用 */
+const skippedCount = ref(0)
+
 /** 扩展名 → 图标底色（与文件列表同一套色板） */
 const EXT_TINTS: Record<string, string> = {
   pdf: '#ef4444',
@@ -112,14 +119,20 @@ function queueKey(relPath: string, file: File): string {
   return relPath + '|' + file.size + '|' + file.lastModified
 }
 
-/** 加入待上传项（relPath 缺省为文件名；拖入文件夹时保留目录结构） */
+/** 加入待上传项（relPath 缺省为文件名；文件夹来源保留目录结构；排除目录整棵子树跳过） */
 function addEntries(entries: KnowledgeUploadItem[]): void {
   if (!entries.length) return
   const known = new Set(queue.value.map((item) => queueKey(item.relPath, item.file)))
   const added: UploadQueueItem[] = []
+  let skipped = 0
   for (const entry of entries) {
     const file = entry.file
     const relPath = entry.relPath || file.name
+    // 过滤对全部来源生效（文件夹选择 / 拖入文件夹 / 拖入文件），手选单文件不会命中
+    if (isExcludedRelPath(relPath)) {
+      skipped += 1
+      continue
+    }
     const key = queueKey(relPath, file)
     if (known.has(key)) continue
     known.add(key)
@@ -128,20 +141,17 @@ function addEntries(entries: KnowledgeUploadItem[]): void {
       id: ++queueSeq,
       file,
       relPath,
-      name: file.name,
+      // 含目录结构时展示相对路径（不同子目录的同名文件因此可区分）
+      name: relPath,
       typeText: ext ? ext.toUpperCase() : '文件',
       sizeText: formatSize(file.size),
       tint: EXT_TINTS[ext] ?? '#64748b'
     })
   }
-  if (!added.length) return
-  queue.value = [...queue.value, ...added]
+  if (!added.length && !skipped) return
+  if (skipped) skippedCount.value += skipped
+  if (added.length) queue.value = [...queue.value, ...added]
   error.value = ''
-}
-
-function addFiles(list: FileList | File[] | null): void {
-  const files = list ? Array.from(list) : []
-  addEntries(files.map((file) => ({ file, relPath: file.name })))
 }
 
 /** 汇总待上传项（带相对路径，落盘时据此保留目录结构） */
@@ -226,10 +236,22 @@ function openPicker(): void {
   fileInputRef.value?.click()
 }
 
+/** 「选择文件夹」：打开系统目录选择器（webkitdirectory），结果按相对路径进队列 */
+function openFolderPicker(): void {
+  folderInputRef.value?.click()
+}
+
 function onPickerChange(event: Event): void {
   const input = event.target as HTMLInputElement
-  addFiles(input.files)
-  input.value = '' // 复位，同一文件可以再次选择
+  // 文件夹选择器与文件选择器共用：webkitdirectory 展开的文件自带 webkitRelativePath
+  const picked = Array.from(input.files ?? [])
+  addEntries(
+    picked.map((file) => ({
+      file,
+      relPath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+    }))
+  )
+  input.value = '' // 复位，同一文件/文件夹可以再次选择
 }
 
 // ── 拖拽投放 ──
@@ -268,7 +290,7 @@ function onDrop(event: DragEvent): void {
     .then(addEntries)
     .catch(() => {
       // 目录读取失败时保持列表不变，由错误提示兜底
-      error.value = '读取拖入的文件夹失败，请改用「上传文件夹」'
+      error.value = '读取拖入的文件夹失败，请改用「选择文件夹」'
     })
 }
 
@@ -368,6 +390,7 @@ watch(
     stage.value = 'files'
     mode.value = 'default'
     queue.value = []
+    skippedCount.value = 0
     error.value = ''
     stepIndex.value = 0
     dragDepth = 0
@@ -447,11 +470,11 @@ onMounted(() => {
 </script>
 
 <template>
-<ModalShell :visible="visible" width="min(720px, calc(100vw - 48px))" aria-label="上传文件" max-height="calc(100vh - 96px)" footer-bordered @close="closeModal">
+<ModalShell :visible="visible" width="min(720px, calc(100vw - 48px))" aria-label="上传文件/文件夹" max-height="calc(100vh - 96px)" footer-bordered @close="closeModal">
     <template #header>
 
           <div class="ku-header-text">
-            <h2 class="ku-title">{{ stage === 'files' ? '上传文件' : '自定义索引' }}</h2>
+            <h2 class="ku-title">{{ stage === 'files' ? '上传文件/文件夹' : '自定义索引' }}</h2>
             <p class="ku-subtitle">
               {{
                 stage === 'files'
@@ -503,11 +526,42 @@ onMounted(() => {
                 </svg>
               </span>
               <p class="ku-drop-title">
-                拖拽文件到此处，或<span class="ku-drop-link">点击选择文件</span>
+                拖拽文件或文件夹到此处，或<span class="ku-drop-link">点击选择文件</span>
               </p>
               <p class="ku-drop-hint">
-                支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式，可一次选择多个文件
+                支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式，可一次选择多个文件；
+                文件夹保留目录结构，常见非文档目录会被自动跳过
               </p>
+            </div>
+
+            <!-- 文件夹上传：webkitdirectory 让系统选择器只能选目录，结果按相对路径进队列 -->
+            <div class="ku-folder-row">
+              <input
+                ref="folderInputRef"
+                type="file"
+                multiple
+                webkitdirectory
+                class="ku-file-input"
+                @change="onPickerChange"
+              />
+              <button class="ku-btn" type="button" @click="openFolderPicker">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+                  />
+                </svg>
+                选择文件夹
+              </button>
+              <span class="ku-folder-hint">保留原始目录结构，可直接用自定义索引向导</span>
             </div>
 
             <!-- 待上传文件列表 -->
@@ -553,7 +607,6 @@ onMounted(() => {
                   <button
                     class="ku-item-del"
                     type="button"
-                    :title="`移除 ${item.name}`"
                     :aria-label="`移除 ${item.name}`"
                     @click="removeItem(item.id)"
                   >
@@ -577,6 +630,9 @@ onMounted(() => {
                 </li>
               </ul>
               <p v-else class="ku-empty">还没有待上传文件，拖入或选择文件后会显示在这里。</p>
+              <p v-if="skippedCount" class="ku-skip-note">
+                已跳过 {{ skippedCount }} 个（node_modules、.git 等常见非文档目录）
+              </p>
             </section>
 
             <!-- 上传后处理：三选一 -->
@@ -839,6 +895,17 @@ onMounted(() => {
   display: none;
 }
 
+/* ── 选择文件夹入口 ── */
+.ku-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ku-folder-hint {
+  font-size: 12px;
+  color: var(--kw-color-text-placeholder);
+}
+
 /* ── 区块与待上传列表 ── */
 .ku-section {
   display: flex;
@@ -953,6 +1020,11 @@ onMounted(() => {
   font-size: 12px;
   color: var(--kw-color-text-placeholder);
   text-align: center;
+}
+.ku-skip-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--kw-color-text-placeholder);
 }
 
 /* ── 上传后处理三选一 ── */

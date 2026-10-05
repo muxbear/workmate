@@ -102,19 +102,16 @@ const activeTab = ref('问答')
 const tabBarRef = ref<HTMLElement | null>(null)
 /** 文件区容器元素 ref（问答分栏拖拽参考矩形；元素 ref 由本页持有，useKbLayout 经参数注入） */
 const detailRef = ref<HTMLElement | null>(null)
-// ── 文件上传（R6 外提至 composables/useKbUploads；元素 ref 由本页持有并注入）──
-/** 上传文件夹仍走系统目录选择 */
-const folderUploadRef = ref<HTMLInputElement | null>(null)
+// ── 文件上传（R6 外提至 composables/useKbUploads）──
 const uploadsApi = useKbUploads({
   selectedKbId,
-  notify: (text) => notify(text),
-  folderUploadRef
+  notify: (text) => notify(text)
 })
 /**
- * 元素 ref 的传递方盒：`folderUploadRef`/`tabBarRef` 由本页创建并注入组合件，
+ * 元素 ref 的传递方盒：`tabBarRef` 由本页创建并注入组合件，
  * 继续传给子组件时要装进普通对象 —— 直接 `:x="someRef"` 会被模板自动解包成值。
  */
-const elementRefs = { folderUploadRef, tabBarRef }
+const elementRefs = { tabBarRef }
 
 const {
   groupsWidth,
@@ -440,7 +437,6 @@ watch(
             :file-ops="fileOpsApi"
             :doc-ops="docOpsApi"
             :file-panel-style="filePanelStyle"
-            :element-refs="elementRefs"
             :file-menu-key="fileMenuKey"
             :library-menu-open="libraryMenuOpen"
             :open-file="openFile"

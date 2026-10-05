@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ComponentPublicInstance, Ref } from 'vue'
 import {
   collectFileNodes,
   flattenVisible,
@@ -38,7 +37,7 @@ const props = defineProps<{
   cloud: ReturnType<typeof useCloudDocs>
   /** 文件树组合件（useKbFiles：展开态/折叠切换） */
   files: ReturnType<typeof useKbFiles>
-  /** 上传组合件（useKbUploads：弹窗/文件夹选择） */
+  /** 上传组合件（useKbUploads：上传弹窗） */
   uploads: ReturnType<typeof useKbUploads>
   /** 文件行操作组合件（useKbFileOps：详情/重命名/打开目录） */
   fileOps: ReturnType<typeof useKbFileOps>
@@ -46,8 +45,6 @@ const props = defineProps<{
   docOps: ReturnType<typeof useKbDocOps>
   /** 文件区宽度样式（useKbLayout 的拖拽结果） */
   filePanelStyle: Record<string, string>
-  /** 页面持有的元素 ref（方盒传递：直接传 Ref 会被模板自动解包成值） */
-  elementRefs: { folderUploadRef: Ref<HTMLInputElement | null> }
   /** 文件行菜单当前 key（页面持有：外部点击关闭靠页面全局监听） */
   fileMenuKey: string | null
   /** 库头部菜单开关（同上） */
@@ -72,7 +69,7 @@ const {
   downloadCloudDoc
 } = props.cloud
 const { isFolderExpanded, toggleFolder } = props.files
-const { onFolderChange, openUploadModal, uploadFolder } = props.uploads
+const { openUploadModal } = props.uploads
 const { openFileDetail, openFileRename, openFileDir } = props.fileOps
 const {
   rebuildIndex,
@@ -89,11 +86,6 @@ const {
   openLibrarySettingsFromHeader,
   deleteLibraryFromHeader
 } = props.docOps
-
-/** input 挂载/卸载时写回页面持有的元素 ref（useKbUploads 读取同一引用） */
-const setFolderUpload = (el: Element | ComponentPublicInstance | null): void => {
-  props.elementRefs.folderUploadRef.value = el instanceof HTMLInputElement ? el : null
-}
 
 // ── 排序（只服务本区表格，实例内状态）──
 const sortKey = ref<KnowledgeSortKey>('updated')
@@ -469,15 +461,7 @@ const changeSort = (key: KnowledgeSortKey): void => {
           {{ cloudDocsLoading ? '同步中…' : '刷新' }}
         </button>
         <template v-if="!isCloudView">
-          <!-- 上传文件夹：webkitdirectory 让系统选择器只能选目录 -->
-          <input
-            :ref="setFolderUpload"
-            type="file"
-            multiple
-            webkitdirectory
-            class="kb-file-input"
-            @change="onFolderChange"
-          />
+          <!-- 上传文件与文件夹统一从弹窗进入（弹窗内可点击/拖入，文件夹保留目录结构） -->
           <button class="kb-btn-ghost" @click="openUploadModal">
             <svg
               width="14"
@@ -493,24 +477,7 @@ const changeSort = (key: KnowledgeSortKey): void => {
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" x2="12" y1="3" y2="15" />
             </svg>
-            上传文件
-          </button>
-          <button class="kb-btn-ghost" @click="uploadFolder">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
-              />
-            </svg>
-            上传文件夹
+            上传文件/文件夹
           </button>
         </template>
       </div>
@@ -1045,9 +1012,6 @@ const changeSort = (key: KnowledgeSortKey): void => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-.kb-file-input {
-  display: none;
 }
 .kb-btn-ghost {
   display: flex;
