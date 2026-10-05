@@ -80,7 +80,9 @@ export function useKbLayout(deps: KbLayoutDeps) {
    */
   const panelCollapsed = ref(true)
   const panelFullscreen = ref(false)
-  const filePanelPercent = ref(40)
+  /** 默认 60%：典型窗口下文件区 ≈570px（表格六列紧凑档，观感与旧版连续）；
+   *  左拖下限由 .kb-files 的 min-width 400px 兜底，不再被表格宽度硬顶到拖不动 */
+  const filePanelPercent = ref(60)
 
   const togglePanelCollapsed = (): void => {
     // 全屏时点它先退出全屏，再收起区域

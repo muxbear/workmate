@@ -966,7 +966,10 @@ const changeSort = (key: KnowledgeSortKey): void => {
    文件区（R6：自 KnowledgePage 外提，规则逐字迁移）
    ═══════════════════════════════════════════════════════════════════════════ */
 .kb-files {
-  min-width: 320px;
+  /* 400px = 最窄档（五列 338px）之上的可用下限；表格列宽按容器宽度分档
+     （见文件末尾容器查询），不再用更大的 min-width 硬顶——那会让分割线在常规窗口下几乎拖不动 */
+  min-width: 400px;
+  container-type: inline-size;
   overflow-y: auto;
   padding: 28px;
   scrollbar-width: none;
@@ -1054,10 +1057,11 @@ const changeSort = (key: KnowledgeSortKey): void => {
 .kb-table-head {
   border-radius: 16px 16px 0 0;
   display: grid;
-  /* 文档 / 大小 / 分片 / 实体关系 / 状态 / 操作（前五列与 web 文档页签一致） */
-  grid-template-columns: minmax(0, 1fr) 76px 56px 104px 168px 36px;
+  /* 文档 / 大小 / 分片 / 实体关系 / 状态 / 操作（前五列与 web 文档页签一致；
+     固定列取内容紧凑值，文档列 1fr 吃掉余量——文件区再窄由末尾容器查询收档） */
+  grid-template-columns: minmax(0, 1fr) 56px 44px 72px 104px 30px;
   align-items: center;
-  gap: 12px;
+  column-gap: 10px;
   border-bottom: 1px solid #edf2f0;
   background: #f8faf9;
   padding: 12px 20px;
@@ -1082,9 +1086,9 @@ const changeSort = (key: KnowledgeSortKey): void => {
 
 .kb-table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px 56px 104px 168px 36px;
+  grid-template-columns: minmax(0, 1fr) 56px 44px 72px 104px 30px;
   align-items: center;
-  gap: 12px;
+  column-gap: 10px;
   border-bottom: 1px solid #f0f4f2;
   padding: 12px 20px;
 }
@@ -1143,9 +1147,11 @@ const changeSort = (key: KnowledgeSortKey): void => {
 .kb-status-cell--clickable {
   cursor: pointer;
 }
+/* 徽标行右对齐贴住操作列：静态徽标只占 ~45px，左对齐会在「状态」「操作」之间留出大片空档 */
 .kb-status-line {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   min-width: 0;
 }
@@ -1280,6 +1286,10 @@ const changeSort = (key: KnowledgeSortKey): void => {
 .kb-table-head-ops {
   text-align: right;
 }
+/* 表头「状态」与行内徽标同向右对齐，贴住操作列 */
+.kb-table-head .kb-col-status {
+  text-align: right;
+}
 .kb-table-row--menu {
   position: relative;
   z-index: 20;
@@ -1370,32 +1380,23 @@ const changeSort = (key: KnowledgeSortKey): void => {
   background: #fdeeee;
 }
 
-/* ── 窄窗口兜底（原页面公共媒体查询中的文件区部分） ── */
-@media (max-width: 1699px) {
+/* ── 文件区宽度收档（容器查询）：分割线拖到多窄，表格就按对应档收列 ──
+   窗口宽度查询兜不住「面板拉宽把文件区挤窄」的场景——此前靠 .kb-files 的
+   610px min-width 硬顶，导致常规窗口下分割线几乎拖不动。列宽改为只跟文件区
+   实际宽度走（.kb-files 为查询容器）：
+   - 基础六列紧凑档：固定列合计 306 + 列距 50 + 行内边距 40 + 文件区内边距 56
+     = 452px，文档列 minmax(0,1fr) 吸收余量，宽屏下观感与原大字档一致；
+   - 容器查询按 .kb-files 的**内容盒**计宽（比文件区外宽少 28px×2 内边距），
+     503px 查询值 = 文件区外宽 559px 的收档线：隐去最不常用的「实体/关系」列
+     （沿用原窄窗口收列做法），五列合计 338px，与 400px min-width 留出富余。 */
+@container (max-width: 503px) {
   .kb-table-head,
   .kb-table-row {
-    grid-template-columns: minmax(120px, 1fr) 56px 44px 80px 132px 30px;
-    column-gap: 10px;
-  }
-  /* 文件区至少容纳「文档 + 大小 + 分片 + 实体关系 + 状态 + 操作」六列：
-     552（列+间距+行内边距）+ 56（.kb-files 左右内边距），避免操作列溢出卡片 */
-  .kb-files {
-    min-width: 610px;
-  }
-}
-@media (max-width: 1199px) {
-  .kb-table-head,
-  .kb-table-row {
-    grid-template-columns: minmax(72px, 1fr) 44px 40px 120px 28px;
+    grid-template-columns: minmax(0, 1fr) 48px 36px 96px 30px;
     column-gap: 8px;
   }
-  /* 极窄下隐藏最不常用的「实体/关系」列（沿用「查看更多」表在窄窗口收列的做法） */
   .kb-col-er {
     display: none;
-  }
-  /* 376（五列+间距+行内边距）+ 56（.kb-files 左右内边距），刚好落在 440 内 */
-  .kb-files {
-    min-width: 440px;
   }
 }
 </style>
