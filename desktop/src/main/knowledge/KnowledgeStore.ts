@@ -1,16 +1,19 @@
 import { existsSync, mkdirSync, statSync } from 'fs'
 import { join } from 'path'
-import { createHash, randomUUID } from 'crypto'
 import Database from 'better-sqlite3'
-import { normalizeName } from './entity-norm'
+import { resolveVectorBackend, type VectorBackend } from './vector-backend'
+import { ShareRepo } from './share-repo'
+import { BaseRepo } from './base-repo'
+import { DocumentRepo } from './document-repo'
+import { GraphRepo } from './graph-repo'
+import { ChunkVectorRepo } from './chunk-vector-repo'
+import type { DocumentIndexWriteInput, DocumentIndexWriter } from './chunk-vector-repo'
+import { MetaStore } from './meta-store'
 import type {
   KnowledgeBaseRow,
-  KnowledgeChunk,
   KnowledgeDocStatus,
   KnowledgeDocumentRow,
   KnowledgeGraphView,
-  KnowledgeGraphViewLink,
-  KnowledgeGraphViewNode,
   KnowledgeIndexStage,
   KnowledgeIndexState,
   KnowledgeKind,
@@ -21,47 +24,6 @@ import type {
 /** 索引库文件名（位于「知识库设置 → 本地存储」目录内） */
 export const INDEX_DB_FILE = 'index.db'
 
-/** 索引写入的批次大小（每批一个事务；见 createDocumentIndexWriter 的原子性说明） */
-const INDEX_WRITE_BATCH = 1500
-
-/** 图谱可视化边数上限（SVG 力导向的渲染规模闸门；超出以 truncated 提示） */
-const MAX_GRAPH_VIEW_EDGES = 600
-
-/** 索引写入入参 */
-export interface DocumentIndexWriteInput {
-  docId: string
-  kbId: string
-  userId: string
-  chunks: KnowledgeChunk[]
-  /** 与 chunks 等长的分词文本（SparseIndexer.tokenize 输出）；FTS 不可用时传 null */
-  tokens: string[] | null
-  /** 与 chunks 等长的向量（未向量化传 null） */
-  vectors: Float32Array[] | null
-  vectorDim: number | null
-  vectorModel: string | null
-}
-
-/** 按批推进的索引写入器（批间由 async 调用方让出事件循环） */
-export interface DocumentIndexWriter {
-  done: boolean
-  written: number
-  writeNextBatch: () => void
-}
-
-/** 某维度的向量表名（维度一表：不同库的 vectorDimensions 可以不同） */
-function vectorTableName(dim: number): string {
-  return `kb_chunk_vec_${dim}`
-}
-
-/** 切片稳定标识：sha1(docId:chunkIndex)，幂等重灌时同一位置得到同一 uid */
-export function chunkUid(docId: string, chunkIndex: number): string {
-  return createHash('sha1').update(`${docId}:${chunkIndex}`).digest('hex')
-}
-
-/** BLOB → Float32Array 视图（零拷贝） */
-function toFloat32(buffer: Buffer): Float32Array {
-  return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4)
-}
 
 /**
  * 索引库迁移：独立版本序列，与 ke-work.db 无关。
@@ -275,154 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_ke_kb_type ON knowledge_base_entities(kb_id, type
   }
 ]
 
-interface BaseDbRow {
-  id: string
-  user_id: string
-  name: string
-  description: string
-  kind: string
-  status: string
-  docs_count: number
-  size_bytes: number
-  sort_order: number
-  pinned: number
-  chunks_count: number
-  entities_count: number
-  indexed_docs_count: number
-  last_indexed_at: number | null
-  created_at: number
-  updated_at: number
-}
-
-interface DocDbRow {
-  id: string
-  kb_id: string
-  user_id: string
-  name: string
-  type: string
-  size_bytes: number
-  rel_path: string
-  storage_path: string
-  index_state: string
-  status: string
-  content_hash: string | null
-  error_message: string | null
-  progress: number
-  stage: string | null
-  char_count: number
-  truncated: number
-  config: string | null
-  chunks_count: number
-  entities_count: number
-  relations_count: number
-  graph_error: string | null
-  index_signature: string | null
-  indexed_at: number | null
-  uploaded_at: number
-  updated_at: number
-}
-
-interface ChunkDbRow {
-  chunk_id: number
-  uid: string
-  doc_id: string
-  chunk_index: number
-  heading: string | null
-  content: string
-  char_start: number
-  char_end: number
-}
-
-/** 切片 + JOIN 文档表后的命中行（docName/relPath 供引用展示；uploaded_at 供时间衰减） */
-interface ChunkHitDbRow extends ChunkDbRow {
-  doc_name: string
-  rel_path: string
-  uploaded_at: number
-}
-
-interface ShareDbRow {
-  id: string
-  user_id: string
-  target_kind: string
-  target_id: string
-  target_name: string
-  token: string
-  permission: string
-  expires_at: number | null
-  revoked_at: number | null
-  created_at: number
-}
-
-function toBase(row: BaseDbRow): KnowledgeBaseRow {
-  return {
-    id: row.id,
-    userId: row.user_id,
-    name: row.name,
-    description: row.description,
-    kind: row.kind as KnowledgeKind,
-    status: row.status,
-    docsCount: row.docs_count,
-    sizeBytes: row.size_bytes,
-    // 迁移前的历史行为 0 / 未置顶，读取时兜底
-    sortOrder: row.sort_order ?? 0,
-    pinned: row.pinned === 1,
-    chunksCount: row.chunks_count ?? 0,
-    entitiesCount: row.entities_count ?? 0,
-    indexedDocsCount: row.indexed_docs_count ?? 0,
-    lastIndexedAt: row.last_indexed_at ?? null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }
-}
-
-function toDocument(row: DocDbRow): KnowledgeDocumentRow {
-  return {
-    id: row.id,
-    kbId: row.kb_id,
-    userId: row.user_id,
-    name: row.name,
-    type: row.type,
-    sizeBytes: row.size_bytes,
-    relPath: row.rel_path,
-    storagePath: row.storage_path,
-    indexState: row.index_state as KnowledgeIndexState,
-    status: row.status as KnowledgeDocStatus,
-    contentHash: row.content_hash,
-    errorMessage: row.error_message,
-    // v4 之前的旧行没有这些列的值，统一兜底
-    progress: row.progress ?? 0,
-    stage: (row.stage as KnowledgeIndexStage | null) ?? null,
-    charCount: row.char_count ?? 0,
-    truncated: row.truncated === 1,
-    config: row.config ?? null,
-    chunksCount: row.chunks_count ?? 0,
-    entitiesCount: row.entities_count ?? 0,
-    relationsCount: row.relations_count ?? 0,
-    graphError: row.graph_error ?? null,
-    indexSignature: row.index_signature ?? null,
-    indexedAt: row.indexed_at ?? null,
-    uploadedAt: row.uploaded_at,
-    updatedAt: row.updated_at
-  }
-}
-
 // 文档行 → 渲染层元信息的映射只有一个实现：KnowledgeFileService.toDocumentMeta
-
-function toShare(row: ShareDbRow): KnowledgeShareRow {
-  return {
-    id: row.id,
-    userId: row.user_id,
-    targetKind: row.target_kind as KnowledgeShareRow['targetKind'],
-    targetId: row.target_id,
-    targetName: row.target_name,
-    token: row.token,
-    url: `ke-work://share/${row.token}`,
-    permission: row.permission,
-    expiresAt: row.expires_at,
-    revokedAt: row.revoked_at,
-    createdAt: row.created_at
-  }
-}
 
 /**
  * 知识库索引库（<knowledge.directory>/index.db）
@@ -437,6 +252,23 @@ export class KnowledgeStore {
   private db: Database.Database | null = null
   private openedDir = ''
   private readonly getDir: () => string
+  /** 索引元信息仓储（R5 拆分第六刀；getMeta/setMeta 下方为委托门面） */
+  private readonly meta = new MetaStore(() => this.open())
+  /** 共享仓储（R5 拆分第一刀；下方同名方法为委托门面） */
+  private readonly shares = new ShareRepo(() => this.open())
+  /** 知识库仓储（R5 拆分第二刀；下方同名方法为委托门面） */
+  private readonly bases = new BaseRepo(() => this.open())
+  /** 文档仓储（R5 拆分第三刀；下方同名方法为委托门面） */
+  private readonly documents = new DocumentRepo(() => this.open())
+  /** 图谱仓储（R5 拆分第四刀；下方同名方法为委托门面） */
+  private readonly graph = new GraphRepo(() => this.open())
+  /** 切片与向量仓储（R5 拆分第五刀；写入器/检索查询/嵌入缓存经门面委托） */
+  private readonly chunks = new ChunkVectorRepo({
+    getDb: () => this.open(),
+    getMeta: (key) => this.getMeta(key),
+    getBackend: () => this.vectorBackend(),
+    graph: this.graph
+  })
 
   constructor(getDir: () => string) {
     this.getDir = getDir
@@ -493,96 +325,32 @@ export class KnowledgeStore {
     }
   }
 
-  // ── 知识库 ──
+  // ── 知识库（R5：SQL 在 BaseRepo；以下为委托门面，签名/行为不变）──
 
   listBases(
     userId: string,
     opts: { kind?: KnowledgeKind; keyword?: string } = {}
   ): KnowledgeBaseRow[] {
-    const db = this.open()
-    const conditions = ['user_id = ?']
-    const params: unknown[] = [userId]
-    if (opts.kind) {
-      conditions.push('kind = ?')
-      params.push(opts.kind)
-    }
-    if (opts.keyword && opts.keyword.trim()) {
-      conditions.push('(name LIKE ? OR description LIKE ?)')
-      const like = `%${opts.keyword.trim()}%`
-      params.push(like, like)
-    }
-    const rows = db
-      .prepare(
-        `SELECT * FROM knowledge_bases WHERE ${conditions.join(' AND ')} ORDER BY pinned DESC, sort_order ASC, updated_at DESC, rowid DESC`
-      )
-      .all(...params) as BaseDbRow[]
-    return rows.map(toBase)
+    return this.bases.listBases(userId, opts)
   }
 
   getBase(userId: string, id: string): KnowledgeBaseRow | null {
-    const row = this.open()
-      .prepare('SELECT * FROM knowledge_bases WHERE id = ? AND user_id = ?')
-      .get(id, userId) as BaseDbRow | undefined
-    return row ? toBase(row) : null
+    return this.bases.getBase(userId, id)
   }
 
   findBaseByName(userId: string, name: string): KnowledgeBaseRow | null {
-    const row = this.open()
-      .prepare('SELECT * FROM knowledge_bases WHERE user_id = ? AND name = ?')
-      .get(userId, name) as BaseDbRow | undefined
-    return row ? toBase(row) : null
+    return this.bases.findBaseByName(userId, name)
   }
 
   createBase(
     userId: string,
     input: { name: string; description: string; kind: KnowledgeKind }
   ): KnowledgeBaseRow {
-    const db = this.open()
-    const id = randomUUID()
-    const now = Date.now()
-    db.prepare(
-      `INSERT INTO knowledge_bases (id, user_id, name, description, kind, status, docs_count, size_bytes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'ready', 0, 0, ?, ?)`
-    ).run(id, userId, input.name, input.description, input.kind, now, now)
-    return {
-      id,
-      userId,
-      name: input.name,
-      description: input.description,
-      kind: input.kind,
-      status: 'ready',
-      docsCount: 0,
-      sizeBytes: 0,
-      // 新建的知识库排在同分类未置顶区的最前面（sort_order 与其他未拖拽项一致时按更新时间兜底）
-      sortOrder: 0,
-      pinned: false,
-      chunksCount: 0,
-      entitiesCount: 0,
-      indexedDocsCount: 0,
-      lastIndexedAt: null,
-      createdAt: now,
-      updatedAt: now
-    }
+    return this.bases.createBase(userId, input)
   }
 
   updateBase(userId: string, id: string, patch: { name?: string; description?: string }): void {
-    const db = this.open()
-    const sets: string[] = []
-    const params: unknown[] = []
-    if (patch.name !== undefined) {
-      sets.push('name = ?')
-      params.push(patch.name)
-    }
-    if (patch.description !== undefined) {
-      sets.push('description = ?')
-      params.push(patch.description)
-    }
-    sets.push('updated_at = ?')
-    params.push(Date.now())
-    params.push(id, userId)
-    db.prepare(`UPDATE knowledge_bases SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(
-      ...params
-    )
+    this.bases.updateBase(userId, id, patch)
   }
 
   /**
@@ -590,17 +358,7 @@ export class KnowledgeStore {
    * 只影响传进来的 id，其余行保持原值。
    */
   reorderBases(userId: string, kind: KnowledgeKind, orderedIds: string[]): number {
-    const db = this.open()
-    const stmt = db.prepare(
-      'UPDATE knowledge_bases SET sort_order = ? WHERE id = ? AND user_id = ? AND kind = ?'
-    )
-    let changed = 0
-    db.transaction((ids: string[]) => {
-      ids.forEach((id, index) => {
-        changed += stmt.run(index, id, userId, kind).changes
-      })
-    })(orderedIds)
-    return changed
+    return this.bases.reorderBases(userId, kind, orderedIds)
   }
 
   /**
@@ -610,33 +368,11 @@ export class KnowledgeStore {
    * - 取消置顶：保留当前 sort_order，于是落到未置顶区的最前面。
    */
   setBasePinned(userId: string, id: string, pinned: boolean): void {
-    const db = this.open()
-    const row = db
-      .prepare('SELECT kind FROM knowledge_bases WHERE id = ? AND user_id = ?')
-      .get(id, userId) as { kind: string } | undefined
-    if (!row) return
-    if (!pinned) {
-      db.prepare('UPDATE knowledge_bases SET pinned = 0 WHERE id = ? AND user_id = ?').run(
-        id,
-        userId
-      )
-      return
-    }
-    const head = db
-      .prepare(
-        'SELECT MIN(sort_order) AS value FROM knowledge_bases WHERE user_id = ? AND kind = ? AND pinned = 1'
-      )
-      .get(userId, row.kind) as { value: number | null }
-    const next = (head.value ?? 0) - 1
-    db.prepare(
-      'UPDATE knowledge_bases SET pinned = 1, sort_order = ? WHERE id = ? AND user_id = ?'
-    ).run(next, id, userId)
+    this.bases.setBasePinned(userId, id, pinned)
   }
 
   deleteBase(userId: string, id: string): number {
-    const db = this.open()
-    return db.prepare('DELETE FROM knowledge_bases WHERE id = ? AND user_id = ?').run(id, userId)
-      .changes
+    return this.bases.deleteBase(userId, id)
   }
 
   /** 重算某知识库的文件数与占用（增删文档后调用） */
@@ -654,57 +390,29 @@ export class KnowledgeStore {
     )
   }
 
-  // ── 文档 ──
+  // ── 文档（R5：SQL 在 DocumentRepo；以下为委托门面，签名/行为不变）──
 
   listDocuments(userId: string, kbId: string): KnowledgeDocumentRow[] {
-    const rows = this.open()
-      .prepare(
-        'SELECT * FROM knowledge_base_documents WHERE kb_id = ? AND user_id = ? ORDER BY rel_path COLLATE NOCASE ASC'
-      )
-      .all(kbId, userId) as DocDbRow[]
-    return rows.map(toDocument)
+    return this.documents.listDocuments(userId, kbId)
   }
 
   findDocument(userId: string, kbId: string, relPath: string): KnowledgeDocumentRow | null {
-    const row = this.open()
-      .prepare(
-        'SELECT * FROM knowledge_base_documents WHERE kb_id = ? AND user_id = ? AND rel_path = ?'
-      )
-      .get(kbId, userId, relPath) as DocDbRow | undefined
-    return row ? toDocument(row) : null
+    return this.documents.findDocument(userId, kbId, relPath)
   }
 
   /** 按文档 ID 取行（索引队列按 docId 驱动，需要拿 storage_path 与快照） */
   getDocumentById(id: string): KnowledgeDocumentRow | null {
-    const row = this.open()
-      .prepare('SELECT * FROM knowledge_base_documents WHERE id = ?')
-      .get(id) as DocDbRow | undefined
-    return row ? toDocument(row) : null
+    return this.documents.getDocumentById(id)
   }
 
   /** 按文件夹前缀取文档（含子层级；relPath 为空表示整库） */
   listDocumentsByPrefix(userId: string, kbId: string, prefix: string): KnowledgeDocumentRow[] {
-    if (!prefix) return this.listDocuments(userId, kbId)
-    const rows = this.open()
-      .prepare(
-        'SELECT * FROM knowledge_base_documents WHERE kb_id = ? AND user_id = ? AND (rel_path = ? OR rel_path LIKE ?)'
-      )
-      .all(kbId, userId, prefix, `${prefix}/%`) as DocDbRow[]
-    return rows.map(toDocument)
+    return this.documents.listDocumentsByPrefix(userId, kbId, prefix)
   }
 
   /** 同库同内容哈希命中（文件去重）；excludeId 用于自身更新场景 */
   findDocumentByHash(kbId: string, hash: string, excludeId?: string): KnowledgeDocumentRow | null {
-    const rows = this.open()
-      .prepare(
-        'SELECT * FROM knowledge_base_documents WHERE kb_id = ? AND content_hash = ? LIMIT 5'
-      )
-      .all(kbId, hash) as DocDbRow[]
-    for (const row of rows) {
-      if (excludeId && row.id === excludeId) continue
-      return toDocument(row)
-    }
-    return null
+    return this.documents.findDocumentByHash(kbId, hash, excludeId)
   }
 
   insertDocument(input: {
@@ -724,83 +432,16 @@ export class KnowledgeStore {
     /** 需要建索引时传 'queued'，仅上传文件保持 'none' */
     status?: KnowledgeDocStatus
   }): KnowledgeDocumentRow {
-    const db = this.open()
-    const { id } = input
-    const now = Date.now()
-    const status: KnowledgeDocStatus = input.status ?? 'none'
-    db.prepare(
-      `INSERT INTO knowledge_base_documents
-        (id, kb_id, user_id, name, type, size_bytes, rel_path, storage_path, index_state, status, content_hash, config, error_message, uploaded_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
-    ).run(
-      id,
-      input.kbId,
-      input.userId,
-      input.name,
-      input.type,
-      input.sizeBytes,
-      input.relPath,
-      input.storagePath,
-      input.indexState,
-      status,
-      input.contentHash,
-      input.config ?? null,
-      now,
-      now
-    )
-    return {
-      id,
-      kbId: input.kbId,
-      userId: input.userId,
-      name: input.name,
-      type: input.type,
-      sizeBytes: input.sizeBytes,
-      relPath: input.relPath,
-      storagePath: input.storagePath,
-      indexState: input.indexState,
-      status,
-      contentHash: input.contentHash,
-      errorMessage: null,
-      progress: 0,
-      stage: status === 'queued' ? 'queued' : null,
-      charCount: 0,
-      truncated: false,
-      config: input.config ?? null,
-      chunksCount: 0,
-      entitiesCount: 0,
-      relationsCount: 0,
-      graphError: null,
-      indexSignature: null,
-      indexedAt: null,
-      uploadedAt: now,
-      updatedAt: now
-    }
+    return this.documents.insertDocument(input)
   }
 
   /** 更新文档的名称/相对路径（重命名；storage_path 不变，磁盘按 docId 隔离） */
   updateDocumentPath(id: string, patch: { name?: string; relPath?: string }): void {
-    const db = this.open()
-    const sets: string[] = ['updated_at = ?']
-    const params: unknown[] = [Date.now()]
-    if (patch.name !== undefined) {
-      sets.push('name = ?')
-      params.push(patch.name)
-    }
-    if (patch.relPath !== undefined) {
-      sets.push('rel_path = ?')
-      params.push(patch.relPath)
-    }
-    params.push(id)
-    db.prepare(`UPDATE knowledge_base_documents SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    this.documents.updateDocumentPath(id, patch)
   }
 
   deleteDocuments(ids: string[]): void {
-    if (!ids.length) return
-    const db = this.open()
-    const stmt = db.prepare('DELETE FROM knowledge_base_documents WHERE id = ?')
-    db.transaction((list: string[]) => {
-      for (const id of list) stmt.run(id)
-    })(ids)
+    this.documents.deleteDocuments(ids)
   }
 
   stats(userId: string): KnowledgeStats {
@@ -840,21 +481,14 @@ export class KnowledgeStore {
     }
   }
 
-  // ── 索引元信息（kb_meta 键值）──
+  // ── 索引元信息（kb_meta 键值；R5：SQL 在 MetaStore；以下为委托门面，签名/行为不变）──
 
   getMeta(key: string): string | null {
-    const row = this.open()
-      .prepare('SELECT value FROM kb_meta WHERE key = ?')
-      .get(key) as { value: string } | undefined
-    return row ? row.value : null
+    return this.meta.getMeta(key)
   }
 
   setMeta(key: string, value: string): void {
-    this.open()
-      .prepare(
-        "INSERT INTO kb_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-      )
-      .run(key, value)
+    this.meta.setMeta(key, value)
   }
 
   // ── 稀疏索引（FTS5）与向量索引（sqlite-vec）──
@@ -911,35 +545,17 @@ export class KnowledgeStore {
     return this.getMeta('vector_backend') === 'sqlite-vec' ? 'sqlite-vec' : 'js'
   }
 
+  /** 当前向量后端实现（strategy；SQL 与数据布局见 vector-backend.ts 的模块说明） */
+  private vectorBackend(): VectorBackend {
+    return resolveVectorBackend(this.getVectorBackend())
+  }
+
   /** 确保某维度的向量表存在（vec0；需先 loadVectorExtension 成功）。维度一表：kb_chunk_vec_<dim> */
   ensureVectorTable(dim: number): boolean {
-    if (this.getVectorBackend() !== 'sqlite-vec') return false
-    if (!Number.isInteger(dim) || dim <= 0 || dim > 8192) return false
-    const db = this.open()
-    try {
-      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${vectorTableName(dim)} USING vec0(
-        chunk_id INTEGER PRIMARY KEY,
-        embedding float[${dim}],
-        kb_id TEXT,
-        user_id TEXT,
-        doc_id TEXT
-      )`)
-      return true
-    } catch (err) {
-      console.warn(`[knowledge-store] 向量表(kb_chunk_vec_${dim})创建失败：`, err)
-      return false
-    }
+    return this.vectorBackend().ensureTable(this.open(), dim)
   }
 
-  /** 库内已建立的向量表（按维度；用于重建/删除时精确清理） */
-  private listVectorTables(): string[] {
-    const rows = this.open()
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'kb_chunk_vec_%'")
-      .all() as Array<{ name: string }>
-    return rows.map((row) => row.name).filter((name) => /^kb_chunk_vec_\d+$/.test(name))
-  }
-
-  // ── 索引写入（切片 + 稀疏 + 向量，单事务）──
+  // ── 索引写入（R5：SQL 在 ChunkVectorRepo；以下为委托门面，签名/行为不变）──
 
   /**
    * 用一批切片替换某文档的全部索引数据（幂等重建的落点）。
@@ -950,158 +566,32 @@ export class KnowledgeStore {
    * 每批阻塞降一个数量级。批间崩溃只会留下「该文档不完整」的中间态——文档此时仍是
    * `indexing`，启动恢复会把它置为 failed，重建也会先清空再写，不会污染检索
    * （检索只返回已提交批次的数据，用户看到的计数在写完后才回写）。
-   *
-   * 单批内完成：插切片 → 插 FTS 行（rowid 对齐）→ 写向量。
-   * - 向量后端为 sqlite-vec 时写入 `kb_chunk_vec_<dim>`（chunk_id 主键必须
-   *   用 BigInt 绑定：better-sqlite3 默认把 number 绑成 REAL，vec0 会拒绝）；
-   * - 降级模式写入 `knowledge_base_chunks.embedding` BLOB。
-   * 返回写入的切片数。
    */
   replaceDocumentIndex(input: DocumentIndexWriteInput): number {
-    const writer = this.createDocumentIndexWriter(input)
-    while (!writer.done) writer.writeNextBatch()
-    return writer.written
+    return this.chunks.replaceDocumentIndex(input)
   }
 
   /**
    * 创建「按批推进」的索引写入器。
    *
-   * 引出它的原因（性能基准实测）：2MB 单文档 ≈ 6500 切片的写入是一次同步调用，
-   * 主进程会有 ~700ms 不回到事件循环。写入器把写入切成批次，**由 async 调用方
-   * 在批间 `await` 让出**（store 自身保持同步 API）。
-   *
    * 调用约定：`while (!writer.done) writer.writeNextBatch()` 循环，每批之后让出。
    * 便利方法 `replaceDocumentIndex` 就是「一次同步跑完」（单测/小文档用）。
    */
   createDocumentIndexWriter(input: DocumentIndexWriteInput): DocumentIndexWriter {
-    const db = this.open()
-    const now = Date.now()
-    const hasFts = this.getMeta('fts5_ready') === '1'
-    const tokens = input.tokens
-    const vectors = input.vectors
-    const useVec = this.getVectorBackend() === 'sqlite-vec' && vectors !== null
-    const dim = input.vectorDim
-    const vecTable = useVec && dim ? vectorTableName(dim) : null
-
-    const insertChunk = db.prepare(
-      `INSERT INTO knowledge_base_chunks
-        (uid, kb_id, doc_id, user_id, chunk_index, content, token_count, heading, char_start, char_end, embedding, vector_dim, vector_model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    // FTS 语句必须等表确认可用后再准备（FTS5 不可用的构建上预编译会直接抛错）
-    const insertFts = hasFts
-      ? db.prepare('INSERT INTO kb_chunk_fts(rowid, text_tokens, kb_id, user_id) VALUES (?, ?, ?, ?)')
-      : null
-
-    // 清旧（独立事务，先落地：分批写入时不会把旧数据留到中途）
-    db.transaction(() => this.clearDocumentIndexTx(db, input.docId))()
-
-    // 向量表按需惰性创建（首次写入该维度时建；测试里预建表会掩盖这一步，别删）
-    if (useVec && typeof dim === 'number') this.ensureVectorTable(dim)
-    const insertVec = vecTable
-      ? db.prepare(
-          `INSERT INTO ${vecTable}(chunk_id, embedding, kb_id, user_id, doc_id) VALUES (?, ?, ?, ?, ?)`
-        )
-      : null
-
-    let offset = 0
-    let writtenCount = 0
-    const writeNextBatch = (): void => {
-      const end = Math.min(offset + INDEX_WRITE_BATCH, input.chunks.length)
-      const runBatch = db.transaction((): number => {
-        const ids: number[] = []
-        for (let i = offset; i < end; i += 1) {
-          const chunk = input.chunks[i]
-          const vector = vectors?.[i] ?? null
-          const blob =
-            vector && !useVec ? Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength) : null
-          const info = insertChunk.run(
-            chunkUid(input.docId, chunk.index),
-            input.kbId,
-            input.docId,
-            input.userId,
-            chunk.index,
-            chunk.content,
-            chunk.tokenCount,
-            chunk.heading ?? null,
-            chunk.charStart,
-            chunk.charEnd,
-            blob,
-            vector ? dim : null,
-            vector ? input.vectorModel : null,
-            now
-          )
-          ids.push(Number(info.lastInsertRowid))
-        }
-        if (insertFts && tokens) {
-          ids.forEach((id, i) => insertFts.run(id, tokens[offset + i] ?? '', input.kbId, input.userId))
-        }
-        if (insertVec && vectors) {
-          ids.forEach((id, i) => {
-            const vector = vectors[offset + i]
-            if (!vector) return
-            insertVec.run(BigInt(id), vector, input.kbId, input.userId, input.docId)
-          })
-        }
-        return ids.length
-      })
-      writtenCount += runBatch()
-      offset = end
-    }
-
-    return {
-      get done(): boolean {
-        return offset >= input.chunks.length
-      },
-      get written(): number {
-        return writtenCount
-      },
-      writeNextBatch
-    }
-  }
-
-  /** 清某文档的索引数据（切片/FTS/向量/图谱）；在事务内调用或独立调用均可 */
-  private clearDocumentIndexTx(db: Database.Database, docId: string): void {
-    const rows = db.prepare('SELECT id FROM knowledge_base_chunks WHERE doc_id = ?').all(docId) as Array<{
-      id: number
-    }>
-    if (rows.length) {
-      const delFts = db.prepare('DELETE FROM kb_chunk_fts WHERE rowid = ?')
-      for (const row of rows) delFts.run(row.id)
-    }
-    for (const table of this.listVectorTables()) {
-      db.prepare(`DELETE FROM ${table} WHERE doc_id = ?`).run(docId)
-    }
-    db.prepare('DELETE FROM knowledge_base_chunks WHERE doc_id = ?').run(docId)
-    this.clearDocumentGraphTx(db, docId)
+    return this.chunks.createDocumentIndexWriter(input)
   }
 
   /** 删除某文档的索引数据（删文件/文件夹时调用） */
   deleteDocumentIndex(docId: string): void {
-    const db = this.open()
-    db.transaction(() => this.clearDocumentIndexTx(db, docId))()
+    this.chunks.deleteDocumentIndex(docId)
   }
 
   /** 删除整库索引数据（删库时调用） */
   deleteBaseIndex(kbId: string): void {
-    const db = this.open()
-    db.transaction(() => {
-      const ids = db.prepare('SELECT id FROM knowledge_base_chunks WHERE kb_id = ?').all(kbId) as Array<{
-        id: number
-      }>
-      const delFts = db.prepare('DELETE FROM kb_chunk_fts WHERE rowid = ?')
-      for (const row of ids) delFts.run(row.id)
-      for (const table of this.listVectorTables()) {
-        db.prepare(`DELETE FROM ${table} WHERE kb_id = ?`).run(kbId)
-      }
-      db.prepare('DELETE FROM knowledge_base_chunks WHERE kb_id = ?').run(kbId)
-      db.prepare('DELETE FROM knowledge_base_entities WHERE kb_id = ?').run(kbId)
-      db.prepare('DELETE FROM knowledge_base_relations WHERE kb_id = ?').run(kbId)
-      db.prepare('DELETE FROM knowledge_base_communities WHERE kb_id = ?').run(kbId)
-    })()
+    this.chunks.deleteBaseIndex(kbId)
   }
 
-  // ── 检索查询 ──
+  // ── 检索查询（R5：SQL 在 ChunkVectorRepo；以下为委托门面，签名/行为不变）──
 
   /** 稀疏检索：调用方负责把查询串分词并转义为 MATCH 表达式 */
   searchSparse(input: {
@@ -1112,20 +602,7 @@ export class KnowledgeStore {
     k1: number
     b: number
   }): Array<{ chunkId: number; score: number }> {
-    const db = this.open()
-    const rows = db
-      .prepare(
-        `SELECT rowid AS chunk_id, bm25(kb_chunk_fts, ?, ?) AS score
-         FROM kb_chunk_fts
-         WHERE kb_chunk_fts MATCH ? AND kb_id = ? AND user_id = ?
-         ORDER BY score LIMIT ?`
-      )
-      .all(input.k1, input.b, input.match, input.kbId, input.userId, input.limit) as Array<{
-      chunk_id: number
-      score: number
-    }>
-    // FTS5 的 bm25() 越小越相关（负值），对外取 -score 便于展示与融合
-    return rows.map((row) => ({ chunkId: row.chunk_id, score: -row.score }))
+    return this.chunks.searchSparse(input)
   }
 
   /** 关键词兜底（分词后 token 过少的短查询） */
@@ -1135,15 +612,7 @@ export class KnowledgeStore {
     keyword: string
     limit: number
   }): Array<{ chunkId: number; score: number }> {
-    const db = this.open()
-    const rows = db
-      .prepare(
-        `SELECT id AS chunk_id FROM knowledge_base_chunks
-         WHERE kb_id = ? AND user_id = ? AND content LIKE ?
-         ORDER BY id LIMIT ?`
-      )
-      .all(input.kbId, input.userId, `%${input.keyword}%`, input.limit) as Array<{ chunk_id: number }>
-    return rows.map((row, index) => ({ chunkId: row.chunk_id, score: 1 / (index + 1) }))
+    return this.chunks.searchLike(input)
   }
 
   /**
@@ -1158,56 +627,7 @@ export class KnowledgeStore {
     limit: number
     docIds?: string[]
   }): Array<{ chunkId: number; score: number }> {
-    const db = this.open()
-    if (this.getVectorBackend() === 'sqlite-vec') {
-      const table = vectorTableName(input.dim)
-      const exists = db
-        .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(table) as { ok: number } | undefined
-      if (exists) {
-        const rows = db
-          .prepare(
-            `SELECT chunk_id, distance FROM ${table}
-             WHERE embedding MATCH ? AND k = ? AND kb_id = ? AND user_id = ?
-             ORDER BY distance`
-          )
-          .all(input.vector, input.limit, input.kbId, input.userId) as Array<{
-          chunk_id: number
-          distance: number
-        }>
-        return rows.map((row) => ({
-          chunkId: row.chunk_id,
-          score: 1 - (row.distance * row.distance) / 2
-        }))
-      }
-    }
-    // JS 兜底：分批扫描该库的向量 BLOB 做余弦
-    const result: Array<{ chunkId: number; score: number }> = []
-    const pageSize = 2000
-    let offset = 0
-    const stmt = db.prepare(
-      `SELECT id, embedding FROM knowledge_base_chunks
-       WHERE kb_id = ? AND user_id = ? AND embedding IS NOT NULL
-       ORDER BY id LIMIT ? OFFSET ?`
-    )
-    for (;;) {
-      const rows = stmt.all(input.kbId, input.userId, pageSize, offset) as Array<{
-        id: number
-        embedding: Buffer
-      }>
-      if (!rows.length) break
-      for (const row of rows) {
-        const vector = toFloat32(row.embedding)
-        if (vector.length !== input.vector.length) continue
-        let dot = 0
-        for (let i = 0; i < vector.length; i += 1) dot += vector[i] * input.vector[i]
-        result.push({ chunkId: row.id, score: dot })
-      }
-      offset += rows.length
-      if (rows.length < pageSize) break
-    }
-    result.sort((a, b) => b.score - a.score)
-    return result.slice(0, input.limit)
+    return this.chunks.searchDense(input)
   }
 
   /** 按 chunk id 取命中内容（JOIN 文档表拿名称/相对路径；不含 storage_path） */
@@ -1225,31 +645,7 @@ export class KnowledgeStore {
     /** 文档导入时间（时间衰减的事实源；见 time-decay.ts 的局限说明） */
     uploadedAt: number
   }> {
-    if (!ids.length) return []
-    const db = this.open()
-    const placeholders = ids.map(() => '?').join(',')
-    const rows = db
-      .prepare(
-        `SELECT c.id AS chunk_id, c.uid, c.doc_id, c.chunk_index, c.heading, c.content, c.char_start, c.char_end,
-                d.name AS doc_name, d.rel_path, d.uploaded_at
-         FROM knowledge_base_chunks c
-         JOIN knowledge_base_documents d ON d.id = c.doc_id
-         WHERE c.id IN (${placeholders})`
-      )
-      .all(...ids) as ChunkHitDbRow[]
-    return rows.map((row) => ({
-      chunkId: row.chunk_id,
-      uid: row.uid,
-      docId: row.doc_id,
-      docName: row.doc_name,
-      relPath: row.rel_path,
-      chunkIndex: row.chunk_index,
-      heading: row.heading,
-      content: row.content,
-      charStart: row.char_start,
-      charEnd: row.char_end,
-      uploadedAt: row.uploaded_at
-    }))
+    return this.chunks.getChunksByIds(ids)
   }
 
   /**
@@ -1257,55 +653,24 @@ export class KnowledgeStore {
    * FTS5 不可用时返回空 Map（调用方回退到 SparseIndexer.tokenize 现切）。
    */
   getChunkTokens(ids: number[]): Map<number, string> {
-    const out = new Map<number, string>()
-    if (!ids.length || this.getMeta('fts5_ready') !== '1') return out
-    const db = this.open()
-    const placeholders = ids.map(() => '?').join(',')
-    const rows = db
-      .prepare(`SELECT rowid AS chunk_id, text_tokens FROM kb_chunk_fts WHERE rowid IN (${placeholders})`)
-      .all(...ids) as Array<{ chunk_id: number; text_tokens: string }>
-    for (const row of rows) out.set(row.chunk_id, row.text_tokens)
-    return out
+    return this.chunks.getChunkTokens(ids)
   }
 
   /** 某文档的切片（图谱抽取按块进行；按 chunk_index 排序） */
   listChunksForDoc(docId: string): Array<{ id: number; index: number; content: string }> {
-    const rows = this.open()
-      .prepare(
-        'SELECT id, chunk_index, content FROM knowledge_base_chunks WHERE doc_id = ? ORDER BY chunk_index'
-      )
-      .all(docId) as Array<{ id: number; chunk_index: number; content: string }>
-    return rows.map((row) => ({ id: row.id, index: row.chunk_index, content: row.content }))
+    return this.chunks.listChunksForDoc(docId)
   }
 
   countChunks(kbId: string): number {
-    const row = this.open()
-      .prepare('SELECT COUNT(*) AS c FROM knowledge_base_chunks WHERE kb_id = ?')
-      .get(kbId) as { c: number }
-    return row.c
+    return this.chunks.countChunks(kbId)
   }
 
   /** 库内是否存在已向量化的切片（检索时判断稠密路是否可用） */
   hasVectors(kbId: string): boolean {
-    const db = this.open()
-    if (this.getVectorBackend() === 'sqlite-vec') {
-      for (const table of this.listVectorTables()) {
-        const row = db.prepare(`SELECT 1 AS ok FROM ${table} WHERE kb_id = ? LIMIT 1`).get(kbId) as
-          | { ok: number }
-          | undefined
-        if (row) return true
-      }
-      return false
-    }
-    const row = db
-      .prepare(
-        'SELECT 1 AS ok FROM knowledge_base_chunks WHERE kb_id = ? AND embedding IS NOT NULL LIMIT 1'
-      )
-      .get(kbId) as { ok: number } | undefined
-    return Boolean(row)
+    return this.chunks.hasVectors(kbId)
   }
 
-  // ── 文档索引状态 ──
+  // ── 文档索引状态（R5：SQL 在 DocumentRepo；以下为委托门面，签名/行为不变）──
 
   /** 索引进度回写（「先写库、后推事件」的写库侧） */
   updateDocumentIndexState(
@@ -1325,98 +690,34 @@ export class KnowledgeStore {
       indexedAt?: number | null
     }
   ): void {
-    const db = this.open()
-    const sets: string[] = ['updated_at = ?']
-    const params: unknown[] = [Date.now()]
-    const push = (column: string, value: unknown): void => {
-      sets.push(`${column} = ?`)
-      params.push(value)
-    }
-    if (patch.status !== undefined) push('status', patch.status)
-    if (patch.stage !== undefined) push('stage', patch.stage)
-    if (patch.progress !== undefined) push('progress', patch.progress)
-    if (patch.charCount !== undefined) push('char_count', patch.charCount)
-    if (patch.truncated !== undefined) push('truncated', patch.truncated ? 1 : 0)
-    if (patch.chunksCount !== undefined) push('chunks_count', patch.chunksCount)
-    if (patch.entitiesCount !== undefined) push('entities_count', patch.entitiesCount)
-    if (patch.relationsCount !== undefined) push('relations_count', patch.relationsCount)
-    if (patch.errorMessage !== undefined) push('error_message', patch.errorMessage)
-    if (patch.graphError !== undefined) push('graph_error', patch.graphError)
-    if (patch.indexSignature !== undefined) push('index_signature', patch.indexSignature)
-    if (patch.indexedAt !== undefined) push('indexed_at', patch.indexedAt)
-    params.push(id)
-    db.prepare(`UPDATE knowledge_base_documents SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    this.documents.updateDocumentIndexState(id, patch)
   }
 
   /** 更新文档的索引配置快照（重建时以当前生效配置刷新，保证「改设置再重建」生效） */
   updateDocumentConfig(id: string, config: string): void {
-    this.open()
-      .prepare('UPDATE knowledge_base_documents SET config = ?, updated_at = ? WHERE id = ?')
-      .run(config, Date.now(), id)
+    this.documents.updateDocumentConfig(id, config)
   }
 
   /** 启动恢复：把中断残留的 queued/indexing 置为 failed（应用退出中断） */
   recoverInterruptedIndexing(): number {
-    const db = this.open()
-    const now = Date.now()
-    return db
-      .prepare(
-        `UPDATE knowledge_base_documents
-         SET status = 'failed', stage = NULL, error_message = ?, updated_at = ?
-         WHERE status IN ('queued', 'indexing')`
-      )
-      .run('应用退出中断，请重新索引', now).changes
+    return this.documents.recoverInterruptedIndexing()
   }
 
-  // ── 嵌入缓存（省调用；sha1(model|dim|text) → 向量）──
+  // ── 嵌入缓存（R5：SQL 在 ChunkVectorRepo；以下为委托门面，签名/行为不变）──
 
   getEmbeddingCache(hashes: string[]): Map<string, Float32Array> {
-    const map = new Map<string, Float32Array>()
-    if (!hashes.length) return map
-    const db = this.open()
-    // 批量查（IN 分片 500；hash 已编码 model|dim|text，无需再按 dim 过滤）
-    for (let i = 0; i < hashes.length; i += 500) {
-      const slice = hashes.slice(i, i + 500)
-      const placeholders = slice.map(() => '?').join(',')
-      const rows = db
-        .prepare(
-          `SELECT hash, vector FROM knowledge_embedding_cache WHERE hash IN (${placeholders})`
-        )
-        .all(...slice) as Array<{ hash: string; vector: Buffer }>
-      for (const row of rows) map.set(row.hash, toFloat32(row.vector))
-    }
-    return map
+    return this.chunks.getEmbeddingCache(hashes)
   }
 
   putEmbeddingCache(entries: Array<{ hash: string; dim: number; vector: Float32Array }>): void {
-    if (!entries.length) return
-    const db = this.open()
-    const stmt = db.prepare(
-      `INSERT INTO knowledge_embedding_cache (hash, dim, vector, created_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(hash) DO UPDATE SET vector = excluded.vector, dim = excluded.dim`
-    )
-    const now = Date.now()
-    db.transaction(() => {
-      for (const entry of entries) {
-        stmt.run(
-          entry.hash,
-          entry.dim,
-          Buffer.from(entry.vector.buffer, entry.vector.byteOffset, entry.vector.byteLength),
-          now
-        )
-      }
-    })()
+    this.chunks.putEmbeddingCache(entries)
   }
 
-  // ── 图谱（实体 / 关系）──
+  // ── 图谱（实体 / 关系；R5：SQL 在 GraphRepo；以下为委托门面，签名/行为不变）──
 
   /** 清某文档的图谱（重抽前先清；删文档时随索引一并清） */
   deleteDocumentGraph(docId: string): void {
-    const db = this.open()
-    db.transaction(() => {
-      db.prepare('DELETE FROM knowledge_base_entities WHERE doc_id = ?').run(docId)
-      db.prepare('DELETE FROM knowledge_base_relations WHERE doc_id = ?').run(docId)
-    })()
+    this.graph.deleteDocumentGraph(docId)
   }
 
   /** 写入某文档的图谱（先清后插，单事务；实体/关系在文档内按归一键去重） */
@@ -1444,62 +745,7 @@ export class KnowledgeStore {
       description: string | null
     }>
   }): { entities: number; relations: number } {
-    const db = this.open()
-    const now = Date.now()
-    const insertEntity = db.prepare(
-      `INSERT INTO knowledge_base_entities
-        (kb_id, doc_id, chunk_id, user_id, name, name_key, type, mentions, source_text, char_start, char_end, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
-    )
-    const insertRelation = db.prepare(
-      `INSERT INTO knowledge_base_relations
-        (kb_id, doc_id, chunk_id, user_id, from_entity, to_entity, from_key, to_key, label, weight, description, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-    )
-    const run = db.transaction((): { entities: number; relations: number } => {
-      this.clearDocumentGraphTx(db, input.docId)
-      let entities = 0
-      for (const entity of input.entities) {
-        insertEntity.run(
-          input.kbId,
-          input.docId,
-          entity.chunkId,
-          input.userId,
-          entity.name,
-          entity.nameKey,
-          entity.type,
-          entity.sourceText,
-          entity.charStart,
-          entity.charEnd,
-          now
-        )
-        entities += 1
-      }
-      let relations = 0
-      for (const relation of input.relations) {
-        insertRelation.run(
-          input.kbId,
-          input.docId,
-          relation.chunkId,
-          input.userId,
-          relation.fromEntity,
-          relation.toEntity,
-          relation.fromKey,
-          relation.toKey,
-          relation.label,
-          relation.description,
-          now
-        )
-        relations += 1
-      }
-      return { entities, relations }
-    })
-    return run()
-  }
-
-  private clearDocumentGraphTx(db: Database.Database, docId: string): void {
-    db.prepare('DELETE FROM knowledge_base_entities WHERE doc_id = ?').run(docId)
-    db.prepare('DELETE FROM knowledge_base_relations WHERE doc_id = ?').run(docId)
+    return this.graph.replaceDocumentGraph(input)
   }
 
   /** 库内实体聚合视图（按 name_key + type 折叠，mentions 为出现次数） */
@@ -1509,21 +755,7 @@ export class KnowledgeStore {
     type: string
     mentions: number
   }> {
-    const rows = this.open()
-      .prepare(
-        `SELECT name, name_key, type, COUNT(*) AS mentions
-         FROM knowledge_base_entities WHERE kb_id = ?
-         GROUP BY name_key, type
-         ORDER BY mentions DESC, name ASC
-         LIMIT ?`
-      )
-      .all(kbId, limit) as Array<{ name: string; name_key: string; type: string; mentions: number }>
-    return rows.map((row) => ({
-      name: row.name,
-      nameKey: row.name_key,
-      type: row.type,
-      mentions: row.mentions
-    }))
+    return this.graph.listEntities(kbId, limit)
   }
 
   /**
@@ -1532,109 +764,21 @@ export class KnowledgeStore {
    * 悬挂边（端点不在节点集内）与自环在 SQL 后过滤；节点超限则整体截断（truncated）。
    */
   loadKbGraphView(kbId: string, limit = 150): KnowledgeGraphView {
-    const db = this.open()
-    const nodeRows = db
-      .prepare(
-        `SELECT name_key, name, type, MAX(cnt) AS mentions, SUM(cnt) AS total
-         FROM (
-           SELECT name_key, name, type, COUNT(*) AS cnt
-           FROM knowledge_base_entities WHERE kb_id = ?
-           GROUP BY name_key, name, type
-         )
-         GROUP BY name_key
-         ORDER BY total DESC, name_key ASC
-         LIMIT ?`
-      )
-      .all(kbId, limit + 1) as Array<{
-      name_key: string
-      name: string
-      type: string
-      mentions: number
-      total: number
-    }>
-    const truncatedNodes = nodeRows.length > limit
-    const kept = nodeRows.slice(0, limit)
-
-    // 文档数（跨文档去重）单独聚合后并入（折叠查询里拿不到 doc_id 明细）
-    const docsRows = db
-      .prepare(
-        `SELECT name_key, COUNT(DISTINCT doc_id) AS docs
-         FROM knowledge_base_entities WHERE kb_id = ?
-         GROUP BY name_key`
-      )
-      .all(kbId) as Array<{ name_key: string; docs: number }>
-    const docsByKey = new Map(docsRows.map((row) => [row.name_key, row.docs]))
-
-    const nodes: KnowledgeGraphViewNode[] = kept.map((row) => ({
-      key: row.name_key,
-      name: row.name,
-      type: row.type,
-      mentions: row.total,
-      docs: docsByKey.get(row.name_key) ?? 0
-    }))
-    const inNodes = new Set(nodes.map((node) => node.key))
-
-    const relationRows = db
-      .prepare(
-        `SELECT from_key, to_key, label, COUNT(*) AS weight
-         FROM knowledge_base_relations WHERE kb_id = ?
-         GROUP BY from_key, to_key, label
-         ORDER BY weight DESC`
-      )
-      .all(kbId) as Array<{ from_key: string; to_key: string; label: string; weight: number }>
-
-    // 折平行边：同一对实体多条关系合并（weight 求和、labels 采样前 3 条）
-    const linkMap = new Map<string, KnowledgeGraphViewLink>()
-    for (const row of relationRows) {
-      if (row.from_key === row.to_key) continue
-      if (!inNodes.has(row.from_key) || !inNodes.has(row.to_key)) continue
-      const id = JSON.stringify([row.from_key, row.to_key])
-      const existing = linkMap.get(id)
-      if (existing) {
-        existing.weight += row.weight
-        if (existing.labels.length < 3 && !existing.labels.includes(row.label)) {
-          existing.labels.push(row.label)
-        }
-      } else {
-        linkMap.set(id, {
-          from: row.from_key,
-          to: row.to_key,
-          labels: [row.label],
-          weight: row.weight
-        })
-      }
-    }
-    const allLinks = [...linkMap.values()].sort((a, b) => b.weight - a.weight)
-    const links = allLinks.slice(0, MAX_GRAPH_VIEW_EDGES)
-
-    return { nodes, links, truncated: truncatedNodes || links.length < allLinks.length }
+    return this.graph.loadKbGraphView(kbId, limit)
   }
 
   countGraphEntities(kbId: string): number {
-    const row = this.open()
-      .prepare('SELECT COUNT(*) AS c FROM knowledge_base_entities WHERE kb_id = ?')
-      .get(kbId) as { c: number }
-    return row.c
+    return this.graph.countGraphEntities(kbId)
   }
 
   /** 某文档的图谱（重抽后回写文档级计数用） */
   countDocumentGraph(docId: string): { entities: number; relations: number } {
-    const db = this.open()
-    const entities = db
-      .prepare('SELECT COUNT(*) AS c FROM knowledge_base_entities WHERE doc_id = ?')
-      .get(docId) as { c: number }
-    const relations = db
-      .prepare('SELECT COUNT(*) AS c FROM knowledge_base_relations WHERE doc_id = ?')
-      .get(docId) as { c: number }
-    return { entities: entities.c, relations: relations.c }
+    return this.graph.countDocumentGraph(docId)
   }
 
   /** 某文档的实体名（重抽失败提示 / 前端展示用） */
   listDocumentGraph(docId: string): Array<{ name: string; nameKey: string; type: string }> {
-    const rows = this.open()
-      .prepare('SELECT name, name_key, type FROM knowledge_base_entities WHERE doc_id = ?')
-      .all(docId) as Array<{ name: string; name_key: string; type: string }>
-    return rows.map((row) => ({ name: row.name, nameKey: row.name_key, type: row.type }))
+    return this.graph.listDocumentGraph(docId)
   }
 
   /**
@@ -1653,55 +797,10 @@ export class KnowledgeStore {
     query: string
     limit: number
   }): { chunkIds: number[]; seedNames: string[] } {
-    const db = this.open()
-    const normalizedQuery = normalizeName(input.query)
-    if (!normalizedQuery) return { chunkIds: [], seedNames: [] }
-
-    const seeds = db
-      .prepare(
-        `SELECT DISTINCT name_key, name FROM knowledge_base_entities
-         WHERE kb_id = ? AND user_id = ? AND length(name_key) >= 2 AND instr(?, name_key) > 0
-         LIMIT 20`
-      )
-      .all(input.kbId, input.userId, normalizedQuery) as Array<{ name_key: string; name: string }>
-    if (!seeds.length) return { chunkIds: [], seedNames: [] }
-    const seedKeys = seeds.map((row) => row.name_key)
-
-    // 一跳邻居（含种子自身）
-    const neighborKeys = new Set<string>(seedKeys)
-    const placeholders = seedKeys.map(() => '?').join(',')
-    const relations = db
-      .prepare(
-        `SELECT from_key, to_key FROM knowledge_base_relations
-         WHERE kb_id = ? AND user_id = ?
-           AND (from_key IN (${placeholders}) OR to_key IN (${placeholders}))`
-      )
-      .all(input.kbId, input.userId, ...seedKeys, ...seedKeys) as Array<{
-      from_key: string
-      to_key: string
-    }>
-    for (const relation of relations) {
-      neighborKeys.add(relation.from_key)
-      neighborKeys.add(relation.to_key)
-    }
-
-    const keys = [...neighborKeys]
-    const keyPlaceholders = keys.map(() => '?').join(',')
-    const chunks = db
-      .prepare(
-        `SELECT DISTINCT chunk_id FROM knowledge_base_entities
-         WHERE kb_id = ? AND user_id = ? AND chunk_id IS NOT NULL AND name_key IN (${keyPlaceholders})
-         LIMIT ?`
-      )
-      .all(input.kbId, input.userId, ...keys, input.limit) as Array<{ chunk_id: number }>
-
-    return {
-      chunkIds: chunks.map((row) => row.chunk_id),
-      seedNames: seeds.map((row) => row.name)
-    }
+    return this.graph.graphExpand(input)
   }
 
-  // ── 社区摘要（GraphRAG 全局检索）──
+  // ── 社区摘要（GraphRAG 全局检索；R5：SQL 在 GraphRepo）──
 
   /** 载入整库实体图（跨文档按归一键折叠；供社区发现用） */
   loadKbGraph(kbId: string): {
@@ -1709,45 +808,7 @@ export class KnowledgeStore {
     entities: Array<{ key: string }>
     relations: Array<{ from: string; to: string; label: string }>
   } {
-    const db = this.open()
-    const entityRows = db
-      .prepare(
-        `SELECT name_key, name, type, source_text FROM knowledge_base_entities WHERE kb_id = ?`
-      )
-      .all(kbId) as Array<{
-      name_key: string
-      name: string
-      type: string
-      source_text: string | null
-    }>
-    const entityIndex = new Map<string, { name: string; type: string; sourceText: string | null }>()
-    for (const row of entityRows) {
-      // 同名跨文档只留一条（名字/类型取首次出现的；source_text 取第一条非空的）
-      const existing = entityIndex.get(row.name_key)
-      if (existing) {
-        if (!existing.sourceText && row.source_text) existing.sourceText = row.source_text
-        continue
-      }
-      entityIndex.set(row.name_key, {
-        name: row.name,
-        type: row.type,
-        sourceText: row.source_text
-      })
-    }
-    const relationRows = db
-      .prepare(
-        `SELECT from_key, to_key, label FROM knowledge_base_relations WHERE kb_id = ?`
-      )
-      .all(kbId) as Array<{ from_key: string; to_key: string; label: string }>
-    return {
-      entityIndex,
-      entities: [...entityIndex.keys()].map((key) => ({ key })),
-      relations: relationRows.map((row) => ({
-        from: row.from_key,
-        to: row.to_key,
-        label: row.label
-      }))
-    }
+    return this.graph.loadKbGraph(kbId)
   }
 
   /** 替换某库的社区摘要（先清后写，单事务；空数组 = 清空） */
@@ -1756,54 +817,16 @@ export class KnowledgeStore {
     userId: string
     communities: Array<{ entityKeys: string[]; summary: string }>
   }): number {
-    const db = this.open()
-    const now = Date.now()
-    const insert = db.prepare(
-      `INSERT INTO knowledge_base_communities (kb_id, user_id, level, entity_keys, summary, entity_count, updated_at)
-       VALUES (?, ?, 0, ?, ?, ?, ?)`
-    )
-    const run = db.transaction((): number => {
-      db.prepare('DELETE FROM knowledge_base_communities WHERE kb_id = ?').run(input.kbId)
-      for (const community of input.communities) {
-        insert.run(
-          input.kbId,
-          input.userId,
-          JSON.stringify(community.entityKeys),
-          community.summary,
-          community.entityKeys.length,
-          now
-        )
-      }
-      return input.communities.length
-    })
-    return run()
+    return this.graph.replaceCommunities(input)
   }
 
   /** 读某库的社区摘要（按社区规模从大到小） */
   listCommunities(kbId: string, limit = 12): Array<{ entityKeys: string[]; summary: string }> {
-    const rows = this.open()
-      .prepare(
-        `SELECT entity_keys, summary FROM knowledge_base_communities
-         WHERE kb_id = ? ORDER BY entity_count DESC, id ASC LIMIT ?`
-      )
-      .all(kbId, limit) as Array<{ entity_keys: string; summary: string }>
-    return rows.map((row) => {
-      let entityKeys: string[] = []
-      try {
-        const parsed = JSON.parse(row.entity_keys) as unknown
-        if (Array.isArray(parsed)) entityKeys = parsed.filter((item): item is string => typeof item === 'string')
-      } catch {
-        entityKeys = []
-      }
-      return { entityKeys, summary: row.summary }
-    })
+    return this.graph.listCommunities(kbId, limit)
   }
 
   countCommunities(kbId: string): number {
-    const row = this.open()
-      .prepare('SELECT COUNT(*) AS c FROM knowledge_base_communities WHERE kb_id = ?')
-      .get(kbId) as { c: number }
-    return row.c
+    return this.graph.countCommunities(kbId)
   }
 
   // ── 备份 ──
@@ -1844,7 +867,7 @@ export class KnowledgeStore {
     ).run(chunks.c, entities.c, docs.indexed_docs, docs.last_indexed || null, kbId)
   }
 
-  // ── 共享 ──
+  // ── 共享（R5：SQL 在 ShareRepo；以下为委托门面，签名/行为不变）──
 
   insertShare(input: {
     userId: string
@@ -1854,62 +877,20 @@ export class KnowledgeStore {
     permission: string
     expiresAt: number | null
   }): KnowledgeShareRow {
-    const db = this.open()
-    const id = randomUUID()
-    const token = randomUUID().replace(/-/g, '')
-    const now = Date.now()
-    db.prepare(
-      `INSERT INTO knowledge_shares
-        (id, user_id, target_kind, target_id, target_name, token, permission, expires_at, revoked_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
-    ).run(
-      id,
-      input.userId,
-      input.targetKind,
-      input.targetId,
-      input.targetName,
-      token,
-      input.permission,
-      input.expiresAt,
-      now
-    )
-    return {
-      id,
-      userId: input.userId,
-      targetKind: input.targetKind,
-      targetId: input.targetId,
-      targetName: input.targetName,
-      token,
-      url: `ke-work://share/${token}`,
-      permission: input.permission,
-      expiresAt: input.expiresAt,
-      revokedAt: null,
-      createdAt: now
-    }
+    return this.shares.insertShare(input)
   }
 
   listShares(userId: string): KnowledgeShareRow[] {
-    const rows = this.open()
-      .prepare(
-        'SELECT * FROM knowledge_shares WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC'
-      )
-      .all(userId) as ShareDbRow[]
-    return rows.map(toShare)
+    return this.shares.listShares(userId)
   }
 
   /** 撤销共享：返回受影响行数（0 = 不存在或非本人） */
   revokeShare(userId: string, token: string): number {
-    return this.open()
-      .prepare(
-        'UPDATE knowledge_shares SET revoked_at = ? WHERE token = ? AND user_id = ? AND revoked_at IS NULL'
-      )
-      .run(Date.now(), token, userId).changes
+    return this.shares.revokeShare(userId, token)
   }
 
   /** 删除某知识库下的全部共享记录（删库时清理） */
   deleteSharesForTarget(userId: string, targetId: string): void {
-    this.open()
-      .prepare('DELETE FROM knowledge_shares WHERE user_id = ? AND target_id = ?')
-      .run(userId, targetId)
+    this.shares.deleteSharesForTarget(userId, targetId)
   }
 }

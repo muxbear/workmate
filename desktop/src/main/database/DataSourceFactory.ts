@@ -1,31 +1,34 @@
-import { EventEmitter } from 'events'
 import { join } from 'path'
 import { homedir } from 'os'
 import type { Database } from 'better-sqlite3'
-import type { WorkMode } from '../mode/work-mode'
-import type { IConfigRepository } from './interfaces/IConfigRepository'
+import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint'
 import type { ILocalAuthStore } from './interfaces/ILocalAuthStore'
 import { LocalDataSource } from './local/LocalDataSource'
-import { LocalConfigRepository } from './local/LocalConfigRepository'
 import { LocalAuthRepository } from './local/LocalAuthRepository'
 import { WorkspaceRepository } from '../workspace/WorkspaceRepository'
-import { CloudDataSource, type CloudTokenStore } from './cloud/CloudDataSource'
-import { CloudConfigRepository } from './cloud/CloudConfigRepository'
+import { ConversationStore } from '../agent/ConversationStore'
+import { AutomationRepository } from '../automation/AutomationRepository'
+import { AutomationRunRepository } from '../automation/AutomationRunRepository'
+import { AuditLogRepository } from '../automation/AuditLogRepository'
 
 /**
- * 数据源工厂（单例 + 工厂 + 观察者）
- * 按当前工作模式创建对应的 Repository 实现（Strategy）
+ * 数据源工厂（单例 + 工厂）
+ *
+ * **R8-3 瘦身**：
+ * - 工作模式不再由本工厂持有 —— 单一事实源 = `WorkModeStore`（工厂内叠放的
+ *   `mode`/`setMode`/`onModeChanged`/`mode:changed` 死事件与双写一并删除）；
+ * - 未接线的云端 Repository 链（`getCloudDataSource` / `CloudConfigRepository` /
+ *   `createConfigRepository` / cloud token 注入）整条删除 —— 桌面端云端身份走
+ *   OAuth2、云知识库走 CloudKnowledgeService HTTP，全链零生产消费者
+ *   （P3-5 方法级普查结论；按方案 §1.2「没有第二个真实消费者的抽象不做」）。
+ * - 留守职责：本地连接（惰性打开 + 迁移目录）与按域 create* 构造。
  */
 export class DataSourceFactory {
   private static instance: DataSourceFactory | null = null
 
-  private mode: WorkMode = 'local'
   private localDbPath = join(homedir(), '.ke-work', 'ke-work.db')
   private localMigrationsDir: string | undefined
   private localDataSource: LocalDataSource | null = null
-  private cloudDataSource: CloudDataSource | null = null
-  private cloudBaseUrl = ''
-  private readonly emitter = new EventEmitter()
 
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   private constructor() {}
@@ -43,54 +46,9 @@ export class DataSourceFactory {
   }
 
   /** 运行时配置（应用启动时调用） */
-  configure(options: { localDbPath?: string; localMigrationsDir?: string; cloudBaseUrl?: string }): void {
+  configure(options: { localDbPath?: string; localMigrationsDir?: string }): void {
     if (options.localDbPath) this.localDbPath = options.localDbPath
     if (options.localMigrationsDir) this.localMigrationsDir = options.localMigrationsDir
-    if (options.cloudBaseUrl) this.cloudBaseUrl = options.cloudBaseUrl
-  }
-
-  getMode(): WorkMode {
-    return this.mode
-  }
-
-  /** 切换工作模式并通知订阅者 */
-  setMode(mode: WorkMode): void {
-    if (this.mode === mode) return
-    this.mode = mode
-    this.emitter.emit('mode:changed', mode)
-  }
-
-  onModeChanged(listener: (mode: WorkMode) => void): () => void {
-    this.emitter.on('mode:changed', listener)
-    return () => this.emitter.off('mode:changed', listener)
-  }
-
-  /** 注入云端 token 提供器（登录后设置） */
-  setCloudTokenStore(store: CloudTokenStore): void {
-    this.getCloudDataSource().setTokenStore(store)
-  }
-
-  /** 注入云端 401 刷新回调（返回 true 表示刷新成功） */
-  setCloudUnauthorizedHandler(handler: () => Promise<boolean>): void {
-    this.getCloudDataSource().setUnauthorizedHandler(handler)
-  }
-
-  getCloudDataSource(): CloudDataSource {
-    if (!this.cloudDataSource) {
-      if (!this.cloudBaseUrl) {
-        throw new Error('cloudBaseUrl not configured. Call configure({ cloudBaseUrl }) first.')
-      }
-      this.cloudDataSource = new CloudDataSource({ baseUrl: this.cloudBaseUrl })
-    }
-    return this.cloudDataSource
-  }
-
-  // ── Repository 工厂方法（Strategy）──
-
-  createConfigRepository(): IConfigRepository {
-    return this.mode === 'local'
-      ? new LocalConfigRepository(this.getLocalDataSource())
-      : new CloudConfigRepository(this.getCloudDataSource())
   }
 
   /** 本地认证存储（登录凭据校验与 OAuth2 账号关联始终写本地 users/oauth2_sessions，与工作模式无关） */
@@ -103,8 +61,28 @@ export class DataSourceFactory {
     return new WorkspaceRepository(this.getLocalDataSource().getDb())
   }
 
-  /** 本地数据库连接（会话自定义标题等业务表使用；cloud 模式同样落本地） */
-  getLocalDb(): Database.Database {
+  /** 会话存储（checkpointer 由装配层注入；自定义标题等业务表走本地连接） */
+  createConversationStore(getCheckpointer: () => BaseCheckpointSaver): ConversationStore {
+    return new ConversationStore(getCheckpointer, () => this.getLocalDb())
+  }
+
+  /** 自动化任务仓储（本地库，按用户隔离） */
+  createAutomationRepository(): AutomationRepository {
+    return new AutomationRepository(this.getLocalDb())
+  }
+
+  /** 自动化运行记录仓储（本地库） */
+  createAutomationRunRepository(): AutomationRunRepository {
+    return new AutomationRunRepository(this.getLocalDb())
+  }
+
+  /** 自动化审计日志仓储（本地库） */
+  createAuditLogRepository(): AuditLogRepository {
+    return new AuditLogRepository(this.getLocalDb())
+  }
+
+  /** 本地数据库连接（R8-1 收回：仅供本工厂内 create* 构造使用，不再对外泄漏） */
+  private getLocalDb(): Database.Database {
     return this.getLocalDataSource().getDb()
   }
 
@@ -119,6 +97,5 @@ export class DataSourceFactory {
   close(): void {
     this.localDataSource?.close()
     this.localDataSource = null
-    this.cloudDataSource = null
   }
 }

@@ -34,7 +34,6 @@ import { ElectronSafeStorage } from './security/secure-storage'
 import { registerAuthHandlers } from './ipc/auth-handlers'
 import { AgentManager } from './agent/AgentManager'
 import { normalizeBackendKind } from './agent/AgentBuilder'
-import { ConversationStore } from './agent/ConversationStore'
 import { RemoteImageService, registerRemoteImageScheme } from './images/RemoteImageService'
 import { registerRemoteImageHandlers } from './ipc/image-handlers'
 import { registerConversationHandlers } from './ipc/conversation-handlers'
@@ -51,11 +50,9 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { KnowledgeSettingsStore } from './knowledge/KnowledgeSettingsStore'
 import { KnowledgeSettingsService } from './knowledge/KnowledgeSettingsService'
 import { registerKnowledgeHandlers } from './ipc/knowledge-handlers'
-import { AutomationRepository } from './automation/AutomationRepository'
-import { AutomationRunRepository } from './automation/AutomationRunRepository'
 import { AutomationService } from './automation/AutomationService'
+import { AuditedAutomationService } from './automation/AuditedAutomationService'
 import { AutomationTemplateSyncService } from './automation/AutomationTemplateSyncService'
-import { AuditLogRepository } from './automation/AuditLogRepository'
 import { registerAutomationHandlers } from './ipc/automation-handlers'
 import { registerAutomationTemplateSyncHandlers } from './ipc/automation-template-sync-handlers'
 import { createCommandRegistrar } from './ipc/command'
@@ -294,18 +291,16 @@ app.whenReady().then(() => {
   )
   remoteImageService.registerProtocol(protocol)
 
-  // ── 初始化工作模式 ──
+  // ── 初始化工作模式（单一事实源：WorkModeStore）──
   const workModeStore = new WorkModeStore(dataDir.getBaseDir())
   const mode = workModeStore.getMode()
 
-  // ── 初始化数据源工厂 ──
+  // ── 初始化数据源工厂（R8-3 瘦身：不再持有 mode / 不再提供云端数据源）──
   const dataSourceFactory = DataSourceFactory.getInstance()
   dataSourceFactory.configure({
     localDbPath: join(dataDir.getBaseDir(), 'ke-work.db'),
-    localMigrationsDir: join(dataDir.getBaseDir(), MIGRATIONS_DIR),
-    cloudBaseUrl: process.env.CLOUD_API_BASE_URL ?? ''
+    localMigrationsDir: join(dataDir.getBaseDir(), MIGRATIONS_DIR)
   })
-  dataSourceFactory.setMode(mode)
 
   // ── 初始化认证服务与会话 ──
   // 登录凭据校验始终走本地 users 表（与工作模式无关）：云端身份经 OAuth2 关联本地账号
@@ -474,9 +469,8 @@ app.whenReady().then(() => {
   })
 
   // ── 注册会话 IPC（基于 LangGraph checkpointer 的会话读写；自定义标题落本地业务表）──
-  const conversationStore = new ConversationStore(
-    () => agentManager.getCheckpointer(),
-    () => dataSourceFactory.getLocalDb()
+  const conversationStore = dataSourceFactory.createConversationStore(() =>
+    agentManager.getCheckpointer()
   )
   registerConversationHandlers(ipcMain, { conversationStore, session })
 
@@ -856,7 +850,6 @@ app.whenReady().then(() => {
   // ── 注册工作模式 IPC ──
   registerModeHandlers(ipcMain, {
     modeStore: workModeStore,
-    dataSourceFactory,
     agentManager,
     authService,
     session
@@ -885,12 +878,15 @@ app.whenReady().then(() => {
   })
 
   // 自动化：任务定义与运行记录（本地库，按用户隔离）
-  const automationRepository = new AutomationRepository(dataSourceFactory.getLocalDb())
-  const automationRunRepository = new AutomationRunRepository(dataSourceFactory.getLocalDb())
-  const automationAuditRepository = new AuditLogRepository(dataSourceFactory.getLocalDb())
-  const automationService = new AutomationService(automationRepository, automationRunRepository, {
-    audit: automationAuditRepository
-  })
+  const automationRepository = dataSourceFactory.createAutomationRepository()
+  const automationRunRepository = dataSourceFactory.createAutomationRunRepository()
+  const automationAuditRepository = dataSourceFactory.createAuditLogRepository()
+  // 审计（R8-10）：装饰器包装，audit 必填（漏接编译期即暴露）
+  const automationBaseService = new AutomationService(automationRepository, automationRunRepository)
+  const automationService = new AuditedAutomationService(
+    automationBaseService,
+    automationAuditRepository
+  )
   // 启动清理：悬挂运行标记为中断 + 清理过期运行记录
   automationService.onStartup()
   registerAutomationHandlers(ipcMain, { automationService, session })

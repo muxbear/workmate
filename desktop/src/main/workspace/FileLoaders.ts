@@ -230,6 +230,27 @@ async function loadPdf(filePath: string, cursor: number, maxChars: number): Prom
   }
 }
 
+/** 加载器契约：按游标分页提取文本（filePath 已由调用方做存在性/containment 校验） */
+type TextLoader = (filePath: string, cursor: number, maxChars: number) => Promise<LoadedText>
+
+/**
+ * 扩展名 → 加载器注册表（新增格式 = 加一行；未登记走纯文本分页）。
+ * 公共骨架（游标/上限归一化、20MB 上限、分页切片）由 loadFileText 与各加载器共享。
+ */
+const TEXT_LOADERS = new Map<string, TextLoader>([
+  ['docx', loadDocx],
+  ['xlsx', loadXlsx],
+  ['pptx', loadPptx],
+  ['pdf', loadPdf],
+  [
+    'ppt',
+    async () => {
+      // ppt 旧二进制格式不支持（保持原 switch 分支的拒绝语义）
+      throw new Error('该格式暂不支持预览')
+    }
+  ]
+])
+
 /**
  * 按扩展名选择文本加载器并提取文本（ext 为小写、无点）。
  * - docx/xlsx/pptx/pdf 走专用加载器（≤20MB），抽取后按 options.maxChars 分页续读
@@ -243,20 +264,8 @@ export async function loadFileText(
 ): Promise<LoadedText> {
   const cursor = normalizeCursor(options.cursor)
   const pageChars = normalizePageChars(options.maxChars)
-  switch (ext) {
-    case 'docx':
-      return loadDocx(filePath, cursor, pageChars)
-    case 'xlsx':
-      return loadXlsx(filePath, cursor, pageChars)
-    case 'pptx':
-      return loadPptx(filePath, cursor, pageChars)
-    case 'pdf':
-      return loadPdf(filePath, cursor, pageChars)
-    case 'ppt':
-      throw new Error('该格式暂不支持预览')
-    default: {
-      // 纯文本按游标分页读取，首页做 NUL 探测拒绝二进制；可反复续读直到读完整篇
-      return readTextPage(filePath, cursor, pageChars)
-    }
-  }
+  const loader = TEXT_LOADERS.get(ext)
+  if (loader) return loader(filePath, cursor, pageChars)
+  // 纯文本按游标分页读取，首页做 NUL 探测拒绝二进制；可反复续读直到读完整篇
+  return readTextPage(filePath, cursor, pageChars)
 }

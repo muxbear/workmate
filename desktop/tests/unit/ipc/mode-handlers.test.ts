@@ -24,7 +24,6 @@ describe('mode IPC handlers', () => {
     const ipc = createFakeIpcMain()
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local' } as never,
-      dataSourceFactory: { setMode: vi.fn(), getMode: () => 'local' } as never,
       agentManager: { switchMode: vi.fn() } as never,
       authService: { logout: vi.fn() } as never,
       session: new SessionService()
@@ -37,7 +36,6 @@ describe('mode IPC handlers', () => {
     const ipc = createFakeIpcMain()
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'cloud' } as never,
-      dataSourceFactory: { setMode: vi.fn(), getMode: () => 'cloud' } as never,
       agentManager: { switchMode: vi.fn() } as never,
       authService: { logout: vi.fn() } as never,
       session: new SessionService()
@@ -47,15 +45,13 @@ describe('mode IPC handlers', () => {
     expect(result.data).toBe('cloud')
   })
 
-  it('mode:set 持久化 + 工厂切换 + 清登录态（Agent 构建延迟到登录后）', async () => {
+  it('mode:set 持久化到 WorkModeStore（R8-3 单源）+ 清登录态（Agent 构建延迟到登录后）', async () => {
     const ipc = createFakeIpcMain()
-    const setMode = vi.fn()
     const switchMode = vi.fn().mockResolvedValue(undefined)
     const logout = vi.fn().mockResolvedValue(undefined)
     const storeSet = vi.fn()
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local', setMode: storeSet } as never,
-      dataSourceFactory: { setMode, getMode: () => 'local' } as never,
       agentManager: { switchMode } as never,
       authService: { logout } as never,
       session: new SessionService()
@@ -63,7 +59,6 @@ describe('mode IPC handlers', () => {
     const result = await ipc.invoke<{ success: boolean }>('mode:set', 'cloud')
     expect(result.success).toBe(true)
     expect(storeSet).toHaveBeenCalledWith('cloud') // 持久化
-    expect(setMode).toHaveBeenCalledWith('cloud') // 工厂切换
     expect(switchMode).not.toHaveBeenCalled() // Agent 构建延迟到登录成功后
     expect(logout).toHaveBeenCalled() // 登录态清除（需重新登录）
   })
@@ -72,7 +67,6 @@ describe('mode IPC handlers', () => {
     const ipc = createFakeIpcMain()
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local' } as never,
-      dataSourceFactory: { setMode: vi.fn(), getMode: () => 'local' } as never,
       agentManager: { switchMode: vi.fn() } as never,
       authService: { logout: vi.fn() } as never,
       session: new SessionService()
@@ -85,11 +79,9 @@ describe('mode IPC handlers', () => {
   it('mode:set 不再因 Agent 构建失败而失败（云端后端未配置时仍可进入登录入口）', async () => {
     const ipc = createFakeIpcMain()
     const storeSet = vi.fn()
-    const setMode = vi.fn()
     const switchMode = vi.fn().mockRejectedValue(new Error('agent build failed'))
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local', setMode: storeSet } as never,
-      dataSourceFactory: { setMode, getMode: () => 'local' } as never,
       agentManager: { switchMode } as never,
       authService: { logout: vi.fn() } as never,
       session: new SessionService()
@@ -97,14 +89,12 @@ describe('mode IPC handlers', () => {
     const result = await ipc.invoke<{ success: boolean; error?: string }>('mode:set', 'cloud')
     expect(result.success).toBe(true)
     expect(storeSet).toHaveBeenCalledWith('cloud')
-    expect(setMode).toHaveBeenCalledWith('cloud')
   })
 
   it('session:check 未登录返回 loggedIn=false', async () => {
     const ipc = createFakeIpcMain()
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local' } as never,
-      dataSourceFactory: { setMode: vi.fn(), getMode: () => 'local' } as never,
       agentManager: { switchMode: vi.fn() } as never,
       authService: { logout: vi.fn() } as never,
       session: new SessionService()
@@ -122,7 +112,6 @@ describe('mode IPC handlers', () => {
     session.setCurrentUser('u1')
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local' } as never,
-      dataSourceFactory: { setMode: vi.fn(), getMode: () => 'local' } as never,
       agentManager: { switchMode: vi.fn() } as never,
       authService: { logout: vi.fn() } as never,
       session

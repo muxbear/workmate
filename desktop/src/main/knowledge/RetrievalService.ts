@@ -81,6 +81,148 @@ interface Candidate {
   rank: number
 }
 
+/** 单个改写变体的召回产物（stageRecall → stageFuse 之间传递） */
+interface VariantRecall {
+  candidates: FusedCandidate[]
+  seedNames: string[]
+  stats: VariantStats
+}
+
+/** 单次检索的运行状态（各 stage 依次读写；字段与阶段一一对应） */
+interface RetrievalRun {
+  // 输入与生效配置
+  userId: string
+  kbId: string
+  query: string
+  mode: KnowledgeSearchMode
+  topK: number
+  config: KnowledgeEngineConfig
+  history?: RetrievalHistoryTurn[]
+  // 通道可用性与候选池
+  sparseAvailable: boolean
+  denseAvailable: boolean
+  candidateLimit: number
+  // 各阶段产物
+  variants: string[]
+  perVariant: VariantRecall[]
+  seedNames: string[]
+  fused: FusedCandidate[]
+  hits: KnowledgeHit[]
+  rerankSkipped: boolean
+  decayNow: number
+  decayApplied: boolean
+  mmrApplied: boolean
+}
+
+/**
+ * 检索调试追踪器：把原先散在 retrieve() 内联的 trace/mark 插桩收拢为一处。
+ * debug=false 时所有方法即时返回（零全局状态、零额外开销）；载荷形状由
+ * hybrid-retrieval 集成测试钉死（阶段耗时 / 通道统计 / 门限 / flags / hits）。
+ */
+class RetrievalTracer {
+  private readonly startedAt: number
+  private lastMark: number
+  private readonly timings: RetrievalDebugStage[] = []
+  private readonly channels = { sparse: 0, dense: 0, graph: 0 }
+  private readonly channelMs = { sparse: 0, dense: 0, graph: 0 }
+  private gate: RetrievalDebugInfo['denseGate'] = null
+  private variants: string[] = []
+
+  constructor(readonly enabled: boolean) {
+    this.startedAt = performance.now()
+    this.lastMark = this.startedAt
+  }
+
+  /** 记录「距上一 mark」的阶段耗时（阶段边界即调用点，与旧内联实现一一对应） */
+  mark(stage: RetrievalDebugStage['stage']): void {
+    if (!this.enabled) return
+    const now = performance.now()
+    this.timings.push({ stage, ms: round2(now - this.lastMark) })
+    this.lastMark = now
+  }
+
+  setVariants(variants: string[]): void {
+    if (this.enabled) this.variants = variants
+  }
+
+  /** 汇总单个改写变体的通道候选数与耗时；门限信息取「失败并集 + 最高 topScore」 */
+  recordVariant(stats: VariantStats): void {
+    if (!this.enabled) return
+    this.channels.sparse += stats.channels.sparse
+    this.channels.dense += stats.channels.dense
+    this.channels.graph += stats.channels.graph
+    this.channelMs.sparse += stats.ms.sparse
+    this.channelMs.dense += stats.ms.dense
+    this.channelMs.graph += stats.ms.graph
+    if (stats.gate) {
+      this.gate = this.gate
+        ? {
+            ...this.gate,
+            failed: this.gate.failed || stats.gate.failed,
+            topScore: Math.max(this.gate.topScore, stats.gate.topScore)
+          }
+        : { ...stats.gate }
+    }
+  }
+
+  /** 组装调试载荷（未启用返回 undefined，调用处条件展开） */
+  finalize(extra: {
+    mode: KnowledgeSearchMode
+    topK: number
+    candidateLimit: number
+    vectorSkipped: boolean
+    sparseSkipped: boolean
+    fusedCount: number
+    finalHits: KnowledgeHit[]
+    rerankSkipped: boolean
+    mmrApplied: boolean
+    decayApplied: boolean
+    decayNow: number
+    timeDecayHalfLifeDays: number
+  }): RetrievalDebugInfo | undefined {
+    if (!this.enabled) return undefined
+    return {
+      mode: extra.mode,
+      topK: extra.topK,
+      candidateLimit: extra.candidateLimit,
+      variants: this.variants,
+      timings: [
+        ...this.timings,
+        { stage: 'total', ms: round2(performance.now() - this.startedAt) }
+      ],
+      channels: {
+        sparse: { candidates: this.channels.sparse, ms: round2(this.channelMs.sparse) },
+        dense: { candidates: this.channels.dense, ms: round2(this.channelMs.dense) },
+        graph: { candidates: this.channels.graph, ms: round2(this.channelMs.graph) }
+      },
+      denseGate: this.gate,
+      flags: {
+        vectorSkipped: extra.vectorSkipped,
+        sparseSkipped: extra.sparseSkipped,
+        rerankSkipped: extra.rerankSkipped,
+        mmrApplied: extra.mmrApplied,
+        decayApplied: extra.decayApplied
+      },
+      fusedCount: extra.fusedCount,
+      hits: extra.finalHits.map((hit) => ({
+        chunkId: hit.chunkId,
+        score: hit.score,
+        vecScore: hit.vecScore,
+        bm25Score: hit.bm25Score,
+        source: hit.source,
+        uploadedAt: hit.uploadedAt,
+        ...(extra.decayApplied && extra.decayNow > 0
+          ? {
+              decayFactor: round4(
+                decayFactor(hit.uploadedAt, extra.decayNow, extra.timeDecayHalfLifeDays)
+              )
+            }
+          : {})
+      }))
+    }
+  }
+}
+
 export class RetrievalService {
   private readonly deps: RetrievalServiceDeps
 
@@ -111,71 +253,7 @@ export class RetrievalService {
     const config = this.effectiveConfig(input.userId, input.kbId)
     const mode: KnowledgeSearchMode = input.mode ?? 'hybrid'
     const topK = clampTopK(input.topK ?? config.topK)
-
-    // 调试插桩：仅 debug=true 时收集（零全局状态；不传时每次 mark 立即返回）
-    const startedAt = performance.now()
-    let lastMark = startedAt
-    const trace = input.debug
-      ? {
-          timings: [] as RetrievalDebugStage[],
-          channels: { sparse: 0, dense: 0, graph: 0 },
-          channelMs: { sparse: 0, dense: 0, graph: 0 },
-          gate: null as RetrievalDebugInfo['denseGate'],
-          variants: [] as string[]
-        }
-      : null
-    const mark = (stage: RetrievalDebugStage['stage']): void => {
-      if (!trace) return
-      const now = performance.now()
-      trace.timings.push({ stage, ms: round2(now - lastMark) })
-      lastMark = now
-    }
-    /** 组装调试载荷（trace 为 null 时返回 undefined，调用处条件展开） */
-    const finalizeDebug = (extra: {
-      fusedCount: number
-      finalHits: KnowledgeHit[]
-      rerankSkipped: boolean
-      mmrApplied: boolean
-      decayApplied: boolean
-      decayNow: number
-    }): RetrievalDebugInfo | undefined => {
-      if (!trace) return undefined
-      return {
-        mode,
-        topK,
-        candidateLimit,
-        variants: trace.variants,
-        timings: [
-          ...trace.timings,
-          { stage: 'total', ms: round2(performance.now() - startedAt) }
-        ],
-        channels: {
-          sparse: { candidates: trace.channels.sparse, ms: round2(trace.channelMs.sparse) },
-          dense: { candidates: trace.channels.dense, ms: round2(trace.channelMs.dense) },
-          graph: { candidates: trace.channels.graph, ms: round2(trace.channelMs.graph) }
-        },
-        denseGate: trace.gate,
-        flags: {
-          vectorSkipped: !denseAvailable,
-          sparseSkipped: !sparseAvailable,
-          rerankSkipped: extra.rerankSkipped,
-          mmrApplied: extra.mmrApplied,
-          decayApplied: extra.decayApplied
-        },
-        fusedCount: extra.fusedCount,
-        hits: extra.finalHits.map((hit) => ({
-          chunkId: hit.chunkId,
-          score: hit.score,
-          vecScore: hit.vecScore,
-          bm25Score: hit.bm25Score,
-          source: hit.source,
-          uploadedAt: hit.uploadedAt,
-          ...(extra.decayApplied && extra.decayNow > 0
-            ? { decayFactor: round4(decayFactor(hit.uploadedAt, extra.decayNow, config.timeDecayHalfLifeDays)) }
-            : {})
-        }))
-      }
-    }
+    const tracer = new RetrievalTracer(input.debug === true)
 
     if (!query) {
       return {
@@ -184,7 +262,7 @@ export class RetrievalService {
         sparseSkipped: mode === 'vector',
         rerankSkipped: !config.rerankEnabled,
         noRelevantResult: true,
-        ...(trace ? { debug: emptyDebugInfo(mode, topK) } : {})
+        ...(tracer.enabled ? { debug: emptyDebugInfo(mode, topK) } : {})
       }
     }
 
@@ -202,92 +280,148 @@ export class RetrievalService {
       )
     }
 
-    const candidateLimit =
-      topK *
-      (config.mmrEnabled
-        ? MMR_CANDIDATE_MULTIPLIER
-        : config.rerankEnabled
-          ? CANDIDATE_MULTIPLIER_RERANK
-          : CANDIDATE_MULTIPLIER_PLAIN)
-
-    // 查询改写：原文永远第一路，变体只做召回扩展（任何失败都退化为只用原问题）
-    const variants = await this.expandQuery(query, config, input.history)
-    mark('rewrite')
-    const perVariant = await Promise.all(
-      variants.map((variant) =>
-        this.collectVariant({
-          userId: input.userId,
-          kbId: input.kbId,
-          query: variant,
-          mode,
-          sparseAvailable,
-          denseAvailable,
-          candidateLimit,
-          config
-        })
-      )
-    )
-    mark('recall')
-    const seedNames = [...new Set(perVariant.flatMap((item) => item.seedNames))]
-    if (trace) {
-      trace.variants = variants
-      for (const item of perVariant) {
-        trace.channels.sparse += item.stats.channels.sparse
-        trace.channels.dense += item.stats.channels.dense
-        trace.channels.graph += item.stats.channels.graph
-        trace.channelMs.sparse += item.stats.ms.sparse
-        trace.channelMs.dense += item.stats.ms.dense
-        trace.channelMs.graph += item.stats.ms.graph
-        if (item.stats.gate) {
-          trace.gate = trace.gate
-            ? {
-                ...trace.gate,
-                failed: trace.gate.failed || item.stats.gate.failed,
-                topScore: Math.max(trace.gate.topScore, item.stats.gate.topScore)
-              }
-            : { ...item.stats.gate }
-        }
-      }
+    const run: RetrievalRun = {
+      userId: input.userId,
+      kbId: input.kbId,
+      query,
+      mode,
+      topK,
+      config,
+      history: input.history,
+      sparseAvailable,
+      denseAvailable,
+      candidateLimit:
+        topK *
+        (config.mmrEnabled
+          ? MMR_CANDIDATE_MULTIPLIER
+          : config.rerankEnabled
+            ? CANDIDATE_MULTIPLIER_RERANK
+            : CANDIDATE_MULTIPLIER_PLAIN),
+      variants: [query],
+      perVariant: [],
+      seedNames: [],
+      fused: [],
+      hits: [],
+      rerankSkipped: false,
+      decayNow: 0,
+      decayApplied: false,
+      mmrApplied: false
     }
 
-    // 跨变体融合：单路直接用其融合结果；多路按排名做等权 RRF
-    const fused =
-      perVariant.length <= 1
-        ? (perVariant[0]?.candidates ?? [])
-        : fuseVariants(
-            perVariant.map((item) => item.candidates),
-            candidateLimit
-          )
-    mark('fuse')
-    if (!fused.length) {
+    await this.stageRewrite(run, tracer)
+    await this.stageRecall(run, tracer)
+    this.stageFuse(run, tracer)
+    if (!run.fused.length) {
       // 召回到此为止就是空：如实标记「没有相关内容」，问答据此不编造
       const emptyRerankSkipped = !config.rerankEnabled || !this.deps.reranker?.available(config)
       return {
         hits: [],
-        vectorSkipped: !denseAvailable,
-        sparseSkipped: !sparseAvailable,
+        vectorSkipped: !run.denseAvailable,
+        sparseSkipped: !run.sparseAvailable,
         rerankSkipped: emptyRerankSkipped,
         noRelevantResult: true,
-        ...(trace
+        ...(tracer.enabled
           ? {
-              debug: finalizeDebug({
+              debug: tracer.finalize({
+                mode,
+                topK,
+                candidateLimit: run.candidateLimit,
+                vectorSkipped: !run.denseAvailable,
+                sparseSkipped: !run.sparseAvailable,
                 fusedCount: 0,
                 finalHits: [],
                 rerankSkipped: emptyRerankSkipped,
                 mmrApplied: false,
                 decayApplied: false,
-                decayNow: 0
+                decayNow: 0,
+                timeDecayHalfLifeDays: config.timeDecayHalfLifeDays
               })!
             }
           : {})
       }
     }
+    this.stageFetch(run, tracer)
+    this.stageMerge(run, tracer)
+    await this.stageRerank(run, tracer)
+    this.stageDecay(run, tracer)
+    this.stageMmr(run, tracer)
 
-    // 取内容（JOIN 文档表；渲染层只拿 relPath/docName）
-    const details = this.deps.store.getChunksByIds(fused.map((item) => item.chunkId))
+    const finalHits = run.hits.slice(0, topK)
+    return {
+      hits: finalHits,
+      vectorSkipped: !run.denseAvailable,
+      sparseSkipped: !run.sparseAvailable,
+      rerankSkipped: run.rerankSkipped,
+      noRelevantResult: finalHits.length === 0,
+      ...(run.seedNames.length ? { graphEntities: run.seedNames } : {}),
+      ...(tracer.enabled
+        ? {
+            debug: tracer.finalize({
+              mode,
+              topK,
+              candidateLimit: run.candidateLimit,
+              vectorSkipped: !run.denseAvailable,
+              sparseSkipped: !run.sparseAvailable,
+              fusedCount: run.fused.length,
+              finalHits,
+              rerankSkipped: run.rerankSkipped,
+              mmrApplied: run.mmrApplied,
+              decayApplied: run.decayApplied,
+              decayNow: run.decayNow,
+              timeDecayHalfLifeDays: config.timeDecayHalfLifeDays
+            })!
+          }
+        : {})
+    }
+  }
+
+  /** stage：查询改写（原文永远第一路；关闭或失败退化为只用原问题） */
+  private async stageRewrite(run: RetrievalRun, tracer: RetrievalTracer): Promise<void> {
+    run.variants = await this.expandQuery(run.query, run.config, run.history)
+    tracer.setVariants(run.variants)
+    tracer.mark('rewrite')
+  }
+
+  /** stage：多路召回（每个改写变体各跑一遍图扩展/稀疏/稠密并做通道内融合） */
+  private async stageRecall(run: RetrievalRun, tracer: RetrievalTracer): Promise<void> {
+    const perVariant = await Promise.all(
+      run.variants.map((variant) =>
+        this.collectVariant({
+          userId: run.userId,
+          kbId: run.kbId,
+          query: variant,
+          mode: run.mode,
+          sparseAvailable: run.sparseAvailable,
+          denseAvailable: run.denseAvailable,
+          candidateLimit: run.candidateLimit,
+          config: run.config
+        })
+      )
+    )
+    tracer.mark('recall')
+    run.perVariant = perVariant
+    run.seedNames = [...new Set(perVariant.flatMap((item) => item.seedNames))]
+    for (const item of perVariant) tracer.recordVariant(item.stats)
+  }
+
+  /** stage：跨变体融合（单路直接用其融合结果；多路按排名做等权 RRF） */
+  private stageFuse(run: RetrievalRun, tracer: RetrievalTracer): void {
+    run.fused =
+      run.perVariant.length <= 1
+        ? (run.perVariant[0]?.candidates ?? [])
+        : fuseVariants(
+            run.perVariant.map((item) => item.candidates),
+            run.candidateLimit
+          )
+    tracer.mark('fuse')
+  }
+
+  /** stage：取内容（JOIN 文档表；渲染层只拿 relPath/docName） */
+  private stageFetch(run: RetrievalRun, tracer: RetrievalTracer): void {
+    const details = this.deps.store.getChunksByIds(run.fused.map((item) => item.chunkId))
     const detailMap = new Map(details.map((detail) => [detail.chunkId, detail]))
-    let hits: KnowledgeHit[] = []
-    for (const item of fused) {
+    const hits: KnowledgeHit[] = []
+    for (const item of run.fused) {
       const detail = detailMap.get(item.chunkId)
       if (!detail) continue
       hits.push({
@@ -308,70 +442,60 @@ export class RetrievalService {
         uploadedAt: detail.uploadedAt
       })
     }
-    mark('fetch')
+    run.hits = hits
+    tracer.mark('fetch')
+  }
 
-    hits = mergeAdjacent(hits)
-    mark('merge')
+  /** stage：相邻块合并去重（必须在衰减之前——合并的贪心分组依赖分数排序） */
+  private stageMerge(run: RetrievalRun, tracer: RetrievalTracer): void {
+    run.hits = mergeAdjacent(run.hits)
+    tracer.mark('merge')
+  }
 
-    // 重排（可选）：失败/不可用只降级，保留融合顺序
+  /** stage：重排（可选；失败/不可用只降级，保留融合顺序） */
+  private async stageRerank(run: RetrievalRun, tracer: RetrievalTracer): Promise<void> {
+    const { config } = run
     let rerankSkipped = !config.rerankEnabled
     if (config.rerankEnabled && this.deps.reranker?.available(config)) {
       const result = await this.deps.reranker
         .rerank(
-          query,
-          hits.slice(0, topK * CANDIDATE_MULTIPLIER_RERANK).map((hit) => hit.content),
+          run.query,
+          run.hits.slice(0, run.topK * CANDIDATE_MULTIPLIER_RERANK).map((hit) => hit.content),
           config
         )
         .catch(() => null)
       if (result) {
-        const head = hits.slice(0, result.length)
+        const head = run.hits.slice(0, result.length)
         head.forEach((hit, index) => {
           hit.score = result[index]
         })
         head.sort((a, b) => b.score - a.score)
-        hits = [...head, ...hits.slice(result.length)]
+        run.hits = [...head, ...run.hits.slice(result.length)]
       } else {
         rerankSkipped = true
       }
     } else if (config.rerankEnabled) {
       rerankSkipped = true
     }
-    mark('rerank')
+    run.rerankSkipped = rerankSkipped
+    tracer.mark('rerank')
+  }
 
-    // 时间衰减（可选）：按文档导入时间加权后重排（见文件头顺序约束）
-    const decayNow = Date.now()
-    const decayApplied = config.timeDecayHalfLifeDays > 0 && hits.length > 0
-    hits = applyTimeDecay(hits, decayNow, config.timeDecayHalfLifeDays)
-    mark('decay')
+  /** stage：时间衰减（可选；必须在重排之后——重排直接覆写 score，先衰减会被抹掉） */
+  private stageDecay(run: RetrievalRun, tracer: RetrievalTracer): void {
+    run.decayNow = Date.now()
+    run.decayApplied = run.config.timeDecayHalfLifeDays > 0 && run.hits.length > 0
+    run.hits = applyTimeDecay(run.hits, run.decayNow, run.config.timeDecayHalfLifeDays)
+    tracer.mark('decay')
+  }
 
-    // MMR 去冗余（可选）：token 口径的贪心重排，压掉近重复切片（截断前做取舍）
-    const mmrApplied = config.mmrEnabled && hits.length > topK
-    if (mmrApplied) {
-      hits = this.applyMmr(hits, topK, config.mmrLambda)
+  /** stage：MMR 去冗余（可选；必须在截断之前——要为 topK 做取舍） */
+  private stageMmr(run: RetrievalRun, tracer: RetrievalTracer): void {
+    run.mmrApplied = run.config.mmrEnabled && run.hits.length > run.topK
+    if (run.mmrApplied) {
+      run.hits = this.applyMmr(run.hits, run.topK, run.config.mmrLambda)
     }
-    mark('mmr')
-
-    const finalHits = hits.slice(0, topK)
-    return {
-      hits: finalHits,
-      vectorSkipped: !denseAvailable,
-      sparseSkipped: !sparseAvailable,
-      rerankSkipped,
-      noRelevantResult: finalHits.length === 0,
-      ...(seedNames.length ? { graphEntities: seedNames } : {}),
-      ...(trace
-        ? {
-            debug: finalizeDebug({
-              fusedCount: fused.length,
-              finalHits,
-              rerankSkipped,
-              mmrApplied,
-              decayApplied,
-              decayNow
-            })!
-          }
-        : {})
-    }
+    tracer.mark('mmr')
   }
 
   /** 查询改写：关闭或失败时只返回原问题（history 仅供改写补全指代，原文永远第一路） */

@@ -9,7 +9,7 @@ import type { ModelService } from '../model/ModelService'
 import type { WorkspaceService } from '../workspace/WorkspaceService'
 import type { AutomationRepository } from './AutomationRepository'
 import type { AutomationRunRepository } from './AutomationRunRepository'
-import type { AutomationService } from './AutomationService'
+import type { IAutomationService } from './AutomationService'
 import type { AutomationTaskRecord, RunErrorCode, RunStatus, RunTrigger } from './types'
 import { buildContextHint } from './context-hint'
 
@@ -56,7 +56,7 @@ function classifyError(err: unknown): { code: RunErrorCode; message: string } {
 export interface AutomationRunnerDeps {
   tasks: AutomationRepository
   runs: AutomationRunRepository
-  service: AutomationService
+  service: IAutomationService
   conversationStore: ConversationStore
   workspaceService: WorkspaceService
   modelService: ModelService

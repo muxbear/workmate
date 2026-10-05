@@ -103,4 +103,17 @@ describe('WorkspaceService.exportZip（打包下载）', () => {
     await expect(service.exportZip('w1', 'u1', ['../escape.md'])).rejects.toThrow()
     await expect(service.exportZip('w1', 'u1', ['missing.md'])).rejects.toThrow(/没有可打包/)
   })
+
+  it(
+    '条目数超过上限（5000）时拒绝打包（R8-7c：收集阶段即时报错，防拖垮主进程）',
+    async () => {
+      const big = join(workDir, '大目录')
+      mkdirSync(big, { recursive: true })
+      for (let i = 0; i < 5001; i += 1) {
+        writeFileSync(join(big, `f${i}.txt`), 'x')
+      }
+      await expect(service.exportZip('w1', 'u1', ['大目录'])).rejects.toThrow(/超出上限/)
+    },
+    30_000
+  )
 })

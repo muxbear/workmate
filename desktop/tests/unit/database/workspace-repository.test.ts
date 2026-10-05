@@ -78,7 +78,7 @@ describe('WorkspaceRepository（workspaces 表）', () => {
     expect(rows.map((r) => r.name)).toEqual(['u1-A'])
   })
 
-  it('WSR-08: 无主记录被首个用户接管（幂等，默认空间除外）', () => {
+  it('WSR-08: 无主记录由显式认领接管（幂等，默认空间除外）；listForUser 为纯查询', () => {
     // 预置无主旧数据（user_id NULL）与默认空间记录
     const orphan = repo.create({ name: '旧数据', path: '/tmp/old', source: 'created', userId: null })
     const def = repo.create({
@@ -87,14 +87,19 @@ describe('WorkspaceRepository（workspaces 表）', () => {
       source: 'default',
       userId: null
     })
-    // 首次加载：NULL 非 default 记录归属 u1，default 保持共享
+    // CQS：listForUser 不再夹带写——认领前无主记录对任何用户不可见，且归属不变
+    expect(repo.listForUser('u1').map((r) => r.id)).toEqual([def.id])
+    expect(repo.findByPath('/tmp/old')?.userId).toBeNull()
+    // 显式认领：NULL 非 default 记录归属首个调用用户；default 保持共享
+    repo.adoptOrphanWorkspaces('u1')
     const rowsU1 = repo.listForUser('u1')
     expect(rowsU1.map((r) => r.id)).toEqual(expect.arrayContaining([orphan.id, def.id]))
     const orphanNow = repo.findByPath('/tmp/old')
     expect(orphanNow?.userId).toBe('u1')
     const defNow = repo.findByPath('/tmp/DefaultWorkspace')
     expect(defNow?.userId).toBeNull()
-    // 幂等：u2 接管不到已归属 u1 的记录
+    // 幂等：u2 认领不到已归属 u1 的记录
+    repo.adoptOrphanWorkspaces('u2')
     const rowsU2 = repo.listForUser('u2')
     expect(rowsU2.map((r) => r.id)).toEqual([def.id])
     expect(repo.findByPath('/tmp/old')?.userId).toBe('u1')

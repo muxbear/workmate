@@ -38,10 +38,17 @@ export class WorkspaceRepository {
    * 用户的工作空间（按创建时间降序）
    * 先接管无主旧数据：user_id 为 NULL 且非默认空间的存量记录归属当前用户（幂等）
    */
-  listForUser(userId: string): WorkspaceRow[] {
+  /**
+   * 认领无主工作空间（user_id IS NULL 且非默认空间的遗留行 → 归当前用户）。
+   * 曾内联在 listForUser 里（查询夹带写，违反 CQS）；显式调用方：WorkspaceService.list。
+   */
+  adoptOrphanWorkspaces(userId: string): void {
     this.db
       .prepare(`UPDATE workspaces SET user_id = ? WHERE user_id IS NULL AND source != 'default'`)
       .run(userId)
+  }
+
+  listForUser(userId: string): WorkspaceRow[] {
     // rowid DESC 作为同毫秒时间戳的 tiebreaker（后插入的在前）
     const rows = this.db
       .prepare(`${SELECT_WS} WHERE ${WS_SCOPE} ORDER BY created_at DESC, rowid DESC`)

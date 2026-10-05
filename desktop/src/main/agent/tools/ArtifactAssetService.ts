@@ -1,7 +1,8 @@
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'fs'
-import { dirname, resolve, sep } from 'path'
+import { existsSync } from 'fs'
+import { basename, dirname, resolve, sep } from 'path'
 import { net } from 'electron'
+import { fetchAsset, writeAssetAtomic, type AssetFetchLike } from '../../assets/asset-fetcher'
 import { sniffImageMime } from '../../images/RemoteImageService'
 
 /** 素材下载超时与单文件大小上限（图片 20MB / 视频 200MB，与工作区媒体白名单对齐） */
@@ -43,16 +44,8 @@ export function isVideoMime(mime: string): boolean {
   return mime.startsWith('video/')
 }
 
-/** 最小可注入的 fetch 形态（默认使用全局 fetch，测试可注入假实现） */
-export type AssetFetchLike = (
-  url: string,
-  init?: { signal?: AbortSignal }
-) => Promise<{
-  ok: boolean
-  status: number
-  headers: { get(name: string): string | null }
-  arrayBuffer(): Promise<ArrayBuffer>
-}>
+/** 最小可注入的 fetch 形态（默认使用 electron net.fetch，测试可注入假实现） */
+export type { AssetFetchLike } from '../../assets/asset-fetcher'
 
 export interface DownloadAssetParams {
   url: string
@@ -117,33 +110,16 @@ export async function downloadAssetToWorkspace(
   const fetchImpl = params.fetchImpl ?? net.fetch
   if (typeof fetchImpl !== 'function') throw new Error('当前环境不支持下载素材')
 
-  const controller = new AbortController()
   // 视频体积大、下载慢，按较长超时兜住；图片（按目标扩展名预判）仍按原超时约束
   const timeoutMs = VIDEO_EXT_RE.test(relPath) ? VIDEO_DOWNLOAD_TIMEOUT_MS : DOWNLOAD_TIMEOUT_MS
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  let buffer: Buffer
-  let declaredMime = ''
-  try {
-    const response = await fetchImpl(url, { signal: controller.signal })
-    if (!response.ok) throw new Error('素材下载失败（HTTP ' + response.status + '）')
-    declaredMime = (response.headers.get('content-type') ?? '')
-      .split(';')[0]
-      .trim()
-      .toLowerCase()
-    const declaredLength = Number(response.headers.get('content-length') ?? '0')
-    if (declaredLength > MAX_VIDEO_BYTES) throw new Error('素材超过大小上限')
-    buffer = Buffer.from(await response.arrayBuffer())
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('素材下载超时')
-    }
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
-
-  if (!buffer.length) throw new Error('素材内容为空')
-  if (buffer.length > MAX_VIDEO_BYTES) throw new Error('素材超过大小上限')
+  // 下载-校验管线（超时/上限/错误文案）在共享的 fetchAsset；此处只保留素材域语义
+  const { buffer, declaredMime } = await fetchAsset({
+    url,
+    timeoutMs,
+    maxBytes: MAX_VIDEO_BYTES,
+    noun: '素材',
+    fetchImpl
+  })
 
   const mime =
     sniffMediaMime(buffer) ??
@@ -156,10 +132,9 @@ export async function downloadAssetToWorkspace(
     throw new Error('图片超过大小上限')
   }
 
-  mkdirSync(dirname(target), { recursive: true })
-  const tmpPath = target + '.' + createHash('sha1').update(String(Date.now())).digest('hex').slice(0, 8) + '.tmp'
-  writeFileSync(tmpPath, buffer)
-  renameSync(tmpPath, target)
+  writeAssetAtomic(dirname(target), basename(target), buffer, (finalPath) =>
+    finalPath + '.' + createHash('sha1').update(String(Date.now())).digest('hex').slice(0, 8) + '.tmp'
+  )
 
   return {
     relPath,

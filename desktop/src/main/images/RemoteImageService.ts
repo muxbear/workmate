@@ -1,7 +1,8 @@
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { Protocol } from 'electron'
+import { fetchAsset, writeAssetAtomic } from '../assets/asset-fetcher'
 
 /** 远程图片本地缓存协议（渲染层 CSP 的 img-src 白名单包含 ke-img:） */
 export const REMOTE_IMAGE_SCHEME = 'ke-img'
@@ -143,48 +144,29 @@ export class RemoteImageService {
   }
 
   private async download(url: string): Promise<void> {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
-    try {
-      const response = await this.fetchImpl(url, { signal: controller.signal })
-      if (!response.ok) {
-        throw new Error(`图片下载失败（HTTP ${response.status}）`)
+    // 下载-校验管线（超时/上限/错误文案）在共享的 fetchAsset；此处只保留图片域语义
+    const { buffer: buf, declaredMime } = await fetchAsset({
+      url,
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      maxBytes: MAX_IMAGE_BYTES,
+      noun: '图片',
+      fetchImpl: this.fetchImpl,
+      onDeclaredMime: (mime) => {
+        if (mime && !mime.startsWith('image/')) {
+          throw new Error(`非图片内容：${mime}`)
+        }
       }
-      const contentType = response.headers.get('content-type') ?? ''
-      const mime = contentType.split(';')[0].trim().toLowerCase()
-      if (mime && !mime.startsWith('image/')) {
-        throw new Error(`非图片内容：${mime}`)
-      }
-      const declaredLength = Number(response.headers.get('content-length') ?? '0')
-      if (declaredLength > MAX_IMAGE_BYTES) {
-        throw new Error('图片超过大小上限')
-      }
-      const buf = Buffer.from(await response.arrayBuffer())
-      if (buf.length === 0) {
-        throw new Error('图片内容为空')
-      }
-      if (buf.length > MAX_IMAGE_BYTES) {
-        throw new Error('图片超过大小上限')
-      }
-      mkdirSync(this.cacheDir, { recursive: true })
-      const hash = sha256Of(url)
-      const tmpPath = join(this.cacheDir, `.${hash}.${Date.now()}.tmp`)
-      writeFileSync(tmpPath, buf)
-      renameSync(tmpPath, this.filePathFor(url))
-      const sniffed = sniffImageMime(buf)
-      writeFileSync(
-        this.metaPathFor(url),
-        JSON.stringify({ url, mime: sniffed ?? (mime || 'image/png'), size: buf.length }),
-        'utf8'
-      )
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error('图片下载超时')
-      }
-      throw err
-    } finally {
-      clearTimeout(timer)
-    }
+    })
+    const hash = sha256Of(url)
+    writeAssetAtomic(this.cacheDir, `${hash}.img`, buf, () =>
+      join(this.cacheDir, `.${hash}.${Date.now()}.tmp`)
+    )
+    const sniffed = sniffImageMime(buf)
+    writeFileSync(
+      this.metaPathFor(url),
+      JSON.stringify({ url, mime: sniffed ?? (declaredMime || 'image/png'), size: buf.length }),
+      'utf8'
+    )
   }
 
   /** 注册 ke-img:// 协议处理：按本地地址还原原始 URL，未缓存则先下载再回源 */

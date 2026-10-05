@@ -1,10 +1,10 @@
 import type { IpcMain } from 'electron'
 import type { SessionService } from '../services/SessionService'
-import type { AutomationService } from '../automation/AutomationService'
+import type { IAutomationService } from '../automation/AutomationService'
 import { createCommandRegistrar } from './command'
 
 export interface AutomationHandlerDeps {
-  automationService: AutomationService
+  automationService: IAutomationService
   session: SessionService
 }
 

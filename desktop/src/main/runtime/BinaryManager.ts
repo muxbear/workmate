@@ -9,15 +9,29 @@
  */
 
 import { execFile } from 'child_process'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import https from 'https'
 import { EventEmitter } from 'events'
 import { promisify } from 'util'
 import type { SettingsStore } from '../settings/SettingsStore'
+import { downloadFile, type DownloadProgress } from './binary-downloader'
+import { EXTRACTORS, type BinaryExtractor } from './binary-extractor'
+import { BinaryRegistry } from './binary-registry'
 
 const execFileAsync = promisify(execFile)
+
+/** 可注入接缝（R8-9；缺省走真实实现，测试注入假实现以覆盖安装全流程） */
+export interface BinaryManagerDeps {
+  download?: (
+    url: string,
+    destPath: string,
+    options: { onProgress?: (progress: DownloadProgress) => void }
+  ) => Promise<void>
+  extractors?: Record<'zip' | '7z-sfx', BinaryExtractor>
+  /** 版本探测（默认 spawn --version） */
+  detect?: (id: RuntimeId, exePath: string) => Promise<string | null>
+}
 
 // ── 类型定义 ──
 
@@ -53,22 +67,6 @@ export interface RuntimeProgress {
   /** 文件总字节数（未知时为 0） */
   totalBytes: number
   message?: string
-}
-
-/** 注册表中单个版本的记录 */
-interface RegistryEntry {
-  source: string
-  executablePath: string
-  installPath: string
-  installedAt: number
-  verified: boolean
-}
-
-/** 注册表结构 */
-interface Registry {
-  version: number
-  lastUpdated: number
-  binaries: Record<string, Record<string, RegistryEntry>>
 }
 
 // ── 运行时元数据 ──
@@ -167,19 +165,21 @@ export class BinaryManager extends EventEmitter {
   private readonly baseDir: string
   private readonly cacheDir: string
   private readonly registryPath: string
-  private registry: Registry
+  /** 运行时注册表（R8-9 外提；原子写） */
+  private readonly registry: BinaryRegistry
   /** 运行中安装/卸载状态（防止并发操作） */
   private readonly inflight = new Map<RuntimeId, RuntimeStatus>()
 
   constructor(
     binariesDir: string,
-    private readonly settingsStore: SettingsStore
+    private readonly settingsStore: SettingsStore,
+    private readonly deps: BinaryManagerDeps = {}
   ) {
     super()
     this.baseDir = binariesDir
     this.cacheDir = join(binariesDir, '.cache')
     this.registryPath = join(this.cacheDir, 'registry.json')
-    this.registry = this.loadRegistry()
+    this.registry = new BinaryRegistry(this.registryPath)
   }
 
   /** 应用启动时调用：确保目录结构存在 */
@@ -214,7 +214,7 @@ export class BinaryManager extends EventEmitter {
     return ids.map((id) => {
       const display = RUNTIME_DISPLAY[id]
       const inflight = this.inflight.get(id)
-      const entry = this.getLatestEntry(id)
+      const entry = this.registry.getLatest(RUNTIME_META[id].dirName)
 
       let status: RuntimeStatus = 'not-installed'
       let version: string | undefined
@@ -226,7 +226,7 @@ export class BinaryManager extends EventEmitter {
         status = inflight
       } else if (entry && entry.verified) {
         status = 'installed'
-        version = this.extractVersionFromRegistryKey(id)
+        version = this.registry.latestVersionKey(RUNTIME_META[id].dirName)
         executablePath = entry.executablePath
         installPath = entry.installPath
       }
@@ -254,7 +254,7 @@ export class BinaryManager extends EventEmitter {
 
   /** 探测已安装运行时的版本（spawn 调用 --version） */
   async detectRuntime(id: RuntimeId): Promise<string | null> {
-    const entry = this.getLatestEntry(id)
+    const entry = this.registry.getLatest(RUNTIME_META[id].dirName)
     if (!entry) return null
     return this.detectByPath(id, entry.executablePath)
   }
@@ -292,7 +292,7 @@ export class BinaryManager extends EventEmitter {
       if (existsSync(exePath)) {
         const detectedVersion = await this.detectByPath(id, exePath)
         if (detectedVersion) {
-          this.setRegistryEntry(id, ver, {
+          this.registry.set(meta.dirName, ver, {
             source: 'managed',
             executablePath: exePath,
             installPath,
@@ -311,9 +311,21 @@ export class BinaryManager extends EventEmitter {
       tempArchive = join(tmpdir(), `kework-${id}-${ver}-${Date.now()}${archiveExt}`)
       console.log(`[binary-manager] downloading ${id} from ${url}`)
       this.emitProgress({ id, phase: 'downloading', percent: 0, receivedBytes: 0, totalBytes: 0, message: '正在下载…' })
-      await this.downloadFile(url, tempArchive, (received, total) => {
-        const percent = total > 0 ? Math.round((received / total) * 100) : 0
-        this.emitProgress({ id, phase: 'downloading', percent, receivedBytes: received, totalBytes: total })
+      const download = this.deps.download ?? downloadFile
+      await download(url, tempArchive, {
+        onProgress: (progress) => {
+          const percent =
+            progress.totalBytes > 0
+              ? Math.round((progress.receivedBytes / progress.totalBytes) * 100)
+              : 0
+          this.emitProgress({
+            id,
+            phase: 'downloading',
+            percent,
+            receivedBytes: progress.receivedBytes,
+            totalBytes: progress.totalBytes
+          })
+        }
       })
       console.log(`[binary-manager] downloaded ${id} to ${tempArchive}`)
 
@@ -324,22 +336,15 @@ export class BinaryManager extends EventEmitter {
 
       // 解压
       this.emitProgress({ id, phase: 'extracting', percent: 0, receivedBytes: 0, totalBytes: 0, message: '正在解压…' })
-      if (meta.archiveType === 'zip') {
-        await this.extractZip(tempArchive, installPath)
-        // zip 内若有顶层目录（如 node-v22.22.2-win-x64），将其内容提升到 installPath
-        if (meta.zipTopDir) {
-          const innerDirName = meta.zipTopDir.replaceAll('{version}', ver)
-          const innerDir = join(installPath, innerDirName)
-          if (existsSync(innerDir)) {
-            this.moveDirContentsUp(innerDir, installPath)
-          }
+      const extractors = this.deps.extractors ?? EXTRACTORS
+      await extractors[meta.archiveType].extract(tempArchive, installPath)
+      // zip 内若有顶层目录（如 node-v22.22.2-win-x64），将其内容提升到 installPath
+      if (meta.archiveType === 'zip' && meta.zipTopDir) {
+        const innerDirName = meta.zipTopDir.replaceAll('{version}', ver)
+        const innerDir = join(installPath, innerDirName)
+        if (existsSync(innerDir)) {
+          this.moveDirContentsUp(innerDir, installPath)
         }
-      } else if (meta.archiveType === '7z-sfx') {
-        // PortableGit SFX：直接运行 -y -o"<installPath>"
-        await execFileAsync(tempArchive, ['-y', `-o${installPath}`], {
-          timeout: 120_000,
-          windowsHide: true
-        })
       }
 
       // 验证
@@ -351,7 +356,7 @@ export class BinaryManager extends EventEmitter {
         )
       }
 
-      this.setRegistryEntry(id, ver, {
+      this.registry.set(meta.dirName, ver, {
         source: 'managed',
         executablePath: exePath,
         installPath,
@@ -378,7 +383,7 @@ export class BinaryManager extends EventEmitter {
       throw new Error(`${RUNTIME_DISPLAY[id].name} 正在处理中，请稍候`)
     }
 
-    const entry = this.getLatestEntry(id)
+    const entry = this.registry.getLatest(RUNTIME_META[id].dirName)
     if (!entry) {
       throw new Error(`${RUNTIME_DISPLAY[id].name} 未安装`)
     }
@@ -389,7 +394,7 @@ export class BinaryManager extends EventEmitter {
       console.log(`[binary-manager] removed ${id} at ${installPath}`)
     }
 
-    this.removeRegistryEntry(id)
+    this.registry.removeAll(RUNTIME_META[id].dirName)
   }
 
   /**
@@ -404,108 +409,12 @@ export class BinaryManager extends EventEmitter {
     const subKey = `runtime.${id}.enabled` as `runtime.${RuntimeId}.enabled`
     if (this.settingsStore.get(subKey) === false) return null
 
-    const entry = this.getLatestEntry(id)
+    const entry = this.registry.getLatest(RUNTIME_META[id].dirName)
     if (!entry || !entry.verified) return null
     return entry.executablePath
   }
 
-  // ── 下载与解压 ──
-
-  /**
-   * 下载文件（自动跟随 301/302 重定向）
-   *
-   * 使用 Node.js 内置 https 模块，流式写入目标文件。
-   */
-  /**
-   * 下载文件（自动跟随 301/302 重定向，流式写入，带进度回调和 30 分钟超时）
-   *
-   * @param onProgress 进度回调：(已接收字节, 总字节)
-   */
-  private downloadFile(
-    url: string,
-    destPath: string,
-    onProgress?: (receivedBytes: number, totalBytes: number) => void
-  ): Promise<void> {
-    /** 30 分钟超时 */
-    const TIMEOUT_MS = 30 * 60 * 1000
-
-    return new Promise((resolve, reject) => {
-      const overallTimer = setTimeout(() => {
-        reject(new Error('下载超时（30 分钟未完成）'))
-      }, TIMEOUT_MS)
-
-      const cleanup = (): void => clearTimeout(overallTimer)
-
-      const attempt = (currentUrl: string, redirectCount: number): void => {
-        if (redirectCount > 5) {
-          cleanup()
-          reject(new Error('下载重定向次数过多'))
-          return
-        }
-
-        const req = https.get(currentUrl, { timeout: 30_000 }, (res) => {
-          // 重定向
-          if ([301, 302, 303, 307, 308].includes(res.statusCode ?? 0)) {
-            const location = res.headers.location
-            if (location) {
-              res.resume()
-              attempt(location, redirectCount + 1)
-              return
-            }
-          }
-
-          if (res.statusCode && res.statusCode >= 400) {
-            res.resume()
-            cleanup()
-            reject(new Error(`下载失败，HTTP ${res.statusCode}`))
-            return
-          }
-
-          const totalBytes = parseInt(res.headers['content-length'] ?? '0', 10) || 0
-          let receivedBytes = 0
-
-          const stream = createWriteStream(destPath)
-          res.on('data', (chunk: Buffer) => {
-            receivedBytes += chunk.length
-            if (onProgress) onProgress(receivedBytes, totalBytes)
-          })
-          res.pipe(stream)
-          stream.on('finish', () => {
-            stream.close()
-            cleanup()
-            resolve()
-          })
-          stream.on('error', (err) => {
-            cleanup()
-            reject(new Error(`写入文件失败：${err.message}`))
-          })
-        })
-
-        req.on('error', (err) => {
-          cleanup()
-          reject(new Error(`下载请求失败：${err.message}`))
-        })
-
-        req.on('timeout', () => {
-          req.destroy()
-          cleanup()
-          reject(new Error('连接超时'))
-        })
-      }
-
-      attempt(url, 0)
-    })
-  }
-
-  /**
-   * 解压 zip 文件到目标目录（使用 PowerShell Expand-Archive）
-   */
-  private async extractZip(zipPath: string, destPath: string): Promise<void> {
-    const psScript = `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${destPath}' -Force`
-    await execFileAsync('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command', psScript
-    ], { timeout: 120_000, windowsHide: true })
-  }
+  // ── 解压辅助 ──
 
   /**
    * 将子目录内的所有内容移动到父目录（合并）
@@ -523,45 +432,11 @@ export class BinaryManager extends EventEmitter {
 
   // ── 内部方法 ──
 
-  /** 从注册表获取指定运行时的最新版本记录 */
-  private getLatestEntry(id: RuntimeId): RegistryEntry | null {
-    const versions = this.registry.binaries[RUNTIME_META[id].dirName]
-    if (!versions) return null
-    const keys = Object.keys(versions)
-    if (keys.length === 0) return null
-    // 取 installedAt 最新的
-    let latest: RegistryEntry | null = null
-    let latestTime = 0
-    for (const [, entry] of Object.entries(versions)) {
-      if (entry.installedAt > latestTime) {
-        latestTime = entry.installedAt
-        latest = entry
-      }
-    }
-    return latest
-  }
-
-  /** 从注册表 key 提取版本号 */
-  private extractVersionFromRegistryKey(id: RuntimeId): string | undefined {
-    const versions = this.registry.binaries[RUNTIME_META[id].dirName]
-    if (!versions) return undefined
-    const keys = Object.keys(versions)
-    if (keys.length === 0) return undefined
-    let latest = keys[0]
-    let latestTime = 0
-    for (const key of keys) {
-      if (versions[key].installedAt > latestTime) {
-        latestTime = versions[key].installedAt
-        latest = key
-      }
-    }
-    return latest
-  }
-
-  /** spawn 调用可执行文件获取版本号 */
+  /** spawn 调用可执行文件获取版本号（测试可经 deps.detect 注入假实现） */
   private async detectByPath(id: RuntimeId, exePath: string): Promise<string | null> {
     const meta = RUNTIME_META[id]
     if (!existsSync(exePath)) return null
+    if (this.deps.detect) return this.deps.detect(id, exePath)
     try {
       const { stdout } = await execFileAsync(exePath, meta.versionArgs, {
         timeout: 10_000,
@@ -575,42 +450,4 @@ export class BinaryManager extends EventEmitter {
     }
   }
 
-  // ── 注册表读写 ──
-
-  private loadRegistry(): Registry {
-    if (!existsSync(this.registryPath)) {
-      return { version: 1, lastUpdated: 0, binaries: {} }
-    }
-    try {
-      const raw = readFileSync(this.registryPath, 'utf-8')
-      const data = JSON.parse(raw) as Registry
-      if (!data.binaries) data.binaries = {}
-      return data
-    } catch (err) {
-      console.warn('[binary-manager] failed to load registry, starting fresh:', err)
-      return { version: 1, lastUpdated: 0, binaries: {} }
-    }
-  }
-
-  private saveRegistry(): void {
-    this.registry.lastUpdated = Date.now()
-    const data = JSON.stringify(this.registry, null, 2)
-    writeFileSync(this.registryPath, data, 'utf-8')
-  }
-
-  private setRegistryEntry(id: RuntimeId, version: string, entry: RegistryEntry): void {
-    const dirName = RUNTIME_META[id].dirName
-    if (!this.registry.binaries[dirName]) {
-      this.registry.binaries[dirName] = {}
-    }
-    this.registry.binaries[dirName][version] = entry
-    this.saveRegistry()
-  }
-
-  private removeRegistryEntry(id: RuntimeId): void {
-    const dirName = RUNTIME_META[id].dirName
-    if (!this.registry.binaries[dirName]) return
-    this.registry.binaries[dirName] = {}
-    this.saveRegistry()
-  }
 }

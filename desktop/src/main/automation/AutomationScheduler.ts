@@ -1,4 +1,4 @@
-import type { AutomationService } from './AutomationService'
+import type { IAutomationService } from './AutomationService'
 import type { AutomationRunner } from './AutomationRunner'
 
 /** 兜底轮询间隔：即使没有精确唤醒也会在这个周期内检查一次 */
@@ -9,7 +9,7 @@ const CATCH_UP_GRACE_MS = 10 * 60 * 1000
 const DUE_BATCH_SIZE = 20
 
 export interface AutomationSchedulerDeps {
-  service: AutomationService
+  service: IAutomationService
   runner: AutomationRunner
   /** 当前时间（测试可注入） */
   now?: () => number

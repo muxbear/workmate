@@ -8,7 +8,6 @@ import type {
   TaskStatus
 } from './types'
 import { asBool, asLimit, asTaskDraft, asTaskId } from './validation'
-import type { AuditLogRepository } from './AuditLogRepository'
 import { computeNextRun } from './AutomationSchedule'
 
 /** 排期结果：下次触发时间与任务状态 */
@@ -19,9 +18,6 @@ export interface TaskScheduleResult {
 
 /** 执行器注入点（M2 接入 AutomationRunner 后使用） */
 export interface AutomationServiceDeps {
-  /** 审计日志（可选，未注入时跳过） */
-  audit?: AuditLogRepository
-
   enqueueRun?: (task: AutomationTaskRecord, trigger: RunTrigger) => Promise<{ runId: string }>
 }
 
@@ -30,12 +26,47 @@ const KEEP_RUNS_PER_TASK = 200
 const RUNS_RETENTION_MS = 90 * 24 * 3600 * 1000
 
 /**
+ * 自动化服务契约（R8-10）：审计装饰器（AuditedAutomationService）与各消费方共同依赖。
+ * 审计不在本服务内 —— 由装饰器以横切方式记录（装配层 audit 必填）。
+ */
+export interface IAutomationService {
+  listTasks(userId: string): AutomationTaskRecord[]
+  getTask(userId: string, rawId: unknown): AutomationTaskRecord
+  createTask(userId: string, rawDraft: unknown): AutomationTaskRecord
+  updateTask(userId: string, rawId: unknown, rawDraft: unknown): AutomationTaskRecord
+  deleteTask(userId: string, rawId: unknown): number
+  setEnabled(userId: string, rawId: unknown, rawEnabled: unknown): AutomationTaskRecord
+  runNow(userId: string, rawId: unknown): Promise<{ runId: string }>
+  getRun(userId: string, rawId: unknown): AutomationRunRecord
+  listRuns(
+    userId: string,
+    rawOpts?: { taskId?: unknown; limit?: unknown; cursor?: unknown }
+  ): AutomationRunRecord[]
+  runStats(userId: string, rawSince?: unknown): AutomationRunStats
+  scheduleTask(
+    task: AutomationTaskRecord,
+    from: number,
+    opts?: { persist?: boolean }
+  ): TaskScheduleResult
+  setRunHandler(
+    handler: (task: AutomationTaskRecord, trigger: RunTrigger) => Promise<{ runId: string }>
+  ): void
+  listDueTasks(now: number, limit: number): AutomationTaskRecord[]
+  findTask(userId: string, id: string): AutomationTaskRecord | null
+  earliestNextRunAt(): number | null
+  markRunningInterrupted(now?: number): number
+  recordSkipped(task: AutomationTaskRecord, trigger: RunTrigger, reason: string, at: number): void
+  onStartup(now?: number): { interrupted: number; pruned: number }
+}
+
+/**
  * 自动化业务服务：入参校验、CRUD 编排、排期计算、运行记录查询
  *
  * 说明：所有方法都要求 userId（来自 session.requireUserId），
  * 仓库层再带一次 user_id 条件，双重保证用户隔离。
+ * 审计日志由 AuditedAutomationService 装饰器承担（R8-10）。
  */
-export class AutomationService {
+export class AutomationService implements IAutomationService {
   constructor(
     private readonly tasks: AutomationRepository,
     private readonly runs: AutomationRunRepository,
@@ -69,12 +100,6 @@ export class AutomationService {
       status: schedule.status,
       now
     })
-    this.deps.audit?.record(userId, 'automation.create', {
-      taskId: created.id,
-      source: created.source,
-      freq: created.freqSummary,
-      fullAccess: created.fullAccess
-    })
     return created
   }
 
@@ -98,11 +123,6 @@ export class AutomationService {
       status,
       now
     })
-    this.deps.audit?.record(userId, 'automation.update', {
-      taskId: id,
-      freq: updated.freqSummary,
-      fullAccess: updated.fullAccess
-    })
     return updated
   }
 
@@ -111,7 +131,6 @@ export class AutomationService {
     const id = asTaskId(rawId)
     const changes = this.tasks.softDelete(userId, id, Date.now())
     if (changes === 0) throw new Error('任务不存在或已被删除')
-    this.deps.audit?.record(userId, 'automation.delete', { taskId: id })
     return changes
   }
 
@@ -128,7 +147,6 @@ export class AutomationService {
         status: 'paused',
         now
       })
-      this.deps.audit?.record(userId, 'automation.enable', { taskId: id, enabled: false })
       return paused
     }
     const schedule = this.resolveSchedule(task.schedule, now, {
@@ -141,11 +159,6 @@ export class AutomationService {
       status: schedule.status,
       now
     })
-    this.deps.audit?.record(userId, 'automation.enable', {
-      taskId: id,
-      enabled: true,
-      fullAccess: resumed.fullAccess
-    })
     return resumed
   }
 
@@ -153,7 +166,6 @@ export class AutomationService {
   async runNow(userId: string, rawId: unknown): Promise<{ runId: string }> {
     const task = this.getTask(userId, rawId)
     if (!this.deps.enqueueRun) throw new Error('自动化执行器尚未接入')
-    this.deps.audit?.record(userId, 'automation.run', { taskId: task.id, trigger: 'manual' })
     return this.deps.enqueueRun(task, 'manual')
   }
 
