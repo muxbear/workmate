@@ -1,16 +1,16 @@
-import type { MessagePart } from '../../shared/contracts'
+import type { AutomationSchedule, MessagePart } from '../../shared/contracts'
 
 /** 频率大类：周期 / 间隔 */
-export type FreqGroup = 'cycle' | 'interval'
+export type FreqGroup = AutomationSchedule['freqGroup']
 
 /** 周期类型：单次 / 每天 / 每周 / 每月 / 每年 */
-export type CycleKind = 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type CycleKind = AutomationSchedule['cycleKind']
 
 /** 间隔类型：每周（选星期）/ 每隔 N 小时 */
-export type IntervalKind = 'weekly' | 'hourly'
+export type IntervalKind = AutomationSchedule['intervalKind']
 
 /** 有效期模式：长期有效 / 指定时间段 */
-export type ValidityMode = 'forever' | 'range'
+export type ValidityMode = AutomationSchedule['validityMode']
 
 /** 任务状态 */
 export type TaskStatus = 'enabled' | 'paused' | 'expired' | 'finished'
@@ -34,24 +34,7 @@ export type RunErrorCode =
   | 'interrupted'
 
 /** 频率与有效期配置（与前端 AutomationPage 的 TaskSchedule 完全一致） */
-export interface TaskSchedule {
-  freqGroup: FreqGroup
-  cycleKind: CycleKind
-  intervalKind: IntervalKind
-  onceDate: string
-  onceTime: string
-  weekDays: number[]
-  monthDay: number
-  yearMonth: number
-  yearDay: number
-  weekIntervalDays: number[]
-  hourInterval: number
-  validityMode: ValidityMode
-  validFrom: string
-  validFromTime: string
-  validTo: string
-  validToTime: string
-}
+export type TaskSchedule = AutomationSchedule
 
 /** 校验后的任务草稿（service 内部使用） */
 export interface NormalizedTaskDraft {
