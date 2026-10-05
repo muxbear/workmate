@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ComponentPublicInstance, Ref } from 'vue'
+import { nextTick, ref, watch, type ComponentPublicInstance, type Ref } from 'vue'
 import KnowledgeIndexPipeline from './KnowledgeIndexPipeline.vue'
 import FilePreviewPane from '../file-preview/FilePreviewPane.vue'
 import MessageContent from '../MessageContent.vue'
@@ -67,6 +67,24 @@ const {
 const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
   props.elementRefs.tabBarRef.value = el instanceof HTMLElement ? el : null
 }
+
+/**
+ * 问答整列滚动（对齐 web KbQaTab）：横幅/历史/回答同一滚动区，
+ * 新内容进来时贴住底部；输入区是滚动区的兄弟节点，始终固定在面板底部。
+ */
+const qaScrollRef = ref<HTMLElement | null>(null)
+function scrollQaToBottom(): void {
+  const el = qaScrollRef.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+watch(
+  () => props.qaRounds.length,
+  () => void nextTick(scrollQaToBottom)
+)
+watch(
+  () => askState.value?.answer,
+  () => void nextTick(scrollQaToBottom)
+)
 </script>
 
 <template>
@@ -209,65 +227,71 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
 
     <!-- 问答 -->
     <div v-if="activeTab === '问答'" class="kb-tab-content">
-      <div class="kb-qa-banner">
-        <p class="kb-qa-eyebrow">KNOWLEDGE Q&amp;A</p>
-        <h2 class="kb-qa-title">向 {{ libraryName }} 提问</h2>
-        <p class="kb-qa-desc">
-          基于本库已索引的内容作答；回答中的 [n] 对应下方「引用来源」，可点击定位到文件。
-        </p>
-      </div>
-
-      <!-- 多轮历史：最近几轮已完成问答（换库/点「新对话」清空） -->
-      <div v-if="qaRounds.length" class="kb-qa-history">
-        <div class="kb-qa-history-head">
-          <span>对话历史 · {{ qaRounds.length }} 轮</span>
-          <button class="kb-qa-clear" @click="clearQaHistory()">新对话</button>
-        </div>
-        <div v-for="(round, index) in qaRounds" :key="index" class="kb-qa-round">
-          <p class="kb-qa-round-q">{{ round.question }}</p>
-          <p class="kb-qa-round-a">{{ round.answer }}</p>
-        </div>
-      </div>
-
-      <div v-if="askState" class="kb-answer">
-        <p v-if="askState.noRelevantResult" class="kb-answer-empty">
-          知识库中没有找到与「{{ askState.question }}」相关的内容。
-        </p>
-        <template v-else>
-          <!-- 回答走与聊天一致的 Markdown 管线（此前 `{{ }}` 纯文本：** 加粗/列表/代码块原样外露）；
-               相对图片按当前库只读解析（knowledgeId 透传） -->
-          <div class="kb-answer-text">
-            <MessageContent
-              :content="askState.answer"
-              :knowledge-id="selectedKbId || undefined"
-              :breaks="true"
-            />
-            <span v-if="askState.streaming" class="kb-answer-caret"></span>
-          </div>
-          <p v-if="askState.canceled" class="kb-answer-note">已取消</p>
-          <p v-if="askState.invalidCitations.length" class="kb-answer-note">
-            回答中的
-            {{ askState.invalidCitations.map((n) => `[${n}]`).join('、') }}
-            未对应本次检索来源，请核对原文。
+      <!-- 整列滚动区（对齐 web KbQaTab 的 .qa-main）：横幅/历史/回答同列滚动，输入区固定在底部 -->
+      <div
+        ref="qaScrollRef"
+        class="kb-qa-scroll"
+      >
+        <div class="kb-qa-banner">
+          <p class="kb-qa-eyebrow">KNOWLEDGE Q&amp;A</p>
+          <h2 class="kb-qa-title">向 {{ libraryName }} 提问</h2>
+          <p class="kb-qa-desc">
+            基于本库已索引的内容作答；回答中的 [n] 对应下方「引用来源」，可点击定位到文件。
           </p>
-          <p v-if="askState.error" class="kb-answer-error">{{ askState.error }}</p>
-          <div v-if="askState.citations.length" class="kb-citations">
-            <p class="kb-citations-title">引用来源</p>
-            <button
-              v-for="citation in askState.citations"
-              :key="citation.index"
-              class="kb-citation"
-              @click="openCitation(citation)"
-            >
-              <span class="kb-citation-index">[{{ citation.index }}]</span>
-              <span class="kb-citation-name">{{ citation.docName }}</span>
-              <span class="kb-citation-path">
-                {{ citation.relPath }} › 切片 #{{ citation.chunkIndex + 1 }}
-                <template v-if="citation.heading"> › {{ citation.heading }}</template>
-              </span>
-            </button>
+        </div>
+
+        <!-- 多轮历史：最近几轮已完成问答（换库/点「新对话」清空） -->
+        <div v-if="qaRounds.length" class="kb-qa-history">
+          <div class="kb-qa-history-head">
+            <span>对话历史 · {{ qaRounds.length }} 轮</span>
+            <button class="kb-qa-clear" @click="clearQaHistory()">新对话</button>
           </div>
-        </template>
+          <div v-for="(round, index) in qaRounds" :key="index" class="kb-qa-round">
+            <p class="kb-qa-round-q">{{ round.question }}</p>
+            <p class="kb-qa-round-a">{{ round.answer }}</p>
+          </div>
+        </div>
+
+        <div v-if="askState" class="kb-answer">
+          <p v-if="askState.noRelevantResult" class="kb-answer-empty">
+            知识库中没有找到与「{{ askState.question }}」相关的内容。
+          </p>
+          <template v-else>
+            <!-- 回答走与聊天一致的 Markdown 管线（此前 `{{ }}` 纯文本：** 加粗/列表/代码块原样外露）；
+                 相对图片按当前库只读解析（knowledgeId 透传） -->
+            <div class="kb-answer-text">
+              <MessageContent
+                :content="askState.answer"
+                :knowledge-id="selectedKbId || undefined"
+                :breaks="true"
+              />
+              <span v-if="askState.streaming" class="kb-answer-caret"></span>
+            </div>
+            <p v-if="askState.canceled" class="kb-answer-note">已取消</p>
+            <p v-if="askState.invalidCitations.length" class="kb-answer-note">
+              回答中的
+              {{ askState.invalidCitations.map((n) => `[${n}]`).join('、') }}
+              未对应本次检索来源，请核对原文。
+            </p>
+            <p v-if="askState.error" class="kb-answer-error">{{ askState.error }}</p>
+            <div v-if="askState.citations.length" class="kb-citations">
+              <p class="kb-citations-title">引用来源</p>
+              <button
+                v-for="citation in askState.citations"
+                :key="citation.index"
+                class="kb-citation"
+                @click="openCitation(citation)"
+              >
+                <span class="kb-citation-index">[{{ citation.index }}]</span>
+                <span class="kb-citation-name">{{ citation.docName }}</span>
+                <span class="kb-citation-path">
+                  {{ citation.relPath }} › 切片 #{{ citation.chunkIndex + 1 }}
+                  <template v-if="citation.heading"> › {{ citation.heading }}</template>
+                </span>
+              </button>
+            </div>
+          </template>
+        </div>
       </div>
 
       <div class="kb-question-wrap">
@@ -586,11 +610,19 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
 .kb-tab-content {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
   padding: 20px;
 }
 /* 索引进度面板：内容可能长于面板高度，允许滚动 */
 .kb-tab-content--pipe {
+  overflow-y: auto;
+}
+/* 问答整列滚动区（对齐 web KbQaTab 的 .qa-main）：横幅/历史/回答同列滚动；
+   输入区（.kb-question-wrap）是它的兄弟节点，不随内容滚走 */
+.kb-qa-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 .kb-qa-banner {
@@ -624,8 +656,6 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
   background: #fbfdfc;
   border: 1px solid #e6efed;
   padding: 12px 14px;
-  max-height: 34%;
-  overflow-y: auto;
 }
 .kb-qa-history-head {
   display: flex;
@@ -670,8 +700,6 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
   font-size: 12px;
   line-height: 24px;
   color: #42575a;
-  overflow-y: auto;
-  max-height: 46%;
 }
 .kb-answer-text {
   word-break: break-word;
@@ -758,7 +786,6 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
   background: #b45309;
 }
 .kb-question-wrap {
-  margin-top: auto;
   padding-top: 20px;
 }
 
