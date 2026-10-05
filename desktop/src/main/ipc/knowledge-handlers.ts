@@ -16,6 +16,7 @@ import type {
   KnowledgeKind,
   KnowledgeSearchMode
 } from '../knowledge/types'
+import { createCommandRegistrar } from './command'
 
 export interface KnowledgeHandlerDeps {
   knowledgeSettingsService: KnowledgeSettingsService
@@ -34,14 +35,6 @@ export interface KnowledgeHandlerDeps {
   showItemInFolder?: (file: string) => void
   /** 选索引库备份的保存位置（系统另存为对话框；取消返回 null） */
   chooseBackupPath?: () => Promise<string | null>
-}
-
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
 }
 
 /** 单批次条目上限（防止单次 IPC 拉爆；真正的批次限制由「知识库设置」决定） */
@@ -125,237 +118,198 @@ function asRelPaths(raw: unknown): string[] | undefined {
  * 注册知识库相关 IPC 通道
  *
  * **用户级数据**：知识库、文档、共享、按库配置都按登录用户隔离，
- * 全部通道先 `session.requireUserId()`；绝对路径只在主进程解析与使用，
- * 渲染层只传 ID 与库内相对路径（与 config:* 的机器级语义不同）。
+ * 全部通道鉴权声明为 user（注册器统一 requireUserId）；绝对路径只在主进程
+ * 解析与使用，渲染层只传 ID 与库内相对路径（与 config:* 的机器级语义不同）。
  *
- * 说明：索引构建与知识库问答/检索尚未实现，这里只提供
- * 知识库管理、文件落盘、文件读取与共享。
+ * **校验顺序**：本文件的历史顺序是「会话校验先于参数校验」（未登录时即使
+ * 参数非法也回「未登录」，knowledge 单测钉死），故不使用注册器的 parse 阶段，
+ * 参数收窄保持在 execute 内、鉴权之后。
  */
 export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDeps): void {
-  const { knowledgeSettingsService, knowledgeService, session, openDir, showItemInFolder } = deps
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
+  const { knowledgeSettingsService, knowledgeService, openDir, showItemInFolder } = deps
 
   // ── 按库覆盖配置（沿用既有实现）──
 
-  ipc.handle('knowledge:get-kb-settings', async (_event, kbIds?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:get-kb-settings', {
+    auth: 'user',
+    execute: (ctx, kbIds) => {
       // 省略 kbIds = 拉取该用户全部已配置项；传数组则逐项返回（未配置为 {}）
       const ids = kbIds === undefined ? undefined : assertKbIdList(kbIds)
-      return ok(knowledgeSettingsService.getOverridesBatch(userId, ids))
-    } catch (err) {
-      return fail((err as Error).message)
+      return knowledgeSettingsService.getOverridesBatch(ctx.userId as string, ids)
     }
   })
 
-  ipc.handle('knowledge:set-kb-settings', async (_event, kbId?: unknown, overrides?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      // 传 {} 即该知识库恢复全部跟随全局（条目会被清除）
-      return ok(knowledgeSettingsService.setOverrides(userId, assertKbId(kbId), overrides))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:set-kb-settings', {
+    auth: 'user',
+    // 传 {} 即该知识库恢复全部跟随全局（条目会被清除）
+    execute: (ctx, kbId, overrides) =>
+      knowledgeSettingsService.setOverrides(ctx.userId as string, assertKbId(kbId), overrides)
   })
 
   // ── 知识库 ──
 
-  ipc.handle('knowledge:list-kbs', async (_event, options?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:list-kbs', {
+    auth: 'user',
+    execute: (ctx, options) => {
       const raw = (options ?? {}) as { kind?: unknown; keyword?: unknown }
       const kind = raw.kind === undefined ? undefined : (raw.kind as KnowledgeKind)
-      if (kind !== undefined && !KINDS.includes(kind)) return fail('知识库分组非法')
-      return ok(knowledgeService.listBases(userId, { kind, keyword: asOptionalText(raw.keyword) }))
-    } catch (err) {
-      return fail((err as Error).message)
+      if (kind !== undefined && !KINDS.includes(kind)) throw new Error('知识库分组非法')
+      return knowledgeService.listBases(ctx.userId as string, {
+        kind,
+        keyword: asOptionalText(raw.keyword)
+      })
     }
   })
 
-  ipc.handle('knowledge:create-kb', async (_event, input?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:create-kb', {
+    auth: 'user',
+    execute: (ctx, input) => {
       const raw = (input ?? {}) as { name?: unknown; description?: unknown; kind?: unknown }
-      return ok(
-        knowledgeService.createBase(userId, {
-          name: asText(raw.name, '知识库名称'),
-          description: asOptionalText(raw.description),
-          kind: raw.kind === undefined ? 'local' : (raw.kind as KnowledgeKind)
-        })
-      )
-    } catch (err) {
-      return fail((err as Error).message)
+      return knowledgeService.createBase(ctx.userId as string, {
+        name: asText(raw.name, '知识库名称'),
+        description: asOptionalText(raw.description),
+        kind: raw.kind === undefined ? 'local' : (raw.kind as KnowledgeKind)
+      })
     }
   })
 
-  ipc.handle('knowledge:update-kb', async (_event, id?: unknown, patch?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:update-kb', {
+    auth: 'user',
+    execute: (ctx, id, patch) => {
       const raw = (patch ?? {}) as { name?: unknown; description?: unknown }
-      return ok(
-        knowledgeService.updateBase(userId, assertKbId(id), {
-          name: asOptionalText(raw.name),
-          description: asOptionalText(raw.description)
-        })
-      )
-    } catch (err) {
-      return fail((err as Error).message)
+      return knowledgeService.updateBase(ctx.userId as string, assertKbId(id), {
+        name: asOptionalText(raw.name),
+        description: asOptionalText(raw.description)
+      })
     }
   })
 
-  ipc.handle('knowledge:delete-kb', async (_event, id?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown], { overridesCleared: true }>(ipc, 'knowledge:delete-kb', {
+    auth: 'user',
+    execute: (ctx, id) => {
+      const userId = ctx.userId as string
       const kbId = assertKbId(id)
       const result = knowledgeService.deleteBase(userId, kbId)
       // 知识库已删除：顺手清掉它的按库覆盖配置，避免 kb-settings.json 残留
       knowledgeSettingsService.setOverrides(userId, kbId, {})
-      return ok({ ...result, overridesCleared: true })
-    } catch (err) {
-      return fail((err as Error).message)
+      return { ...result, overridesCleared: true }
     }
   })
 
-  ipc.handle('knowledge:reorder-kbs', async (_event, kind?: unknown, ids?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:reorder-kbs', {
+    auth: 'user',
+    execute: (ctx, kind, ids) => {
       const category = kind as KnowledgeKind
-      if (typeof kind !== 'string' || !KINDS.includes(category)) return fail('知识库分类非法')
-      return ok(knowledgeService.reorderBases(userId, category, assertKbIdList(ids)))
-    } catch (err) {
-      return fail((err as Error).message)
+      if (typeof kind !== 'string' || !KINDS.includes(category)) throw new Error('知识库分类非法')
+      return knowledgeService.reorderBases(ctx.userId as string, category, assertKbIdList(ids))
     }
   })
 
-  ipc.handle('knowledge:set-kb-pinned', async (_event, id?: unknown, pinned?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      if (typeof pinned !== 'boolean') return fail('置顶参数非法')
-      return ok(knowledgeService.setBasePinned(userId, assertKbId(id), pinned))
-    } catch (err) {
-      return fail((err as Error).message)
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:set-kb-pinned', {
+    auth: 'user',
+    execute: (ctx, id, pinned) => {
+      if (typeof pinned !== 'boolean') throw new Error('置顶参数非法')
+      return knowledgeService.setBasePinned(ctx.userId as string, assertKbId(id), pinned)
     }
   })
 
-  ipc.handle('knowledge:stats', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.stats(userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'knowledge:stats', {
+    auth: 'user',
+    execute: (ctx) => knowledgeService.stats(ctx.userId as string)
   })
 
   // ── 文档 ──
 
-  ipc.handle('knowledge:list-docs', async (_event, kbId?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.listDocuments(userId, assertKbId(kbId)))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:list-docs', {
+    auth: 'user',
+    execute: (ctx, kbId) => knowledgeService.listDocuments(ctx.userId as string, assertKbId(kbId))
   })
 
-  ipc.handle(
-    'knowledge:import',
-    async (_event, kbId?: unknown, items?: unknown, indexState?: unknown, config?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        const id = assertKbId(kbId)
-        const mode = asIndexState(indexState)
-        // 配置快照（主进程为权威）：
-        // - default：取该库当前生效配置（全局 ← 按库）的 14 个索引项
-        // - custom：校验渲染层传来的向导快照（白名单 + 区间/枚举，非法直接拒绝）
-        // - none：null（只上传文件）
-        let snapshot: string | null = null
-        if (mode === 'default') {
-          const effective = knowledgeSettingsService.getEffective(userId, id).effective
-          snapshot = pickIndexSnapshot(toEngineConfig(effective, deps.getGlobalSettings()))
-        } else if (mode === 'custom') {
-          snapshot = normalizeIndexSnapshot(config)
-          if (!snapshot) throw new Error('自定义索引缺少配置项')
-        }
-        return ok(knowledgeService.importDocuments(userId, id, asImportItems(items), mode, snapshot))
-      } catch (err) {
-        return fail((err as Error).message)
+  registerCommand<[unknown, unknown, unknown, unknown], unknown>(ipc, 'knowledge:import', {
+    auth: 'user',
+    execute: (ctx, kbId, items, indexState, config) => {
+      const userId = ctx.userId as string
+      const id = assertKbId(kbId)
+      const mode = asIndexState(indexState)
+      // 配置快照（主进程为权威）：
+      // - default：取该库当前生效配置（全局 ← 按库）的 14 个索引项
+      // - custom：校验渲染层传来的向导快照（白名单 + 区间/枚举，非法直接拒绝）
+      // - none：null（只上传文件）
+      let snapshot: string | null = null
+      if (mode === 'default') {
+        const effective = knowledgeSettingsService.getEffective(userId, id).effective
+        snapshot = pickIndexSnapshot(toEngineConfig(effective, deps.getGlobalSettings()))
+      } else if (mode === 'custom') {
+        snapshot = normalizeIndexSnapshot(config)
+        if (!snapshot) throw new Error('自定义索引缺少配置项')
       }
+      return knowledgeService.importDocuments(userId, id, asImportItems(items), mode, snapshot)
     }
-  )
+  })
 
   // ── 索引管理（重建 / 重试 / 取消 / 检索）──
 
-  ipc.handle('knowledge:reindex', async (_event, kbId?: unknown, relPaths?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.reindex(userId, assertKbId(kbId), asRelPaths(relPaths)))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:reindex', {
+    auth: 'user',
+    execute: (ctx, kbId, relPaths) =>
+      knowledgeService.reindex(ctx.userId as string, assertKbId(kbId), asRelPaths(relPaths))
   })
 
-  ipc.handle('knowledge:retry-doc', async (_event, kbId?: unknown, relPath?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(
-        knowledgeService.retryDocument(userId, assertKbId(kbId), asText(relPath, '文件路径'))
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:retry-doc', {
+    auth: 'user',
+    execute: (ctx, kbId, relPath) =>
+      knowledgeService.retryDocument(
+        ctx.userId as string,
+        assertKbId(kbId),
+        asText(relPath, '文件路径')
       )
-    } catch (err) {
-      return fail((err as Error).message)
-    }
   })
 
-  ipc.handle('knowledge:backup-index', async () => {
-    try {
-      const userId = session.requireUserId()
-      if (!deps.chooseBackupPath) return fail('当前环境不支持选择保存位置')
+  registerCommand<[], unknown>(ipc, 'knowledge:backup-index', {
+    auth: 'user',
+    execute: async (ctx) => {
+      if (!deps.chooseBackupPath) throw new Error('当前环境不支持选择保存位置')
       const dest = await deps.chooseBackupPath()
-      if (!dest) return ok({ canceled: true })
-      const result = knowledgeService.backupIndex(userId, dest)
-      return ok({ canceled: false, path: dest, sizeBytes: result.sizeBytes })
-    } catch (err) {
-      return fail((err as Error).message)
+      if (!dest) return { canceled: true }
+      const result = knowledgeService.backupIndex(ctx.userId as string, dest)
+      return { canceled: false, path: dest, sizeBytes: result.sizeBytes }
     }
   })
 
-  ipc.handle('knowledge:rebuild-communities', async (_event, kbId?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(await knowledgeService.rebuildCommunities(userId, assertKbId(kbId)))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:rebuild-communities', {
+    auth: 'user',
+    execute: (ctx, kbId) =>
+      knowledgeService.rebuildCommunities(ctx.userId as string, assertKbId(kbId))
   })
 
-  ipc.handle('knowledge:reextract-graph', async (_event, kbId?: unknown, relPaths?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.reextractGraph(userId, assertKbId(kbId), asRelPaths(relPaths)))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:reextract-graph', {
+    auth: 'user',
+    execute: (ctx, kbId, relPaths) =>
+      knowledgeService.reextractGraph(ctx.userId as string, assertKbId(kbId), asRelPaths(relPaths))
   })
 
-  ipc.handle('knowledge:cancel-index', async (_event, kbId?: unknown, relPaths?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.cancelIndex(userId, assertKbId(kbId), asRelPaths(relPaths)))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:cancel-index', {
+    auth: 'user',
+    execute: (ctx, kbId, relPaths) =>
+      knowledgeService.cancelIndex(ctx.userId as string, assertKbId(kbId), asRelPaths(relPaths))
   })
 
   // ── 问答（2-Step RAG；结果走 ask-* 事件，与 agent:stream-* 同一约定）──
 
-  ipc.handle(
+  registerCommand<[unknown, unknown, unknown, unknown], { started: true; requestId: string }>(
+    ipc,
     'knowledge:ask',
-    async (event, kbId?: unknown, question?: unknown, modelName?: unknown, history?: unknown) => {
-      try {
-        const userId = session.requireUserId()
+    {
+      auth: 'user',
+      execute: (ctx, kbId, question, modelName, history) => {
+        const userId = ctx.userId as string
+        const event = ctx.event
         const id = assertKbId(kbId)
         const text = asText(question, '问题')
         const model = asOptionalText(modelName)?.trim() || undefined
         const qa = deps.knowledgeQaService
-        if (!qa) return fail('问答功能不可用')
+        if (!qa) throw new Error('问答功能不可用')
         // 只记长度不记原文（隐私：设计口径「检索/问答日志不落用户查询内容」）
         console.log(`[main] knowledge:ask kb=${id} questionLen=${text.length}`)
 
@@ -399,28 +353,24 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
             if (activeAsks.get(event.sender.id) === controller) activeAsks.delete(event.sender.id)
           })
 
-        return ok({ started: true, requestId })
-      } catch (err) {
-        return fail((err as Error).message)
+        return { started: true as const, requestId }
       }
     }
   )
 
-  ipc.handle('knowledge:cancel-ask', async (event) => {
-    try {
-      session.requireUserId()
-      const controller = activeAsks.get(event.sender.id)
-      if (!controller) return ok({ aborted: false })
+  registerCommand<[], { aborted: boolean }>(ipc, 'knowledge:cancel-ask', {
+    auth: 'user',
+    execute: (ctx) => {
+      const controller = activeAsks.get(ctx.event.sender.id)
+      if (!controller) return { aborted: false }
       controller.abort()
-      return ok({ aborted: true })
-    } catch (err) {
-      return fail((err as Error).message)
+      return { aborted: true }
     }
   })
 
-  ipc.handle('knowledge:graph-view', async (_event, kbId?: unknown, options?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:graph-view', {
+    auth: 'user',
+    execute: (ctx, kbId, options) => {
       const raw = (options ?? {}) as { limit?: unknown }
       let limit: number | undefined
       if (raw.limit !== undefined) {
@@ -429,15 +379,13 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
         }
         limit = Math.floor(raw.limit)
       }
-      return ok(knowledgeService.graphView(userId, assertKbId(kbId), { limit }))
-    } catch (err) {
-      return fail((err as Error).message)
+      return knowledgeService.graphView(ctx.userId as string, assertKbId(kbId), { limit })
     }
   })
 
-  ipc.handle('knowledge:search', async (_event, kbId?: unknown, query?: unknown, options?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown, unknown, unknown], unknown>(ipc, 'knowledge:search', {
+    auth: 'user',
+    execute: async (ctx, kbId, query, options) => {
       const raw = (options ?? {}) as { topK?: unknown; mode?: unknown; debug?: unknown }
       const mode = raw.mode === undefined ? undefined : asSearchMode(raw.mode)
       const topK =
@@ -452,97 +400,73 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
       if (raw.debug !== undefined && typeof raw.debug !== 'boolean') {
         throw new Error('debug 参数非法')
       }
-      return ok(
-        await knowledgeService.search(userId, assertKbId(kbId), asText(query, '检索内容'), {
-          topK,
-          mode,
-          debug: raw.debug
-        })
+      return knowledgeService.search(ctx.userId as string, assertKbId(kbId), asText(query, '检索内容'), {
+        topK,
+        mode,
+        debug: raw.debug
+      })
+    }
+  })
+
+  registerCommand<[unknown, unknown, unknown], unknown>(ipc, 'knowledge:rename-doc', {
+    auth: 'user',
+    execute: (ctx, kbId, relPath, newName) =>
+      knowledgeService.renameDocument(
+        ctx.userId as string,
+        assertKbId(kbId),
+        asText(relPath, '文件路径'),
+        asText(newName, '名称')
       )
-    } catch (err) {
-      return fail((err as Error).message)
+  })
+
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:remove-doc', {
+    auth: 'user',
+    execute: (ctx, kbId, relPath) =>
+      knowledgeService.removeDocument(
+        ctx.userId as string,
+        assertKbId(kbId),
+        asText(relPath, '文件路径')
+      )
+  })
+
+  registerCommand<[unknown, unknown, unknown, unknown], unknown>(ipc, 'knowledge:read-file', {
+    auth: 'user',
+    execute: async (ctx, kbId, relPath, as, cursor) => {
+      if (as !== 'text' && as !== 'bytes') throw new Error('读取方式非法')
+      return knowledgeService.readDocument(
+        ctx.userId as string,
+        assertKbId(kbId),
+        asText(relPath, '文件路径'),
+        as,
+        { cursor: asCursor(cursor) }
+      )
     }
   })
 
-  ipc.handle(
-    'knowledge:rename-doc',
-    async (_event, kbId?: unknown, relPath?: unknown, newName?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        return ok(
-          knowledgeService.renameDocument(
-            userId,
-            assertKbId(kbId),
-            asText(relPath, '文件路径'),
-            asText(newName, '名称')
-          )
-        )
-      } catch (err) {
-        return fail((err as Error).message)
-      }
-    }
-  )
-
-  ipc.handle('knowledge:remove-doc', async (_event, kbId?: unknown, relPath?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.removeDocument(userId, assertKbId(kbId), asText(relPath, '文件路径')))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'knowledge:read-image-bytes', {
+    auth: 'user',
+    execute: (ctx, kbId, relPath) =>
+      knowledgeService.readImageBytes(
+        ctx.userId as string,
+        assertKbId(kbId),
+        asText(relPath, '文件路径')
+      )
   })
-
-  ipc.handle(
-    'knowledge:read-file',
-    async (_event, kbId?: unknown, relPath?: unknown, as?: unknown, cursor?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        if (as !== 'text' && as !== 'bytes') return fail('读取方式非法')
-        return ok(
-          await knowledgeService.readDocument(
-            userId,
-            assertKbId(kbId),
-            asText(relPath, '文件路径'),
-            as,
-            { cursor: asCursor(cursor) }
-          )
-        )
-      } catch (err) {
-        return fail((err as Error).message)
-      }
-    }
-  )
-
-  ipc.handle(
-    'knowledge:read-image-bytes',
-    async (_event, kbId?: unknown, relPath?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        return ok(
-          await knowledgeService.readImageBytes(
-            userId,
-            assertKbId(kbId),
-            asText(relPath, '文件路径')
-          )
-        )
-      } catch (err) {
-        return fail((err as Error).message)
-      }
-    }
-  )
 
   // ── 打开文件夹（路径一律由主进程解析）──
 
-  ipc.handle('knowledge:open-dir', async (_event, kbId?: unknown, relPath?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown, unknown], null>(ipc, 'knowledge:open-dir', {
+    auth: 'user',
+    execute: async (ctx, kbId, relPath) => {
+      const userId = ctx.userId as string
       const id = assertKbId(kbId)
-      if (!openDir) return fail('当前环境不支持打开文件夹')
+      if (!openDir) throw new Error('当前环境不支持打开文件夹')
       // 不传 relPath = 知识库目录；传 = 该文件所在目录（并尽量选中文件）
       if (relPath === undefined || relPath === null || relPath === '') {
         const dir = knowledgeService.resolveKnowledgeBaseDir(userId, id)
         const error = await openDir(dir)
-        return error ? fail(error) : ok(null)
+        if (error) throw new Error(error)
+        return null
       }
       const location = knowledgeService.resolveDocumentLocation(
         userId,
@@ -551,57 +475,44 @@ export function registerKnowledgeHandlers(ipc: IpcMain, deps: KnowledgeHandlerDe
       )
       if (showItemInFolder) {
         showItemInFolder(location.file)
-        return ok(null)
+        return null
       }
       const error = await openDir(location.dir)
-      return error ? fail(error) : ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
+      if (error) throw new Error(error)
+      return null
     }
   })
 
   // ── 共享 ──
 
-  ipc.handle('knowledge:create-share', async (_event, input?: unknown) => {
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:create-share', {
+    auth: 'user',
+    execute: (ctx, input) => {
       const raw = (input ?? {}) as {
         targetKind?: unknown
         targetId?: unknown
         targetName?: unknown
         expiresInDays?: unknown
       }
-      return ok(
-        knowledgeService.createShare(userId, {
-          targetKind: raw.targetKind as 'library' | 'folder' | 'file',
-          targetId: asText(raw.targetId, '共享对象'),
-          targetName: asText(raw.targetName, '共享对象名称'),
-          expiresInDays:
-            typeof raw.expiresInDays === 'number' && Number.isFinite(raw.expiresInDays)
-              ? raw.expiresInDays
-              : undefined
-        })
-      )
-    } catch (err) {
-      return fail((err as Error).message)
+      return knowledgeService.createShare(ctx.userId as string, {
+        targetKind: raw.targetKind as 'library' | 'folder' | 'file',
+        targetId: asText(raw.targetId, '共享对象'),
+        targetName: asText(raw.targetName, '共享对象名称'),
+        expiresInDays:
+          typeof raw.expiresInDays === 'number' && Number.isFinite(raw.expiresInDays)
+            ? raw.expiresInDays
+            : undefined
+      })
     }
   })
 
-  ipc.handle('knowledge:list-shares', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.listShares(userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'knowledge:list-shares', {
+    auth: 'user',
+    execute: (ctx) => knowledgeService.listShares(ctx.userId as string)
   })
 
-  ipc.handle('knowledge:revoke-share', async (_event, token?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(knowledgeService.revokeShare(userId, asText(token, '共享标识')))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'knowledge:revoke-share', {
+    auth: 'user',
+    execute: (ctx, token) => knowledgeService.revokeShare(ctx.userId as string, asText(token, '共享标识'))
   })
 }

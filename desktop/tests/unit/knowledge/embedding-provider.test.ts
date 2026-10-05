@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   EmbeddingProvider,
   embeddingsUrl,
@@ -251,19 +251,5 @@ describe('parseEmbeddingsPayload', () => {
   })
 })
 
-describe('EmbeddingProvider 与检索链路（代理传递）', () => {
-  it('把解析出的代理显式传给传输层', async () => {
-    const seen: Array<unknown> = []
-    const transport: EmbeddingTransport = vi.fn(async ({ proxy, body }) => {
-      seen.push(proxy)
-      return payloadFor((body as { input: string[] }).input)
-    })
-    const provider = new EmbeddingProvider({
-      store: createCacheFake(),
-      transport,
-      getProxy: async () => ({ host: '127.0.0.1', port: 7890, protocol: 'http' })
-    })
-    await provider.embed(['x'], config())
-    expect(seen[0]).toEqual({ host: '127.0.0.1', port: 7890, protocol: 'http' })
-  })
-})
+// 代理注入已收敛到统一 HTTP 客户端（network/main-http，R8-5），
+// 原「把解析出的代理显式传给传输层」用例的等价覆盖见 tests/unit/network/main-http.test.ts。

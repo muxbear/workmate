@@ -58,6 +58,7 @@ import { AutomationTemplateSyncService } from './automation/AutomationTemplateSy
 import { AuditLogRepository } from './automation/AuditLogRepository'
 import { registerAutomationHandlers } from './ipc/automation-handlers'
 import { registerAutomationTemplateSyncHandlers } from './ipc/automation-template-sync-handlers'
+import { createCommandRegistrar } from './ipc/command'
 import { AutomationRunner } from './automation/AutomationRunner'
 import { AutomationScheduler } from './automation/AutomationScheduler'
 import { KnowledgeStore } from './knowledge/KnowledgeStore'
@@ -82,7 +83,8 @@ import {
 import { CommunityService, renderCommunityContext } from './knowledge/CommunityService'
 import { QueryRewriter } from './knowledge/QueryRewriter'
 import { resolveDefaultModel } from './agent/ModelFactory'
-import { resolveMainProxy, type MainProxyConfig } from './network/main-proxy'
+import { resolveMainProxy } from './network/main-proxy'
+import { configureMainHttpProxyResolver } from './network/main-http'
 import { CloudKnowledgeService } from './knowledge/CloudKnowledgeService'
 import { registerCloudKnowledgeHandlers } from './ipc/knowledge-cloud-handlers'
 import { registerModelHandlers } from './ipc/model-handlers'
@@ -275,6 +277,16 @@ app.whenReady().then(() => {
     return typeof name === 'string' && name.trim() ? name : DEFAULT_SYSTEM_NAME
   }
 
+  // ── 统一 HTTP 客户端代理解析（R8-5）：所有 axios 出网（同步/登录/云知识库/图片生成/嵌入重排）
+  //    共用「设置 → 网络」的代理配置（axios 不走 Electron session，必须显式解析）──
+  configureMainHttpProxyResolver((targetUrl) =>
+    resolveMainProxy(
+      targetUrl,
+      String(settingsStore.get('network.proxyMode') ?? 'direct'),
+      String(settingsStore.get('network.proxyUrl') ?? '')
+    )
+  )
+
   // ── 远程图片缓存服务（ke-img:// 协议 + 落盘缓存；解决外链图片 CSP 拦截与 URL 过期）──
   const remoteImageService = new RemoteImageService(
     join(dataDir.getDir('cache'), 'remote-images'),
@@ -296,11 +308,10 @@ app.whenReady().then(() => {
   dataSourceFactory.setMode(mode)
 
   // ── 初始化认证服务与会话 ──
-  // 登录凭据校验始终走本地 users 表（与工作模式无关）：云端身份经 OAuth2 关联本地账号；
-  // CloudAuthRepository 的用户查询为空实现，若按模式注入会导致 cloud 模式登录必然失败
+  // 登录凭据校验始终走本地 users 表（与工作模式无关）：云端身份经 OAuth2 关联本地账号
+  // （云端认证面已随 R8-2 删除，见 interfaces/ILocalAuthStore 的说明）
   const authService = new AuthService({
     repository: dataSourceFactory.createLocalAuthRepository(),
-    localAuthRepository: dataSourceFactory.createLocalAuthRepository(),
     jwtSecret,
     secureStorage
   })
@@ -639,18 +650,9 @@ app.whenReady().then(() => {
     })
   })
   // 索引/检索引擎（嵌入与重排端点在「设置 → 知识库」页配置；未配置时自动走纯稀疏链路）
-  // axios 不走 Electron session：按「设置 → 网络」把代理解析出来显式传给两个 provider
-  const resolveKnowledgeProxy = (targetUrl: string): Promise<MainProxyConfig | undefined> =>
-    resolveMainProxy(
-      targetUrl,
-      String(settingsStore.get('network.proxyMode') ?? 'direct'),
-      String(settingsStore.get('network.proxyUrl') ?? '')
-    )
-  const embeddingProvider = new EmbeddingProvider({
-    store: knowledgeStore,
-    getProxy: resolveKnowledgeProxy
-  })
-  const rerankProvider = new RerankProvider({ getProxy: resolveKnowledgeProxy })
+  // 代理由统一 HTTP 客户端按请求解析（见文件上方 configureMainHttpProxyResolver）
+  const embeddingProvider = new EmbeddingProvider({ store: knowledgeStore })
+  const rerankProvider = new RerankProvider()
   // 图谱抽取（P3）+ 社区摘要（P4）：同一个 graphModel 解析链
   const resolveGraphModel = async (modelName: string): Promise<GraphChatModel> => {
       const resolved = await resolveDefaultModel(
@@ -838,13 +840,16 @@ app.whenReady().then(() => {
   // ── 注册内置运行时管理 IPC（机器级，不调 requireUserId）──
   registerRuntimeHandlers(ipcMain, { binaryManager })
 
+  // 内联通道统一走注册器（auth:'user' 通道由注册器统一 requireUserId）
+  const registerCommand = createCommandRegistrar(() => session.requireUserId())
+
   // 打开默认工作目录（~/.ke-work/workspace；未绑定工作空间的会话使用）
-  ipcMain.handle('workspace:open-default', async () => {
-    try {
+  registerCommand<[], null>(ipcMain, 'workspace:open-default', {
+    auth: 'machine',
+    execute: async () => {
       const err = await shell.openPath(dataDir.getDir('workspace'))
-      return err ? { success: false, error: err } : { success: true, data: null }
-    } catch (error) {
-      return { success: false, error: (error as Error).message }
+      if (err) throw new Error(err)
+      return null
     }
   })
 
@@ -867,6 +872,8 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // open-external / web:open-home 的通道契约是 Promise<void>（见 contracts.ts），
+  // 非 IpcResult 包裹，不适用 registerCommand；保持裸 ipcMain.handle 直通。
   ipcMain.handle('open-external', async (_, url: string) => {
     await shell.openExternal(url)
   })
@@ -970,6 +977,8 @@ app.whenReady().then(() => {
   })
 
   // Agent message handler
+  // TODO(P4/R4⑤): 内联编排将与 service.ts 拆分（RunOrchestrator/Context Object）一并
+  // 抽取为注册器通道 —— 其抛错/自定义文案路径与注册器语义不同，届时统一收敛（见重构方案 R4⑤）。
   ipcMain.handle(
     'agent:send',
     async (
@@ -1052,11 +1061,11 @@ app.whenReady().then(() => {
           conversationStore.deleteTurnDataFrom(userId, conversationId, turnIndex)
         }
 
-        await invokeSendMessage(
+        await invokeSendMessage({
           messages,
           win,
           agent,
-          {
+          config: {
             thread_id: conversationStore.buildThreadId(userId, conversationId),
             user_id: userId,
             workspace_dir: ws?.dir,
@@ -1067,8 +1076,8 @@ app.whenReady().then(() => {
               ? { modelOverride: customModelId }
               : {})
           },
-          controller.signal,
-          (artifacts) => {
+          signal: controller.signal,
+          onArtifacts: (artifacts) => {
             if (turnIndex === undefined) return
             try {
               conversationStore.saveTurnArtifacts(
@@ -1086,7 +1095,7 @@ app.whenReady().then(() => {
               console.error('[main] save turn artifacts failed:', err)
             }
           }
-        )
+        })
         // 对话流完成后异步生成 AI 总结标题（不阻塞响应；失败通过 title-error 事件提示）
         void generateConversationTitle(userId, conversationId, win, modelService, customModelId)
         console.log('[main] invokeSendMessage completed, returning success')
@@ -1101,37 +1110,38 @@ app.whenReady().then(() => {
   )
 
   // 设置当前选中的专家为子智能体；调用方需等待完成后再发送消息
-  ipcMain.handle('agent:set-experts', async (_event, experts: unknown) => {
-    try {
-      session.requireUserId()
-      if (!Array.isArray(experts)) {
-        return { success: false, error: '参数错误' }
+  registerCommand<[unknown]>(ipcMain, 'agent:set-experts', {
+    auth: 'user',
+    // 参数校验保持在会话校验之后（历史顺序）
+    execute: async (_ctx, experts) => {
+      if (!Array.isArray(experts)) throw new Error('参数错误')
+      try {
+        const result = await agentManager.setExperts(experts as DesktopExpert[])
+        // MCP 服务连不上时专家会静默失去能力（如视频生成），把告警回传渲染层提示用户
+        return { mcpWarnings: result.mcpWarnings }
+      } catch (err) {
+        console.error('[main] set experts failed:', err)
+        const message = err instanceof Error ? err.message : String(err)
+        throw new Error(message || '设置专家失败')
       }
-      const result = await agentManager.setExperts(experts as DesktopExpert[])
-      // MCP 服务连不上时专家会静默失去能力（如视频生成），把告警回传渲染层提示用户
-      return { success: true, data: { mcpWarnings: result.mcpWarnings } }
-    } catch (err) {
-      console.error('[main] set experts failed:', err)
-      const message = err instanceof Error ? err.message : String(err)
-      return { success: false, error: message || '设置专家失败' }
     }
   })
 
   // AI 改写润色（登录态；单次 LLM 请求，非流式；入参校验 + 长度上限主进程权威）
-  ipcMain.handle('agent:polish', async (_event, text: unknown) => {
-    try {
-      session.requireUserId()
-      if (typeof text !== 'string' || !text.trim()) {
-        return { success: false, error: '请输入要改写的内容' }
-      }
+  registerCommand<[unknown]>(ipcMain, 'agent:polish', {
+    auth: 'user',
+    // 参数校验保持在会话校验之后（历史顺序）
+    execute: async (_ctx, text) => {
+      if (typeof text !== 'string' || !text.trim()) throw new Error('请输入要改写的内容')
       if (text.length > POLISH_MAX_TEXT_CHARS) {
-        return { success: false, error: `改写内容过长（上限 ${POLISH_MAX_TEXT_CHARS} 字符）` }
+        throw new Error(`改写内容过长（上限 ${POLISH_MAX_TEXT_CHARS} 字符）`)
       }
-      const polished = await polishText(text, modelService)
-      return { success: true, data: polished }
-    } catch (err) {
-      console.error('[main] agent:polish failed:', err)
-      return { success: false, error: (err as Error).message || '改写失败' }
+      try {
+        return await polishText(text, modelService)
+      } catch (err) {
+        console.error('[main] agent:polish failed:', err)
+        throw new Error((err as Error).message || '改写失败')
+      }
     }
   })
 

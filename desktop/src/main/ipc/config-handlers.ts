@@ -1,17 +1,10 @@
 import type { IpcMain } from 'electron'
 import type { SettingsService } from '../settings/SettingsService'
 import type { BrandLogoUpload } from '../settings/BrandLogoService'
+import { createCommandRegistrar } from './command'
 
 export interface ConfigHandlerDeps {
   settingsService: SettingsService
-}
-
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
 }
 
 /**
@@ -40,84 +33,64 @@ function normalizeBrandLogoUpload(payload: unknown): BrandLogoUpload | null {
  * 主进程为校验权威（白名单 + 类型/枚举/路径合法性），渲染层不可信
  */
 export function registerConfigHandlers(ipc: IpcMain, deps: ConfigHandlerDeps): void {
+  const registerCommand = createCommandRegistrar(null)
   const { settingsService } = deps
 
-  ipc.handle('config:get-all', async () => {
-    try {
-      return ok(settingsService.getAll())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'config:get-all', {
+    auth: 'machine',
+    execute: () => settingsService.getAll()
   })
 
-  ipc.handle('config:set', async (_event, key?: unknown, value?: unknown) => {
-    if (typeof key !== 'string' || !key) return fail('参数错误')
-    try {
+  registerCommand<[string, unknown], null>(ipc, 'config:set', {
+    auth: 'machine',
+    parse: ([key, value]) => (typeof key === 'string' && key ? [key, value] : null),
+    execute: async (_ctx, key, value) => {
       await settingsService.set(key, value)
-      return ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
+      return null
     }
   })
 
-  ipc.handle('config:storage-stats', async () => {
-    try {
-      return ok(await settingsService.getStorageStats())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'config:storage-stats', {
+    auth: 'machine',
+    execute: () => settingsService.getStorageStats()
   })
 
-  ipc.handle('config:select-workspace-dir', async () => {
-    try {
-      // 用户取消返回 null（success: true），对齐 workspace:select-dir
-      return ok(await settingsService.selectWorkspaceDir())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'config:select-workspace-dir', {
+    auth: 'machine',
+    // 用户取消返回 null（success: true），对齐 workspace:select-dir
+    execute: () => settingsService.selectWorkspaceDir()
   })
 
-  ipc.handle('config:select-knowledge-dir', async () => {
-    try {
-      // 用户取消返回 null（success: true），对齐 config:select-workspace-dir
-      return ok(await settingsService.selectKnowledgeDir())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'config:select-knowledge-dir', {
+    auth: 'machine',
+    // 用户取消返回 null（success: true），对齐 config:select-workspace-dir
+    execute: () => settingsService.selectKnowledgeDir()
   })
 
-  ipc.handle('config:get-brand-logo', async () => {
-    try {
-      return ok(settingsService.getBrandLogo())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'config:get-brand-logo', {
+    auth: 'machine',
+    execute: () => settingsService.getBrandLogo()
   })
 
-  ipc.handle('config:upload-brand-logo', async (_event, payload?: unknown) => {
-    try {
+  registerCommand<[BrandLogoUpload], unknown>(ipc, 'config:upload-brand-logo', {
+    auth: 'machine',
+    parse: ([payload]) => {
       const upload = normalizeBrandLogoUpload(payload)
-      if (!upload) return fail('参数错误')
-      return ok(await settingsService.uploadBrandLogo(upload))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+      return upload ? [upload] : null
+    },
+    execute: (_ctx, upload) => settingsService.uploadBrandLogo(upload)
   })
 
-  ipc.handle('config:reset-brand-logo', async () => {
-    try {
-      return ok(await settingsService.resetBrandLogo())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'config:reset-brand-logo', {
+    auth: 'machine',
+    execute: () => settingsService.resetBrandLogo()
   })
 
-  ipc.handle('config:open-data-dir', async () => {
-    try {
+  registerCommand<[], null>(ipc, 'config:open-data-dir', {
+    auth: 'machine',
+    execute: async () => {
       await settingsService.openDataDir()
-      return ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
+      return null
     }
   })
 }

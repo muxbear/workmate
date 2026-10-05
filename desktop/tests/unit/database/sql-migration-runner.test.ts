@@ -1,12 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { MIGRATIONS } from '../../../src/main/database/local/migrations'
 import {
+  assertNoVersionConflicts,
   formatMigrationFile,
   migrationFileName,
+  runBuiltInMigrations,
   runSqlMigrations,
   seedMigrationFiles
 } from '../../../src/main/database/local/SqlMigrationRunner'
@@ -152,6 +154,79 @@ describe('runSqlMigrations', () => {
     runSqlMigrations(db, missingDir)
     expect(db.pragma('user_version', { simple: true })).toBe(lastVersion())
     expect(existsSync(missingDir)).toBe(true)
+    db.close()
+  })
+})
+
+describe('迁移单轨化（R8-4）', () => {
+  const lastVersion = (): number => MIGRATIONS[MIGRATIONS.length - 1].version
+
+  function tableNames(db: Database.Database): string[] {
+    return (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name)
+  }
+
+  it('runBuiltInMigrations 与磁盘轨语义一致（同一执行核心）且幂等', () => {
+    const builtin = createDb()
+    const disk = createDb()
+    runBuiltInMigrations(builtin)
+    runSqlMigrations(disk, dir)
+    expect(builtin.pragma('user_version', { simple: true })).toBe(
+      disk.pragma('user_version', { simple: true })
+    )
+    expect(tableNames(builtin)).toEqual(tableNames(disk))
+    // 幂等：重复运行不报错、version 不变
+    runBuiltInMigrations(builtin)
+    expect(builtin.pragma('user_version', { simple: true })).toBe(lastVersion())
+    builtin.close()
+    disk.close()
+  })
+
+  it('assertNoVersionConflicts：当前内置无重复序号；构造重复序号即抛错', () => {
+    expect(() => assertNoVersionConflicts()).not.toThrow()
+    expect(() =>
+      assertNoVersionConflicts([
+        { version: 3, name: 'a' },
+        { version: 3, name: 'b' }
+      ])
+    ).toThrow('序号冲突')
+  })
+
+  it('同名文件内容与内置不一致：告警、保留磁盘版本、不抛错（手动修改属预期场景）', () => {
+    seedMigrationFiles(dir)
+    const target = join(dir, '0000_ke_work_baseline.sql')
+    writeFileSync(target, formatMigrationFile(MIGRATIONS[0].sql) + '-- extra\n', 'utf-8')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    seedMigrationFiles(dir)
+    expect(warn.mock.calls.some((call) => String(call[0]).includes('内容不一致'))).toBe(true)
+    expect(readFileSync(target, 'utf-8')).toContain('-- extra')
+    warn.mockRestore()
+  })
+
+  it('仅换行差异（CRLF）不误报内容不一致', () => {
+    seedMigrationFiles(dir)
+    const target = join(dir, '0000_ke_work_baseline.sql')
+    const content = readFileSync(target, 'utf-8')
+    writeFileSync(target, content.replace(/\n/g, '\r\n'), 'utf-8')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    seedMigrationFiles(dir)
+    expect(warn.mock.calls.some((call) => String(call[0]).includes('内容不一致'))).toBe(false)
+    warn.mockRestore()
+  })
+
+  it('未按 NNNN_名称.sql 命名的 .sql 文件：告警列出且不执行', () => {
+    writeFileSync(join(dir, 'notes.sql'), 'CREATE TABLE should_not_run (id INTEGER);', 'utf-8')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const db = createDb()
+    runSqlMigrations(db, dir)
+    expect(warn.mock.calls.some((call) => String(call[0]).includes('notes.sql'))).toBe(true)
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name='should_not_run'").get()
+    ).toBeUndefined()
+    warn.mockRestore()
     db.close()
   })
 })

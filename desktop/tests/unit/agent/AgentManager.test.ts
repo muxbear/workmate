@@ -322,6 +322,65 @@ describe('AgentManager', () => {
     const again = await manager.setExperts([expert])
     expect(again.mcpWarnings).toHaveLength(result.mcpWarnings.length)
   }, 30_000)
+
+  it('P1-13: 慢构建在途时的新触发排队执行——各次构建快照互不撕裂（历史缺陷：await 窗口交错写同一 builder）', async () => {
+    const withService = new AgentManager(
+      workDir,
+      join(workDir, 'ke-work.db'),
+      join(workDir, 'ke-work.db'),
+      createFakeModelService() as never
+    )
+    await withService.init('local')
+    const before = createDeepAgentMock.mock.calls.length
+
+    // 让第一次重建卡在「模型解析」的 await 上（旧实现在此窗口会与后续触发交错）
+    let releaseModel!: () => void
+    initChatModelMock.mockImplementationOnce(
+      async () =>
+        await new Promise((resolve) => {
+          releaseModel = (): void => resolve({ id: 'slow-model' })
+        })
+    )
+    const slow = withService.applyInstalledSkills(['slow-build'])
+    await vi.waitFor(() => expect(initChatModelMock).toHaveBeenCalled())
+    // build#1 仍在途：新触发排队
+    withService.setSkills(['alpha'])
+    releaseModel()
+
+    await slow
+    await withService.ready()
+    const calls = createDeepAgentMock.mock.calls
+      .slice(before)
+      .map((c) => c[0] as { skills?: string[] })
+    // 严格两次构建：快照分别在各自触发时刻捕获，互不混入对方配置
+    expect(calls).toHaveLength(2)
+    expect(calls[0].skills).toEqual(['/skills/slow-build/'])
+    expect(calls[1].skills).toEqual(['/skills/alpha/'])
+  })
+
+  it('P1-14: 重建失败不破坏既有实例且链可自愈（原子提交）', async () => {
+    const withService = new AgentManager(
+      workDir,
+      join(workDir, 'ke-work.db'),
+      join(workDir, 'ke-work.db'),
+      createFakeModelService() as never
+    )
+    await withService.init('local')
+    const first = await withService.ready()
+    const cpBefore = withService.getCheckpointer()
+
+    // 模型解析失败 → 本次重建失败
+    initChatModelMock.mockRejectedValueOnce(new Error('boom'))
+    await expect(withService.applyInstalledSkills(['alpha'])).rejects.toThrow(/boom/)
+    // 原子提交：旧的 builder/agent 原封未动
+    expect(withService.getCheckpointer()).toBe(cpBefore)
+    await expect(withService.ready()).rejects.toThrow(/Agent not built/)
+
+    // 链自愈：后续重建可继续且产出新实例
+    await expect(withService.applyInstalledSkills(['beta'])).resolves.toBeUndefined()
+    const second = await withService.ready()
+    expect(second).not.toBe(first)
+  })
 })
 
 describe('AgentManager × 知识库工具（Agentic RAG 装配）', () => {

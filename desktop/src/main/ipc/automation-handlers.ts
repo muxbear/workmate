@@ -1,119 +1,74 @@
 import type { IpcMain } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { AutomationService } from '../automation/AutomationService'
+import { createCommandRegistrar } from './command'
 
 export interface AutomationHandlerDeps {
   automationService: AutomationService
   session: SessionService
 }
 
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
-}
-
 /**
  * 注册自动化相关 IPC 通道
  *
- * **用户隔离**：所有通道第一行取 session.requireUserId()，
- * 渲染层只传任务 id 与表单字段，不传 userId。
+ * **用户隔离**：鉴权统一声明为 user（注册器取 session.requireUserId()），
+ * 渲染层只传任务 id 与表单字段，不传 userId；入参校验由服务层负责。
  */
 export function registerAutomationHandlers(ipc: IpcMain, deps: AutomationHandlerDeps): void {
-  const { automationService, session } = deps
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
+  const { automationService } = deps
 
-  ipc.handle('automation:list-tasks', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.listTasks(userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'automation:list-tasks', {
+    auth: 'user',
+    execute: (ctx) => automationService.listTasks(ctx.userId as string)
   })
 
-  ipc.handle('automation:get-task', async (_event, id?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.getTask(userId, id))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'automation:get-task', {
+    auth: 'user',
+    execute: (ctx, id) => automationService.getTask(ctx.userId as string, id)
   })
 
-  ipc.handle('automation:create-task', async (_event, draft?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.createTask(userId, draft))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'automation:create-task', {
+    auth: 'user',
+    execute: (ctx, draft) => automationService.createTask(ctx.userId as string, draft)
   })
 
-  ipc.handle('automation:update-task', async (_event, id?: unknown, draft?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.updateTask(userId, id, draft))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'automation:update-task', {
+    auth: 'user',
+    execute: (ctx, id, draft) => automationService.updateTask(ctx.userId as string, id, draft)
   })
 
-  ipc.handle('automation:delete-task', async (_event, id?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.deleteTask(userId, id))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'automation:delete-task', {
+    auth: 'user',
+    execute: (ctx, id) => automationService.deleteTask(ctx.userId as string, id)
   })
 
-  ipc.handle('automation:set-enabled', async (_event, id?: unknown, enabled?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.setEnabled(userId, id, enabled))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown, unknown], unknown>(ipc, 'automation:set-enabled', {
+    auth: 'user',
+    execute: (ctx, id, enabled) => automationService.setEnabled(ctx.userId as string, id, enabled)
   })
 
-  ipc.handle('automation:run-now', async (_event, id?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(await automationService.runNow(userId, id))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'automation:run-now', {
+    auth: 'user',
+    execute: (ctx, id) => automationService.runNow(ctx.userId as string, id)
   })
 
-  ipc.handle(
+  registerCommand<[{ taskId?: unknown; limit?: unknown; cursor?: unknown }], unknown>(
+    ipc,
     'automation:list-runs',
-    async (_event, opts?: { taskId?: unknown; limit?: unknown; cursor?: unknown }) => {
-      try {
-        const userId = session.requireUserId()
-        return ok(automationService.listRuns(userId, opts))
-      } catch (err) {
-        return fail((err as Error).message)
-      }
+    {
+      auth: 'user',
+      execute: (ctx, opts) => automationService.listRuns(ctx.userId as string, opts)
     }
   )
 
-  ipc.handle('automation:get-run', async (_event, id?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.getRun(userId, id))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'automation:get-run', {
+    auth: 'user',
+    execute: (ctx, id) => automationService.getRun(ctx.userId as string, id)
   })
 
-  ipc.handle('automation:run-stats', async (_event, since?: unknown) => {
-    try {
-      const userId = session.requireUserId()
-      return ok(automationService.runStats(userId, since))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[unknown], unknown>(ipc, 'automation:run-stats', {
+    auth: 'user',
+    execute: (ctx, since) => automationService.runStats(ctx.userId as string, since)
   })
 }

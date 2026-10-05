@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import MockAdapter from 'axios-mock-adapter'
 import { CloudDataSource } from '../../../src/main/database/cloud/CloudDataSource'
-import { CloudAuthRepository } from '../../../src/main/database/cloud/CloudAuthRepository'
 import { CloudConfigRepository } from '../../../src/main/database/cloud/CloudConfigRepository'
 
 function setup(): { ds: CloudDataSource; mock: MockAdapter } {
@@ -11,61 +10,9 @@ function setup(): { ds: CloudDataSource; mock: MockAdapter } {
   return { ds, mock }
 }
 
-describe('CloudAuthRepository', () => {
-  let ds: CloudDataSource
-  let mock: MockAdapter
-  let repo: CloudAuthRepository
-
-  beforeEach(() => {
-    ;({ ds, mock } = setup())
-    repo = new CloudAuthRepository(ds)
-  })
-
-  it('AUTH-03: 密码登录成功解析 token+user', async () => {
-    mock.onPost('/api/auth/login-password').reply(200, {
-      code: 0,
-      data: {
-        token: 't1',
-        refreshToken: 'r1',
-        user: { id: 'u1', username: 'wangke', mobile: '138' }
-      }
-    })
-    const result = await repo.loginByPassword('wangke', 'Secret123!')
-    expect(result.token).toBe('t1')
-    expect(result.user.username).toBe('wangke')
-  })
-
-  it('AUTH-04: 云端 401 抛业务错误', async () => {
-    mock.onPost('/api/auth/login-password').reply(401, { code: 401, message: '账号或密码错误' })
-    await expect(repo.loginByPassword('wangke', 'wrong')).rejects.toThrow('账号或密码错误')
-  })
-
-  it('AUTH-08: 微信 code 交换', async () => {
-    mock.onPost('/api/auth/login-wechat').reply(200, {
-      code: 0,
-      data: { token: 't', refreshToken: 'r', user: { id: 'u', username: 'wx', mobile: undefined } }
-    })
-    const result = await repo.loginByWechat('code-abc')
-    expect(result.user.id).toBe('u')
-  })
-
-  it('refreshToken 调用 /api/auth/refresh', async () => {
-    mock
-      .onPost('/api/auth/refresh')
-      .reply(200, { code: 0, data: { token: 't2', refreshToken: 'r2' } })
-    const result = await repo.refreshToken('r-old')
-    expect(result.token).toBe('t2')
-  })
-
-  it('云端不维护本地锁定/计数（no-op 适配）', async () => {
-    const user = await repo.createUser({ username: 'x', passwordHash: 'h' }).catch(() => null)
-    expect(user).toBeNull()
-    await repo.recordLoginFailure('u1', 5, 900_000, Date.now())
-    await repo.resetLoginFailures('u1')
-    await repo.updateToken('u1', 'h', 1)
-    // 以上不抛错即为通过（服务端管理这些状态）
-  })
-})
+// CloudAuthRepository 及其 AUTH-03/04/08 用例已随 R8-2 删除：
+// 云端 HTTP 登录面（login-password/sms/wechat/refresh）在生产链路零调用
+// （桌面端登录凭据始终校验本地 users 表，Web 身份经 OAuth2 关联）。
 
 describe('CloudConfigRepository', () => {
   let ds: CloudDataSource

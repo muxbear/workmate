@@ -1,16 +1,9 @@
-﻿import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { IpcMain } from 'electron'
 import type { BinaryManager, RuntimeId, RuntimeProgress } from '../runtime/BinaryManager'
+import { createCommandRegistrar } from './command'
 
 export interface RuntimeHandlerDeps {
   binaryManager: BinaryManager
-}
-
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
 }
 
 /** 校验 RuntimeId */
@@ -28,52 +21,47 @@ function isRuntimeId(v: unknown): v is RuntimeId {
  * - runtime:progress    → 主进程 → 渲染层的进度推送事件
  */
 export function registerRuntimeHandlers(ipc: IpcMain, deps: RuntimeHandlerDeps): void {
+  const registerCommand = createCommandRegistrar(null)
   const { binaryManager } = deps
 
-  ipc.handle('runtime:list', async () => {
-    try {
-      return ok(binaryManager.listRuntimes())
-    } catch (err) {
-      return fail((err as Error).message)
+  registerCommand<[], unknown>(ipc, 'runtime:list', {
+    auth: 'machine',
+    execute: () => binaryManager.listRuntimes()
+  })
+
+  registerCommand<[unknown, unknown], unknown>(ipc, 'runtime:install', {
+    auth: 'machine',
+    execute: async (ctx, id, version) => {
+      // 保持既有文案（非「参数错误」）
+      if (!isRuntimeId(id)) throw new Error('参数错误：未知的运行时标识')
+      // 订阅 BinaryManager 进度事件，推送给发起安装的渲染进程
+      const onProgress = (p: RuntimeProgress): void => {
+        ctx.event.sender.send('runtime:progress', p)
+      }
+      binaryManager.on('progress', onProgress)
+      try {
+        await binaryManager.installRuntime(id, typeof version === 'string' ? version : undefined)
+        return binaryManager.listRuntimes()
+      } finally {
+        binaryManager.off('progress', onProgress)
+      }
     }
   })
 
-  ipc.handle('runtime:install', async (event: IpcMainInvokeEvent, id?: unknown, version?: unknown) => {
-    if (!isRuntimeId(id)) return fail('参数错误：未知的运行时标识')
-
-    // 订阅 BinaryManager 进度事件，推送给发起安装的渲染进程
-    const onProgress = (p: RuntimeProgress): void => {
-      event.sender.send('runtime:progress', p)
-    }
-    binaryManager.on('progress', onProgress)
-
-    try {
-      await binaryManager.installRuntime(id, typeof version === 'string' ? version : undefined)
-      return ok(binaryManager.listRuntimes())
-    } catch (err) {
-      return fail((err as Error).message)
-    } finally {
-      binaryManager.off('progress', onProgress)
-    }
-  })
-
-  ipc.handle('runtime:uninstall', async (_event, id?: unknown) => {
-    if (!isRuntimeId(id)) return fail('参数错误：未知的运行时标识')
-    try {
+  registerCommand<[unknown], unknown>(ipc, 'runtime:uninstall', {
+    auth: 'machine',
+    execute: async (_ctx, id) => {
+      if (!isRuntimeId(id)) throw new Error('参数错误：未知的运行时标识')
       await binaryManager.uninstallRuntime(id)
-      return ok(binaryManager.listRuntimes())
-    } catch (err) {
-      return fail((err as Error).message)
+      return binaryManager.listRuntimes()
     }
   })
 
-  ipc.handle('runtime:detect', async (_event, id?: unknown) => {
-    if (!isRuntimeId(id)) return fail('参数错误：未知的运行时标识')
-    try {
-      const version = await binaryManager.detectRuntime(id)
-      return ok(version)
-    } catch (err) {
-      return fail((err as Error).message)
+  registerCommand<[unknown], unknown>(ipc, 'runtime:detect', {
+    auth: 'machine',
+    execute: async (_ctx, id) => {
+      if (!isRuntimeId(id)) throw new Error('参数错误：未知的运行时标识')
+      return binaryManager.detectRuntime(id)
     }
   })
 }

@@ -25,7 +25,6 @@ async function setup(): Promise<{
   const repo = new LocalAuthRepository(ds)
   const deps: AuthServiceDeps = {
     repository: repo,
-    localAuthRepository: repo,
     jwtSecret: JWT_SECRET,
     secureStorage: new InMemorySecureStorage()
   }

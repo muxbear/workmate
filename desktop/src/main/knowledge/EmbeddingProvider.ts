@@ -1,8 +1,7 @@
 import { createHash } from 'crypto'
-import axios from 'axios'
 import type { KnowledgeEmbedder } from './KnowledgeIndexService'
 import type { KnowledgeEngineConfig } from './knowledge-config'
-import type { MainProxyConfig } from '../network/main-proxy'
+import { createMainHttpClient } from '../network/main-http'
 
 /**
  * 向量化（OpenAI 兼容 `POST {baseUrl}/embeddings`）。
@@ -18,7 +17,7 @@ import type { MainProxyConfig } from '../network/main-proxy'
  * - 32 条/批、单批 60s 超时、408/429/5xx 指数退避重试 2 次；
  * - 命中 `knowledge_embedding_cache`（sha1(model|dim|text)）直接复用，重建索引不再重复计费；
  * - 同批内重复文本只请求一次；
- * - 代理显式传递（axios 不走 Electron session，由主进程解析后注入）。
+ * - 代理由统一 HTTP 客户端（network/main-http，R8-5）按请求注入，与「设置 → 网络」同源。
  */
 
 /** 批次大小（与设计文档一致） */
@@ -37,7 +36,6 @@ export interface EmbeddingTransport {
     body: unknown
     timeoutMs: number
     signal?: AbortSignal
-    proxy?: MainProxyConfig
   }): Promise<unknown>
 }
 
@@ -52,9 +50,7 @@ export interface EmbeddingCacheStore {
 
 export interface EmbeddingProviderDeps {
   store: EmbeddingCacheStore
-  /** 代理解析（主进程注入；不注入=直连） */
-  getProxy?: (targetUrl: string) => Promise<MainProxyConfig | undefined>
-  /** 传输实现（单测注入替身；缺省走 axios） */
+  /** 传输实现（单测注入替身；缺省走统一 HTTP 客户端） */
   transport?: EmbeddingTransport
 }
 
@@ -143,8 +139,7 @@ export class EmbeddingProvider implements KnowledgeEmbedder {
     const url = embeddingsUrl(config.embeddingBaseUrl)
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (config.embeddingApiKey) headers.Authorization = `Bearer ${config.embeddingApiKey}`
-    const proxy = await this.deps.getProxy?.(url)
-    const transport = this.deps.transport ?? axiosTransport
+    const transport = this.deps.transport ?? defaultTransport
 
     let lastError: Error | null = null
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
@@ -164,8 +159,7 @@ export class EmbeddingProvider implements KnowledgeEmbedder {
             headers,
             body,
             timeoutMs: EMBED_BATCH_TIMEOUT_MS,
-            signal,
-            proxy
+            signal
           })
         } catch (err) {
           if (isHttpStatus(err, 400)) {
@@ -175,8 +169,7 @@ export class EmbeddingProvider implements KnowledgeEmbedder {
               headers,
               body,
               timeoutMs: EMBED_BATCH_TIMEOUT_MS,
-              signal,
-              proxy
+              signal
             })
           } else {
             throw err
@@ -196,13 +189,14 @@ export class EmbeddingProvider implements KnowledgeEmbedder {
   }
 }
 
-/** 默认传输：axios（显式带代理） */
-const axiosTransport: EmbeddingTransport = async ({ url, headers, body, timeoutMs, signal, proxy }) => {
-  const response = await axios.post(url, body, {
+/** 默认传输：统一 HTTP 客户端（代理由 main-http 按请求注入） */
+const defaultHttp = createMainHttpClient({ purpose: 'knowledge-embedding' })
+
+const defaultTransport: EmbeddingTransport = async ({ url, headers, body, timeoutMs, signal }) => {
+  const response = await defaultHttp.post(url, body, {
     headers,
     timeout: timeoutMs,
     signal,
-    proxy,
     // 交给业务层判断状态码，避免 axios 把错误信息吞成通用文案
     validateStatus: (status) => status >= 200 && status < 300
   })

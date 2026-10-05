@@ -7,6 +7,8 @@
  * **未授权不是失败**：列表类通道返回 `state: 'auth-required'`（仍是 `ok`），
  * 渲染层据此渲染「去授权」按钮；只有参数非法与读取/下载失败才走 `fail`。
  * 这样 `IpcResult.success` 保持"IPC 是否完成"的语义，域状态由载荷表达。
+ * 因此列表/详情类通道的鉴权声明为 none（会话校验在 execute 内，与网络错误一起
+ * 转成域状态）；respond/read/download 保持「会话校验先于参数校验」的历史顺序。
  */
 
 import type { IpcMain } from 'electron'
@@ -18,6 +20,8 @@ import {
   type CloudKbScope,
   type CloudKnowledgeService
 } from '../knowledge/CloudKnowledgeService'
+import { createCommandRegistrar } from './command'
+import { errorMessage } from './ipc-result'
 
 export interface CloudKnowledgeHandlerDeps {
   cloudKnowledgeService: CloudKnowledgeService
@@ -26,20 +30,8 @@ export interface CloudKnowledgeHandlerDeps {
   chooseSavePath?: (defaultName: string) => Promise<string | null>
 }
 
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
-}
-
 function isAuthRequired(error: unknown): boolean {
   return error instanceof CloudAuthRequiredError
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** 列表类通道的统一失败载荷：保持 items/total 等字段齐全，渲染层无需判空 */
@@ -98,175 +90,174 @@ export function registerCloudKnowledgeHandlers(
   ipc: IpcMain,
   deps: CloudKnowledgeHandlerDeps
 ): void {
-  const { cloudKnowledgeService, session, chooseSavePath } = deps
-
-  /** 参数解析：非法就是调用方的编程错误 → 直接 fail（不混进域状态里） */
-  function parsedOrFail<T>(parse: () => T): { value: T } | { error: string } {
-    try {
-      return { value: parse() }
-    } catch (err) {
-      return { error: errorMessage(err) }
-    }
-  }
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
+  const { cloudKnowledgeService, chooseSavePath } = deps
+  const requireUserId = (): string => deps.session.requireUserId()
 
   // ── 状态与列表 ──
 
-  ipc.handle('knowledge-cloud:status', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(cloudKnowledgeService.getStatus(userId))
-    } catch (err) {
-      return fail(errorMessage(err))
+  registerCommand<[], unknown>(ipc, 'knowledge-cloud:status', {
+    auth: 'user',
+    execute: (ctx) => cloudKnowledgeService.getStatus(ctx.userId as string)
+  })
+
+  registerCommand<[CloudKbScope, number, number, string | undefined], unknown>(
+    ipc,
+    'knowledge-cloud:list',
+    {
+      // 参数非法就是调用方的编程错误 → 直接 fail（不混进域状态里）
+      parse: ([raw]) => {
+        const params = (raw ?? {}) as Record<string, unknown>
+        return [
+          asScope(params.scope),
+          asPage(params.page),
+          asPageSize(params.pageSize),
+          asOptionalText(params.search, '关键字')
+        ]
+      },
+      // 未授权不是失败：列表类通道返回 state:'auth-required'|'error'（仍是 ok），
+      // 与网络错误同一出口，故会话校验在 execute 内
+      auth: 'none',
+      execute: async (_ctx, scope, page, pageSize, search) => {
+        const empty = { items: [], total: 0, page: 1, pageSize: 0 }
+        try {
+          const userId = requireUserId()
+          const result = await cloudKnowledgeService.listBases(userId, scope, {
+            page,
+            pageSize,
+            search
+          })
+          return { state: 'ok' as const, message: '', ...result }
+        } catch (err) {
+          return listFailure(err, empty)
+        }
+      }
+    }
+  )
+
+  registerCommand<[], unknown>(ipc, 'knowledge-cloud:invitations', {
+    auth: 'none',
+    execute: async () => {
+      const empty = { items: [] as unknown[] }
+      try {
+        const userId = requireUserId()
+        return {
+          state: 'ok' as const,
+          message: '',
+          items: await cloudKnowledgeService.listInvitations(userId)
+        }
+      } catch (err) {
+        return listFailure(err, empty)
+      }
     }
   })
 
-  ipc.handle('knowledge-cloud:list', async (_event, raw?: unknown) => {
-    const empty = { items: [], total: 0, page: 1, pageSize: 0 }
-    const params = (raw ?? {}) as Record<string, unknown>
-    const parsed = parsedOrFail(() => ({
-      scope: asScope(params.scope),
-      page: asPage(params.page),
-      pageSize: asPageSize(params.pageSize),
-      search: asOptionalText(params.search, '关键字')
-    }))
-    if ('error' in parsed) return fail(parsed.error)
-
-    try {
-      const userId = session.requireUserId()
-      const result = await cloudKnowledgeService.listBases(userId, parsed.value.scope, {
-        page: parsed.value.page,
-        pageSize: parsed.value.pageSize,
-        search: parsed.value.search
-      })
-      return ok({ state: 'ok' as const, message: '', ...result })
-    } catch (err) {
-      return ok(listFailure(err, empty))
+  registerCommand<[string], unknown>(ipc, 'knowledge-cloud:get-kb', {
+    auth: 'none',
+    parse: ([kbId]) => [assertKbId(kbId)],
+    execute: async (_ctx, kbId) => {
+      try {
+        const userId = requireUserId()
+        const kb = await cloudKnowledgeService.getBase(userId, kbId)
+        return { state: 'ok' as const, message: '', kb }
+      } catch (err) {
+        return {
+          state: isAuthRequired(err) ? ('auth-required' as const) : ('error' as const),
+          message: errorMessage(err),
+          kb: null
+        }
+      }
     }
   })
 
-  ipc.handle('knowledge-cloud:invitations', async () => {
-    const empty = { items: [] as unknown[] }
-    try {
-      const userId = session.requireUserId()
-      return ok({
-        state: 'ok' as const,
-        message: '',
-        items: await cloudKnowledgeService.listInvitations(userId)
-      })
-    } catch (err) {
-      return ok(listFailure(err, empty))
+  registerCommand<[string, number, number, string | undefined, string | undefined], unknown>(
+    ipc,
+    'knowledge-cloud:list-docs',
+    {
+      parse: ([raw]) => {
+        const params = (raw ?? {}) as Record<string, unknown>
+        return [
+          assertKbId(params.kbId),
+          asPage(params.page),
+          asPageSize(params.pageSize),
+          asOptionalText(params.search, '关键字'),
+          asOptionalText(params.folder, '目录')
+        ]
+      },
+      auth: 'none',
+      execute: async (_ctx, kbId, page, pageSize, search, folder) => {
+        const empty = { items: [], total: 0, page: 1, pageSize: 0 }
+        try {
+          const userId = requireUserId()
+          const result = await cloudKnowledgeService.listDocuments(userId, kbId, {
+            page,
+            pageSize,
+            search,
+            folder
+          })
+          return { state: 'ok' as const, message: '', ...result }
+        } catch (err) {
+          return listFailure(err, empty)
+        }
+      }
     }
-  })
-
-  ipc.handle('knowledge-cloud:get-kb', async (_event, kbId?: unknown) => {
-    const parsed = parsedOrFail(() => assertKbId(kbId))
-    if ('error' in parsed) return fail(parsed.error)
-
-    try {
-      const userId = session.requireUserId()
-      const kb = await cloudKnowledgeService.getBase(userId, parsed.value)
-      return ok({ state: 'ok' as const, message: '', kb })
-    } catch (err) {
-      return ok({
-        state: isAuthRequired(err) ? ('auth-required' as const) : ('error' as const),
-        message: errorMessage(err),
-        kb: null
-      })
-    }
-  })
-
-  ipc.handle('knowledge-cloud:list-docs', async (_event, raw?: unknown) => {
-    const empty = { items: [], total: 0, page: 1, pageSize: 0 }
-    const params = (raw ?? {}) as Record<string, unknown>
-    const parsed = parsedOrFail(() => ({
-      kbId: assertKbId(params.kbId),
-      page: asPage(params.page),
-      pageSize: asPageSize(params.pageSize),
-      search: asOptionalText(params.search, '关键字'),
-      folder: asOptionalText(params.folder, '目录')
-    }))
-    if ('error' in parsed) return fail(parsed.error)
-
-    try {
-      const userId = session.requireUserId()
-      const result = await cloudKnowledgeService.listDocuments(userId, parsed.value.kbId, {
-        page: parsed.value.page,
-        pageSize: parsed.value.pageSize,
-        search: parsed.value.search,
-        folder: parsed.value.folder
-      })
-      return ok({ state: 'ok' as const, message: '', ...result })
-    } catch (err) {
-      return ok(listFailure(err, empty))
-    }
-  })
+  )
 
   // ── 参与者操作：接受 / 拒绝分享邀请 ──
 
-  ipc.handle(
-    'knowledge-cloud:respond-invitation',
-    async (_event, shareId?: unknown, accept?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        await cloudKnowledgeService.respondInvitation(
-          userId,
-          assertKbId(shareId),
-          asBoolean(accept, 'accept')
-        )
-        return ok(null)
-      } catch (err) {
-        return fail(errorMessage(err))
-      }
+  registerCommand<[unknown, unknown], null>(ipc, 'knowledge-cloud:respond-invitation', {
+    auth: 'user',
+    // 会话校验先于参数校验（历史顺序：未登录时统一回「未登录」）
+    execute: async (ctx, shareId, accept) => {
+      await cloudKnowledgeService.respondInvitation(
+        ctx.userId as string,
+        assertKbId(shareId),
+        asBoolean(accept, 'accept')
+      )
+      return null
     }
-  )
+  })
 
   // ── 读取原文（预览）与另存为 ──
 
-  ipc.handle(
-    'knowledge-cloud:read-file',
-    async (_event, kbId?: unknown, docId?: unknown, as?: unknown, cursor?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        if (as !== 'text' && as !== 'bytes') return fail('读取方式非法')
-        return ok(
-          await cloudKnowledgeService.readDocument(
-            userId,
-            assertKbId(kbId),
-            assertKbId(docId),
-            as,
-            { cursor: asCursor(cursor) }
-          )
-        )
-      } catch (err) {
-        return fail(errorMessage(err))
-      }
+  registerCommand<[unknown, unknown, unknown, unknown], unknown>(ipc, 'knowledge-cloud:read-file', {
+    auth: 'user',
+    // 会话校验先于参数校验（历史顺序：未登录时统一回「未登录」）
+    execute: async (ctx, kbId, docId, as, cursor) => {
+      if (as !== 'text' && as !== 'bytes') throw new Error('读取方式非法')
+      return cloudKnowledgeService.readDocument(
+        ctx.userId as string,
+        assertKbId(kbId),
+        assertKbId(docId),
+        as,
+        { cursor: asCursor(cursor) }
+      )
     }
-  )
+  })
 
-  ipc.handle(
-    'knowledge-cloud:download-doc',
-    async (_event, kbId?: unknown, docId?: unknown, suggestedName?: unknown) => {
-      try {
-        const userId = session.requireUserId()
-        if (!chooseSavePath) return fail('当前环境不支持另存为')
-        const id = assertKbId(kbId)
-        const doc = assertKbId(docId)
-        // 文件名只用于对话框默认值；真正落盘的名字由主进程按服务端记录自行净化
-        const defaultName = asOptionalText(suggestedName, '文件名') ?? `${doc}.bin`
-        const target = await chooseSavePath(defaultName)
-        if (!target) return ok({ saved: false })
-        await cloudKnowledgeService.saveDocumentAs(userId, id, doc, target)
-        return ok({ saved: true, path: target })
-      } catch (err) {
-        return fail(errorMessage(err))
-      }
+  registerCommand<[unknown, unknown, unknown], unknown>(ipc, 'knowledge-cloud:download-doc', {
+    auth: 'user',
+    // 会话校验先于参数校验（历史顺序：未登录时统一回「未登录」）
+    execute: async (ctx, kbId, docId, suggestedName) => {
+      if (!chooseSavePath) throw new Error('当前环境不支持另存为')
+      const id = assertKbId(kbId)
+      const doc = assertKbId(docId)
+      // 文件名只用于对话框默认值；真正落盘的名字由主进程按服务端记录自行净化
+      const defaultName = asOptionalText(suggestedName, '文件名') ?? `${doc}.bin`
+      const target = await chooseSavePath(defaultName)
+      if (!target) return { saved: false }
+      await cloudKnowledgeService.saveDocumentAs(ctx.userId as string, id, doc, target)
+      return { saved: true, path: target }
     }
-  )
+  })
 
   /** 登出：清内存缓存（磁盘缓存保留，下次登录仍可命中） */
-  ipc.handle('knowledge-cloud:disconnect', async () => {
-    cloudKnowledgeService.disconnect()
-    return ok(null)
+  registerCommand<[], null>(ipc, 'knowledge-cloud:disconnect', {
+    auth: 'none',
+    execute: () => {
+      cloudKnowledgeService.disconnect()
+      return null
+    }
   })
 }
 

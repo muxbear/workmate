@@ -1,17 +1,10 @@
 import type { IpcMain } from 'electron'
 import type { ModelService } from '../model/ModelService'
 import type { ModelProtocol } from '../model/types'
+import { createCommandRegistrar } from './command'
 
 export interface ModelHandlerDeps {
   modelService: ModelService
-}
-
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
 }
 
 /** 添加模型入参白名单（渲染层不可信，类型校验在主进程） */
@@ -45,58 +38,52 @@ function toAddInput(input: unknown): {
   }
 }
 
+type AddInput = NonNullable<ReturnType<typeof toAddInput>>
+
 /**
  * 注册自定义模型相关 IPC 通道
  * 机器级配置（本地 models.json，与登录态无关），不调 session.requireUserId()；
  * 主进程为校验权威，渲染层不可信
  */
 export function registerModelHandlers(ipc: IpcMain, deps: ModelHandlerDeps): void {
+  const registerCommand = createCommandRegistrar(null)
   const { modelService } = deps
 
-  ipc.handle('model:list', async () => {
-    try {
-      return ok(modelService.list())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'model:list', {
+    auth: 'machine',
+    execute: () => modelService.list()
   })
 
-  ipc.handle('model:add', async (_event, input?: unknown) => {
-    const parsed = toAddInput(input)
-    if (!parsed) return fail('参数错误')
-    try {
-      return ok(modelService.add(parsed))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[AddInput], unknown>(ipc, 'model:add', {
+    auth: 'machine',
+    parse: ([input]) => {
+      const parsed = toAddInput(input)
+      return parsed ? [parsed] : null
+    },
+    execute: (_ctx, parsed) => modelService.add(parsed)
   })
 
-  ipc.handle('model:remove', async (_event, id?: unknown) => {
-    if (typeof id !== 'string' || !id) return fail('参数错误')
-    try {
+  registerCommand<[string], null>(ipc, 'model:remove', {
+    auth: 'machine',
+    parse: ([id]) => (typeof id === 'string' && id ? [id] : null),
+    execute: (_ctx, id) => {
       modelService.remove(id)
-      return ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
+      return null
     }
   })
 
-  ipc.handle('model:update', async (_event, id?: unknown, input?: unknown) => {
-    if (typeof id !== 'string' || !id) return fail('参数错误')
-    const parsed = toAddInput(input)
-    if (!parsed) return fail('参数错误')
-    try {
-      return ok(modelService.update(id, parsed))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[string, AddInput], unknown>(ipc, 'model:update', {
+    auth: 'machine',
+    parse: ([id, input]) => {
+      if (typeof id !== 'string' || !id) return null
+      const parsed = toAddInput(input)
+      return parsed ? [id, parsed] : null
+    },
+    execute: (_ctx, id, parsed) => modelService.update(id, parsed)
   })
 
-  ipc.handle('model:list-providers', async () => {
-    try {
-      return ok(modelService.listProviders())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'model:list-providers', {
+    auth: 'machine',
+    execute: () => modelService.listProviders()
   })
 }

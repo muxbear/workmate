@@ -5,6 +5,7 @@ import type { OAuth2ClientService } from '../oauth2/OAuth2ClientService'
 import type { ISecureStorage } from '../security/secure-storage'
 import { oauth2SessionTokenKey } from './oauth2-handlers'
 import type { IpcMain } from 'electron'
+import { createCommandRegistrar } from './command'
 
 interface AuthHandlerDeps {
   authService: AuthService
@@ -21,52 +22,48 @@ interface AuthHandlerDeps {
   openWeChatAuth?: (authUrl: string, redirectUri: string) => Promise<{ code?: string; error?: string }>
 }
 
-/** 统一的 IPC 结果包裹：成功返回 data，失败返回 { success:false, error } */
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-/** 注册认证相关 IPC 通道 */
+/**
+ * 注册认证相关 IPC 通道
+ * 鉴权声明均为 none：登录动作先于会话存在；logout 不强制登录态
+ * （会话可能已失效，仍要完成本地清理）。
+ */
 export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void {
-  ipc.handle('auth:login-password', async (_event, account?: unknown, password?: unknown) => {
-    if (typeof account !== 'string' || typeof password !== 'string') {
-      return { success: false, error: '参数错误' }
-    }
-    try {
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
+
+  registerCommand<[string, string], unknown>(ipc, 'auth:login-password', {
+    auth: 'none',
+    parse: ([account, password]) =>
+      typeof account === 'string' && typeof password === 'string' ? [account, password] : null,
+    execute: async (_ctx, account, password) => {
       const result = await deps.authService.loginByPassword(account, password)
       deps.session.setCurrentUser(result.user.id)
-      return ok(result)
-    } catch (err) {
-      return { success: false, error: (err as Error).message }
+      return result
     }
   })
 
-  ipc.handle('auth:login-sms', async (_event, mobile?: unknown, code?: unknown) => {
-    if (typeof mobile !== 'string' || typeof code !== 'string') {
-      return { success: false, error: '参数错误' }
-    }
-    try {
+  registerCommand<[string, string], unknown>(ipc, 'auth:login-sms', {
+    auth: 'none',
+    parse: ([mobile, code]) =>
+      typeof mobile === 'string' && typeof code === 'string' ? [mobile, code] : null,
+    execute: async (_ctx, mobile, code) => {
       const result = await deps.authService.loginBySms(mobile, code)
       deps.session.setCurrentUser(result.user.id)
-      return ok(result)
-    } catch (err) {
-      return { success: false, error: (err as Error).message }
+      return result
     }
   })
 
-  ipc.handle('auth:send-sms-code', async (_event, mobile?: unknown) => {
-    if (typeof mobile !== 'string') {
-      return { success: false, error: '参数错误' }
-    }
-    try {
+  registerCommand<[string], null>(ipc, 'auth:send-sms-code', {
+    auth: 'none',
+    parse: ([mobile]) => (typeof mobile === 'string' ? [mobile] : null),
+    execute: async (_ctx, mobile) => {
       await deps.authService.sendSmsCode(mobile)
-      return ok(null)
-    } catch (err) {
-      return { success: false, error: (err as Error).message }
+      return null
     }
   })
 
   // 微信扫码授权窗口：打开授权页并等待回跳 code（渲染层拿 code 后走 auth:login-wechat 换登录态）
+  // 契约是 {code?,error?} 裸形状（见 contracts.ts 的 openWeChatAuth），非 IpcResult 包裹，
+  // 不适用 registerCommand；成功/失败由渲染层按 code/error 字段自行分支。
   ipc.handle('auth:wechat-open', async (_event, authUrl?: unknown, redirectUri?: unknown) => {
     if (typeof authUrl !== 'string' || !authUrl || typeof redirectUri !== 'string' || !redirectUri) {
       return { error: '参数错误' }
@@ -81,24 +78,20 @@ export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void 
     }
   })
 
-  ipc.handle('auth:login-wechat', async (_event, code?: unknown) => {
-    if (typeof code !== 'string') {
-      return { success: false, error: '参数错误' }
-    }
-    try {
+  registerCommand<[string], unknown>(ipc, 'auth:login-wechat', {
+    auth: 'none',
+    parse: ([code]) => (typeof code === 'string' ? [code] : null),
+    execute: async (_ctx, code) => {
       const result = await deps.authService.loginByWechat(code)
       deps.session.setCurrentUser(result.user.id)
-      return ok(result)
-    } catch (err) {
-      return { success: false, error: (err as Error).message }
+      return result
     }
   })
 
-  ipc.handle('auth:logout', async (_event, account?: unknown) => {
-    if (typeof account !== 'string') {
-      return { success: false, error: '参数错误' }
-    }
-    try {
+  registerCommand<[string], null>(ipc, 'auth:logout', {
+    auth: 'none',
+    parse: ([account]) => (typeof account === 'string' ? [account] : null),
+    execute: async (_ctx, account) => {
       // 登出前先停止所有正在执行中的任务（含后台会话）
       deps.cancelAllAgents?.()
       deps.onLogout?.()
@@ -114,9 +107,7 @@ export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void 
       }
       await deps.authService.logout(account)
       deps.session.clear()
-      return ok(null)
-    } catch (err) {
-      return { success: false, error: (err as Error).message }
+      return null
     }
   })
 }

@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron'
 import type { WorkspaceService } from '../workspace/WorkspaceService'
 import type { SessionService } from '../services/SessionService'
 import type { ConversationStore } from '../agent/ConversationStore'
+import { createCommandRegistrar } from './command'
 
 export interface WorkspaceHandlerDeps {
   workspaceService: WorkspaceService
@@ -14,191 +15,145 @@ export interface WorkspaceHandlerDeps {
   revealFile?: (absPath: string) => Promise<void>
 }
 
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
-}
-
 /**
  * 注册工作空间相关 IPC 通道
  * 工作空间按登录用户隔离（主进程 session 注入 userId）；
  * 渲染层只传 id/name，路径一律由主进程解析，防路径注入
  */
 export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDeps): void {
-  const { workspaceService, conversationStore, session } = deps
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
+  const { workspaceService, conversationStore } = deps
 
-  ipc.handle('workspace:list', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(await workspaceService.list(userId))
-    } catch (err) {
-      return fail((err as Error).message)
+  registerCommand<[], unknown>(ipc, 'workspace:list', {
+    auth: 'user',
+    execute: (ctx) => workspaceService.list(ctx.userId as string)
+  })
+
+  registerCommand<[string], unknown>(ipc, 'workspace:create', {
+    auth: 'user',
+    parse: ([name]) => (typeof name === 'string' && name.trim() ? [name] : null),
+    execute: (ctx, name) => workspaceService.createWorkspace(name, ctx.userId as string)
+  })
+
+  registerCommand<[], unknown>(ipc, 'workspace:select-dir', {
+    auth: 'user',
+    // 用户取消时返回 null（success: true）
+    execute: (ctx) => workspaceService.selectExternalDir(ctx.userId as string)
+  })
+
+  registerCommand<[], unknown>(ipc, 'workspace:default', {
+    auth: 'user',
+    execute: () => workspaceService.ensureDefaultWorkspace()
+  })
+
+  registerCommand<[string], null>(ipc, 'workspace:open', {
+    auth: 'user',
+    parse: ([id]) => (typeof id === 'string' && id ? [id] : null),
+    execute: async (ctx, id) => {
+      await workspaceService.openWorkspace(id, ctx.userId as string)
+      return null
     }
   })
 
-  ipc.handle('workspace:create', async (_event, name?: unknown) => {
-    if (typeof name !== 'string' || !name.trim()) return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      return ok(workspaceService.createWorkspace(name, userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
-  })
-
-  ipc.handle('workspace:select-dir', async () => {
-    try {
-      const userId = session.requireUserId()
-      // 用户取消时返回 null（success: true）
-      return ok(await workspaceService.selectExternalDir(userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
-  })
-
-  ipc.handle('workspace:default', async () => {
-    try {
-      session.requireUserId()
-      return ok(await workspaceService.ensureDefaultWorkspace())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
-  })
-
-  ipc.handle('workspace:open', async (_event, id?: unknown) => {
-    if (typeof id !== 'string' || !id) return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      await workspaceService.openWorkspace(id, userId)
-      return ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
-    }
-  })
-
-  ipc.handle('workspace:delete', async (_event, id?: unknown) => {
-    if (typeof id !== 'string' || !id) return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
+  registerCommand<[string], null>(ipc, 'workspace:delete', {
+    auth: 'user',
+    parse: ([id]) => (typeof id === 'string' && id ? [id] : null),
+    execute: async (ctx, id) => {
+      const userId = ctx.userId as string
       // 先守卫可删除性（默认空间不可删），再做不可逆的级联删除
       workspaceService.assertDeletable(id, userId)
       await conversationStore.deleteConversationsByWorkspace(userId, id)
       workspaceService.deleteWorkspace(id, userId)
-      return ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
+      return null
     }
   })
 
-  ipc.handle('workspace:list-files', async (_event, id?: unknown, relPath?: unknown) => {
-    if (typeof id !== 'string' || !id) return fail('参数错误')
-    if (relPath !== undefined && typeof relPath !== 'string') return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      return ok(workspaceService.listFiles(id, userId, relPath ?? ''))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[string, string], unknown>(ipc, 'workspace:list-files', {
+    auth: 'user',
+    parse: ([id, relPath]) => {
+      if (typeof id !== 'string' || !id) return null
+      if (relPath !== undefined && typeof relPath !== 'string') return null
+      return [id, relPath ?? '']
+    },
+    execute: (ctx, id, relPath) => workspaceService.listFiles(id, ctx.userId as string, relPath)
   })
 
-  ipc.handle(
-    'workspace:read-file',
-    async (_event, id?: unknown, relPath?: unknown, cursor?: unknown) => {
-      if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
+  registerCommand<[string, string, number | undefined], unknown>(ipc, 'workspace:read-file', {
+    auth: 'user',
+    parse: ([id, relPath, cursor]) => {
+      if (typeof id !== 'string' || !id || typeof relPath !== 'string') return null
       if (cursor !== undefined && (typeof cursor !== 'number' || !Number.isFinite(cursor))) {
-        return fail('参数错误')
+        return null
       }
-      try {
-        const userId = session.requireUserId()
-        return ok(await workspaceService.readFile(id, userId, relPath, cursor as number | undefined))
-      } catch (err) {
-        return fail((err as Error).message)
-      }
-    }
-  )
-
-  ipc.handle('workspace:read-file-bytes', async (_event, id?: unknown, relPath?: unknown) => {
-    if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      return ok(await workspaceService.readFileBytes(id, userId, relPath))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+      return [id, relPath, cursor as number | undefined]
+    },
+    execute: (ctx, id, relPath, cursor) =>
+      workspaceService.readFile(id, ctx.userId as string, relPath, cursor)
   })
 
-  ipc.handle('workspace:read-image-bytes', async (_event, id?: unknown, relPath?: unknown) => {
-    if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      return ok(await workspaceService.readImageBytes(id, userId, relPath))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[string, string], unknown>(ipc, 'workspace:read-file-bytes', {
+    auth: 'user',
+    parse: ([id, relPath]) =>
+      typeof id === 'string' && id && typeof relPath === 'string' ? [id, relPath] : null,
+    execute: (ctx, id, relPath) => workspaceService.readFileBytes(id, ctx.userId as string, relPath)
   })
 
-  ipc.handle('workspace:read-media-bytes', async (_event, id?: unknown, relPath?: unknown) => {
-    if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
-    try {
-      const userId = session.requireUserId()
-      return ok(await workspaceService.readMediaBytes(id, userId, relPath))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[string, string], unknown>(ipc, 'workspace:read-image-bytes', {
+    auth: 'user',
+    parse: ([id, relPath]) =>
+      typeof id === 'string' && id && typeof relPath === 'string' ? [id, relPath] : null,
+    execute: (ctx, id, relPath) => workspaceService.readImageBytes(id, ctx.userId as string, relPath)
   })
 
-  ipc.handle(
-    'workspace:export-zip',
-    async (_event, id?: unknown, relPaths?: unknown, zipName?: unknown) => {
-      if (typeof id !== 'string' || !id) return fail('参数错误')
-      if (!Array.isArray(relPaths) || relPaths.some((item) => typeof item !== 'string')) {
-        return fail('参数错误')
-      }
-      try {
-        const userId = session.requireUserId()
-        const name = typeof zipName === 'string' ? zipName : undefined
-        const paths = relPaths as string[]
+  registerCommand<[string, string], unknown>(ipc, 'workspace:read-media-bytes', {
+    auth: 'user',
+    parse: ([id, relPath]) =>
+      typeof id === 'string' && id && typeof relPath === 'string' ? [id, relPath] : null,
+    execute: (ctx, id, relPath) => workspaceService.readMediaBytes(id, ctx.userId as string, relPath)
+  })
 
-        let destAbsPath: string | undefined
-        if (deps.chooseZipPath) {
-          const chosen = await deps.chooseZipPath(workspaceService.suggestZipName(paths, name))
-          if (!chosen) {
-            // 用户取消另存为：不落盘，返回取消标记由渲染层静默处理
-            return ok({ canceled: true, relPath: '', absPath: '', entries: 0, size: 0 })
-          }
-          destAbsPath = chosen
+  registerCommand<[string, string[], string | undefined], unknown>(ipc, 'workspace:export-zip', {
+    auth: 'user',
+    parse: ([id, relPaths, zipName]) => {
+      if (typeof id !== 'string' || !id) return null
+      if (!Array.isArray(relPaths) || relPaths.some((item) => typeof item !== 'string')) return null
+      return [id, relPaths as string[], typeof zipName === 'string' ? zipName : undefined]
+    },
+    execute: async (ctx, id, paths, name) => {
+      const userId = ctx.userId as string
+
+      let destAbsPath: string | undefined
+      if (deps.chooseZipPath) {
+        const chosen = await deps.chooseZipPath(workspaceService.suggestZipName(paths, name))
+        if (!chosen) {
+          // 用户取消另存为：不落盘，返回取消标记由渲染层静默处理
+          return { canceled: true, relPath: '', absPath: '', entries: 0, size: 0 }
         }
+        destAbsPath = chosen
+      }
 
-        const result = await workspaceService.exportZip(id, userId, paths, name, destAbsPath)
-        if (deps.revealFile) {
-          try {
-            await deps.revealFile(result.absPath)
-          } catch (err) {
-            console.warn('[workspace] reveal exported zip failed:', err)
-          }
+      const result = await workspaceService.exportZip(id, userId, paths, name, destAbsPath)
+      if (deps.revealFile) {
+        try {
+          await deps.revealFile(result.absPath)
+        } catch (err) {
+          console.warn('[workspace] reveal exported zip failed:', err)
         }
-        return ok({ ...result, canceled: false })
-      } catch (err) {
-        return fail((err as Error).message)
       }
+      return { ...result, canceled: false }
     }
-  )
+  })
 
-  ipc.handle(
-    'workspace:write-file',
-    async (_event, id?: unknown, relPath?: unknown, bytes?: unknown) => {
-      if (typeof id !== 'string' || !id || typeof relPath !== 'string') return fail('参数错误')
-      if (!(bytes instanceof Uint8Array || bytes instanceof ArrayBuffer)) return fail('参数错误')
-      try {
-        const userId = session.requireUserId()
-        await workspaceService.writeFile(id, userId, relPath, bytes as Uint8Array | ArrayBuffer)
-        return ok(null)
-      } catch (err) {
-        return fail((err as Error).message)
-      }
+  registerCommand<[string, string, Uint8Array | ArrayBuffer], null>(ipc, 'workspace:write-file', {
+    auth: 'user',
+    parse: ([id, relPath, bytes]) => {
+      if (typeof id !== 'string' || !id || typeof relPath !== 'string') return null
+      if (!(bytes instanceof Uint8Array || bytes instanceof ArrayBuffer)) return null
+      return [id, relPath, bytes]
+    },
+    execute: async (ctx, id, relPath, bytes) => {
+      await workspaceService.writeFile(id, ctx.userId as string, relPath, bytes)
+      return null
     }
-  )
+  })
 }

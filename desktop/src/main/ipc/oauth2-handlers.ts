@@ -11,6 +11,7 @@ import { DESKTOP_DEFAULT_SCOPES, DESKTOP_SCOPE_CATALOG } from '../oauth2/scopes'
 import type { OAuth2Token } from '../oauth2/types'
 import type { ISecureStorage } from '../security/secure-storage'
 import type { AgentManager } from '../agent/AgentManager'
+import { createCommandRegistrar } from './command'
 
 interface OAuth2HandlerDeps {
   authService: AuthService
@@ -32,14 +33,6 @@ export { oauth2SessionTokenKey }
 
 const PENDING_LINK_KEY = 'oauth2-pending:link'
 
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
-}
-
 function parseToken(raw: string | null): OAuth2Token | null {
   if (!raw) return null
   try {
@@ -49,131 +42,140 @@ function parseToken(raw: string | null): OAuth2Token | null {
   }
 }
 
-/** 注册 OAuth2 登录 IPC 通道。 */
+/**
+ * 注册 OAuth2 登录 IPC 通道。
+ * 登录/确认两条通道鉴权为 none（登录动作本身先于会话存在）；
+ * 状态类通道对未登录返回未绑定而非报错（渲染层登录页/设置页共用）。
+ */
 export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): void {
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
   const { authService, oauth2Client, authorization, session, secureStorage } = deps
 
-  ipc.handle('auth:login-oauth2', async () => {
-    try {
-      // 1. 完整 OAuth2 授权（PKCE → 浏览器 → 回跳 → 换 token）
-      const token = await oauth2Client.authorize(OAUTH2_LOGIN_SCOPE)
-      // 2. 暂存 pending 链接信息（确认分支从 secureStorage 读取，防渲染层伪造）
-      secureStorage.set(PENDING_LINK_KEY, JSON.stringify(token))
-      const currentUserId = session.getCurrentUserId()
-      const result = await authService.loginByOAuth2(token.webUser, token, currentUserId, false)
+  registerCommand<[], unknown>(ipc, 'auth:login-oauth2', {
+    auth: 'none',
+    execute: async () => {
+      try {
+        // 1. 完整 OAuth2 授权（PKCE → 浏览器 → 回跳 → 换 token）
+        const token = await oauth2Client.authorize(OAUTH2_LOGIN_SCOPE)
+        // 2. 暂存 pending 链接信息（确认分支从 secureStorage 读取，防渲染层伪造）
+        secureStorage.set(PENDING_LINK_KEY, JSON.stringify(token))
+        const currentUserId = session.getCurrentUserId()
+        const result = await authService.loginByOAuth2(token.webUser, token, currentUserId, false)
 
-      if (result.status === 'needs-confirmation') {
-        return ok({
-          status: 'needs-confirmation',
-          action: result.action,
-          message: result.message,
-          webUser: token.webUser
-        })
+        if (result.status === 'needs-confirmation') {
+          return {
+            status: 'needs-confirmation',
+            action: result.action,
+            message: result.message,
+            webUser: token.webUser
+          }
+        }
+
+        await completeLogin(token, result.user!, session, authorization, secureStorage)
+        await ensureCloudAgent(deps.agentManager)
+        return {
+          status: 'logged-in',
+          user: result.user,
+          webUser: token.webUser,
+          grantedScopes: authorization.getGrantedScopes(result.user!.id)
+        }
+      } catch (err) {
+        secureStorage.delete(PENDING_LINK_KEY)
+        // 保持既有兜底文案（空 message → 「OAuth2 登录失败」）
+        throw new Error((err as Error).message || 'OAuth2 登录失败')
       }
-
-      await completeLogin(token, result.user!, session, authorization, secureStorage)
-      await ensureCloudAgent(deps.agentManager)
-      return ok({
-        status: 'logged-in',
-        user: result.user,
-        webUser: token.webUser,
-        grantedScopes: authorization.getGrantedScopes(result.user!.id)
-      })
-    } catch (err) {
-      secureStorage.delete(PENDING_LINK_KEY)
-      return fail((err as Error).message || 'OAuth2 登录失败')
     }
   })
 
-  ipc.handle('auth:confirm-oauth2-link', async (_event, action?: unknown) => {
-    try {
-      const token = parseToken(secureStorage.get(PENDING_LINK_KEY))
-      if (!token) {
-        return fail('授权状态已失效，请重新登录')
-      }
-      const currentUserId = session.getCurrentUserId()
+  registerCommand<[unknown], unknown>(ipc, 'auth:confirm-oauth2-link', {
+    auth: 'none',
+    execute: async (_ctx, action) => {
+      try {
+        const token = parseToken(secureStorage.get(PENDING_LINK_KEY))
+        if (!token) {
+          throw new Error('授权状态已失效，请重新登录')
+        }
+        const currentUserId = session.getCurrentUserId()
 
-      // 换绑：先撤销旧 Web 账号的 refresh token 并清理旧 token 存储
-      if (action === 'rebind' && currentUserId) {
-        await authorization.revokeAndClear(currentUserId)
-      }
+        // 换绑：先撤销旧 Web 账号的 refresh token 并清理旧 token 存储
+        if (action === 'rebind' && currentUserId) {
+          await authorization.revokeAndClear(currentUserId)
+        }
 
-      const result = await authService.loginByOAuth2(token.webUser, token, currentUserId, true)
-      if (result.status !== 'logged-in' || !result.user) {
-        return fail(result.message || '登录失败')
-      }
+        const result = await authService.loginByOAuth2(token.webUser, token, currentUserId, true)
+        if (result.status !== 'logged-in' || !result.user) {
+          throw new Error(result.message || '登录失败')
+        }
 
-      await completeLogin(token, result.user, session, authorization, secureStorage)
-      await ensureCloudAgent(deps.agentManager)
-      return ok({
-        status: 'logged-in',
-        user: result.user,
-        webUser: token.webUser,
-        grantedScopes: authorization.getGrantedScopes(result.user.id)
-      })
-    } catch (err) {
-      return fail((err as Error).message || '确认登录失败')
+        await completeLogin(token, result.user, session, authorization, secureStorage)
+        await ensureCloudAgent(deps.agentManager)
+        return {
+          status: 'logged-in',
+          user: result.user,
+          webUser: token.webUser,
+          grantedScopes: authorization.getGrantedScopes(result.user.id)
+        }
+      } catch (err) {
+        // 保持既有兜底文案（空 message → 「确认登录失败」）
+        throw new Error((err as Error).message || '确认登录失败')
+      }
     }
   })
 
-  ipc.handle('oauth2:status', async () => {
-    try {
+  registerCommand<[], unknown>(ipc, 'oauth2:status', {
+    auth: 'none',
+    execute: async () => {
       const localUserId = session.getCurrentUserId()
       if (!localUserId) {
-        return ok({ linked: false, webAccountId: null, grantedScopes: [] })
+        return { linked: false, webAccountId: null, grantedScopes: [] }
       }
       const status = await authService.getOAuth2Status(localUserId)
       const token = oauth2Client.loadToken(oauth2SessionTokenKey(localUserId))
-      return ok({
+      return {
         linked: status.linked,
         webAccountId: status.webAccountId,
         webUser: token?.webUser ?? null,
         grantedScopes: authorization.getGrantedScopes(localUserId)
-      })
-    } catch (err) {
-      return fail((err as Error).message)
+      }
     }
   })
 
   /** 授权管理：scope 目录 + 当前授予状态 */
-  ipc.handle('oauth2:scope-catalog', async () => {
-    try {
+  registerCommand<[], unknown>(ipc, 'oauth2:scope-catalog', {
+    auth: 'none',
+    execute: () => {
       const localUserId = session.getCurrentUserId()
       const granted = new Set(localUserId ? authorization.getGrantedScopes(localUserId) : [])
-      return ok(
-        DESKTOP_SCOPE_CATALOG.map((scope) => ({
-          ...scope,
-          granted: granted.has(scope.key)
-        }))
-      )
-    } catch (err) {
-      return fail((err as Error).message)
+      return DESKTOP_SCOPE_CATALOG.map((scope) => ({
+        ...scope,
+        granted: granted.has(scope.key)
+      }))
     }
   })
 
   /** 按需授权（缺省请求桌面默认集合）；已授权时静默返回，不打开浏览器 */
-  ipc.handle('oauth2:authorize', async (_event, scopes?: unknown) => {
-    try {
-      const localUserId = session.requireUserId()
+  registerCommand<[unknown], unknown>(ipc, 'oauth2:authorize', {
+    auth: 'user',
+    execute: async (ctx, scopes) => {
+      const localUserId = ctx.userId as string
       const required = Array.isArray(scopes)
         ? scopes.filter((item): item is string => typeof item === 'string' && item.length > 0)
         : [...DESKTOP_DEFAULT_SCOPES]
       const result = await authorization.ensureAuthorization(localUserId, required, {
         reason: 'manual'
       })
-      return ok({
+      return {
         webUser: toWebUser(authorization.getWebUser(localUserId)),
         grantedScopes: result.grantedScopes
-      })
-    } catch (err) {
-      return fail((err as Error).message)
+      }
     }
   })
 
   /** 撤销指定 scope 或整份授权（服务端 consent + refresh token，本地同步清理） */
-  ipc.handle('oauth2:revoke', async (_event, scopes?: unknown) => {
-    try {
-      const localUserId = session.requireUserId()
+  registerCommand<[unknown], { grantedScopes: string[] }>(ipc, 'oauth2:revoke', {
+    auth: 'user',
+    execute: async (ctx, scopes) => {
+      const localUserId = ctx.userId as string
       const scopeList = Array.isArray(scopes)
         ? scopes.filter((item): item is string => typeof item === 'string' && item.length > 0)
         : undefined
@@ -192,9 +194,7 @@ export function registerOAuth2Handlers(ipc: IpcMain, deps: OAuth2HandlerDeps): v
       if (!scopeList) {
         await authorization.clear(localUserId)
       }
-      return ok({ grantedScopes })
-    } catch (err) {
-      return fail((err as Error).message)
+      return { grantedScopes }
     }
   })
 }

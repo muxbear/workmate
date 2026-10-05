@@ -151,18 +151,8 @@ describe('RerankProvider.rerank', () => {
     expect(received).toBe(50)
   })
 
-  it('代理显式传给传输层', async () => {
-    let seenProxy: unknown
-    const provider = new RerankProvider({
-      transport: async ({ proxy }) => {
-        seenProxy = proxy
-        return { results: [] }
-      },
-      getProxy: async () => ({ host: '10.0.0.1', port: 8080, protocol: 'http' })
-    })
-    await provider.rerank('q', ['a'], config())
-    expect(seenProxy).toEqual({ host: '10.0.0.1', port: 8080, protocol: 'http' })
-  })
+  // 代理注入已收敛到统一 HTTP 客户端（network/main-http，R8-5），
+  // 原「代理显式传给传输层」用例的等价覆盖见 tests/unit/network/main-http.test.ts。
 })
 
 describe('rerankUrl / parseRerankPayload', () => {

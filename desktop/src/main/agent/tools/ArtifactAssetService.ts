@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'fs'
 import { dirname, resolve, sep } from 'path'
+import { net } from 'electron'
 import { sniffImageMime } from '../../images/RemoteImageService'
 
 /** 素材下载超时与单文件大小上限（图片 20MB / 视频 200MB，与工作区媒体白名单对齐） */
@@ -111,8 +112,9 @@ export async function downloadAssetToWorkspace(
   const target = resolve(root, relPath)
   if (target !== root && !target.startsWith(root + sep)) throw new Error('路径越界')
 
-  const fetchImpl =
-    params.fetchImpl ?? (globalThis as { fetch: AssetFetchLike }).fetch
+  // 缺省走 Electron net（Chromium 栈，吃 session.setProxy 的应用代理配置）；
+  // 全局 fetch 是 Node/undici，不认 Electron session，会静默绕过代理
+  const fetchImpl = params.fetchImpl ?? net.fetch
   if (typeof fetchImpl !== 'function') throw new Error('当前环境不支持下载素材')
 
   const controller = new AbortController()

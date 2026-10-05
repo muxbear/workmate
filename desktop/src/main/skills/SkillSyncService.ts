@@ -1,23 +1,15 @@
-import axios, { type AxiosInstance, type AxiosProgressEvent } from 'axios'
 import type {
   DesktopSkill,
   SkillFileEntry,
   SkillSyncProgress,
-  SkillSyncStatus,
-  SkillSyncStats,
-  WebUser
+  SkillSyncStats
 } from '../../shared/contracts'
-import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import type { OAuth2AuthorizationProvider } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_SKILL_READ } from '../oauth2/scopes'
+import { BaseSyncService } from '../network/base-sync-service'
 import { hashSkillFileEntries, SkillFileStore } from './SkillFileStore'
 import { SkillJsonStore } from './SkillJsonStore'
 import { planSkillRuntime } from './SkillRuntimePlanner'
-
-interface WebApiEnvelope<T> {
-  code: number
-  data: T
-  message: string
-}
 
 interface WebSkillInfo {
   id: string
@@ -59,7 +51,6 @@ interface SkillSyncServiceDeps {
   apiBaseUrl?: string
 }
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const JSON_FILE_VERSION = 1
 const PAGE_SIZE = 100
 
@@ -91,34 +82,6 @@ function mapSkill(item: WebSkillInfo): DesktopSkill {
   }
 }
 
-/** 二进制响应体 → Uint8Array（axios arraybuffer / Buffer 兼容） */
-function toUint8Array(data: unknown): Uint8Array {
-  if (data instanceof Uint8Array) return data
-  if (data instanceof ArrayBuffer) return new Uint8Array(data)
-  throw new Error('技能包内容为空')
-}
-
-/** axios 错误 → 可读 message（兼容 arraybuffer 错误体） */
-function toErrorMessage(error: unknown): string {
-  if (!axios.isAxiosError(error)) {
-    return error instanceof Error ? error.message : '网络请求失败'
-  }
-  const data = error.response?.data as unknown
-  if (data instanceof ArrayBuffer) {
-    try {
-      const parsed = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(data))) as {
-        message?: string
-        detail?: string
-      }
-      return parsed.message || parsed.detail || error.message || '网络请求失败'
-    } catch {
-      return error.message || '网络请求失败'
-    }
-  }
-  const record = data as { message?: string; detail?: string } | undefined
-  return record?.message || record?.detail || error.message || '网络请求失败'
-}
-
 /**
  * 桌面端 Web 技能同步服务。
  *
@@ -126,36 +89,21 @@ function toErrorMessage(error: unknown): string {
  * 落盘到 ~/.ke-work/skills/<dirName> → 原子写 skills.json → 读回作为返回值。
  * 页面展示以本地 skills.json 为事实源（本地优先，离线可用）。
  */
-export class SkillSyncService {
-  private readonly http: AxiosInstance
-  private readonly authorization: OAuth2AuthorizationProvider
+export class SkillSyncService extends BaseSyncService<SkillSyncProgress> {
   private readonly store: SkillJsonStore
   private readonly fileStore: SkillFileStore
   private cachedSkills: DesktopSkill[] = []
   private lastSyncedAt: number | null = null
 
   constructor(deps: SkillSyncServiceDeps) {
-    const apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
-    this.authorization = deps.authorization
+    super({
+      authorization: deps.authorization,
+      scopes: [SCOPE_SKILL_READ],
+      reason: 'skill-sync',
+      apiBaseUrl: deps.apiBaseUrl
+    })
     this.store = deps.store
     this.fileStore = deps.fileStore
-    this.http = axios.create({ baseURL: apiBaseUrl, timeout: 15_000 })
-  }
-
-  getStatus(localUserId: string): SkillSyncStatus {
-    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_SKILL_READ])
-    return {
-      status: snapshot.status,
-      webUser: toWebUser(snapshot.webUser)
-    }
-  }
-
-  /** 确保 skill:read 已授权；已授权时不打开浏览器 */
-  async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    await this.authorization.ensureAuthorization(localUserId, [SCOPE_SKILL_READ], {
-      reason: 'skill-sync'
-    })
-    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
   }
 
   /** 读取 ~/.ke-work/skills/skills.json 并做磁盘一致性标记；文件缺失返回 null。 */
@@ -177,11 +125,12 @@ export class SkillSyncService {
     onProgress?: (progress: SkillSyncProgress) => void
   ): Promise<{ skills: DesktopSkill[]; syncedAt: number; stats: SkillSyncStats }> {
     this.report(onProgress, 'authorize', 3, '正在校验技能同步授权…')
-    const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_SKILL_READ])
-    const webUser = toWebUser(this.authorization.getWebUser(localUserId))
+    const { accessToken, webUser } = await this.ensureSyncAccess(localUserId)
 
+    // 单页语义：沿用现状（服务器技能量未超 page_size 上限；与定时模板源的翻页实现不一致，
+    // 漂移已显式记录，统一取全量需产品确认后切换为翻页）
     this.report(onProgress, 'fetch', 8, '正在拉取技能列表…')
-    const data = await this.request<SkillListData>('get', '/api/skill/list', undefined, {
+    const data = await this.http.request<SkillListData>('get', '/api/skill/list', undefined, {
       params: { page: 1, page_size: PAGE_SIZE },
       headers: { Authorization: `Bearer ${accessToken}` }
     })
@@ -206,13 +155,20 @@ export class SkillSyncService {
         this.report(onProgress, 'download', base, `正在下载技能「${item.name}」…`, {
           skill: item.name
         })
-        const buffer = await this.downloadPackage(accessToken, item.id, (event) => {
-          this.report(onProgress, 'download', base, `正在下载技能「${item.name}」…`, {
-            skill: item.name,
-            received: event.loaded,
-            total: event.total ?? 0
-          })
-        })
+        const buffer = await this.http.download(
+          `/api/skill/${encodeURIComponent(item.id)}/download`,
+          {
+            timeoutMs: 120_000,
+            headers: { Authorization: `Bearer ${accessToken}` },
+            onProgress: (event) => {
+              this.report(onProgress, 'download', base, `正在下载技能「${item.name}」…`, {
+                skill: item.name,
+                received: event.loaded,
+                total: event.total ?? 0
+              })
+            }
+          }
+        )
 
         const pkg = this.fileStore.extractPackage(buffer, item.id)
         const files = await this.fileStore.writePackage(pkg)
@@ -274,7 +230,7 @@ export class SkillSyncService {
 
   /** 断开同步：仅清理本地会话 token 与内存缓存（决策 D1，磁盘技能包保留） */
   async disconnect(localUserId: string): Promise<void> {
-    await this.authorization.clear(localUserId)
+    await super.disconnect(localUserId)
     this.cachedSkills = []
     this.lastSyncedAt = null
   }
@@ -308,7 +264,7 @@ export class SkillSyncService {
     skillId: string
   ): Promise<WebSkillManifest | null> {
     try {
-      return await this.request<WebSkillManifest>(
+      return await this.http.request<WebSkillManifest>(
         'get',
         `/api/skill/${encodeURIComponent(skillId)}/manifest`,
         undefined,
@@ -316,59 +272,6 @@ export class SkillSyncService {
       )
     } catch {
       return null
-    }
-  }
-
-  /** 下载技能包（zip → Uint8Array） */
-  private async downloadPackage(
-    accessToken: string,
-    skillId: string,
-    onProgress?: (event: AxiosProgressEvent) => void
-  ): Promise<Uint8Array> {
-    try {
-      const response = await this.http.get<ArrayBuffer>(
-        `/api/skill/${encodeURIComponent(skillId)}/download`,
-        {
-          responseType: 'arraybuffer',
-          timeout: 120_000,
-          headers: { Authorization: `Bearer ${accessToken}` },
-          onDownloadProgress: onProgress
-        }
-      )
-      return toUint8Array(response.data)
-    } catch (error) {
-      throw new Error(toErrorMessage(error))
-    }
-  }
-
-  private report(
-    onProgress: ((progress: SkillSyncProgress) => void) | undefined,
-    phase: SkillSyncProgress['phase'],
-    percent: number,
-    message: string,
-    extra?: Partial<SkillSyncProgress>
-  ): void {
-    onProgress?.({ phase, percent, message, ...extra })
-  }
-
-  private async request<T>(
-    method: 'get' | 'post',
-    path: string,
-    body?: unknown,
-    config?: Record<string, unknown>
-  ): Promise<T> {
-    try {
-      const response =
-        method === 'post'
-          ? await this.http.post<WebApiEnvelope<T>>(path, body, config)
-          : await this.http.get<WebApiEnvelope<T>>(path, config)
-      const envelope = response.data
-      if (envelope.code !== 0) {
-        throw new Error(envelope.message || 'Web 服务返回错误')
-      }
-      return envelope.data
-    } catch (error) {
-      throw new Error(toErrorMessage(error))
     }
   }
 }

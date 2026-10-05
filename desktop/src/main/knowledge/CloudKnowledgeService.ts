@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, statSync } from 'fs'
 import { copyFile, readFile, rename, writeFile } from 'fs/promises'
 import { basename, extname, resolve, sep } from 'path'
 
+import { createMainHttpClient } from '../network/main-http'
 import { SCOPE_KNOWLEDGE_READ } from '../oauth2/scopes'
 import { loadFileText, MAX_BINARY_BYTES, PREVIEW_PAGE_CHARS } from '../workspace/FileLoaders'
 
@@ -126,7 +127,9 @@ export class CloudKnowledgeService {
 
   constructor(private readonly deps: CloudKnowledgeServiceDeps) {
     const baseURL = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
-    this.http = deps.http ?? axios.create({ baseURL, timeout: REQUEST_TIMEOUT_MS })
+    this.http =
+      deps.http ??
+      createMainHttpClient({ purpose: 'cloud-knowledge', baseURL, timeoutMs: REQUEST_TIMEOUT_MS })
     this.cacheDir = deps.cacheDir
   }
 

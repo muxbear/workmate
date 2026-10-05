@@ -1,15 +1,9 @@
-import axios, { type AxiosInstance } from 'axios'
-import type { CustomModel, ModelSyncStatus, WebUser } from '../../shared/contracts'
+import type { CustomModel } from '../../shared/contracts'
 import type { ProviderPlanType, ProviderRecord } from '../model/types'
 import type { ModelService } from '../model/ModelService'
-import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import type { OAuth2AuthorizationProvider } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_MODEL_READ } from '../oauth2/scopes'
-
-interface WebApiEnvelope<T> {
-  code: number
-  data: T
-  message: string
-}
+import { BaseSyncService } from '../network/base-sync-service'
 
 interface WebSyncProvider {
   id: string
@@ -48,7 +42,6 @@ interface ModelSyncServiceDeps {
   apiBaseUrl?: string
 }
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const MASKED_API_KEY = '**********'
 
 function mapProvider(item: WebSyncProvider): ProviderRecord {
@@ -86,40 +79,26 @@ function mapModel(item: WebSyncModel): CustomModel {
  *
  * 复用 OAuth2 Authorization Code + PKCE 流程，使用 model:read scope
  * 调用 /api/model-sync/list，并将结果写入 models.json。
+ * 授权三件套与 HTTP 客户端由 BaseSyncService 提供；本源无进度事件（无分页、单次拉取）。
  */
-export class ModelSyncService {
-  private readonly http: AxiosInstance
-  private readonly authorization: OAuth2AuthorizationProvider
+export class ModelSyncService extends BaseSyncService {
   private readonly modelService: ModelService
 
   constructor(deps: ModelSyncServiceDeps) {
-    const apiBaseUrl = deps.apiBaseUrl || DEFAULT_API_BASE_URL
-    this.authorization = deps.authorization
-    this.modelService = deps.modelService
-    this.http = axios.create({ baseURL: apiBaseUrl, timeout: 15_000 })
-  }
-
-  getStatus(localUserId: string): ModelSyncStatus {
-    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_MODEL_READ])
-    return {
-      status: snapshot.status,
-      webUser: toWebUser(snapshot.webUser)
-    }
-  }
-
-  /** 确保 model:read 已授权；已授权时不打开浏览器 */
-  async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    await this.authorization.ensureAuthorization(localUserId, [SCOPE_MODEL_READ], {
-      reason: 'model-sync'
+    super({
+      authorization: deps.authorization,
+      scopes: [SCOPE_MODEL_READ],
+      reason: 'model-sync',
+      apiBaseUrl: deps.apiBaseUrl
     })
-    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
+    this.modelService = deps.modelService
   }
 
   async sync(
     localUserId: string
   ): Promise<{ providerCount: number; modelCount: number; syncedAt: number }> {
-    const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_MODEL_READ])
-    const data = await this.request<WebSyncPayload>('get', '/api/model-sync/list', undefined, {
+    const { accessToken } = await this.ensureSyncAccess(localUserId)
+    const data = await this.http.request<WebSyncPayload>('get', '/api/model-sync/list', undefined, {
       headers: { Authorization: 'Bearer ' + accessToken }
     })
 
@@ -146,36 +125,6 @@ export class ModelSyncService {
       providerCount: providers.length,
       modelCount: models.length,
       syncedAt: data.synced_at
-    }
-  }
-
-  /** 断开同步：仅清理本地会话 token（决策 D1） */
-  async disconnect(localUserId: string): Promise<void> {
-    await this.authorization.clear(localUserId)
-  }
-
-  private async request<T>(
-    method: 'get' | 'post',
-    path: string,
-    body?: unknown,
-    config?: Record<string, unknown>
-  ): Promise<T> {
-    try {
-      const response =
-        method === 'post'
-          ? await this.http.post<WebApiEnvelope<T>>(path, body, config)
-          : await this.http.get<WebApiEnvelope<T>>(path, config)
-      const envelope = response.data
-      if (envelope.code !== 0) {
-        throw new Error(envelope.message || 'Web 服务返回错误')
-      }
-      return envelope.data
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const message = error.response?.data?.message || error.message || '网络请求失败'
-        throw new Error(message)
-      }
-      throw error
     }
   }
 }

@@ -1,7 +1,6 @@
-import axios from 'axios'
 import type { KnowledgeReranker } from './RetrievalService'
 import type { KnowledgeEngineConfig } from './knowledge-config'
-import type { MainProxyConfig } from '../network/main-proxy'
+import { createMainHttpClient } from '../network/main-http'
 
 /**
  * 重排（OpenAI/Cohere 兼容 `POST {baseUrl}/rerank`）。
@@ -28,13 +27,11 @@ export interface RerankTransport {
     body: unknown
     timeoutMs: number
     signal?: AbortSignal
-    proxy?: MainProxyConfig
   }): Promise<unknown>
 }
 
 export interface RerankProviderDeps {
-  getProxy?: (targetUrl: string) => Promise<MainProxyConfig | undefined>
-  /** 传输实现（单测注入替身；缺省走 axios） */
+  /** 传输实现（单测注入替身；缺省走统一 HTTP 客户端） */
   transport?: RerankTransport
 }
 
@@ -60,8 +57,7 @@ export class RerankProvider implements KnowledgeReranker {
     const url = rerankUrl(config.rerankBaseUrl)
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (config.rerankApiKey) headers.Authorization = `Bearer ${config.rerankApiKey}`
-    const proxy = await this.deps.getProxy?.(url)
-    const transport = this.deps.transport ?? axiosTransport
+    const transport = this.deps.transport ?? defaultTransport
     const body = {
       model: config.rerankModel,
       query,
@@ -71,7 +67,7 @@ export class RerankProvider implements KnowledgeReranker {
 
     for (let attempt = 0; attempt <= 1; attempt += 1) {
       try {
-        const payload = await transport({ url, headers, body, timeoutMs: RERANK_TIMEOUT_MS, proxy })
+        const payload = await transport({ url, headers, body, timeoutMs: RERANK_TIMEOUT_MS })
         return parseRerankPayload(payload, docs.length)
       } catch (err) {
         const status = (err as { response?: { status?: number } })?.response?.status
@@ -87,11 +83,13 @@ export class RerankProvider implements KnowledgeReranker {
   }
 }
 
-const axiosTransport: RerankTransport = async ({ url, headers, body, timeoutMs, proxy }) => {
-  const response = await axios.post(url, body, {
+/** 默认传输：统一 HTTP 客户端（代理由 main-http 按请求注入） */
+const defaultHttp = createMainHttpClient({ purpose: 'knowledge-rerank' })
+
+const defaultTransport: RerankTransport = async ({ url, headers, body, timeoutMs }) => {
+  const response = await defaultHttp.post(url, body, {
     headers,
     timeout: timeoutMs,
-    proxy,
     validateStatus: (status) => status >= 200 && status < 300
   })
   return response.data

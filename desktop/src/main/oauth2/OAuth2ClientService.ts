@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto'
 import axios, { type AxiosInstance } from 'axios'
+import { createMainHttpClient } from '../network/main-http'
 import type { ISecureStorage } from '../security/secure-storage'
 import { DesktopOAuthCallbackServer } from './DesktopOAuthCallbackServer'
 import { DEFAULT_SYSTEM_NAME } from '../settings/schema'
@@ -72,9 +73,10 @@ export class OAuth2ClientService {
     this.clientId = deps.clientId || DEFAULT_CLIENT_ID
     this.http =
       deps.http ??
-      axios.create({
+      createMainHttpClient({
+        purpose: 'oauth2',
         baseURL: this.apiBaseUrl,
-        timeout: 15_000
+        timeoutMs: 15_000
       })
   }
 

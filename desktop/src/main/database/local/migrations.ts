@@ -1,5 +1,3 @@
-import type { Database } from 'better-sqlite3'
-
 /** 版本化迁移：每项为 { version, name, sql }，按 user_version 增量应用；name 用于磁盘迁移文件名 */
 export const MIGRATIONS: Array<{ version: number; name: string; sql: string }> = [
   {
@@ -255,12 +253,5 @@ ALTER TABLE automation_runs ADD COLUMN model TEXT;
   }
 ]
 
-/** 应用所有未执行的迁移 */
-export function runMigrations(db: Database): void {
-  const current = db.pragma('user_version', { simple: true }) as number
-  for (const migration of MIGRATIONS) {
-    if (migration.version <= current) continue
-    db.exec(migration.sql)
-    db.pragma(`user_version = ${migration.version}`)
-  }
-}
+// 迁移执行已单轨化到 SqlMigrationRunner（runSqlMigrations / runBuiltInMigrations 共用同一执行核心）：
+// 本文件只保留内置迁移常量（含版本号与磁盘文件名），不再持有独立的执行实现。

@@ -1,4 +1,5 @@
-import axios, { AxiosError, type AxiosInstance, type AxiosResponse } from 'axios'
+import { AxiosError, type AxiosInstance, type AxiosResponse } from 'axios'
+import { createMainHttpClient } from '../../network/main-http'
 
 /** 云端 API 业务错误（HTTP 错误与业务错误码统一归一化） */
 export class CloudApiError extends Error {
@@ -42,9 +43,10 @@ export class CloudDataSource {
   private unauthorizedRetried = false
 
   constructor(options: CloudOptions) {
-    this.client = axios.create({
+    this.client = createMainHttpClient({
+      purpose: 'cloud-datasource',
       baseURL: options.baseUrl,
-      timeout: options.timeoutMs ?? 10_000
+      timeoutMs: options.timeoutMs ?? 10_000
     })
     // 请求拦截：注入 Authorization
     this.client.interceptors.request.use((config) => {

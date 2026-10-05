@@ -1,5 +1,5 @@
 import { randomInt } from 'crypto'
-import type { IAuthRepository, UserRecord } from '../database/interfaces/IAuthRepository'
+import type { ILocalAuthStore, UserRecord } from '../database/interfaces/ILocalAuthStore'
 import { sha256, verifyPassword } from '../security/crypto'
 import { signToken, type TokenPayload } from '../security/token'
 import type { ISecureStorage } from '../security/secure-storage'
@@ -12,9 +12,8 @@ export interface AuthResult {
 }
 
 export interface AuthServiceDeps {
-  repository: IAuthRepository
-  /** 本地认证仓库：OAuth2 账号关联始终写本地 users/oauth2_sessions（与工作模式无关） */
-  localAuthRepository?: IAuthRepository
+  /** 本地认证存储：密码/短信/微信登录、OAuth2 账号关联均读写本地 users/sms/oauth2_sessions */
+  repository: ILocalAuthStore
   jwtSecret: string
   secureStorage: ISecureStorage
   now?: () => number
@@ -38,8 +37,7 @@ const ACCESS_TTL_SEC = 2 * 60 * 60
 const REFRESH_TTL_SEC = 30 * 24 * 60 * 60
 
 export class AuthService {
-  private readonly repo: IAuthRepository
-  private readonly localRepo: IAuthRepository
+  private readonly repo: ILocalAuthStore
   private readonly secret: string
   private readonly now: () => number
   private readonly smsSender: { send(mobile: string, code: string): Promise<void> }
@@ -52,7 +50,6 @@ export class AuthService {
 
   constructor(deps: AuthServiceDeps) {
     this.repo = deps.repository
-    this.localRepo = deps.localAuthRepository ?? deps.repository
     this.secret = deps.jwtSecret
     this.now = deps.now ?? Date.now
     this.smsSender = deps.smsSender ?? { send: async () => {} }
@@ -154,9 +151,9 @@ export class AuthService {
     currentUserId: string | null,
     confirm: boolean
   ): Promise<OAuth2LoginResult> {
-    const byWeb = await this.localRepo.findByWebAccountId(webUser.id)
+    const byWeb = await this.repo.findByWebAccountId(webUser.id)
     const current = currentUserId
-      ? await this.localRepo.findById(currentUserId)
+      ? await this.repo.findById(currentUserId)
       : null
 
     let target: UserRecord
@@ -176,8 +173,8 @@ export class AuthService {
               '当前本地账号已绑定其他 Web 账号，换绑后旧 Web 账号的登录凭证将被撤销，且本地数据边界会随绑定变化。确认换绑？'
           }
         }
-        await this.localRepo.unlinkWebAccount(current.id)
-        await this.localRepo.linkWebAccount({
+        await this.repo.unlinkWebAccount(current.id)
+        await this.repo.linkWebAccount({
           userId: current.id,
           webAccountId: webUser.id,
           webNickname: webUser.nickname,
@@ -215,7 +212,7 @@ export class AuthService {
         target = byWeb
         action = 'switch-identity'
       }
-      await this.localRepo.linkWebAccount({
+      await this.repo.linkWebAccount({
         userId: target.id,
         webAccountId: webUser.id,
         webNickname: webUser.nickname,
@@ -224,14 +221,14 @@ export class AuthService {
     }
 
     // 完成登录：更新 token 摘要、写入会话索引与审计
-    await this.localRepo.updateToken(target.id, sha256(token.accessToken), token.expiresAt)
-    await this.localRepo.saveOAuth2Session({
+    await this.repo.updateToken(target.id, sha256(token.accessToken), token.expiresAt)
+    await this.repo.saveOAuth2Session({
       localUserId: target.id,
       webAccountId: webUser.id,
       scope: token.scope,
       expiresAt: token.expiresAt
     })
-    await this.localRepo.addAuditLog({
+    await this.repo.addAuditLog({
       userId: target.id,
       action: 'oauth2_login',
       detail: JSON.stringify({ webAccountId: webUser.id, action })
@@ -259,7 +256,7 @@ export class AuthService {
   async getOAuth2Status(
     localUserId: string
   ): Promise<{ linked: boolean; webAccountId: string | null }> {
-    const user = await this.localRepo.findById(localUserId)
+    const user = await this.repo.findById(localUserId)
     return {
       linked: Boolean(user?.webAccountId),
       webAccountId: user?.webAccountId ?? null
@@ -306,7 +303,7 @@ export class AuthService {
   }
 
   private async createWebOnlyUser(webUser: OAuth2WebUser): Promise<UserRecord> {
-    return this.localRepo.createWebOnlyUser({
+    return this.repo.createWebOnlyUser({
       webAccountId: webUser.id,
       webNickname: webUser.nickname,
       webAvatar: webUser.avatar

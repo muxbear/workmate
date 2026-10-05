@@ -1,22 +1,15 @@
-import axios, { type AxiosInstance, type AxiosProgressEvent } from 'axios'
+import type { AxiosProgressEvent } from 'axios'
 import type {
   DesktopExpert,
   DesktopMcpConfig,
   ExpertSyncProgress,
-  ExpertSyncStats,
-  ExpertSyncStatus,
-  WebUser
+  ExpertSyncStats
 } from '../../shared/contracts'
-import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import type { OAuth2AuthorizationProvider } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_EXPERT_READ } from '../oauth2/scopes'
+import { BaseSyncService } from '../network/base-sync-service'
 import { ExpertJsonStore } from './ExpertJsonStore'
 import { shouldUpdateExpert } from './expertVersion'
-
-interface WebApiEnvelope<T> {
-  code: number
-  data: T
-  message: string
-}
 
 interface ExpertSyncItem {
   id: string
@@ -86,7 +79,6 @@ interface ExpertSyncServiceDeps {
   apiBaseUrl?: string
 }
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const JSON_FILE_VERSION = 1
 /** 服务端未返回版本号时的兜底（与服务端 DEFAULT_VERSION 一致） */
 const DEFAULT_EXPERT_VERSION = '1.0.0'
@@ -145,34 +137,19 @@ function describeStats(stats: ExpertSyncStats): string {
  * 映射后原子写入 ~/.ke-work/experts/experts.json，并以文件读回结果作为同步返回值，
  * 保证页面展示的数据与磁盘一致。
  */
-export class ExpertSyncService {
-  private readonly http: AxiosInstance
-  private readonly authorization: OAuth2AuthorizationProvider
+export class ExpertSyncService extends BaseSyncService<ExpertSyncProgress> {
   private readonly store: ExpertJsonStore
   private cachedExperts: DesktopExpert[] = []
   private lastSyncedAt: number | null = null
 
   constructor(deps: ExpertSyncServiceDeps) {
-    const apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
-    this.authorization = deps.authorization
-    this.store = new ExpertJsonStore(deps.expertsDir)
-    this.http = axios.create({ baseURL: apiBaseUrl, timeout: 15_000 })
-  }
-
-  getStatus(localUserId: string): ExpertSyncStatus {
-    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_EXPERT_READ])
-    return {
-      status: snapshot.status,
-      webUser: toWebUser(snapshot.webUser)
-    }
-  }
-
-  /** 确保 expert:read 已授权；已授权时不打开浏览器 */
-  async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    await this.authorization.ensureAuthorization(localUserId, [SCOPE_EXPERT_READ], {
-      reason: 'expert-sync'
+    super({
+      authorization: deps.authorization,
+      scopes: [SCOPE_EXPERT_READ],
+      reason: 'expert-sync',
+      apiBaseUrl: deps.apiBaseUrl
     })
-    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
+    this.store = new ExpertJsonStore(deps.expertsDir)
   }
 
   /**
@@ -190,11 +167,11 @@ export class ExpertSyncService {
     onProgress?: (p: ExpertSyncProgress) => void
   ): Promise<{ experts: DesktopExpert[]; syncedAt: number; stats: ExpertSyncStats }> {
     this.report(onProgress, 'authorize', 5, '正在校验专家同步授权…')
-    const accessToken = await this.authorization.ensureAccessToken(localUserId, [SCOPE_EXPERT_READ])
-    const webUser = toWebUser(this.authorization.getWebUser(localUserId))
+    const { accessToken, webUser } = await this.ensureSyncAccess(localUserId)
 
+    // 单页语义：沿用现状（服务端专家量未超上限；与定时模板源的翻页实现不一致，统一需产品确认）
     this.report(onProgress, 'fetch', 12, '正在从服务器拉取专家数据…')
-    const data = await this.request<ExpertSyncListData>('get', '/api/expert-sync/list', undefined, {
+    const data = await this.http.request<ExpertSyncListData>('get', '/api/expert-sync/list', undefined, {
       // 平台参数：服务端据此渲染平台化提示词（去掉平台专属命令）
       params: { platform: 'desktop' },
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -271,42 +248,8 @@ export class ExpertSyncService {
 
   /** 断开同步：仅清理本地缓存与本地会话 token（决策 D1） */
   async disconnect(localUserId: string): Promise<void> {
-    await this.authorization.clear(localUserId)
+    await super.disconnect(localUserId)
     this.cachedExperts = []
     this.lastSyncedAt = null
-  }
-
-  private report(
-    onProgress: ((p: ExpertSyncProgress) => void) | undefined,
-    phase: ExpertSyncProgress['phase'],
-    percent: number,
-    message: string
-  ): void {
-    onProgress?.({ phase, percent, message })
-  }
-
-  private async request<T>(
-    method: 'get' | 'post',
-    path: string,
-    body?: unknown,
-    config?: Record<string, unknown>
-  ): Promise<T> {
-    try {
-      const response =
-        method === 'post'
-          ? await this.http.post<WebApiEnvelope<T>>(path, body, config)
-          : await this.http.get<WebApiEnvelope<T>>(path, config)
-      const envelope = response.data
-      if (envelope.code !== 0) {
-        throw new Error(envelope.message || 'Web 服务返回错误')
-      }
-      return envelope.data
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const message = error.response?.data?.message || error.message || '网络请求失败'
-        throw new Error(message)
-      }
-      throw error
-    }
   }
 }

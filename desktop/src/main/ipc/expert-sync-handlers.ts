@@ -1,19 +1,13 @@
-import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { IpcMain } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { ExpertSyncService } from '../experts/ExpertSyncService'
 import type { ExpertSyncProgress } from '../../shared/contracts'
+import { createCommandRegistrar } from './command'
+import { errorMessage } from './ipc-result'
 
 interface ExpertSyncHandlerDeps {
   expertSyncService: ExpertSyncService
   session: SessionService
-}
-
-function ok<T>(data: T): { success: true; data: T } {
-  return { success: true, data }
-}
-
-function fail(error: string): { success: false; error: string } {
-  return { success: false, error }
 }
 
 /** 专家 id 校验（与技能 id 校验一致：非空字符串 + 长度上限） */
@@ -23,73 +17,59 @@ function isValidExpertId(value: unknown): value is string {
 
 /** 注册 Web 专家同步 IPC 通道（含主进程 → 渲染层的同步进度事件）。 */
 export function registerExpertSyncHandlers(ipc: IpcMain, deps: ExpertSyncHandlerDeps): void {
-  const { expertSyncService, session } = deps
+  const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
+  const { expertSyncService } = deps
 
-  ipc.handle('expert-sync:status', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(expertSyncService.getStatus(userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'expert-sync:status', {
+    auth: 'user',
+    execute: (ctx) => expertSyncService.getStatus(ctx.userId as string)
   })
 
-  ipc.handle('expert-sync:authorize', async () => {
-    try {
-      const userId = session.requireUserId()
-      return ok(await expertSyncService.authorize(userId))
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'expert-sync:authorize', {
+    auth: 'user',
+    execute: (ctx) => expertSyncService.authorize(ctx.userId as string)
   })
 
-  ipc.handle('expert-sync:sync', async (event: IpcMainInvokeEvent) => {
-    const sendProgress = (p: ExpertSyncProgress): void => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('expert-sync:progress', p)
+  registerCommand<[], unknown>(ipc, 'expert-sync:sync', {
+    auth: 'user',
+    execute: async (ctx) => {
+      const sendProgress = (p: ExpertSyncProgress): void => {
+        if (!ctx.event.sender.isDestroyed()) {
+          ctx.event.sender.send('expert-sync:progress', p)
+        }
       }
-    }
-    try {
-      const userId = session.requireUserId()
-      return ok(await expertSyncService.sync(userId, sendProgress))
-    } catch (err) {
-      const message = (err as Error).message
-      sendProgress({ phase: 'error', percent: 0, message })
-      return fail(message)
+      try {
+        return await expertSyncService.sync(ctx.userId as string, sendProgress)
+      } catch (err) {
+        // 失败兜底：补推 error 阶段进度（常规进度由服务内部回调驱动）
+        sendProgress({ phase: 'error', percent: 0, message: errorMessage(err) })
+        throw err
+      }
     }
   })
 
   /** 读取 ~/.ke-work/experts/experts.json（专家页挂载与同步完成后加载） */
-  ipc.handle('expert-sync:load-local', async () => {
-    try {
-      session.requireUserId()
-      return ok(await expertSyncService.loadLocal())
-    } catch (err) {
-      return fail((err as Error).message)
-    }
+  registerCommand<[], unknown>(ipc, 'expert-sync:load-local', {
+    auth: 'user',
+    execute: () => expertSyncService.loadLocal()
   })
 
   /** 删除本地专家（仅本机副本；服务端仍存在时下次同步按版本重新拉回） */
-  ipc.handle(
-    'expert-sync:delete-expert',
-    async (_event: IpcMainInvokeEvent, expertId?: unknown) => {
-      if (!isValidExpertId(expertId)) return fail('参数错误：专家 id 无效')
-      try {
-        session.requireUserId()
-        return ok(await expertSyncService.deleteExpert(expertId))
-      } catch (err) {
-        return fail((err as Error).message)
-      }
-    }
-  )
+  registerCommand<[string], unknown>(ipc, 'expert-sync:delete-expert', {
+    auth: 'user',
+    // 保持既有文案且在会话校验前返回（ESH-03 钉死：非法入参不触碰服务与会话）
+    parse: ([expertId]) => {
+      if (!isValidExpertId(expertId)) throw new Error('参数错误：专家 id 无效')
+      return [expertId]
+    },
+    execute: (_ctx, expertId) => expertSyncService.deleteExpert(expertId)
+  })
 
-  ipc.handle('expert-sync:disconnect', async () => {
-    try {
-      const userId = session.requireUserId()
-      await expertSyncService.disconnect(userId)
-      return ok(null)
-    } catch (err) {
-      return fail((err as Error).message)
+  registerCommand<[], null>(ipc, 'expert-sync:disconnect', {
+    auth: 'user',
+    execute: async (ctx) => {
+      await expertSyncService.disconnect(ctx.userId as string)
+      return null
     }
   })
 }

@@ -1,5 +1,8 @@
-import axios from 'axios'
+import { createMainHttpClient } from '../../network/main-http'
 import type { ModelService } from '../../model/ModelService'
+
+/** 图片生成出网（代理由统一客户端按请求注入，与「设置 → 网络」同源） */
+const http = createMainHttpClient({ purpose: 'image-generation' })
 
 export interface GenerateImageInput {
   prompt: string
@@ -23,7 +26,7 @@ export async function generateImage(input: GenerateImageInput): Promise<Generate
   }
 
   const url = credential.url.endsWith('/') ? credential.url : credential.url + '/'
-  const response = await axios.post(
+  const response = await http.post(
     url,
     { model: credential.id, prompt: input.prompt, size: input.size || '512x512' },
     { headers: { Authorization: 'Bearer ' + credential.apiKey }, timeout: 60000 }

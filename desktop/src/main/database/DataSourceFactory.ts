@@ -4,13 +4,12 @@ import { homedir } from 'os'
 import type { Database } from 'better-sqlite3'
 import type { WorkMode } from '../mode/work-mode'
 import type { IConfigRepository } from './interfaces/IConfigRepository'
-import type { IAuthRepository } from './interfaces/IAuthRepository'
+import type { ILocalAuthStore } from './interfaces/ILocalAuthStore'
 import { LocalDataSource } from './local/LocalDataSource'
 import { LocalConfigRepository } from './local/LocalConfigRepository'
 import { LocalAuthRepository } from './local/LocalAuthRepository'
 import { WorkspaceRepository } from '../workspace/WorkspaceRepository'
 import { CloudDataSource, type CloudTokenStore } from './cloud/CloudDataSource'
-import { CloudAuthRepository } from './cloud/CloudAuthRepository'
 import { CloudConfigRepository } from './cloud/CloudConfigRepository'
 
 /**
@@ -94,23 +93,8 @@ export class DataSourceFactory {
       : new CloudConfigRepository(this.getCloudDataSource())
   }
 
-  createAuthRepository(): IAuthRepository {
-    if (this.mode === 'local') {
-      return new LocalAuthRepository(this.getLocalDataSource())
-    }
-    if (!this.cloudBaseUrl) {
-      // cloud 模式未配置 CLOUD_API_BASE_URL 时降级本地实现，避免应用启动崩溃；
-      // 登录流程（本地密码 / OAuth2 账号关联）本身就走本地仓库
-      console.warn(
-        '[data-source] cloud mode without CLOUD_API_BASE_URL, fallback to local auth repository'
-      )
-      return new LocalAuthRepository(this.getLocalDataSource())
-    }
-    return new CloudAuthRepository(this.getCloudDataSource())
-  }
-
-  /** 本地认证仓库（OAuth2 账号关联始终写本地 users/oauth2_sessions，与工作模式无关） */
-  createLocalAuthRepository(): IAuthRepository {
+  /** 本地认证存储（登录凭据校验与 OAuth2 账号关联始终写本地 users/oauth2_sessions，与工作模式无关） */
+  createLocalAuthRepository(): ILocalAuthStore {
     return new LocalAuthRepository(this.getLocalDataSource())
   }
 

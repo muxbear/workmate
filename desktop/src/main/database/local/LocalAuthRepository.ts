@@ -2,11 +2,11 @@ import { randomUUID } from 'crypto'
 import type { LocalDataSource } from './LocalDataSource'
 import type {
   AuditLogInput,
-  IAuthRepository,
+  ILocalAuthStore,
   OAuth2SessionRecord,
   SmsCodeRecord,
   UserRecord
-} from '../interfaces/IAuthRepository'
+} from '../interfaces/ILocalAuthStore'
 import type { WorkMode } from '../../mode/work-mode'
 
 interface UserRow {
@@ -55,8 +55,8 @@ function toUserRecord(row: UserRow): UserRecord {
 
 const SELECT_USER = 'SELECT * FROM users'
 
-/** 本地 SQLite 认证数据实现 */
-export class LocalAuthRepository implements IAuthRepository {
+/** 本地 SQLite 认证存储实现（ILocalAuthStore 的唯一实现） */
+export class LocalAuthRepository implements ILocalAuthStore {
   constructor(private readonly ds: LocalDataSource) {}
 
   private findBy(where: string, value: string): Promise<UserRecord | null> {

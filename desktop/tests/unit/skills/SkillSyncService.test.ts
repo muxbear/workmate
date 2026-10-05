@@ -66,7 +66,7 @@ function setup(dir: string): Harness {
     store,
     fileStore
   })
-  const http = (service as unknown as { http: AxiosInstance }).http
+  const http = (service as unknown as { http: { axiosInstance: AxiosInstance } }).http.axiosInstance
   return { service, store, fileStore, mock: new MockAdapter(http) }
 }
 

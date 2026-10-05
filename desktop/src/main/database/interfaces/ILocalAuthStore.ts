@@ -49,8 +49,18 @@ export interface OAuth2SessionRecord {
   updatedAt: number
 }
 
-/** 认证数据访问接口（本地 SQLite / 云端 API 共用契约） */
-export interface IAuthRepository {
+/**
+ * 本地认证存储原语（users / sms_codes / audit_logs / oauth2_sessions 表）。
+ *
+ * ISP 拆分（R8-2）：本接口只描述**本地存储**，唯一实现是 `LocalAuthRepository`。
+ * 旧的「本地 SQLite / 云端 API 共用」契约已废除 —— 云端 HTTP 登录面
+ * （原 CloudAuthRepository 的 login-by-password/sms/wechat/refresh）在生产链路
+ * 零调用（桌面端登录凭据始终校验本地 users 表，Web 身份经 OAuth2 关联，
+ * 见 oauth2/OAuth2ClientService 与 services/AuthService.loginByOAuth2），
+ * 已连同 13 个 no-op 适配方法一并删除，杜绝「cloud 实现被注入给期待真实存储的服务」
+ * 类缺陷（历史上的 D3：cloud 模式密码登录必然失败）。
+ */
+export interface ILocalAuthStore {
   /** 按账号（username 或 mobile）查找用户 */
   findByAccount(account: string): Promise<UserRecord | null>
   /** 按用户 id 查找 */

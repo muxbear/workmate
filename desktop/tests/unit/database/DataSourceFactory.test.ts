@@ -24,21 +24,20 @@ describe('DataSourceFactory', () => {
     expect(factory.createConfigRepository().constructor.name).toBe('LocalConfigRepository')
   })
 
-  it('DSF-04: auth repository 可创建', () => {
+  it('DSF-04: 认证存储始终为本地实现（local 模式）', () => {
     factory.setMode('local')
-    expect(factory.createAuthRepository().constructor.name).toBe('LocalAuthRepository')
+    expect(factory.createLocalAuthRepository().constructor.name).toBe('LocalAuthRepository')
   })
 
   it('DSF-03: cloud 模式创建 Cloud 实现', () => {
     factory.configure({ cloudBaseUrl: 'https://api.example.com' })
     factory.setMode('cloud')
-    expect(factory.createAuthRepository().constructor.name).toBe('CloudAuthRepository')
     expect(factory.createConfigRepository().constructor.name).toBe('CloudConfigRepository')
   })
 
-  it('cloud 模式未配置 baseUrl 降级本地实现（不崩溃）', () => {
+  it('cloud 模式下认证存储仍为本地实现（登录凭据不随工作模式走云端）', () => {
     factory.setMode('cloud')
-    expect(factory.createAuthRepository().constructor.name).toBe('LocalAuthRepository')
+    expect(factory.createLocalAuthRepository().constructor.name).toBe('LocalAuthRepository')
   })
 
   it('WM-04: setMode 通知订阅者且能获取对应实现', () => {

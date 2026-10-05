@@ -10,13 +10,9 @@ import {
 import type { DeepAgent } from 'deepagents'
 import type { BackendKind } from './AgentBuilder'
 import type { RawConversationMessage } from './ConversationStore'
-import type { DocArtifactFile, AgentArtifactMeta } from '../../shared/contracts'
-import { randomUUID } from 'crypto'
-import {
-  buildArtifactMeta,
-  docArtifactFromWriteInput,
-  extractDocArtifactsFromText
-} from './doc-artifacts'
+import type { DocArtifactFile } from '../../shared/contracts'
+import { ArtifactCollector, type AgentRunHandle } from './artifact-collector'
+import { pumpMessageStream } from './stream-pump'
 
 /** 会话绑定的工作空间信息（写入 checkpoint metadata 持久化） */
 export interface WorkspaceBinding {
@@ -87,75 +83,33 @@ export function buildRegenerateInput(history: RawConversationMessage[]): BaseMes
   return removes
 }
 
-/** 工具调用流句柄（DeepAgent v3 run.toolCalls / run.subagents 的结构子集） */
-interface AgentToolCallHandle {
-  name: string
-  callId?: string
-  input?: unknown
-  output?: Promise<unknown>
-  status?: Promise<string>
-}
-
-interface AgentRunHandle {
-  toolCalls: AsyncIterable<AgentToolCallHandle>
-  subagents?: AsyncIterable<AgentRunHandle>
-}
-
-/** LangChain 消息 content（string / blocks 数组 / 消息对象）统一取文本 */
-function contentToText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) {
-    return value.map((item) => contentToText(item)).join('')
-  }
-  if (value && typeof value === 'object') {
-    const obj = value as { content?: unknown; text?: unknown }
-    if (obj.content !== undefined) return contentToText(obj.content)
-    if (obj.text !== undefined) return contentToText(obj.text)
-  }
-  return ''
-}
-
-function toolInputString(input: unknown, key: string): string | undefined {
-  if (typeof input !== 'object' || input === null) return undefined
-  const value = (input as Record<string, unknown>)[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+/**
+ * 发送消息运行上下文（Context Object）。
+ * 历史是 7 个位置参数（messages/win/agent/config/signal/onArtifacts/onToken），
+ * 调用方（agent:send、自动化执行、测试）极易因顺序写错静默传参错位，收敛为具名对象。
+ */
+export interface SendMessageContext {
+  messages: BaseMessage[]
+  /** 渲染层窗口；无窗口调用方（自动化执行）传 null，事件静默丢弃 */
+  win: BrowserWindow | null
+  agent: DeepAgent
+  config: AgentRunConfig
+  signal?: AbortSignal
+  /** 流结束回调：持久化产物清单，供历史回显恢复文件链接 */
+  onArtifacts?: (artifacts: DocArtifactFile[]) => void
+  /** 无窗口调用方（自动化执行）用：逐段汇总正式回复文本 */
+  onToken?: (text: string) => void
 }
 
 /**
- * 从 `download_asset` 的工具输出里取保存路径。
+ * 运行一次发送：`agent.streamEvents` 起两条并发流，跑完补发完成信号。
  *
- * 该工具返回 JSON（`{ relPath, absPath, size, mime, path, mime_type }`）；
- * 素材由工具直接落盘、不经过 write_file，因此必须从输出里登记，
- * 否则成片不会出现在消息产物区（方案 D-4）。
+ * - 消息流（reasoning / text token）→ `stream-pump.pumpMessageStream`；
+ * - 工具调用与文档产物流（含嵌套子智能体）→ `artifact-collector.walkTools`；
+ * - 结束后发 `agent:stream-done`，并把产物清单经 `onArtifacts` 交回调用方持久化。
  */
-function assetRelPathFromOutput(output: unknown): string {
-  const text = contentToText(output).trim()
-  if (!text) return ''
-  try {
-    const parsed = JSON.parse(text) as Record<string, unknown>
-    const candidate = parsed.relPath ?? parsed.path ?? parsed.rel_path
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
-  } catch {
-    // 非纯 JSON：走下面的正则兜底
-  }
-  const matched = text.match(/"(?:relPath|path|rel_path)"\s*:\s*"([^"]+)"/)
-  return matched ? matched[1].trim() : ''
-}
-
-export async function invokeSendMessage(
-  messages: BaseMessage[],
-  win: BrowserWindow | null,
-  agent: DeepAgent,
-  config: AgentRunConfig,
-  signal?: AbortSignal,
-  onArtifacts?: (artifacts: DocArtifactFile[]) => void,
-  /** 无窗口调用方（自动化执行）用：逐段汇总输出 */
-  onToken?: (text: string) => void
-): Promise<void> {
+export async function invokeSendMessage(ctx: SendMessageContext): Promise<void> {
+  const { messages, win, agent, config, signal } = ctx
   console.log('[service] invokeSendMessage called, messages count:', messages.length)
   console.log('[service] signal aborted?:', signal?.aborted)
 
@@ -186,154 +140,15 @@ export async function invokeSendMessage(
   )
 
   // ── 文档产物流（并发于消息流，含嵌套子智能体的工具调用）──
-  const artifacts: DocArtifactFile[] = []
+  const collector = new ArtifactCollector({
+    win,
+    workspaceId: config.workspace?.id ?? null,
+    workspaceDir: config.workspace_dir ?? config.workspace?.dir,
+    signal
+  })
 
-  async function streamArtifactText(artifactId: string, text: string): Promise<void> {
-    const CHUNK_CHARS = 32
-    const CHUNK_DELAY_MS = 6
-    const MAX_TOTAL_DELAY_MS = 6000
-    let offset = 0
-    let totalDelay = 0
-    while (offset < text.length) {
-      if (signal?.aborted) break
-      const piece = text.slice(offset, offset + CHUNK_CHARS)
-      win?.webContents.send('agent:artifact-chunk', { artifactId, text: piece })
-      offset += piece.length
-      if (offset >= text.length) break
-      if (totalDelay >= MAX_TOTAL_DELAY_MS) break
-      await delay(CHUNK_DELAY_MS)
-      totalDelay += CHUNK_DELAY_MS
-    }
-    // 超时上限后一次性推送剩余内容，避免超长文档拖慢整体完成信号
-    if (offset < text.length) {
-      win?.webContents.send('agent:artifact-chunk', { artifactId, text: text.slice(offset) })
-    }
-  }
-
-  async function pushArtifact(
-    artifact: DocArtifactFile,
-    content: string,
-    done?: Promise<unknown>
-  ): Promise<void> {
-    if (artifacts.some((item) => item.relPath === artifact.relPath && item.ext === artifact.ext))
-      return
-    const artifactId = randomUUID()
-    const meta: AgentArtifactMeta = buildArtifactMeta(artifactId, artifact)
-    win?.webContents.send('agent:artifact-start', meta)
-    try {
-      if (meta.preview === 'text' && content) {
-        await streamArtifactText(artifactId, content)
-      }
-      if (done) await done
-      win?.webContents.send('agent:artifact-end', { artifactId, ok: true })
-      artifacts.push(artifact)
-    } catch (err) {
-      win?.webContents.send('agent:artifact-error', {
-        artifactId,
-        error: err instanceof Error ? err.message : String(err)
-      })
-    }
-  }
-
-  async function handleToolCall(call: AgentToolCallHandle): Promise<void> {
-    if (call.name === 'write_file' || call.name === 'edit_file') {
-      const filePath = toolInputString(call.input, 'file_path')
-      const content = toolInputString(call.input, 'content') ?? ''
-      const found = filePath
-        ? docArtifactFromWriteInput(filePath, config.workspace?.id ?? null)
-        : null
-      if (found) {
-        await pushArtifact(found.artifact, content, call.output as Promise<unknown> | undefined)
-      }
-      return
-    }
-    if (call.name === 'download_asset') {
-      // 素材（配图 / 成片）由工具直接落盘，不经 write_file：从工具输出登记为消息产物
-      const output = await Promise.resolve(call.output).catch(() => undefined)
-      const relPath = assetRelPathFromOutput(output)
-      const found = relPath
-        ? docArtifactFromWriteInput(relPath, config.workspace?.id ?? null)
-        : null
-      if (found) {
-        await pushArtifact(found.artifact, '', undefined)
-      }
-      return
-    }
-    if (call.name === 'task' || call.name === 'execute') {
-      // 委派专家（子智能体）事件：渲染层据此显示「正在委派…」动态状态，
-      // 否则长任务期间界面完全无反馈（用户不知道当前进度）
-      if (call.name === 'task') {
-        const callId = call.callId ?? randomUUID()
-        const name = toolInputString(call.input, 'subagent_type') ?? '专家'
-        const description = toolInputString(call.input, 'description')
-        win?.webContents.send('agent:delegate-start', {
-          callId,
-          name,
-          ...(description ? { description } : {})
-        })
-        void Promise.resolve(call.output)
-          .then(() => win?.webContents.send('agent:delegate-end', { callId, ok: true }))
-          .catch(() => win?.webContents.send('agent:delegate-end', { callId, ok: false }))
-      }
-      const outputText = contentToText(await (call.output ?? Promise.resolve('')).catch(() => ''))
-      const baseDir = config.workspace_dir ?? config.workspace?.dir
-      const extracted = extractDocArtifactsFromText(
-        outputText,
-        baseDir,
-        config.workspace?.id ?? null
-      )
-      for (const artifact of extracted) {
-        await pushArtifact(artifact, '', undefined)
-      }
-    }
-  }
-
-  async function walkToolCalls(run: AgentRunHandle): Promise<void> {
-    // 测试/无工具运行的 stream 对象可能只有 messages 投影，防御处理
-    if (!run.toolCalls) return
-    for await (const call of run.toolCalls) {
-      await handleToolCall(call)
-    }
-    if (run.subagents) {
-      for await (const sub of run.subagents) {
-        await walkToolCalls(sub)
-      }
-    }
-  }
-
-  const messagesTask = (async (): Promise<void> => {
-    let chunkCount = 0
-    for await (const chunk of events.messages) {
-      // 先处理 reasoning（深度思考）流
-      let reasoningCount = 0
-      for await (const token of chunk.reasoning) {
-        reasoningCount++
-        win?.webContents.send('agent:stream-thinking', token)
-      }
-      if (reasoningCount > 0) {
-        console.log('[service] reasoning done, tokens:', reasoningCount)
-        win?.webContents.send('agent:stream-thinking-done')
-      }
-
-      // 再处理 text（正式回复）流
-      let textCount = 0
-      for await (const text of chunk.text) {
-        textCount++
-        chunkCount++
-        win?.webContents.send('agent:stream-chunk', text)
-        onToken?.(text)
-      }
-      console.log(
-        '[service] message chunk done, text pieces:',
-        textCount,
-        'reasoning pieces:',
-        reasoningCount
-      )
-    }
-    console.log('[service] all messages done, total text chunks sent:', chunkCount)
-  })()
-
-  const toolTask = walkToolCalls(events as unknown as AgentRunHandle)
+  const messagesTask = pumpMessageStream(events.messages, { win, onToken: ctx.onToken })
+  const toolTask = collector.walkTools(events as unknown as AgentRunHandle)
 
   await Promise.all([messagesTask, toolTask])
 
@@ -341,5 +156,5 @@ export async function invokeSendMessage(
   win?.webContents.send('agent:stream-done')
   console.log('[service] stream-done sent')
   // 通知调用方（agent:send）持久化产物清单，供历史回显恢复文件链接
-  onArtifacts?.(artifacts)
+  ctx.onArtifacts?.(collector.artifacts)
 }

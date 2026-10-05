@@ -71,10 +71,11 @@ describe('invokeSendMessage（configurable 注入）', () => {
 
   it('SVC-01: modelOverride 注入 configurable.model_override', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
-      thread_id: 't1',
-      user_id: 'u1',
-      modelOverride: 'gpt-4o'
+    await invokeSendMessage({
+      messages: [],
+      win: createFakeWin(),
+      agent: createFakeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1', modelOverride: 'gpt-4o' }
     })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect(config.configurable.thread_id).toBe('t1')
@@ -84,9 +85,11 @@ describe('invokeSendMessage（configurable 注入）', () => {
 
   it('SVC-02: 无 modelOverride 时 configurable 不含 model_override', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
-      thread_id: 't1',
-      user_id: 'u1'
+    await invokeSendMessage({
+      messages: [],
+      win: createFakeWin(),
+      agent: createFakeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1' }
     })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect('model_override' in config.configurable).toBe(false)
@@ -94,11 +97,11 @@ describe('invokeSendMessage（configurable 注入）', () => {
 
   it('SVC-03: workspace_dir 注入与 modelOverride 共存不冲突', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
-      thread_id: 't1',
-      user_id: 'u1',
-      workspace_dir: '/ws',
-      modelOverride: 'm1'
+    await invokeSendMessage({
+      messages: [],
+      win: createFakeWin(),
+      agent: createFakeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1', workspace_dir: '/ws', modelOverride: 'm1' }
     })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect(config.configurable.workspace_dir).toBe('/ws')
@@ -107,18 +110,21 @@ describe('invokeSendMessage（configurable 注入）', () => {
 
   it('SVC-04: backendKind 注入 configurable.backend_kind（缺省不注入）', async () => {
     const streamEvents = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage([], createFakeWin(), createFakeAgent(streamEvents), {
-      thread_id: 't1',
-      user_id: 'u1',
-      backendKind: 'filesystem'
+    await invokeSendMessage({
+      messages: [],
+      win: createFakeWin(),
+      agent: createFakeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1', backendKind: 'filesystem' }
     })
     const config = streamEvents.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect(config.configurable.backend_kind).toBe('filesystem')
 
     const noKind = vi.fn().mockResolvedValue(createEmptyStream())
-    await invokeSendMessage([], createFakeWin(), createFakeAgent(noKind), {
-      thread_id: 't1',
-      user_id: 'u1'
+    await invokeSendMessage({
+      messages: [],
+      win: createFakeWin(),
+      agent: createFakeAgent(noKind),
+      config: { thread_id: 't1', user_id: 'u1' }
     })
     const noKindConfig = noKind.mock.calls[0][1] as { configurable: Record<string, unknown> }
     expect('backend_kind' in noKindConfig.configurable).toBe(false)
@@ -188,16 +194,15 @@ describe('invokeSendMessage（文档产物流事件）', () => {
     const streamEvents = vi.fn().mockResolvedValue(createWriteFileStream())
     const win = makeWin()
     let artifacts: unknown[] = []
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1', workspace: { id: 'ws1', name: '空间' } },
-      undefined,
-      (list) => {
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1', workspace: { id: 'ws1', name: '空间' } },
+      onArtifacts: (list) => {
         artifacts = list
       }
-    )
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     const starts = send.mock.calls.filter((c) => c[0] === 'agent:artifact-start')
     const ends = send.mock.calls.filter((c) => c[0] === 'agent:artifact-end')
@@ -221,16 +226,15 @@ describe('invokeSendMessage（文档产物流事件）', () => {
     const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
     const win = makeWin()
     let artifacts: unknown[] = []
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1' },
-      undefined,
-      (list) => {
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1' },
+      onArtifacts: (list) => {
         artifacts = list
       }
-    )
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     expect(send.mock.calls.some((c) => c[0] === 'agent:artifact-start')).toBe(false)
     expect(artifacts).toHaveLength(0)
@@ -258,16 +262,15 @@ describe('invokeSendMessage（文档产物流事件）', () => {
     const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
     const win = makeWin()
     let artifacts: unknown[] = []
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1', workspace: { id: 'ws1', name: '空间' } },
-      undefined,
-      (list) => {
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1', workspace: { id: 'ws1', name: '空间' } },
+      onArtifacts: (list) => {
         artifacts = list
       }
-    )
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     const starts = send.mock.calls.filter((c) => c[0] === 'agent:artifact-start')
     expect(starts).toHaveLength(1)
@@ -287,14 +290,13 @@ describe('invokeSendMessage（文档产物流事件）', () => {
     }
     const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
     const win = makeWin()
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1' },
-      undefined,
-      () => {}
-    )
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1' },
+      onArtifacts: () => {}
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     expect(send.mock.calls.some((c) => c[0] === 'agent:artifact-start')).toBe(false)
   })
@@ -328,14 +330,13 @@ describe('invokeSendMessage（委派专家事件）', () => {
     }
     const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
     const win = makeWin()
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1' },
-      undefined,
-      () => {}
-    )
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1' },
+      onArtifacts: () => {}
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     const starts = send.mock.calls.filter((c) => c[0] === 'agent:delegate-start')
     const ends = send.mock.calls.filter((c) => c[0] === 'agent:delegate-end')
@@ -360,14 +361,13 @@ describe('invokeSendMessage（委派专家事件）', () => {
     }
     const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
     const win = makeWin()
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1' },
-      undefined,
-      () => {}
-    )
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1' },
+      onArtifacts: () => {}
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     const ends = send.mock.calls.filter((c) => c[0] === 'agent:delegate-end')
     expect(ends).toHaveLength(1)
@@ -385,14 +385,13 @@ describe('invokeSendMessage（委派专家事件）', () => {
     }
     const streamEvents = vi.fn().mockResolvedValue({ messages: [], toolCalls: toolCalls() })
     const win = makeWin()
-    await invokeSendMessage(
-      [],
+    await invokeSendMessage({
+      messages: [],
       win,
-      makeAgent(streamEvents),
-      { thread_id: 't1', user_id: 'u1' },
-      undefined,
-      () => {}
-    )
+      agent: makeAgent(streamEvents),
+      config: { thread_id: 't1', user_id: 'u1' },
+      onArtifacts: () => {}
+    })
     const send = win.webContents.send as ReturnType<typeof vi.fn>
     expect(send.mock.calls.some((c) => c[0] === 'agent:delegate-start')).toBe(false)
     expect(send.mock.calls.some((c) => c[0] === 'agent:delegate-end')).toBe(false)

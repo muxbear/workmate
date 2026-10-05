@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron'
 import type { RemoteImageService } from '../images/RemoteImageService'
+import { createCommandRegistrar } from './command'
 
 /** images:resolve 依赖：登录态守卫 + 远程图片缓存服务 */
 export interface RemoteImageResolveDeps {
@@ -12,20 +13,14 @@ export interface RemoteImageResolveDeps {
  * 渲染层在渲染 Markdown 图片前调用，保证 <img src> 指向 CSP 放行的本地协议。
  */
 export function registerRemoteImageHandlers(ipcMain: IpcMain, deps: RemoteImageResolveDeps): void {
-  ipcMain.handle('images:resolve', async (_event, url?: unknown) => {
-    try {
-      deps.requireUserId()
-    } catch (err) {
-      return { success: false, error: (err as Error).message || '未登录' }
-    }
-    if (typeof url !== 'string' || !url) {
-      return { success: false, error: '参数错误' }
-    }
-    try {
-      const localUrl = await deps.remoteImageService.resolveRemoteImage(url)
-      return { success: true, data: { url: localUrl } }
-    } catch (err) {
-      return { success: false, error: (err as Error).message || '图片解析失败' }
+  const registerCommand = createCommandRegistrar(deps.requireUserId)
+
+  registerCommand<[unknown], { url: string }>(ipcMain, 'images:resolve', {
+    auth: 'user',
+    // 参数校验保持在会话校验之后（历史顺序）
+    execute: async (_ctx, url) => {
+      if (typeof url !== 'string' || !url) throw new Error('参数错误')
+      return { url: await deps.remoteImageService.resolveRemoteImage(url) }
     }
   })
 }

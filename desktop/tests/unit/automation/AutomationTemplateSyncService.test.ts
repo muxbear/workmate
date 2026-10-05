@@ -134,7 +134,7 @@ function setup(templatesDir: string): ServiceHarness {
     authorization: fakeAuthorization(),
     templatesDir
   })
-  const http = (service as unknown as { http: AxiosInstance }).http
+  const http = (service as unknown as { http: { axiosInstance: AxiosInstance } }).http.axiosInstance
   const mock = new MockAdapter(http)
   return { service, mock }
 }

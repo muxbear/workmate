@@ -145,25 +145,25 @@ export class AutomationRunner {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS)
       try {
-        await invokeSendMessage(
+        await invokeSendMessage({
           messages,
-          null,
+          win: null,
           agent,
-          {
+          config: {
             thread_id: threadId,
             user_id: task.userId,
             workspace_dir: ws?.dir,
             workspace: ws,
             ...(modelOverride ? { modelOverride } : {})
           },
-          controller.signal,
-          (list) => {
+          signal: controller.signal,
+          onArtifacts: (list) => {
             artifacts = list
           },
-          (text) => {
+          onToken: (text) => {
             output += text
           }
-        )
+        })
       } finally {
         clearTimeout(timer)
       }

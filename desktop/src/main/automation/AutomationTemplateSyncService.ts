@@ -1,22 +1,15 @@
-import axios, { type AxiosInstance, type AxiosProgressEvent } from 'axios'
+import type { AxiosProgressEvent } from 'axios'
 import type {
   AutomationSchedule,
   AutomationTemplateSyncProgress,
   AutomationTemplateSyncStats,
-  AutomationTemplateSyncStatus,
-  DesktopAutomationTemplate,
-  WebUser
+  DesktopAutomationTemplate
 } from '../../shared/contracts'
-import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
+import type { OAuth2AuthorizationProvider } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_TEMPLATE_READ } from '../oauth2/scopes'
+import { BaseSyncService } from '../network/base-sync-service'
 import { compareExpertVersion } from '../experts/expertVersion'
 import { AutomationTemplateJsonStore } from './AutomationTemplateJsonStore'
-
-interface WebApiEnvelope<T> {
-  code: number
-  data: T
-  message: string
-}
 
 /** Web 端 contextMode 取值（'files' 与桌面端的 'local' 同义） */
 type WebContextMode = 'default' | 'files' | 'knowledge'
@@ -77,7 +70,6 @@ interface AutomationTemplateSyncServiceDeps {
   apiBaseUrl?: string
 }
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8001'
 const JSON_FILE_VERSION = 1
 /** 服务端 page_size 上限；超过 100 个模板时按 total 翻页 */
 const PAGE_SIZE = 100
@@ -161,34 +153,19 @@ function describeStats(stats: AutomationTemplateSyncStats): string {
  * 映射后原子写入 ~/.ke-work/automation-templates/templates.json，并以文件读回结果作为
  * 同步返回值，保证页面展示的数据与磁盘一致。
  */
-export class AutomationTemplateSyncService {
-  private readonly http: AxiosInstance
-  private readonly authorization: OAuth2AuthorizationProvider
+export class AutomationTemplateSyncService extends BaseSyncService<AutomationTemplateSyncProgress> {
   private readonly store: AutomationTemplateJsonStore
   private cachedTemplates: DesktopAutomationTemplate[] = []
   private lastSyncedAt: number | null = null
 
   constructor(deps: AutomationTemplateSyncServiceDeps) {
-    const apiBaseUrl = (deps.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
-    this.authorization = deps.authorization
-    this.store = new AutomationTemplateJsonStore(deps.templatesDir)
-    this.http = axios.create({ baseURL: apiBaseUrl, timeout: 15_000 })
-  }
-
-  getStatus(localUserId: string): AutomationTemplateSyncStatus {
-    const snapshot = this.authorization.getSnapshot(localUserId, [SCOPE_TEMPLATE_READ])
-    return {
-      status: snapshot.status,
-      webUser: toWebUser(snapshot.webUser)
-    }
-  }
-
-  /** 确保 template:read 已授权；已授权时不打开浏览器 */
-  async authorize(localUserId: string): Promise<{ webUser: WebUser | null }> {
-    await this.authorization.ensureAuthorization(localUserId, [SCOPE_TEMPLATE_READ], {
-      reason: 'automation-template-sync'
+    super({
+      authorization: deps.authorization,
+      scopes: [SCOPE_TEMPLATE_READ],
+      reason: 'automation-template-sync',
+      apiBaseUrl: deps.apiBaseUrl
     })
-    return { webUser: toWebUser(this.authorization.getWebUser(localUserId)) }
+    this.store = new AutomationTemplateJsonStore(deps.templatesDir)
   }
 
   /**
@@ -210,10 +187,7 @@ export class AutomationTemplateSyncService {
     stats: AutomationTemplateSyncStats
   }> {
     this.report(onProgress, 'authorize', 5, '正在校验定时模板同步授权…')
-    const accessToken = await this.authorization.ensureAccessToken(localUserId, [
-      SCOPE_TEMPLATE_READ
-    ])
-    const webUser = toWebUser(this.authorization.getWebUser(localUserId))
+    const { accessToken, webUser } = await this.ensureSyncAccess(localUserId)
 
     this.report(onProgress, 'fetch', 12, '正在从服务器拉取定时模板…')
     const items: AutomationTemplateSyncItem[] = []
@@ -221,7 +195,7 @@ export class AutomationTemplateSyncService {
     let page = 1
     // 服务端 page_size 有上限（100），超过就翻页取全量，避免静默截断
     for (;;) {
-      const data = await this.request<AutomationTemplateListData>(
+      const data = await this.http.request<AutomationTemplateListData>(
         'get',
         '/api/automation-template-sync/list',
         undefined,
@@ -321,42 +295,8 @@ export class AutomationTemplateSyncService {
 
   /** 断开同步：仅清理本地缓存与本地会话 token（决策 D1） */
   async disconnect(localUserId: string): Promise<void> {
-    await this.authorization.clear(localUserId)
+    await super.disconnect(localUserId)
     this.cachedTemplates = []
     this.lastSyncedAt = null
-  }
-
-  private report(
-    onProgress: ((p: AutomationTemplateSyncProgress) => void) | undefined,
-    phase: AutomationTemplateSyncProgress['phase'],
-    percent: number,
-    message: string
-  ): void {
-    onProgress?.({ phase, percent, message })
-  }
-
-  private async request<T>(
-    method: 'get' | 'post',
-    path: string,
-    body?: unknown,
-    config?: Record<string, unknown>
-  ): Promise<T> {
-    try {
-      const response =
-        method === 'post'
-          ? await this.http.post<WebApiEnvelope<T>>(path, body, config)
-          : await this.http.get<WebApiEnvelope<T>>(path, config)
-      const envelope = response.data
-      if (envelope.code !== 0) {
-        throw new Error(envelope.message || 'Web 服务返回错误')
-      }
-      return envelope.data
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const message = error.response?.data?.message || error.message || '网络请求失败'
-        throw new Error(message)
-      }
-      throw error
-    }
   }
 }
