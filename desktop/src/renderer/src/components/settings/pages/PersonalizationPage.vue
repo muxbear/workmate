@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
+import ComingSoon from '../ComingSoon.vue'
 import { useSettingsStore } from '../../../store/settings'
 
 const settingsStore = useSettingsStore()
@@ -38,6 +39,7 @@ const memoryFiles = computed(() => [
 
 <template>
   <div class="s-page">
+    <ComingSoon variant="banner" />
     <!-- 基本风格和语调 -->
     <section class="s-sec-divider s-pad-bottom">
       <div class="s-row s-row--start">
@@ -53,6 +55,7 @@ const memoryFiles = computed(() => [
           <select
             v-model="responseTone"
             class="s-select s-select--tone"
+            disabled
           >
             <option>默认</option>
             <option>简洁</option>
@@ -90,6 +93,7 @@ const memoryFiles = computed(() => [
         <SettingToggle
           v-model="welcomeMessage"
           size="sm"
+          disabled
         />
       </div>
     </section>
@@ -107,13 +111,17 @@ const memoryFiles = computed(() => [
         maxlength="1500"
         placeholder="例如: &quot;每次回答我之前都说 ok, 再接后续内容&quot;"
         class="s-textarea"
+        disabled
       />
       <div class="s-textarea-footer">
         <span>这些指令会应用于你的所有对话</span>
         <span>{{ instructionsLength }} / 1500</span>
       </div>
       <div class="s-confirm-row">
-        <button class="s-confirm-btn">
+        <button
+          class="s-confirm-btn"
+          disabled
+        >
           确认
         </button>
       </div>
@@ -162,6 +170,7 @@ const memoryFiles = computed(() => [
             </svg>
             <button
               class="s-edit-btn"
+              disabled
               @click="editingMemoryFile = file.name"
             >
               编辑

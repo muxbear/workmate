@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
+import ComingSoon from '../ComingSoon.vue'
 
 const pluginsDisabled = ref(false)
 const agentsDisabled = ref(true)
@@ -9,6 +10,7 @@ const localMemoryEnabled = ref(true)
 
 <template>
   <div class="s-page">
+    <ComingSoon variant="banner" />
     <section class="s-card">
       <div class="s-row s-row--start">
         <div>
@@ -20,7 +22,10 @@ const localMemoryEnabled = ref(true)
             <strong>当前状态：</strong>技能、MCP、插件可被正常使用。
           </p>
         </div>
-        <SettingToggle v-model="pluginsDisabled" />
+        <SettingToggle
+          v-model="pluginsDisabled"
+          disabled
+        />
       </div>
     </section>
     <section class="s-card">
@@ -33,7 +38,10 @@ const localMemoryEnabled = ref(true)
             禁用后，智能体不会自动组建团队来完成任务。当用户使用专家团时，团队能力仍会自动开启。
           </p>
         </div>
-        <SettingToggle v-model="agentsDisabled" />
+        <SettingToggle
+          v-model="agentsDisabled"
+          disabled
+        />
       </div>
     </section>
     <section class="s-card">
@@ -46,7 +54,10 @@ const localMemoryEnabled = ref(true)
             自动记录本地记忆、工作日志，自动沉淀和优化技能。数据本地存储，仅在你的设备和工作区中保留。
           </p>
         </div>
-        <SettingToggle v-model="localMemoryEnabled" />
+        <SettingToggle
+          v-model="localMemoryEnabled"
+          disabled
+        />
       </div>
     </section>
   </div>

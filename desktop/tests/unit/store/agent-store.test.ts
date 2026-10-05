@@ -373,15 +373,160 @@ describe('useAgentStore（会话数据基于 LangGraph checkpoint）', () => {
 
   it('stopAllTasks 重置流式状态（登出/切换前停止所有任务）', () => {
     const store = useAgentStore()
-    store.isStreaming = true
-    store.isThinking = true
+    store.phase = 'thinking'
 
     store.stopAllTasks()
 
+    expect(store.phase).toBe('idle')
     expect(store.isStreaming).toBe(false)
     expect(store.isThinking).toBe(false)
     // 不触发任何 IPC（主进程任务停止由 auth:logout 联动）
     expect(mock.api.cancelAgentMessage).not.toHaveBeenCalled()
+  })
+
+  it('phase 状态机：thinking →（thinking-done）→ streaming →（流结束）→ idle', async () => {
+    const store = useAgentStore()
+    await store.createConversation()
+
+    const p = store.sendMessage([{ type: 'text', text: '问' }])
+    await vi.waitFor(() => expect(mock.api.onAgentDone).toHaveBeenCalled())
+    expect(store.phase).toBe('thinking')
+    expect(store.isStreaming && store.isThinking).toBe(true)
+
+    // 思考结束：仅 thinking → streaming；派生的两个读值变为 (true, false)
+    ;(firstCallArg(mock.api.onAgentThinkingDone) as () => void)()
+    expect(store.phase).toBe('streaming')
+    expect(store.isStreaming).toBe(true)
+    expect(store.isThinking).toBe(false)
+
+    ;(firstCallArg(mock.api.onAgentDone) as () => void)()
+    await p
+    expect(store.phase).toBe('idle')
+  })
+
+  it('thinking 阶段取消 → canceling（思考指示停、流未结束）；收尾回 idle', async () => {
+    const store = useAgentStore()
+    await store.createConversation()
+
+    const p = store.sendMessage([{ type: 'text', text: '问' }])
+    await vi.waitFor(() => expect(mock.api.onAgentDone).toHaveBeenCalled())
+    expect(store.phase).toBe('thinking')
+
+    store.cancelMessage()
+    expect(mock.api.cancelAgentMessage).toHaveBeenCalled()
+    expect(store.phase).toBe('canceling')
+    expect(store.isStreaming).toBe(true)
+    expect(store.isThinking).toBe(false)
+
+    ;(firstCallArg(mock.api.onAgentDone) as () => void)()
+    await p
+    expect(store.phase).toBe('idle')
+  })
+
+  it('流完成后清理：done 监听被卸载、超时定时器被清除（旧实现两者都泄漏）', async () => {
+    const unlistenDone = vi.fn()
+    mock.api.onAgentDone.mockReturnValueOnce(unlistenDone)
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+
+    const store = useAgentStore()
+    await store.createConversation()
+    const p = store.sendMessage([{ type: 'text', text: '问' }])
+    await vi.waitFor(() => expect(mock.api.onAgentDone).toHaveBeenCalled())
+    ;(firstCallArg(mock.api.onAgentDone) as () => void)()
+    await p
+
+    expect(unlistenDone).toHaveBeenCalled()
+    expect(clearSpy).toHaveBeenCalled()
+    expect(store.phase).toBe('idle')
+  })
+
+  it('产物流：不可变更新驱动 liveArtifact（chunk 累计 + 终态），每次变化替换引用', async () => {
+    const store = useAgentStore()
+    await store.createConversation()
+
+    const p = store.sendMessage([{ type: 'text', text: '写文档' }])
+    await vi.waitFor(() => expect(mock.api.onAgentArtifactStart).toHaveBeenCalled())
+
+    const start = firstCallArg(mock.api.onAgentArtifactStart) as (m: {
+      artifactId: string
+      name: string
+      relPath: string
+      ext: string
+      preview: string
+      workspaceId?: string | null
+    }) => void
+    const chunk = firstCallArg(mock.api.onAgentArtifactChunk) as (d: {
+      artifactId: string
+      text: string
+    }) => void
+    const end = firstCallArg(mock.api.onAgentArtifactEnd) as (d: { artifactId: string }) => void
+    const error = firstCallArg(mock.api.onAgentArtifactError) as (d: {
+      artifactId: string
+      error: string
+    }) => void
+
+    start({
+      artifactId: 'a1',
+      name: '方案.md',
+      relPath: '方案.md',
+      ext: 'md',
+      preview: 'text',
+      workspaceId: 'ws1'
+    })
+    expect(store.liveArtifact?.phase).toBe('streaming')
+    expect(store.liveArtifact?.text).toBe('')
+
+    const first = store.liveArtifact
+    chunk({ artifactId: 'a1', text: '第一段' })
+    // 不可变替换：引用变化（ChatSidePanel 的 watcher 据此感知每个 chunk）
+    expect(store.liveArtifact).not.toBe(first)
+    expect(store.liveArtifact?.text).toBe('第一段')
+    // 非当前产物的 chunk 忽略
+    chunk({ artifactId: 'other', text: '×' })
+    expect(store.liveArtifact?.text).toBe('第一段')
+    chunk({ artifactId: 'a1', text: '第二段' })
+    expect(store.liveArtifact?.text).toBe('第一段第二段')
+
+    end({ artifactId: 'a1' })
+    expect(store.liveArtifact?.phase).toBe('done')
+    expect(store.liveArtifact?.text).toBe('第一段第二段')
+
+    // 结束后同一产物的迟到 error 事件仍按引用替换（状态显式化）
+    error({ artifactId: 'a1', error: '磁盘满了' })
+    expect(store.liveArtifact?.phase).toBe('error')
+    expect(store.liveArtifact?.error).toBe('磁盘满了')
+
+    ;(firstCallArg(mock.api.onAgentDone) as () => void)()
+    await p
+  })
+
+  it('产物流：切换会话/新建任务清空 liveArtifact', async () => {
+    const store = useAgentStore()
+    await store.createConversation()
+    const p = store.sendMessage([{ type: 'text', text: '写文档' }])
+    await vi.waitFor(() => expect(mock.api.onAgentArtifactStart).toHaveBeenCalled())
+    ;(
+      firstCallArg(mock.api.onAgentArtifactStart) as (m: {
+        artifactId: string
+        name: string
+        relPath: string
+        ext: string
+        preview: string
+      }) => void
+    )({
+      artifactId: 'a1',
+      name: 'x.md',
+      relPath: 'x.md',
+      ext: 'md',
+      preview: 'text'
+    })
+    expect(store.liveArtifact).not.toBeNull()
+
+    store.resetNewTask()
+    expect(store.liveArtifact).toBeNull()
+
+    ;(firstCallArg(mock.api.onAgentDone) as () => void)()
+    await p
   })
 
   it('loadConversations 当前会话已不存在（级联删除）时清空选中态', async () => {

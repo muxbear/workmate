@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
+import ComingSoon from '../ComingSoon.vue'
 import { useSettingsStore } from '../../../store/settings'
 
 const settingsStore = useSettingsStore()
@@ -37,11 +38,15 @@ const qrCenterCell = 24
 
 <template>
   <div class="s-page">
+    <ComingSoon variant="banner" />
     <div class="s-beta-head">
       <h2 class="s-beta-title">
         集成（BETA）
       </h2>
-      <button class="s-link">
+      <button
+        class="s-link"
+        disabled
+      >
         配置指南
       </button>
     </div>
@@ -57,13 +62,19 @@ const qrCenterCell = 24
             接入微信小程序，用户可通过小程序与 AI 对话。
           </p>
         </div>
-        <SettingToggle v-model="miniProgramEnabled" />
+        <SettingToggle
+          v-model="miniProgramEnabled"
+          disabled
+        />
       </div>
       <div class="s-sync-row">
         <h3 class="s-sec-title">
           任务产物自动同步到小程序
         </h3>
-        <SettingToggle v-model="autoSyncToMiniProgram" />
+        <SettingToggle
+          v-model="autoSyncToMiniProgram"
+          disabled
+        />
       </div>
       <!-- 小程序码示意图 -->
       <div
@@ -105,13 +116,17 @@ const qrCenterCell = 24
           <p class="s-desc s-desc--mt">
             {{ channel.desc }}
           </p>
-          <button class="s-guide-btn">
+          <button
+            class="s-guide-btn"
+            disabled
+          >
             配置指南
           </button>
         </div>
         <button
           class="s-config-btn"
           :class="{ 's-config-btn--done': configuredChannels.includes(channel.name) }"
+          disabled
           @click="toggleChannel(channel.name)"
         >
           {{ configuredChannels.includes(channel.name) ? '已配置' : '配置' }}
@@ -133,7 +148,10 @@ const qrCenterCell = 24
             超过设定时间未对话，自动开启新对话
           </p>
         </div>
-        <SettingToggle v-model="autoStartConversation" />
+        <SettingToggle
+          v-model="autoStartConversation"
+          disabled
+        />
       </div>
       <div class="s-idle-row">
         <span>超过</span>
@@ -142,6 +160,7 @@ const qrCenterCell = 24
           type="number"
           min="1"
           class="s-idle-input"
+          disabled
         >
         <span>小时未对话，自动开启新会话</span>
       </div>

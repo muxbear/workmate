@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import ComingSoon from '../ComingSoon.vue'
 
 const shortcutQuery = ref('')
 const removedShortcuts = ref<string[]>([])
@@ -44,6 +45,7 @@ const resetAll = (): void => {
 
 <template>
   <div class="s-page">
+    <ComingSoon variant="banner" />
     <p class="s-count">
       共 {{ shortcuts.length }} 条
     </p>
@@ -75,6 +77,7 @@ const resetAll = (): void => {
       </div>
       <button
         class="s-reset-btn"
+        disabled
         @click="resetAll"
       >
         全部恢复默认
@@ -104,6 +107,7 @@ const resetAll = (): void => {
           <button
             class="s-del-btn"
             :aria-label="`删除${item.command}快捷键`"
+            disabled
             @click="removeShortcut(item.command)"
           >
             <svg

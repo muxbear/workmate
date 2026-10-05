@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { ComponentPublicInstance } from 'vue'
 import { showToast as showToastBase } from '@renderer/composables/useToast'
-import QRCode from 'qrcode'
+import { useConversationSearch } from '@renderer/composables/useConversationSearch'
+import { useSharePanel } from '@renderer/composables/useSharePanel'
+import { copyText } from '@renderer/composables/clipboard'
 import { useAgentStore } from '@store/agent'
 import { useModelStore } from '@store/models'
-import MessageContent from '@components/MessageContent.vue'
+import MessageList from '@components/MessageList.vue'
+import ShareDialog from '@components/ShareDialog.vue'
 import ChatSidePanel from '@components/ChatSidePanel.vue'
 import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
 import { useCatalogStore, type CatalogTab } from '@store/catalog'
 import { loadQuickChips, saveQuickChips } from '@store/quickChips'
 import { useSettingsStore } from '@store/settings'
-import BrandMark from '@components/brand/BrandMark.vue'
 
 const agentStore = useAgentStore()
 const catalog = useCatalogStore()
@@ -29,133 +30,16 @@ const CATALOG_NAV_TARGETS: Record<CatalogTab, CatalogNavTarget> = {
 // 通过本地 computed 包装 agentStore，建立正确的 Vue 响应式依赖链
 const currentMessages = computed(() => agentStore.currentMessages)
 const isStreaming = computed(() => agentStore.isStreaming)
-const isThinking = computed(() => agentStore.isThinking)
-const currentWorkspaceId = computed(
-  () => agentStore.currentConversation?.workspace?.id ?? undefined
-)
-
-// ── 消息内成片播放（视频产物直接给出播放入口，不依赖模型是否把 <video> 写进回复）──
-/** 视频产物扩展名（与主进程 doc-artifacts 的白名单保持一致） */
-const VIDEO_ARTIFACT_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'avi'])
-/** 视频对象地址 MIME（Blob 需带对类型，<video> 才肯内联播放） */
-function videoMimeOf(name: string): string {
-  const ext = (name.split('.').pop() ?? '').toLowerCase()
-  if (ext === 'webm') return 'video/webm'
-  if (ext === 'mov') return 'video/quicktime'
-  if (ext === 'm4v') return 'video/x-m4v'
-  if (ext === 'mkv') return 'video/x-matroska'
-  if (ext === 'avi') return 'video/x-msvideo'
-  return 'video/mp4'
-}
-function isVideoArtifact(file: { name: string }): boolean {
-  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
-  return VIDEO_ARTIFACT_EXTS.has(ext)
-}
-
-/** 视频产物 relPath → blob 地址（已就绪的成片） */
-const videoArtifactSrc = ref<Record<string, string>>({})
-const videoArtifactFailed = ref<Record<string, true>>({})
-/** 已创建的 blob 地址：切换会话/消息时统一释放 */
-const videoArtifactUrls = new Map<string, string>()
-
-function revokeVideoArtifacts(): void {
-  for (const url of videoArtifactUrls.values()) URL.revokeObjectURL(url)
-  videoArtifactUrls.clear()
-  videoArtifactSrc.value = {}
-  videoArtifactFailed.value = {}
-}
-
-async function resolveVideoArtifacts(): Promise<void> {
-  const workspaceId = currentWorkspaceId.value
-  if (!workspaceId) return
-  const targets = new Map<string, { relPath: string; name: string }>()
-  for (const msg of currentMessages.value) {
-    for (const file of msg.files ?? []) {
-      if (isVideoArtifact(file)) targets.set(file.relPath, { relPath: file.relPath, name: file.name })
-    }
-  }
-  // 已就绪的不重复拉取
-  for (const relPath of Array.from(targets.keys())) {
-    if (videoArtifactSrc.value[relPath]) targets.delete(relPath)
-  }
-  if (targets.size === 0) return
-
-  const next: Record<string, string> = { ...videoArtifactSrc.value }
-  const failed: Record<string, true> = { ...videoArtifactFailed.value }
-  await Promise.all(
-    Array.from(targets.values(), async (target) => {
-      try {
-        const res = await window.api.readWorkspaceMediaBytes(workspaceId, target.relPath)
-        const bytes = res?.data?.bytes
-        if (!res?.success || !bytes || bytes.byteLength === 0) throw new Error('empty')
-        const buffer = bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength
-        ) as ArrayBuffer
-        const url = URL.createObjectURL(new Blob([buffer], { type: videoMimeOf(target.name) }))
-        videoArtifactUrls.set(target.relPath, url)
-        next[target.relPath] = url
-        delete failed[target.relPath]
-      } catch {
-        failed[target.relPath] = true
-      }
-    })
-  )
-  videoArtifactSrc.value = next
-  videoArtifactFailed.value = failed
-}
-
-watch(
-  () => [
-    currentWorkspaceId.value ?? '',
-    currentMessages.value.map((msg) => (msg.files ?? []).map((f) => f.relPath).join('|')).join('::')
-  ].join('\u0000'),
-  () => void resolveVideoArtifacts(),
-  { immediate: true }
-)
-
-onUnmounted(revokeVideoArtifacts)
 
 // ── State ──
 const category = ref('work')
 const taskInput = ref('')
 const model = ref('Auto')
 const chipsScrollRef = ref<HTMLElement | null>(null)
-
-// ── 消息区滚动状态（追滚/回顶回底按钮的数据源）──
-const messagesScrollRef = ref<HTMLElement | null>(null)
-const SCROLL_NEAR_EDGE = 40
-const atTop = ref(true)
-const atBottom = ref(true)
 /** 输入卡组件实例（欢迎态 / 对话态互斥挂载，共用一个 ref） */
 const promptRef = ref<InstanceType<typeof PromptInput> | null>(null)
-
-/** 由容器 scroll 事件驱动：按 40px 阈值刷新「接近顶部/底部」状态 */
-const updateScrollState = (): void => {
-  const el = messagesScrollRef.value
-  if (!el) return
-  const max = el.scrollHeight - el.clientHeight
-  atTop.value = el.scrollTop <= SCROLL_NEAR_EDGE
-  atBottom.value = el.scrollTop >= max - SCROLL_NEAR_EDGE
-}
-
-/** 容器挂载时刷新一次状态（初次渲染无 scroll 事件，避免状态残留默认值） */
-watch(messagesScrollRef, (el) => {
-  if (!el) return
-  updateScrollState()
-  // 回显路径：页面挂载时消息已加载（从其它标签切到新建任务打开会话），直接滚底
-  if (currentMessages.value.length > 0) scrollMessagesToBottom()
-})
-
-/** 回顶/回底跳转（按钮点击，smooth 滚动） */
-const scrollToTop = (): void => {
-  messagesScrollRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
-}
-
-const scrollToBottom = (): void => {
-  const el = messagesScrollRef.value
-  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-}
+/** 消息列表组件实例（滚动机制随 R6 外提；本页仅做布局联动与强制跟随） */
+const messageListRef = ref<InstanceType<typeof MessageList> | null>(null)
 
 /** 菜单内导航 → Home 切换到“智能体”下对应的专家 / 技能 / 连接器页面 */
 const onPlusNavigate = (tab: CatalogTab): void => {
@@ -169,231 +53,43 @@ const panelFullscreen = ref(false)
 watch(panelFullscreen, () => {
   // 全屏右侧栏时退出 5:5 比例态（全屏宽度 100%）
   if (panelFullscreen.value) sideRatioMode.value = false
-  nextTick(updateScrollState)
+  messageListRef.value?.refreshScrollState()
 })
 
-// ── AI 消息操作栏 ──
 // 轻量提示：全局 toast（本页沿用历史 1.5s 短时长；欢迎态/对话态由全局宿主统一覆盖）
 const showToast = (text: string): void => showToastBase(text, 1500)
 
-// ── 文档右侧栏：5:5 比例态 + 产物流同步 ──
+// ── 文档右侧栏：5:5 比例态 ──
+// 产物流本身由 ChatSidePanel 直接订阅 store.liveArtifact（单一事实源）；
+// 本页只对「新产物出现」做布局反应（进入 5:5），不再搬运内容。
 const sidePanelRef = ref<InstanceType<typeof ChatSidePanel> | null>(null)
 const sideRatioMode = ref(false)
-const artifactTextLengths = new Map<string, number>()
 
-async function syncLiveArtifact(): Promise<void> {
-  const artifact = agentStore.liveArtifact
-  const panel = sidePanelRef.value
-  if (!artifact || !panel) return
-  const prevLength = artifactTextLengths.get(artifact.artifactId)
-  if (prevLength === undefined) {
-    artifactTextLengths.set(artifact.artifactId, artifact.text.length)
-    sideRatioMode.value = true
-    await panel.openArtifact(artifact, artifact.text)
-    return
-  }
-  if (artifact.text.length > prevLength) {
-    panel.appendArtifactText(artifact.artifactId, artifact.text.slice(prevLength))
-    artifactTextLengths.set(artifact.artifactId, artifact.text.length)
-  }
-  if (artifact.phase === 'done' || artifact.phase === 'error') {
-    artifactTextLengths.delete(artifact.artifactId)
-    await panel.finishArtifact(artifact.artifactId, artifact.phase === 'done', artifact.error)
-  }
-}
-
+/** 新产物出现（artifactId 变化）→ 进入 5:5 比例态 */
 watch(
-  () => agentStore.artifactVersion,
-  () => {
-    void syncLiveArtifact()
+  () => agentStore.liveArtifact?.artifactId,
+  (id, prev) => {
+    if (id && id !== prev) sideRatioMode.value = true
   }
 )
 
 watch(
   () => agentStore.currentConversationId,
   () => {
-    artifactTextLengths.clear()
     sideRatioMode.value = false
   }
 )
 
-/** 点击消息区文档文件卡片/正文链接 → 右侧打开（未开则展开，已开则聚焦） */
-async function openDocFromMessage(file: { name: string; relPath: string }): Promise<void> {
+/** 点击消息区文档文件卡片/正文链接 → 右侧打开（未开则展开，已开则聚焦；R6：由 MessageList 统一 emit） */
+async function openDocFromList(relPath: string, name?: string): Promise<void> {
   sideRatioMode.value = true
-  await sidePanelRef.value?.openDocFileByRelPath(file.relPath, { name: file.name })
+  const displayName = name ?? relPath.split('/').pop() ?? relPath
+  await sidePanelRef.value?.openDocFileByRelPath(relPath, { name: displayName })
 }
 
-function openDocFromRelPath(relPath: string): void {
-  const name = relPath.split('/').pop() ?? relPath
-  sideRatioMode.value = true
-  void sidePanelRef.value?.openDocFileByRelPath(relPath, { name })
-}
-
-/** 点赞/点踩本地状态（按消息 id） */
-const feedbackMap = ref<Record<string, 'up' | 'down' | null>>({})
-const toggleFeedback = (msgId: string, kind: 'up' | 'down'): void => {
-  const cur = feedbackMap.value[msgId]
-  feedbackMap.value[msgId] = cur === kind ? null : kind
-}
-
-/** 复制文本到剪贴板（clipboard + execCommand fallback） */
-async function copyText(text: string, okText = '已复制'): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-  }
-  showToast(okText)
-}
-
-/** 朗读 AI 回复（Web Speech API；无引擎降级提示） */
-const speakingMsgId = ref<string | null>(null)
-const toggleSpeak = (msg: { id: string; content: string }): void => {
-  if (!('speechSynthesis' in window)) {
-    showToast('当前环境不支持语音朗读')
-    return
-  }
-  if (speakingMsgId.value === msg.id) {
-    window.speechSynthesis.cancel()
-    speakingMsgId.value = null
-    return
-  }
-  window.speechSynthesis.cancel()
-  const utter = new SpeechSynthesisUtterance(msg.content)
-  utter.lang = 'zh-CN'
-  speakingMsgId.value = msg.id
-  utter.onend = () => {
-    speakingMsgId.value = null
-  }
-  utter.onerror = () => {
-    speakingMsgId.value = null
-  }
-  window.speechSynthesis.speak(utter)
-  // 降级：speak 后 1.5s 未进入朗读状态视为不支持
-  setTimeout(() => {
-    if (speakingMsgId.value === msg.id && !window.speechSynthesis.speaking) {
-      speakingMsgId.value = null
-      showToast('当前环境不支持语音朗读')
-    }
-  }, 1500)
-}
-
-// ── 分享选择模式 ──
-/** 分享面板开启：每条消息左侧出现复选框，底部出现操作面板 */
-const shareMode = ref(false)
-const shareSelected = ref<string[]>([])
-
-const shareAllChecked = computed(
-  () => messages.value.length > 0 && shareSelected.value.length === messages.value.length
-)
-const shareAllIndeterminate = computed(
-  () => shareSelected.value.length > 0 && shareSelected.value.length < messages.value.length
-)
-
-const isShareSelected = (id: string): boolean => shareSelected.value.includes(id)
-
-const toggleShareSelected = (id: string): void => {
-  const i = shareSelected.value.indexOf(id)
-  if (i >= 0) shareSelected.value.splice(i, 1)
-  else shareSelected.value.push(id)
-}
-
-/** 全选/取消全选（收敛为方法，避免模板内多语句表达式） */
-const toggleShareAll = (): void => {
-  shareSelected.value = shareAllChecked.value ? [] : messages.value.map((m) => m.id)
-}
-
-/** 打开分享面板（同时收起对话内搜索，避免视觉叠加） */
-const openSharePanel = (): void => {
-  closeSearch()
-  shareMode.value = true
-}
-
-/** 关闭分享面板并清空选中（收敛为方法，避免模板内多语句表达式） */
-const closeSharePanel = (): void => {
-  shareMode.value = false
-  shareSelected.value = []
-}
-
-/** 分享链接：本地自定义协议（未来云端模式可切换 https 分享服务地址） */
-const shareLink = computed(
-  () => `kework://conversation/${agentStore.currentConversationId ?? 'new'}`
-)
-
-/** 选中消息拼文本（用户/AI 前缀，过滤空内容） */
-const shareSelectedText = (): string =>
-  messages.value
-    .filter((m) => shareSelected.value.includes(m.id))
-    .map((m) => (m.role === 'user' ? `[用户] ${m.content}` : `[AI] ${m.content}`))
-    .filter((t) => t.trim().length > 0)
-    .join('\n\n')
-
-/** 分享到微信：复制选中对话文本，由用户粘贴到微信发送 */
-const shareToWechat = (): void => {
-  const text = shareSelectedText()
-  if (!text) return showToast('请先选择要分享的消息')
-  copyText(text, '已复制，请在微信中粘贴分享')
-}
-
-/** 分享到朋友圈：同微信，复制文本 */
-const shareToMoments = (): void => {
-  const text = shareSelectedText()
-  if (!text) return showToast('请先选择要分享的消息')
-  copyText(text, '已复制，请在朋友圈中粘贴分享')
-}
-
-/** 复制分享链接 */
-const copyShareLink = (): void => {
-  copyText(shareLink.value, '分享链接已复制')
-}
-
-/** 浏览器打开分享链接（本地自定义协议，未注册时由系统提示） */
-const openShareInBrowser = (): void => {
-  window.api.openExternal(shareLink.value)
-}
-
-// ── 分享二维码 ──
-const qrModalOpen = ref(false)
-const qrDataUrl = ref('')
-const qrGenerating = ref(false)
-
-/** 生成分享链接二维码并弹出展示 */
-const generateQr = async (): Promise<void> => {
-  qrModalOpen.value = true
-  qrGenerating.value = true
-  qrDataUrl.value = ''
-  try {
-    qrDataUrl.value = await QRCode.toDataURL(shareLink.value, { width: 240, margin: 1 })
-  } catch (err) {
-    console.error('[share] 二维码生成失败:', err)
-    qrDataUrl.value = ''
-  } finally {
-    qrGenerating.value = false
-  }
-}
-
-/** 关闭二维码弹窗（收敛为方法，避免模板内多语句表达式） */
-const closeQrModal = (): void => {
-  qrModalOpen.value = false
-  qrDataUrl.value = ''
-}
+// ── 消息操作栏（点赞/朗读/复制：R6 外提至 components/MessageActions.vue，per-instance 状态）──
 
 // ── 格式化工具 ──
-const formatDuration = (ms: number): string => {
-  if (ms < 1000) return '共 <1s'
-  if (ms < 60_000) return `共 ${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60_000)
-  const s = Math.floor((ms % 60_000) / 1000)
-  return `共 ${m}m ${s}s`
-}
-
 const formatTime = (ts: number): string => {
   const d = new Date(ts)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -408,63 +104,10 @@ const historyQuestions = computed(() =>
     .reverse()
 )
 
-// ── 对话内搜索 ──
-const searchOpen = ref(false)
-const searchKeyword = ref('')
-const searchIndex = ref(0)
-const suppressAutoScroll = ref(false)
-
-/** 关闭搜索并清空关键词（收敛为方法，避免模板内多语句表达式） */
-const closeSearch = (): void => {
-  searchOpen.value = false
-  searchKeyword.value = ''
-}
-
-const searchMatches = computed(() => {
-  const kw = searchKeyword.value.trim().toLowerCase()
-  if (!kw) return []
-  return messages.value.filter(
-    (m) => m.content.toLowerCase().includes(kw) || (m.reasoning ?? '').toLowerCase().includes(kw)
-  )
-})
-
-watch(searchKeyword, () => {
-  searchIndex.value = 0
-})
-
-const hitSet = computed(() => new Set(searchMatches.value.map((m) => m.id)))
-const currentHitId = computed(() => searchMatches.value[searchIndex.value]?.id ?? null)
-
-/** 滚动定位到消息（suppressAutoScroll 防与底部自动滚动竞争） */
-const scrollToMsg = (id: string): void => {
-  suppressAutoScroll.value = true
-  nextTick(() => {
-    document
-      .querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    setTimeout(() => {
-      suppressAutoScroll.value = false
-    }, 600)
-  })
-}
-
-const gotoSearch = (dir: 1 | -1): void => {
-  const total = searchMatches.value.length
-  if (total === 0) return
-  searchIndex.value = (searchIndex.value + dir + total) % total
-  const target = searchMatches.value[searchIndex.value]
-  if (target) scrollToMsg(target.id)
-}
-
-const jumpToQuestion = (id: string): void => {
-  historyMenuOpen.value = false
-  scrollToMsg(id)
-}
-
 /** 重新生成最后一条回复 */
 const regenerateLast = (): void => {
   // 用户主动触发的消息动作：即使向上翻阅过也强制回到底部跟随
-  atBottom.value = true
+  messageListRef.value?.stickToBottom()
   agentStore.regenerate({
     model: model.value,
     customModelId: selectedCustomId.value ?? undefined,
@@ -485,120 +128,55 @@ const messages = computed(() => {
     files: m.files
   }))
 })
-const thinking = computed(() => {
-  const val = isStreaming.value || isThinking.value
-  return val
+
+// ── 对话内搜索（R6 外提至 composables/useConversationSearch；suppressAutoScroll 由下方滚动 watcher 读取） ──
+const {
+  searchOpen,
+  searchKeyword,
+  searchIndex,
+  suppressAutoScroll,
+  closeSearch,
+  searchMatches,
+  hitSet,
+  currentHitId,
+  scrollToMsg,
+  gotoSearch
+} = useConversationSearch({ messages })
+
+/** 从历史问题菜单跳转（先收起菜单再定位） */
+const jumpToQuestion = (id: string): void => {
+  historyMenuOpen.value = false
+  scrollToMsg(id)
+}
+
+// ── 分享选择模式 + 二维码（R6 外提至 composables/useSharePanel；与搜索互斥、复制能力与消息操作共用） ──
+const {
+  shareMode,
+  shareSelected,
+  shareAllChecked,
+  shareAllIndeterminate,
+  isShareSelected,
+  toggleShareSelected,
+  toggleShareAll,
+  openSharePanel,
+  closeSharePanel,
+  shareLink,
+  shareToWechat,
+  shareToMoments,
+  copyShareLink,
+  openShareInBrowser,
+  qrModalOpen,
+  qrDataUrl,
+  generateQr,
+  closeQrModal
+} = useSharePanel({
+  messages,
+  conversationId: computed(() => agentStore.currentConversationId),
+  onBeforeOpen: closeSearch,
+  notify: showToast,
+  copy: copyText
 })
-
-const findLastAssistant = (): (typeof messages.value)[number] | null => {
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    if (messages.value[i].role === 'assistant') {
-      return messages.value[i]
-    }
-  }
-  return null
-}
-
-const isLastAssistant = (msgId: string): boolean => findLastAssistant()?.id === msgId
-
-// ── 思考块交互：按消息 id 记录（regenerate 截断后 index 会错位）──
-/** 折叠为一行（仅保留标题行） */
-const thinkingCollapsed = ref<Record<string, boolean>>({})
-/** 展开浏览（高度上限放宽到阅读高度；默认在紧凑高度内滚动） */
-const thinkingExpanded = ref<Record<string, boolean>>({})
-/** 内容是否超出紧凑高度（决定「展开浏览」入口是否出现） */
-const thinkingOverflow = ref<Record<string, boolean>>({})
-/** 内部滚动是否跟随输出（用户向上翻阅后暂停跟随） */
-const thinkingFollow = ref<Record<string, boolean>>({})
-/** 用户手动操作过的思考块：思考结束后不自动收起，尊重用户意图 */
-const thinkingTouched = new Set<string>()
-/** 思考块正文滚动容器（ref 回调注册，卸载自动移除） */
-const thinkingBodies = new Map<string, HTMLElement>()
-
-function registerThinkingBody(msgId: string, el: Element | ComponentPublicInstance | null): void {
-  if (el instanceof HTMLElement) thinkingBodies.set(msgId, el)
-  else thinkingBodies.delete(msgId)
-}
-
-/** 贴近底部判定阈值（px）：留容差，避免逐像素误差把跟随判停 */
-const THINKING_FOLLOW_GAP = 24
-
-/** 思考块内部滚到底（流式逐块增长时跟随输出；force 用于用户主动展开时定位到最新） */
-function scrollThinkingToBottom(msgId: string, force = false): void {
-  const el = thinkingBodies.get(msgId)
-  if (!el) return
-  if (!force && thinkingFollow.value[msgId] === false) return
-  el.scrollTop = el.scrollHeight
-  thinkingFollow.value[msgId] = true
-}
-
-/** 内部滚动事件：刷新「是否仍贴近底部」，决定后续输出是否继续跟随 */
-function onThinkingScroll(msgId: string, e: Event): void {
-  const el = e.target as HTMLElement
-  thinkingFollow.value[msgId] =
-    el.scrollHeight - el.scrollTop - el.clientHeight <= THINKING_FOLLOW_GAP
-}
-
-/** 内容超出紧凑高度 → 出现「展开浏览」；折叠隐藏（高度为 0）时不测量，保留既有判断 */
-function updateThinkingOverflow(msgId: string): void {
-  if (thinkingOverflow.value[msgId]) return
-  const el = thinkingBodies.get(msgId)
-  if (!el || el.clientHeight === 0) return
-  thinkingOverflow.value[msgId] = el.scrollHeight > el.clientHeight + 1
-}
-
-/** 该思考块是否正在输出（此消息为最后一条 AI 消息且思考流未结束） */
-function isThinkingNow(msgId: string): boolean {
-  return isStreaming.value && isThinking.value && isLastAssistant(msgId)
-}
-
-/** 折叠/展开切换（手动操作后不再自动收起）；展开时定位到最新输出 */
-const toggleThinking = (msgId: string): void => {
-  thinkingTouched.add(msgId)
-  thinkingCollapsed.value[msgId] = !thinkingCollapsed.value[msgId]
-  if (!thinkingCollapsed.value[msgId]) {
-    nextTick(() => {
-      scrollThinkingToBottom(msgId, true)
-      updateThinkingOverflow(msgId)
-    })
-  }
-}
-
-/** 展开浏览 / 收起：紧凑高度 ↔ 阅读高度 */
-const toggleThinkingExpand = (msgId: string): void => {
-  thinkingTouched.add(msgId)
-  thinkingExpanded.value[msgId] = !thinkingExpanded.value[msgId]
-  nextTick(() => updateThinkingOverflow(msgId))
-}
-
-const showThinkingExpandToggle = (msgId: string): boolean =>
-  !!thinkingOverflow.value[msgId] && !thinkingCollapsed.value[msgId]
-
-// ── 委派专家进行中：动态状态提示（主智能体拆分任务交给专家时给出明确反馈）──
-const activeDelegation = computed(() => {
-  const list = agentStore.activeDelegations
-  return list.length > 0 ? list[list.length - 1] : null
-})
-
-/** 当前委派已等待秒数：长任务期间持续刷新，表明仍在进行 */
-const delegationWaitSec = ref(0)
-let delegationTimer: ReturnType<typeof setInterval> | null = null
-
-watch(activeDelegation, (val) => {
-  if (delegationTimer) {
-    clearInterval(delegationTimer)
-    delegationTimer = null
-  }
-  delegationWaitSec.value = 0
-  if (!val) return
-  delegationTimer = setInterval(() => {
-    delegationWaitSec.value += 1
-  }, 1000)
-})
-
-onUnmounted(() => {
-  if (delegationTimer) clearInterval(delegationTimer)
-})
+// ── 思考块交互 / 委派计时 / 消息列表渲染：随 R6 外提至 ThinkingBlock 与 MessageList 组件 ──
 
 // ── Constants ──
 const categories = [
@@ -739,7 +317,7 @@ const sendMessage = async (payload: PromptPayload): Promise<void> => {
   }
 
   // 用户主动触发的消息动作：即使向上翻阅过也强制回到底部跟随
-  atBottom.value = true
+  messageListRef.value?.stickToBottom()
   agentStore
     .sendMessage(payload.parts, {
       model: payload.model,
@@ -781,101 +359,7 @@ onUnmounted(() => {
   if (taskInput.value.trim()) catalog.clearSkills()
 })
 
-// 最后一条 assistant 消息的正文+思考长度（流式逐块增长时驱动实时追滚）
-const lastAssistantContentLen = computed(() => {
-  for (let i = currentMessages.value.length - 1; i >= 0; i--) {
-    const m = currentMessages.value[i]
-    if (m.role === 'assistant') {
-      return (m.content?.length ?? 0) + (m.reasoning?.length ?? 0)
-    }
-  }
-  return 0
-})
-
-/** 用户位于底部时，把消息区滚到底部（瞬时赋值，流式高频增长不用 smooth） */
-const scrollMessagesToBottom = (): void => {
-  const el = messagesScrollRef.value
-  if (!el) return
-  el.scrollTop = el.scrollHeight
-  updateScrollState()
-}
-
-// 消息增删 / 流式开始结束：位于底部时滚底（搜索/历史提问定位期间抑制）
-watch(
-  () => [currentMessages.value.length, isStreaming.value],
-  () => {
-    if (suppressAutoScroll.value) return
-    if (!atBottom.value) return
-    nextTick(scrollMessagesToBottom)
-  }
-)
-
-// 流式内容逐块增长：位于底部时实时追滚（用户向上翻阅后 atBottom=false 即暂停跟随）
-watch(lastAssistantContentLen, () => {
-  if (suppressAutoScroll.value) return
-  if (!atBottom.value) return
-  nextTick(scrollMessagesToBottom)
-})
-
-// ── 思考块：输出中跟随内部滚动 + 溢出测量（决定是否出现「展开浏览」）──
-const lastAssistantReasoningLen = computed(() => findLastAssistant()?.reasoning?.length ?? 0)
-
-watch(lastAssistantReasoningLen, () => {
-  const last = findLastAssistant()
-  if (!last?.reasoning) return
-  nextTick(() => {
-    scrollThinkingToBottom(last.id)
-    updateThinkingOverflow(last.id)
-  })
-})
-
-// 思考流结束：自动收起为一行（对齐主流同类产品：思考完成后收起，点击可再展开）；
-// 用户手动操作过的思考块保持现状，不打扰阅读
-watch(isThinking, (now, prev) => {
-  if (!prev || now) return
-  const last = findLastAssistant()
-  if (!last?.reasoning) return
-  if (thinkingTouched.has(last.id)) return
-  thinkingCollapsed.value[last.id] = true
-})
-
-// 会话切换/历史回显：思考块默认收起（仅一行摘要），并同步可见块的溢出状态；
-// 正在流式输出的消息除外（保持展开可见）
-watch(
-  () => messages.value.map((m) => m.id).join('|'),
-  () => {
-    nextTick(() => {
-      for (const m of messages.value) {
-        if (!m.reasoning || m.id in thinkingCollapsed.value) continue
-        if (isStreaming.value && isLastAssistant(m.id)) continue
-        thinkingCollapsed.value[m.id] = true
-      }
-      for (const m of messages.value) {
-        if (m.reasoning && !thinkingCollapsed.value[m.id]) updateThinkingOverflow(m.id)
-      }
-    })
-  }
-)
-
-// ── 历史会话回显：切换会话后等消息加载完成滚到底部（修复残留上次滚动位置问题）──
-const echoPendingScroll = ref(false)
-
-watch(
-  () => agentStore.currentConversationId,
-  () => {
-    echoPendingScroll.value = true
-  }
-)
-
-watch(
-  () => currentMessages.value.length,
-  (len) => {
-    if (echoPendingScroll.value && len > 0) {
-      echoPendingScroll.value = false
-      nextTick(scrollMessagesToBottom)
-    }
-  }
-)
+// ── 滚动状态机与历史回显滚底：随 R6 外提至 components/MessageList.vue ──
 </script>
 
 <template>
@@ -1288,503 +772,38 @@ watch(
           </div>
         </header>
 
-        <div ref="messagesScrollRef" class="chat-messages" @scroll="updateScrollState">
-          <div
-            v-for="msg in messages"
-            :key="msg.id"
-            :data-msg-id="msg.id"
-            :class="[
-              'chat-bubble-row',
-              msg.role === 'user' ? 'chat-bubble-row--user' : 'chat-bubble-row--assistant',
-              {
-                'chat-msg--hit': hitSet.has(msg.id),
-                'chat-msg--current': currentHitId === msg.id,
-                'chat-msg-row--selected': isShareSelected(msg.id)
-              }
-            ]"
-          >
-            <!-- 分享选择模式：消息最左侧复选框 -->
-            <label
-              v-if="shareMode"
-              class="chat-msg-check"
-              :class="{ 'chat-msg-check--selected': isShareSelected(msg.id) }"
-              :title="isShareSelected(msg.id) ? '取消选中' : '选中该消息'"
-              @click.prevent="toggleShareSelected(msg.id)"
-            >
-              <input type="checkbox" :checked="isShareSelected(msg.id)" />
-              <span class="chat-msg-check-box">
-                <svg
-                  v-if="isShareSelected(msg.id)"
-                  width="10"
-                  height="10"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="white"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </span>
-            </label>
-            <!-- AI 回复：头像+名字在顶部，正文无背景色，底部操作栏 -->
-            <template v-if="msg.role === 'assistant'">
-              <div class="chat-bubble-head">
-                <div class="chat-avatar chat-avatar--ai chat-avatar--sm">
-                  <BrandMark
-                    :size="16"
-                    variant="mark"
-                  />
-                </div>
-                <span class="chat-bubble-head-name">{{ settingsStore.systemName }}</span>
-              </div>
-              <div class="chat-bubble-wrapper">
-                <!-- 深度思考块：高度受限+内部滚动+输出提示；「展开浏览」放宽高度上限 -->
-                <div v-if="msg.reasoning" class="thinking-block">
-                  <button class="thinking-header" @click="toggleThinking(msg.id)">
-                    <span class="thinking-header-text">
-                      深度思考
-                      <span v-if="isThinkingNow(msg.id)" class="thinking-live">
-                        <span class="thinking-live-dot"></span>
-                        <span class="thinking-live-text">正在思考…</span>
-                      </span>
-                    </span>
-                    <span
-                      v-if="showThinkingExpandToggle(msg.id)"
-                      class="thinking-expand"
-                      :title="thinkingExpanded[msg.id] ? '收起为紧凑高度' : '展开浏览完整思考'"
-                      @click.stop="toggleThinkingExpand(msg.id)"
-                    >
-                      {{ thinkingExpanded[msg.id] ? '收起' : '展开浏览' }}
-                    </span>
-                    <svg
-                      :class="[
-                        'thinking-chevron',
-                        { 'thinking-chevron--collapsed': thinkingCollapsed[msg.id] }
-                      ]"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                  </button>
-                  <Transition name="thinking-collapse">
-                    <div
-                      v-show="!thinkingCollapsed[msg.id]"
-                      :ref="(el) => registerThinkingBody(msg.id, el)"
-                      :class="[
-                        'thinking-body',
-                        { 'thinking-body--expanded': thinkingExpanded[msg.id] }
-                      ]"
-                      @scroll="onThinkingScroll(msg.id, $event)"
-                    >
-                      <MessageContent
-                        :content="msg.reasoning"
-                        content-type="markdown"
-                        :workspace-id="currentWorkspaceId"
-                        @open-file="openDocFromRelPath"
-                      />
-                    </div>
-                  </Transition>
-                </div>
-                <!-- 消息内容：有内容时渲染，空内容+流式输出时显示加载动画 -->
-                <div v-if="msg.content" class="chat-bubble">
-                  <MessageContent
-                    :content="msg.content"
-                    content-type="markdown"
-                    :workspace-id="currentWorkspaceId"
-                    @open-file="openDocFromRelPath"
-                  />
-                </div>
-                <!-- 等待首块输出：无正文且无思考时显示加载动画（思考块/委派提示已给状态时不重复） -->
-                <div
-                  v-if="
-                    !msg.content &&
-                    !msg.reasoning &&
-                    !activeDelegation &&
-                    isLastAssistant(msg.id) &&
-                    thinking
-                  "
-                  class="chat-bubble thinking-bubble"
-                >
-                  <span class="dot-pulse" style="animation-delay: 0s"></span>
-                  <span class="dot-pulse" style="animation-delay: 0.15s"></span>
-                  <span class="dot-pulse" style="animation-delay: 0.3s"></span>
-                </div>
-                <!-- 生成文档链接条：live 与历史回显共用同一模板 -->
-                <div v-if="msg.files && msg.files.length" class="msg-artifacts">
-                  <template v-for="file in msg.files" :key="file.relPath">
-                    <!-- 视频产物：直接给出播放入口（不依赖模型是否把 <video> 写进回复） -->
-                    <video
-                      v-if="isVideoArtifact(file) && videoArtifactSrc[file.relPath]"
-                      class="msg-video"
-                      :src="videoArtifactSrc[file.relPath]"
-                      :title="file.relPath"
-                      controls
-                      preload="metadata"
-                    ></video>
-                    <button
-                      v-else
-                      class="msg-artifact-link"
-                      :class="{ 'msg-artifact-link--failed': videoArtifactFailed[file.relPath] }"
-                      :title="file.relPath"
-                      @click="openDocFromMessage(file)"
-                    >
-                      <span class="msg-artifact-ico">📄</span>
-                      <span class="msg-artifact-name">{{ file.name }}</span>
-                    </button>
-                  </template>
-                </div>
-                <!-- 委派专家进行中：主智能体拆分任务交给专家时的动态状态（长任务期间界面不空转） -->
-                <div
-                  v-if="activeDelegation && isLastAssistant(msg.id) && thinking"
-                  class="chat-bubble delegate-bubble"
-                  :title="activeDelegation.description"
-                >
-                  <span class="delegate-spinner"></span>
-                  <span class="delegate-text">正在委派「{{ activeDelegation.name }}」处理…</span>
-                  <span v-if="delegationWaitSec > 0" class="delegate-elapsed"
-                    >{{ delegationWaitSec }}s</span
-                  >
-                </div>
-              </div>
-              <!-- 操作栏：按钮组 + 元信息 -->
-              <div v-if="msg.content" class="chat-msg-actions">
-                <div class="chat-msg-action-group">
-                  <button class="chat-msg-action-btn" title="复制" @click="copyText(msg.content)">
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <rect x="9" y="9" width="13" height="13" rx="2" />
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                    </svg>
-                  </button>
-                  <button
-                    class="chat-msg-action-btn"
-                    :class="{ 'chat-msg-action-btn--active': feedbackMap[msg.id] === 'up' }"
-                    title="点赞"
-                    @click="toggleFeedback(msg.id, 'up')"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <path
-                        d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    class="chat-msg-action-btn"
-                    :class="{ 'chat-msg-action-btn--active': feedbackMap[msg.id] === 'down' }"
-                    title="点踩"
-                    @click="toggleFeedback(msg.id, 'down')"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <path
-                        d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zM17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    class="chat-msg-action-btn"
-                    :class="{ 'chat-msg-action-btn--active': speakingMsgId === msg.id }"
-                    title="朗读"
-                    @click="toggleSpeak(msg)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    </svg>
-                  </button>
-                  <button
-                    class="chat-msg-action-btn"
-                    title="重新生成"
-                    :disabled="isStreaming || !isLastAssistant(msg.id)"
-                    @click="regenerateLast"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <polyline points="23 4 23 10 17 10" />
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                    </svg>
-                  </button>
-                  <button class="chat-msg-action-btn" title="分享" @click="copyText(msg.content)">
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <circle cx="18" cy="5" r="3" />
-                      <circle cx="6" cy="12" r="3" />
-                      <circle cx="18" cy="19" r="3" />
-                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                    </svg>
-                  </button>
-                  <button class="chat-msg-action-btn" title="更多">
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <circle cx="12" cy="5" r="1" />
-                      <circle cx="12" cy="12" r="1" />
-                      <circle cx="12" cy="19" r="1" />
-                    </svg>
-                  </button>
-                </div>
-                <div class="chat-msg-meta">
-                  <span v-if="msg.durationMs" class="chat-msg-meta-item chat-msg-meta-item--strong">
-                    {{ formatDuration(msg.durationMs) }}
-                  </span>
-                  <span class="chat-msg-meta-item">{{ msg.model ?? model }}</span>
-                  <span v-if="msg.createdAt" class="chat-msg-meta-item">{{
-                    formatTime(msg.createdAt)
-                  }}</span>
-                </div>
-              </div>
-            </template>
-            <!-- 用户消息：无头像，浅灰背景 -->
-            <template v-else>
-              <div class="chat-bubble-wrapper chat-bubble-wrapper--user">
-                <div class="chat-bubble chat-bubble--user">
-                  <!-- 用户输入按行断行（GFM 软换行）：多行提问保持输入的换行结构 -->
-                  <MessageContent
-                    :content="msg.content"
-                    content-type="markdown"
-                    :workspace-id="currentWorkspaceId"
-                    :breaks="true"
-                    @open-file="openDocFromRelPath"
-                  />
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-        <!-- 消息区滚动定位按钮：接近顶部→回底，接近底部→回顶；中间位置不显示 -->
-        <button
-          v-if="atTop && !atBottom"
-          class="chat-scroll-jump"
-          title="回到底部"
-          @click="scrollToBottom"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        <button
-          v-else-if="atBottom && !atTop"
-          class="chat-scroll-jump"
-          title="回到顶部"
-          @click="scrollToTop"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          >
-            <polyline points="18 15 12 9 6 15" />
-          </svg>
-        </button>
+        <MessageList
+          ref="messageListRef"
+          :messages="messages"
+          :share-mode="shareMode"
+          :is-share-selected="isShareSelected"
+          :hit-set="hitSet"
+          :current-hit-id="currentHitId"
+          :suppress-auto-scroll="suppressAutoScroll"
+          :model="model"
+          @open-doc="openDocFromList"
+          @toggle-share="toggleShareSelected"
+          @regenerate="regenerateLast"
+        />
         <!-- 分享面板：底部、输入栏上方，全选 + 5 个分享动作 + 关闭 -->
-        <Transition name="share-panel">
-          <div v-if="shareMode" class="share-panel">
-            <label class="share-select-all" @click.prevent="toggleShareAll">
-              <input type="checkbox" :checked="shareAllChecked" />
-              <span
-                class="share-select-all-box"
-                :class="{ 'share-select-all-box--indeterminate': shareAllIndeterminate }"
-              >
-                <svg
-                  v-if="shareAllChecked"
-                  width="10"
-                  height="10"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="white"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <span v-else-if="shareAllIndeterminate" class="share-select-all-line"></span>
-              </span>
-              <span class="share-select-all-text"
-                >全选 ({{ shareSelected.length }}/{{ messages.length }})</span
-              >
-            </label>
-            <div class="share-panel-divider"></div>
-            <button class="share-action" title="分享到微信" @click="shareToWechat">
-              <span class="share-action-icon share-action-icon--wechat">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                >
-                  <path
-                    d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
-                  />
-                </svg>
-              </span>
-              <span class="share-action-text">分享到微信</span>
-            </button>
-            <button class="share-action" title="分享到朋友圈" @click="shareToMoments">
-              <span class="share-action-icon share-action-icon--moments">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <circle cx="12" cy="12" r="1.2" fill="currentColor" />
-                  <path d="M12 2v4.5M12 17.5V22M2 12h4.5M17.5 12H22" />
-                </svg>
-              </span>
-              <span class="share-action-text">分享到朋友圈</span>
-            </button>
-            <button class="share-action" title="复制链接" @click="copyShareLink">
-              <span class="share-action-icon share-action-icon--link">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                >
-                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                </svg>
-              </span>
-              <span class="share-action-text">复制链接</span>
-            </button>
-            <button class="share-action" title="生成二维码" @click="generateQr">
-              <span class="share-action-icon share-action-icon--qr">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                >
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <rect x="14" y="3" width="7" height="7" rx="1" />
-                  <rect x="3" y="14" width="7" height="7" rx="1" />
-                  <path d="M14 14h3v3h-3zM21 14v3M14 21h3" />
-                </svg>
-              </span>
-              <span class="share-action-text">生成二维码</span>
-            </button>
-            <button class="share-action" title="浏览器打开" @click="openShareInBrowser">
-              <span class="share-action-icon share-action-icon--browser">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M2 12h20" />
-                  <path
-                    d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                  />
-                </svg>
-              </span>
-              <span class="share-action-text">浏览器打开</span>
-            </button>
-            <div class="share-panel-spacer"></div>
-            <button class="share-close" title="关闭" @click="closeSharePanel">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        </Transition>
+        <ShareDialog
+          :visible="shareMode"
+          :selected-count="shareSelected.length"
+          :total="messages.length"
+          :all-checked="shareAllChecked"
+          :all-indeterminate="shareAllIndeterminate"
+          :qr-visible="qrModalOpen"
+          :qr-data-url="qrDataUrl"
+          :link="shareLink"
+          @toggle-all="toggleShareAll"
+          @share-wechat="shareToWechat"
+          @share-moments="shareToMoments"
+          @copy-link="copyShareLink"
+          @generate-qr="generateQr"
+          @open-browser="openShareInBrowser"
+          @close="closeSharePanel"
+          @close-qr="closeQrModal"
+        />
         <!-- Compact input -->
         <div class="chat-input-bar">
           <PromptInput
@@ -1801,33 +820,6 @@ watch(
             @navigate="onPlusNavigate"
           />
         </div>
-        <!-- 分享二维码模态框 -->
-        <Transition name="dropdown">
-          <div v-if="qrModalOpen" class="qr-modal-mask" @click.self="closeQrModal">
-            <div class="qr-modal">
-              <button class="qr-modal-close" title="关闭" @click="closeQrModal">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-              <p class="qr-modal-title">扫码打开分享链接</p>
-              <div class="qr-modal-body">
-                <img v-if="qrDataUrl" :src="qrDataUrl" alt="分享二维码" class="qr-modal-img" />
-                <div v-else class="qr-modal-loading">二维码生成中…</div>
-              </div>
-              <p class="qr-modal-link">{{ shareLink }}</p>
-            </div>
-          </div>
-        </Transition>
       </div>
       <ChatSidePanel
         ref="sidePanelRef"
@@ -2057,59 +1049,6 @@ watch(
   flex: 0 1 50%;
 }
 
-/* AI 回复下的生成文档文件链接条（live 与历史回显共用） */
-.msg-artifacts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.msg-artifact-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 260px;
-  padding: 5px 10px;
-  border: 1px solid var(--kw-color-border-brand);
-  border-radius: 8px;
-  background: var(--kw-color-bg-soft);
-  color: var(--kw-color-brand);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.msg-artifact-link:hover {
-  background: var(--kw-color-brand-hover);
-}
-
-/* 消息内成片播放器（视频产物直接可播） */
-.msg-video {
-  display: block;
-  width: 100%;
-  max-width: 320px;
-  max-height: 420px;
-  border-radius: var(--radius-lg, 8px);
-  background: #000;
-}
-
-/* 成片读取失败时给出可见提示，而不是静默消失 */
-.msg-artifact-link--failed {
-  border-color: var(--kw-color-danger, #d9534f);
-  opacity: 0.75;
-}
-
-.msg-artifact-ico {
-  flex-shrink: 0;
-}
-
-.msg-artifact-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* 左侧对话+输入列（全屏右侧栏时隐藏） */
 .chat-main {
   flex: 1;
@@ -2118,473 +1057,6 @@ watch(
   flex-direction: column;
   overflow: hidden;
   position: relative;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  /* 全宽滚动容器：滚动条贴右缘（右栏分割线），内容保持 760px 居中列（窄窗钳制 32px 留白） */
-  padding: 48px max(32px, calc((100% - 760px) / 2)) 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  /* 细窄滚动条：内容不溢出时不显示，溢出时出现在消息区最右缘（分割线旁） */
-  scrollbar-width: thin;
-  scrollbar-color: rgba(8, 145, 178, 0.28) transparent;
-  width: 100%;
-}
-
-.chat-messages::-webkit-scrollbar {
-  width: 6px;
-}
-
-.chat-messages::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.chat-messages::-webkit-scrollbar-thumb {
-  background: var(--kw-color-border-brand);
-  border-radius: 3px;
-}
-
-.chat-messages::-webkit-scrollbar-thumb:hover {
-  background: var(--kw-color-border-brand);
-}
-
-/* 消息区浮动跳转按钮（与 760px 消息列右缘对齐；悬于输入栏上方） */
-.chat-scroll-jump {
-  position: absolute;
-  right: max(8px, calc(50% - 380px));
-  bottom: 132px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid var(--kw-color-border-brand);
-  border-radius: 50%;
-  background: var(--kw-color-surface);
-  color: var(--kw-color-brand-strong);
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
-  z-index: 10;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.chat-scroll-jump:hover {
-  background: var(--kw-color-brand-soft);
-  color: var(--kw-color-brand);
-  box-shadow: 0 2px 12px rgba(8, 145, 178, 0.25);
-}
-
-.chat-bubble-row {
-  position: relative;
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  border-radius: 10px;
-  transition: background-color 0.15s ease;
-}
-
-/* 搜索高亮：命中行淡黄、当前定位行深黄 */
-.chat-msg--hit {
-  background: #fffbe6;
-}
-
-.chat-msg--current {
-  background: #fef3c7;
-}
-
-/* 分享选择模式：选中消息行高亮 */
-.chat-msg-row--selected {
-  background: var(--kw-color-brand-hover);
-}
-
-/* 分享选择模式：行内出现复选框时左侧让位（:has 兼容 Electron 39 / Chromium 高版本） */
-.chat-bubble-row:has(.chat-msg-check) {
-  padding-left: 26px;
-}
-
-/* 消息行复选框（分享选择模式下显示，位于每条消息最左侧） */
-.chat-msg-check {
-  position: absolute;
-  left: 0;
-  top: 1px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  cursor: pointer;
-  z-index: 2;
-}
-
-.chat-msg-check input {
-  display: none;
-}
-
-.chat-msg-check-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  border: 1.5px solid var(--kw-color-border-strong);
-  background: var(--kw-color-surface);
-  box-sizing: border-box;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.chat-msg-check:hover .chat-msg-check-box {
-  border-color: var(--kw-color-brand);
-}
-
-.chat-msg-check--selected .chat-msg-check-box {
-  background: var(--kw-color-brand);
-  border-color: var(--kw-color-brand);
-}
-
-.chat-bubble-row--user {
-  justify-content: flex-end;
-}
-
-/* AI 回复行纵向化：头部（头像+名字）在上，正文中，操作栏在下 */
-.chat-bubble-row--assistant {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
-}
-
-/* AI 头像：顶部头部行内的小尺寸 */
-.chat-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.chat-avatar--sm {
-  width: 20px;
-  height: 20px;
-  margin-top: 0;
-}
-
-.chat-avatar--ai {
-  background: var(--kw-gradient-brand);
-}
-
-/* AI 消息头部行：头像 + 系统名称 */
-.chat-bubble-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.chat-bubble-head-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-/* 正文：无背景色（接近左侧白底） */
-.chat-bubble {
-  padding: 0;
-  border-radius: 18px;
-  font-size: 14px;
-  line-height: 1.6;
-  background: transparent;
-  color: var(--kw-color-text);
-}
-
-/* 用户消息：浅灰背景 */
-.chat-bubble--user {
-  background: var(--kw-color-bg-muted);
-  color: var(--kw-color-text);
-  border-radius: 18px;
-  border-bottom-right-radius: 4px;
-  padding: 12px 16px;
-}
-
-/* Chat bubble wrapper (for reasoning + content layout) */
-.chat-bubble-wrapper {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  /* 思考消息与正式消息的间隔 */
-  gap: 16px;
-}
-
-.chat-bubble-wrapper--user {
-  align-items: flex-end;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   Thinking / Reasoning Block (深度思考)
-   ═══════════════════════════════════════════════════════════════════════════ */
-.thinking-block {
-  border-radius: 14px 14px 4px 4px;
-  background: var(--kw-color-brand-hover);
-  border: 1px solid var(--kw-color-border-brand);
-  border-left: 3px solid #0891b2;
-  overflow: hidden;
-}
-
-.thinking-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 8px 14px;
-  border: none;
-  background: transparent;
-  color: var(--kw-color-brand);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 0.15s ease;
-}
-
-.thinking-header:hover {
-  background: var(--kw-color-brand-hover);
-}
-
-.thinking-header-text {
-  flex: 1;
-  text-align: left;
-  display: flex;
-  align-items: center;
-}
-
-/* 思考输出中的提示：呼吸圆点 + 文案（仅流式期间出现） */
-.thinking-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: 8px;
-  font-weight: 500;
-  color: var(--kw-color-brand);
-}
-
-.thinking-live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: thinkingPulse 1s ease-in-out infinite;
-}
-
-.thinking-live-text {
-  animation: thinkingBreathe 1.4s ease-in-out infinite;
-}
-
-@keyframes thinkingPulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes thinkingBreathe {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
-/* 「展开浏览 / 收起」：内容超出紧凑高度时出现，切换阅读高度 */
-.thinking-expand {
-  flex-shrink: 0;
-  margin-right: 8px;
-  padding: 1px 8px;
-  border: 1px solid var(--kw-color-border-brand);
-  border-radius: 999px;
-  background: var(--kw-color-surface);
-  color: var(--kw-color-brand);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 18px;
-  cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.thinking-expand:hover {
-  background: var(--kw-color-brand-hover);
-  border-color: var(--kw-color-brand);
-}
-
-.thinking-chevron {
-  flex-shrink: 0;
-  color: var(--kw-color-brand);
-  transition: transform 0.2s ease;
-}
-
-.thinking-chevron--collapsed {
-  transform: rotate(-90deg);
-}
-
-.thinking-body {
-  padding: 6px 14px 10px;
-  font-size: 13px;
-  line-height: 1.6;
-  /* 思考消息：淡灰文字，hover 变深灰 */
-  color: var(--kw-color-text-faint);
-  border-top: 1px solid var(--kw-color-border-brand);
-  transition: color 0.15s ease;
-  /* 高度上限：思考输出不随内容无限拉长，超出后在块内滚动 */
-  max-height: 200px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  /* 逐块重渲染（v-html 整体替换）会触发浏览器滚动锚定自行调 scrollTop：
-     用户上翻阅读时会被莫名拽动，这里禁用锚定，交给上面的跟随逻辑 */
-  overflow-anchor: none;
-  /* 细滚动条：内容未超出时不出现，出现时也不喧宾夺主 */
-  scrollbar-width: thin;
-  scrollbar-color: var(--kw-color-border-strong) transparent;
-}
-
-/* 展开浏览：放宽到阅读高度（仍有限，避免长思考把消息区顶飞） */
-.thinking-body--expanded {
-  max-height: min(70vh, 720px);
-}
-
-.thinking-body::-webkit-scrollbar {
-  width: 8px;
-}
-
-.thinking-body::-webkit-scrollbar-thumb {
-  background: var(--kw-color-border-strong);
-  border-radius: 4px;
-}
-
-.thinking-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.thinking-block:hover .thinking-body {
-  color: var(--kw-color-text-secondary);
-}
-
-/* 思考块内嵌元素颜色统一为淡灰（保留 code/pre 原配色保证可读性） */
-.thinking-body :deep(.message-content--rich p),
-.thinking-body :deep(.message-content--rich li),
-.thinking-body :deep(.message-content--rich strong),
-.thinking-body :deep(.message-content--rich td),
-.thinking-body :deep(.message-content--rich h1),
-.thinking-body :deep(.message-content--rich h2),
-.thinking-body :deep(.message-content--rich h3),
-.thinking-body :deep(.message-content--rich h4) {
-  color: inherit;
-}
-
-/* Thinking collapse transition */
-.thinking-collapse-enter-active,
-.thinking-collapse-leave-active {
-  transition:
-    opacity 0.2s ease,
-    max-height 0.25s ease;
-  overflow: hidden;
-}
-
-.thinking-collapse-enter-from,
-.thinking-collapse-leave-to {
-  opacity: 0;
-  max-height: 0;
-}
-
-/* Thinking bubble (loading dots) */
-.thinking-bubble {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  /* 基类 padding 已归零，加载气泡自持外观 */
-  padding: 12px 16px;
-  background: var(--kw-color-input-bg);
-  border-radius: 18px 18px 18px 4px;
-}
-
-.dot-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--kw-color-brand);
-  animation: dotBounce 0.6s ease-in-out infinite;
-}
-
-@keyframes dotBounce {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-4px);
-  }
-}
-
-/* 委派专家进行中：旋转指示 + 文案 + 已等待秒数（气泡贴合内容宽度） */
-.delegate-bubble {
-  display: flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--kw-color-input-bg);
-  border-radius: 14px 14px 14px 4px;
-  font-size: 13px;
-}
-
-.delegate-spinner {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--kw-color-brand);
-  border-top-color: transparent;
-  animation: delegateSpin 0.8s linear infinite;
-}
-
-.delegate-text {
-  color: var(--kw-color-brand);
-  font-weight: 500;
-}
-
-.delegate-elapsed {
-  color: var(--kw-color-text-faint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-@keyframes delegateSpin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* Chat input bar */
@@ -2807,328 +1279,6 @@ watch(
   opacity: 0;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   Share Panel（底部分享面板）
-   ═══════════════════════════════════════════════════════════════════════════ */
-.share-panel {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--kw-color-border-brand);
-  border-radius: 14px;
-  background: var(--kw-color-surface);
-  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
-  flex-shrink: 0;
-}
-
-.share-select-all {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border-radius: 8px;
-  cursor: pointer;
-  user-select: none;
-  flex-shrink: 0;
-}
-
-.share-select-all:hover {
-  background: var(--kw-color-brand-hover);
-}
-
-.share-select-all input {
-  display: none;
-}
-
-.share-select-all-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  border: 1.5px solid var(--kw-color-border-strong);
-  background: var(--kw-color-surface);
-  box-sizing: border-box;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.share-select-all-box--indeterminate {
-  border-color: var(--kw-color-brand);
-}
-
-.share-select-all-line {
-  width: 8px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--kw-color-brand);
-}
-
-.share-select-all-text {
-  font-size: 12px;
-  color: var(--kw-color-text-secondary);
-  white-space: nowrap;
-}
-
-.share-panel-divider {
-  width: 1px;
-  height: 20px;
-  background: #e5e7eb;
-  margin: 0 6px;
-  flex-shrink: 0;
-}
-
-.share-action {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 6px 10px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.share-action:hover {
-  background: var(--kw-color-brand-soft);
-}
-
-.share-action-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  color: var(--kw-color-on-accent);
-}
-
-.share-action-icon--wechat {
-  background: #10b981;
-}
-
-.share-action-icon--moments {
-  background: #059669;
-}
-
-.share-action-icon--link {
-  background: var(--kw-color-brand);
-}
-
-.share-action-icon--qr {
-  background: #7c3aed;
-}
-
-.share-action-icon--browser {
-  background: #6366f1;
-}
-
-.share-action-text {
-  font-size: 11px;
-  color: var(--kw-color-text-secondary);
-  white-space: nowrap;
-}
-
-.share-panel-spacer {
-  flex: 1;
-}
-
-.share-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--kw-color-bg-muted);
-  color: var(--kw-color-text-secondary);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.share-close:hover {
-  background: var(--kw-color-danger-soft);
-  color: var(--kw-color-danger);
-}
-
-/* 分享面板过渡 */
-.share-panel-enter-active,
-.share-panel-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
-}
-
-.share-panel-enter-from,
-.share-panel-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   Share QR Modal（分享二维码模态框）
-   ═══════════════════════════════════════════════════════════════════════════ */
-.qr-modal-mask {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.qr-modal {
-  position: relative;
-  width: 300px;
-  padding: 20px;
-  border-radius: 16px;
-  background: var(--kw-color-surface);
-  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.18);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.qr-modal-close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--kw-color-bg-muted);
-  color: var(--kw-color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.qr-modal-close:hover {
-  background: var(--kw-color-danger-soft);
-  color: var(--kw-color-danger);
-}
-
-.qr-modal-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--kw-color-text);
-}
-
-.qr-modal-body {
-  width: 240px;
-  height: 240px;
-  border: 1px solid var(--kw-color-border);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.qr-modal-img {
-  width: 240px;
-  height: 240px;
-  display: block;
-}
-
-.qr-modal-loading {
-  font-size: 12px;
-  color: var(--kw-color-text-faint);
-}
-
-.qr-modal-link {
-  margin: 0;
-  max-width: 260px;
-  font-size: 11px;
-  color: var(--kw-color-text-muted);
-  word-break: break-all;
-  text-align: center;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   Chat Message Actions（AI 回复操作栏）
-   ═══════════════════════════════════════════════════════════════════════════ */
-.chat-msg-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-}
-
-.chat-msg-action-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.chat-msg-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--kw-color-text-faint);
-  cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.chat-msg-action-btn:hover:not(:disabled) {
-  background: var(--kw-color-brand-soft);
-  color: var(--kw-color-brand-strong);
-}
-
-.chat-msg-action-btn--active {
-  color: var(--kw-color-brand);
-}
-
-.chat-msg-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.chat-msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--kw-color-text-faint);
-  flex-shrink: 0;
-}
-
-.chat-msg-meta-item--strong {
-  color: var(--kw-color-text-secondary);
-}
-
 /* Toast */
 .chat-input-bar {
   /* 与对话区同宽居中（max-width 与 margin auto 必须同写） */
@@ -3191,4 +1341,5 @@ watch(
     padding: 0 8px 10px;
   }
 }
+
 </style>

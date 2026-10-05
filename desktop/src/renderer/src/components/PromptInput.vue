@@ -30,21 +30,20 @@ export interface PromptPayload {
 </script>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showToast } from '@renderer/composables/useToast'
-import { useCatalogStore, type CatalogTab, type Mode, type SkillItem } from '@store/catalog'
+import { createFileToken, serializeInput, useRichTokens } from '@renderer/composables/useRichTokens'
+import { useFileAttach } from '@renderer/composables/useFileAttach'
+import { createHoverMenu } from '@renderer/composables/hoverMenu'
+import { useCatalogStore, type CatalogTab, type Mode } from '@store/catalog'
 import { useWorkspaceStore } from '@store/workspace'
 import { useModelStore } from '@store/models'
 import { useSettingsStore } from '@store/settings'
 import PlusMenu from './PlusMenu.vue'
-import ModalShell from './ModalShell.vue'
+import ModelSelect from './ModelSelect.vue'
+import PermissionMenu from './PermissionMenu.vue'
+import WorkspaceCreateModal from './WorkspaceCreateModal.vue'
 import type { MessagePart } from '../../../shared/contracts'
-import {
-  MAX_ATTACH_FILES,
-  classifyPath,
-  getFileName,
-  limitForKind
-} from '../../../shared/file-kinds'
 
 /**
  * 任务提示词输入卡（PromptInput）
@@ -112,7 +111,6 @@ const modelStore = useModelStore()
 
 // ── State ──
 const inputRef = ref<HTMLElement | null>(null)
-const modelOpen = ref(false)
 const showInputPlusMenu = ref(false)
 const polishing = ref(false)
 
@@ -123,187 +121,13 @@ watch(hasContent, (v) => emit('update:hasContent', v), { immediate: true })
 /** 当前输入框元素 */
 const getInputEl = (): HTMLElement | null => inputRef.value
 
-/** 相邻文本段合并（减少 parts 数量；文件段自然分隔） */
-const pushTextPart = (parts: MessagePart[], text: string): void => {
-  const last = parts[parts.length - 1]
-  if (last && last.type === 'text') last.text += text
-  else parts.push({ type: 'text', text })
-}
-
-/** 序列化输入框 DOM → 保序消息部件：文本节点原样；技能 token → /技能名；文件 token → {type:'file',path} */
-const serializeInput = (el: HTMLElement): MessagePart[] => {
-  const parts: MessagePart[] = []
-  for (const node of el.childNodes) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const t = node.textContent ?? ''
-      if (t) pushTextPart(parts, t)
-    } else if (node instanceof HTMLElement && node.classList.contains('skill-token')) {
-      pushTextPart(parts, '/' + (node.dataset.name ?? node.textContent ?? ''))
-    } else if (node instanceof HTMLElement && node.classList.contains('file-token')) {
-      const path = node.dataset.path
-      if (path) parts.push({ type: 'file', path })
-    } else if (node.nodeName === 'BR') {
-      pushTextPart(parts, '\n')
-    } else if (node instanceof HTMLElement) {
-      const t = node.textContent ?? ''
-      if (t) pushTextPart(parts, t)
-    }
+/** 富输入 token 工具（序列化 / 光标处插入 / 移除 —— R6 外提至 composables/useRichTokens） */
+const richTokens = useRichTokens({
+  syncText: (text) => {
+    taskInput.value = text
   }
-  return parts
-}
+})
 
-/** 在光标处插入技能 token（无有效光标时追加到末尾），光标移到 token 后 */
-const insertSkillTokenAtCaret = (el: HTMLElement, skill: SkillItem): void => {
-  const sel = window.getSelection()
-  let range: Range
-  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
-    range = sel.getRangeAt(0)
-    range.collapse(false)
-  } else {
-    range = document.createRange()
-    range.selectNodeContents(el)
-    range.collapse(false)
-  }
-  const token = document.createElement('span')
-  token.className = 'skill-token'
-  token.dataset.skillId = String(skill.id)
-  token.dataset.name = skill.name
-  token.contentEditable = 'false'
-  const icon = document.createElement('span')
-  icon.className = 'skill-token-icon'
-  icon.style.background = skill.color
-  const flash = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  flash.setAttribute('width', '9')
-  flash.setAttribute('height', '9')
-  flash.setAttribute('viewBox', '0 0 24 24')
-  flash.setAttribute('fill', 'none')
-  flash.setAttribute('stroke', 'white')
-  flash.setAttribute('stroke-width', '3')
-  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
-  poly.setAttribute('points', '13 2 3 14 12 14 11 22 21 10 12 10 13 2')
-  flash.appendChild(poly)
-  const del = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  del.classList.add('skill-token-del')
-  del.setAttribute('width', '10')
-  del.setAttribute('height', '10')
-  del.setAttribute('viewBox', '0 0 24 24')
-  del.setAttribute('fill', 'none')
-  del.setAttribute('stroke', 'white')
-  del.setAttribute('stroke-width', '2.5')
-  del.setAttribute('stroke-linecap', 'round')
-  const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-  l1.setAttribute('x1', '18')
-  l1.setAttribute('y1', '6')
-  l1.setAttribute('x2', '6')
-  l1.setAttribute('y2', '18')
-  const l2 = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-  l2.setAttribute('x1', '6')
-  l2.setAttribute('y1', '6')
-  l2.setAttribute('x2', '18')
-  l2.setAttribute('y2', '18')
-  del.appendChild(l1)
-  del.appendChild(l2)
-  icon.appendChild(flash)
-  icon.appendChild(del)
-  const name = document.createElement('span')
-  name.className = 'skill-token-name'
-  name.textContent = skill.name
-  token.appendChild(icon)
-  token.appendChild(name)
-  range.insertNode(token)
-  range.setStartAfter(token)
-  range.collapse(true)
-  sel?.removeAllRanges()
-  sel?.addRange(range)
-  taskInput.value = el.innerText
-}
-
-/** 构造文件 token（图标 + 文件名；title 原生提示绝对路径） */
-const createFileToken = (filePath: string): HTMLElement => {
-  const token = document.createElement('span')
-  token.className = 'file-token'
-  token.dataset.path = filePath
-  token.title = filePath // 悬停显示绝对路径（原生 tooltip）
-  token.contentEditable = 'false'
-  const icon = document.createElement('span')
-  icon.className = 'file-token-icon'
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('width', '10')
-  svg.setAttribute('height', '10')
-  svg.setAttribute('viewBox', '0 0 24 24')
-  svg.setAttribute('fill', 'none')
-  svg.setAttribute('stroke', 'currentColor')
-  svg.setAttribute('stroke-width', '2')
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute(
-    'd',
-    'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'
-  )
-  svg.appendChild(path)
-  const del = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  del.classList.add('file-token-del')
-  del.setAttribute('width', '10')
-  del.setAttribute('height', '10')
-  del.setAttribute('viewBox', '0 0 24 24')
-  del.setAttribute('fill', 'none')
-  del.setAttribute('stroke', 'currentColor')
-  del.setAttribute('stroke-width', '2.5')
-  del.setAttribute('stroke-linecap', 'round')
-  const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-  l1.setAttribute('x1', '18')
-  l1.setAttribute('y1', '6')
-  l1.setAttribute('x2', '6')
-  l1.setAttribute('y2', '18')
-  const l2 = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-  l2.setAttribute('x1', '6')
-  l2.setAttribute('y1', '6')
-  l2.setAttribute('x2', '18')
-  l2.setAttribute('y2', '18')
-  del.appendChild(l1)
-  del.appendChild(l2)
-  icon.appendChild(svg)
-  icon.appendChild(del)
-  const name = document.createElement('span')
-  name.className = 'file-token-name'
-  name.textContent = filePath.split(/[\\/]/).pop() || filePath
-  token.appendChild(icon)
-  token.appendChild(name)
-  return token
-}
-
-/** 在光标处插入文件 token（图标 + 文件名；title 原生提示绝对路径），光标移到 token 后 */
-const insertFileTokenAtCaret = (el: HTMLElement, filePath: string): void => {
-  const sel = window.getSelection()
-  let range: Range
-  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
-    range = sel.getRangeAt(0)
-    range.collapse(false)
-  } else {
-    range = document.createRange()
-    range.selectNodeContents(el)
-    range.collapse(false)
-  }
-  const token = createFileToken(filePath)
-  range.insertNode(token)
-  range.setStartAfter(token)
-  range.collapse(true)
-  sel?.removeAllRanges()
-  sel?.addRange(range)
-  taskInput.value = el.innerText
-}
-
-/** 从 DOM 移除第一个指定技能的 token */
-const removeSkillTokenFromDom = (el: HTMLElement, id: string): void => {
-  for (const node of Array.from(el.children)) {
-    if (node instanceof HTMLElement && node.classList.contains('skill-token')) {
-      if (node.dataset.skillId === id) {
-        node.remove()
-        break
-      }
-    }
-  }
-  taskInput.value = el.innerText
-}
 
 /** 菜单选技能：切 store 勾选（真相源）+ 同步 DOM（插入或移除 token） */
 const onSelectSkillToken = (id: string): void => {
@@ -312,104 +136,23 @@ const onSelectSkillToken = (id: string): void => {
   if (!skill || !el) return
   const willSelect = !catalog.selectedSkillIds.includes(id)
   catalog.toggleSkill(id)
-  if (willSelect) insertSkillTokenAtCaret(el, skill)
-  else removeSkillTokenFromDom(el, id)
+  if (willSelect) richTokens.insertSkillTokenAtCaret(el, skill)
+  else richTokens.removeSkillTokenFromDom(el, id)
 }
 
-// ── 文件附件：选中即时校验（主进程权威，渲染层复用共享分类做 UX 前置） ──
-/** PlusMenu 选中本地文件 → 逐个即时校验（UX 前置），通过的在光标处插入文件 token */
-const onSelectFiles = async (paths: string[]): Promise<void> => {
-  const el = getInputEl()
-  if (!el) return
-  // 去重：同一文件多次选择只插一个 token
-  const uniquePaths = [...new Set(paths)]
-  if (uniquePaths.length > MAX_ATTACH_FILES) {
-    showToast('单次最多选择 ' + MAX_ATTACH_FILES + ' 个文件')
-    return
-  }
-  const accepted: string[] = []
-  for (const p of uniquePaths) {
-    const name = getFileName(p)
-    if (classifyPath(p) === 'unsupported') {
-      showToast('暂不支持该文件类型：' + name)
-      continue
-    }
-    const res = await window.api.inspectFile(p)
-    if (!res.success) {
-      showToast(res.error ?? '文件校验失败')
-      continue
-    }
-    const data = res.data
-    if (!data || !data.exists) {
-      showToast('文件不存在：' + name)
-      continue
-    }
-    if (data.kind === 'unsupported') {
-      showToast('暂不支持该文件类型：' + name)
-      continue
-    }
-    const limit = data.maxBytes ?? limitForKind(data.kind)
-    if (data.size > limit) {
-      showToast('文件过大（上限 ' + Math.round(limit / 1024 / 1024) + 'MB）：' + name)
-      continue
-    }
-    accepted.push(p)
-  }
-  // await 期间输入框可能已卸载（弹窗关闭），守卫防插入到游离 DOM
-  if (!el.isConnected) return
-  for (const p of accepted) insertFileTokenAtCaret(el, p)
-}
-
-// ── 拖拽文件入输入框（效果与「+ → 添加文件 → 本地文件」一致） ──
-const inputDragging = ref(false)
-let fileDragDepth = 0
-
-/** 仅响应文件拖拽（文本拖拽保留浏览器默认插入） */
-const isFileDrag = (e: DragEvent): boolean => !!e.dataTransfer?.types.includes('Files')
-
-/** 拖入输入框：高亮提示可放置（dragenter/dragleave 在子节点间冒泡，用深度计数防闪烁） */
-const onInputDragEnter = (e: DragEvent): void => {
-  e.preventDefault()
-  if (!isFileDrag(e)) return
-  fileDragDepth++
-  inputDragging.value = true
-}
-
-/** 持续派发时阻止默认（否则 drop 不被允许） */
-const onInputDragOver = (e: DragEvent): void => {
-  e.preventDefault()
-}
-
-const onInputDragLeave = (e: DragEvent): void => {
-  if (!isFileDrag(e)) return
-  fileDragDepth = Math.max(0, fileDragDepth - 1)
-  if (fileDragDepth === 0) inputDragging.value = false
-}
-
-/** 松手：光标定位到拖放点，解析真实路径后复用 onSelectFiles 的校验与插入管线 */
-const onInputDrop = (e: DragEvent): void => {
-  fileDragDepth = 0
-  inputDragging.value = false
-  const files = Array.from(e.dataTransfer?.files ?? [])
-  if (!files.length) return // 文本拖拽：不做拦截，保留浏览器默认插入
-  e.preventDefault()
-  const el = getInputEl()
-  if (!el) return
-  // 光标定位到拖放点（caretRangeFromPoint 为 Chromium 扩展 API，Electron 可用）
-  const range = document.caretRangeFromPoint(e.clientX, e.clientY)
-  if (range) {
-    const sel = window.getSelection()
-    sel?.removeAllRanges()
-    sel?.addRange(range)
-  }
-  // Electron 39 起 File.path 已移除：经 preload 的 webUtils.getPathForFile 解析真实路径
-  const paths = files.map((f) => window.api.getPathForFile(f)).filter((p): p is string => !!p)
-  if (!paths.length) {
-    showToast('无法读取文件，请从本地文件夹重新拖入')
-    return
-  }
-  void onSelectFiles(paths)
-}
+// ── 文件附件：选中即时校验 + 拖拽入框（R6 外提至 composables/useFileAttach） ──
+const {
+  inputDragging,
+  onSelectFiles,
+  onInputDragEnter,
+  onInputDragOver,
+  onInputDragLeave,
+  onInputDrop
+} = useFileAttach({
+  getInputEl,
+  insertFileToken: (el, path) => richTokens.insertFileTokenAtCaret(el, path),
+  notify: showToast
+})
 
 /** 点击「AI 改写润色」：校验 → 主进程调 LLM → 改写结果替换输入内容（含 token 时拒绝） */
 const onPolishClick = async (): Promise<void> => {
@@ -530,67 +273,17 @@ const onPlusNavigate = (tab: CatalogTab): void => {
   emit('navigate', tab)
 }
 
-// ── 模型选择 ──
-/** 内置模型（仅 Auto 走默认 agent 配置；其余模型经 modelStore 追加展示） */
-const BUILTIN_MODELS = ['Auto']
-
+// ── 模型选择（R6 外提至 ModelSelect 组件；本页保留双向绑定与发送时关闭） ──
 /** 当前选中的自定义模型 id（内置模型为 null） */
 const selectedCustomId = defineModel<string | null>('customModelId', { default: null })
+const modelSelectRef = ref<InstanceType<typeof ModelSelect> | null>(null)
 
-/** 模型下拉分组：内置 + 自定义（自定义模型名可重复，id 唯一，故按 id 传参） */
-const modelGroups = computed(() => [
-  {
-    name: '内置模型',
-    items: BUILTIN_MODELS.map((name) => ({ name, id: undefined as string | undefined }))
-  },
-  { name: '自定义模型', items: modelStore.models.map((m) => ({ name: m.name, id: m.id })) }
-])
-
-const selectModel = (opt: { name: string; id?: string }): void => {
-  model.value = opt.name
-  selectedCustomId.value = opt.id ?? null
-  modelOpen.value = false
-}
-
-// ── hover 菜单控制器：按钮移入打开，移出延迟关闭（给鼠标移入菜单留时间） ──
-interface HoverMenu {
-  open: () => void
-  scheduleClose: () => void
-  cancelClose: () => void
-  closeNow: () => void
-}
-
-const createHoverMenu = (flag: Ref<boolean>): HoverMenu => {
-  let closeTimer: ReturnType<typeof setTimeout> | null = null
-  const open = (): void => {
-    if (closeTimer) clearTimeout(closeTimer)
-    flag.value = true
-  }
-  const scheduleClose = (): void => {
-    if (closeTimer) clearTimeout(closeTimer)
-    closeTimer = setTimeout(() => {
-      flag.value = false
-    }, 200)
-  }
-  const cancelClose = (): void => {
-    if (closeTimer) clearTimeout(closeTimer)
-  }
-  const closeNow = (): void => {
-    if (closeTimer) clearTimeout(closeTimer)
-    flag.value = false
-  }
-  return { open, scheduleClose, cancelClose, closeNow }
-}
-
-const modelMenuHover = createHoverMenu(modelOpen)
+/** 「+」菜单 hover 控制器（模型下拉的控制器随组件外提，见 ModelSelect） */
 const plusMenuHover = createHoverMenu(showInputPlusMenu)
 
 // ── Workspace selector 状态 ──
 const wsMenuOpen = ref(false)
 const showCreateModal = ref(false)
-const createName = ref('')
-const createError = ref('')
-const creating = ref(false)
 
 /** 选中列表中的工作空间 */
 const pickWorkspace = (ws: { id: string }): void => {
@@ -610,60 +303,19 @@ const pickDefault = async (): Promise<void> => {
   await workspaceStore.useDefault()
 }
 
-/** 打开「新建工作空间」弹窗 */
+/** 打开「新建工作空间」弹窗（输入重置由 WorkspaceCreateModal 在打开时自理） */
 const openCreateModal = (): void => {
   wsMenuOpen.value = false
-  createName.value = ''
-  createError.value = ''
   showCreateModal.value = true
 }
 
-/** 确认创建：主进程 sanitize 是权威校验，错误经 createError 展示 */
-const confirmCreate = async (): Promise<void> => {
-  const name = createName.value.trim()
-  if (!name || creating.value) return
-  creating.value = true
-  createError.value = ''
-  try {
-    await workspaceStore.create(name)
-    showCreateModal.value = false
-    createName.value = ''
-  } catch (err) {
-    createError.value = err instanceof Error ? err.message : '新建工作空间失败'
-  } finally {
-    creating.value = false
-  }
-}
-
-// ── 权限菜单：默认权限 / 允许完全访问（渲染层本地状态，localStorage 持久化） ──
+// ── 允许完全访问（PermissionMenu 的 v-model；渲染层本地状态，localStorage 持久化） ──
 const FULL_ACCESS_KEY = 'ke-work.full-access'
 const fullAccess = ref(localStorage.getItem(FULL_ACCESS_KEY) === '1')
-const permMenuOpen = ref(false)
-const showPermConfirm = ref(false)
-const riskChecked = ref(false)
 
 watch(fullAccess, (v) => {
   localStorage.setItem(FULL_ACCESS_KEY, v ? '1' : '0')
 })
-
-/** 点击开关：关闭到开启需经风险确认弹窗；开启到关闭直接切换 */
-const onPermSwitchClick = (): void => {
-  if (fullAccess.value) {
-    fullAccess.value = false
-  } else {
-    riskChecked.value = false
-    showPermConfirm.value = true
-  }
-}
-
-const confirmFullAccess = (): void => {
-  fullAccess.value = true
-  showPermConfirm.value = false
-}
-
-const cancelFullAccess = (): void => {
-  showPermConfirm.value = false
-}
 
 // ── 轻量提示：全局 toast（composables/useToast，由 App 的 ToastHost 渲染） ──
 
@@ -698,7 +350,7 @@ const onSend = (): void => {
   const payload = buildPayload()
   const hasBody = payload.text.length > 0 || payload.parts.some((p) => p.type === 'file')
   if (!hasBody) return
-  modelOpen.value = false
+  modelSelectRef.value?.close()
   showInputPlusMenu.value = false
   emit('submit', payload)
 }
@@ -765,9 +417,7 @@ const handleDocumentClick = (e: MouseEvent): void => {
   if (!target.closest('[data-workspace-menu-trigger]') && !target.closest('.workspace-menu')) {
     wsMenuOpen.value = false
   }
-  if (!target.closest('[data-perm-menu-trigger]') && !target.closest('.perm-menu')) {
-    permMenuOpen.value = false
-  }
+  // 权限菜单的点击外部关闭由 PermissionMenu 组件自持（R6 外提）
 }
 
 onMounted(() => {
@@ -885,70 +535,14 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <div class="toolbar-spacer"></div>
-        <!-- 模型选择 -->
-        <div :class="['model-selector', { 'model-selector--compact': compact }]">
-          <button
-            class="model-btn"
-            @mouseenter="modelMenuHover.open"
-            @mouseleave="modelMenuHover.scheduleClose"
-          >
-            <svg
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-            </svg>
-            {{ model }}
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          <Transition name="dropdown">
-            <div
-              v-if="modelOpen"
-              :class="['model-dropdown', { 'model-dropdown--down': menuPlacement === 'down' }]"
-              @mouseenter="modelMenuHover.cancelClose"
-              @mouseleave="modelMenuHover.closeNow"
-            >
-              <template v-for="group in modelGroups" :key="group.name">
-                <div v-if="group.items.length > 0" class="model-group-label">
-                  {{ group.name }}
-                </div>
-                <button
-                  v-for="opt in group.items"
-                  :key="opt.id ?? opt.name"
-                  :class="['model-option', { 'model-option--active': model === opt.name }]"
-                  @click="selectModel(opt)"
-                >
-                  <svg
-                    v-if="model === opt.name"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="3"
-                  >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <span v-else class="model-option-gap"></span>
-                  {{ opt.name }}
-                </button>
-              </template>
-            </div>
-          </Transition>
-        </div>
+        <!-- 模型选择（R6 外提组件：hover 开合 + 内置/自定义分组） -->
+        <ModelSelect
+          ref="modelSelectRef"
+          v-model="model"
+          v-model:custom-model-id="selectedCustomId"
+          :compact="compact"
+          :menu-placement="menuPlacement"
+        />
         <button class="toolbar-btn" title="语音输入">
           <svg
             width="15"
@@ -1148,140 +742,11 @@ onBeforeUnmount(() => {
             </div>
           </Transition>
         </div>
-        <div class="perm-selector">
-          <button
-            class="footer-action"
-            data-perm-menu-trigger
-            @click="permMenuOpen = !permMenuOpen"
-          >
-            <svg
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-            默认权限
-            <svg
-              width="9"
-              height="9"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          <Transition name="plus-menu-slide">
-            <div v-if="permMenuOpen" class="perm-menu" @click.stop>
-              <p class="perm-desc">
-                当前为默认权限，所有操作都会在安全沙箱约束内进行，超出范围会请求你的允许。
-              </p>
-              <div class="perm-row">
-                <span class="perm-row-label">允许完全访问</span>
-                <button
-                  class="perm-switch"
-                  :class="{ 'perm-switch--on': fullAccess }"
-                  type="button"
-                  role="switch"
-                  :aria-checked="fullAccess"
-                  title="开启后将减少确认步骤，允许 AI 直接执行更多操作。可能涉及敏感操作、文件修改或外部执行"
-                  @click="onPermSwitchClick"
-                >
-                  <span class="perm-switch-knob"></span>
-                </button>
-              </div>
-            </div>
-          </Transition>
-        </div>
+        <PermissionMenu v-model="fullAccess" />
       </div>
     </div>
-    <!-- 允许完全访问风险确认 Modal -->
-    <ModalShell
-      :visible="showPermConfirm"
-      width="420px"
-      :z-index="200"
-      aria-label="开启允许完全访问"
-      @close="cancelFullAccess"
-    >
-      <template #header>
-        <span>开启允许完全访问</span>
-      </template>
-
-          <div class="perm-confirm-body">
-            <p class="perm-confirm-message">
-              开启允许完全访问后，AI
-              将减少确认步骤，并可直接执行更多操作，包括敏感操作、文件修改或外部执行。仅建议在您信任当前任务时使用。
-            </p>
-            <label class="perm-risk">
-              <input v-model="riskChecked" type="checkbox" class="perm-risk-checkbox" />
-              <span>我已了解风险，并愿意继续</span>
-            </label>
-          </div>
-
-      <template #footer>
-            <button
-              class="perm-confirm-btn perm-confirm-btn--cancel"
-              type="button"
-              @click="cancelFullAccess"
-            >
-              取消
-            </button>
-            <button
-              class="perm-confirm-btn perm-confirm-btn--confirm"
-              type="button"
-              :disabled="!riskChecked"
-              @click="confirmFullAccess"
-            >
-              允许完全访问
-            </button>
-      </template>
-    </ModalShell>
-    <!-- 新建工作空间 Modal -->
-    <ModalShell
-      :visible="showCreateModal"
-      width="360px"
-      :z-index="200"
-      aria-label="新建工作空间"
-      @close="showCreateModal = false"
-    >
-      <template #header>
-        <span>新建工作空间</span>
-      </template>
-
-          <div class="ws-modal-body">
-            <label class="ws-modal-label" for="prompt-ws-create-name">工作空间名称</label>
-            <input
-              id="prompt-ws-create-name"
-              v-model="createName"
-              class="ws-modal-input"
-              maxlength="50"
-              placeholder="将创建于 ~/KeWork/ 目录下"
-              @keydown.enter.prevent="confirmCreate"
-            />
-            <p v-if="createError" class="ws-modal-error">{{ createError }}</p>
-            <p class="ws-modal-hint">将在系统家目录的 KeWork/ 下创建同名文件夹</p>
-          </div>
-
-      <template #footer>
-            <button class="ws-modal-btn ws-modal-btn--cancel" @click="showCreateModal = false">
-              取消
-            </button>
-            <button
-              class="ws-modal-btn ws-modal-btn--confirm"
-              :disabled="creating || !createName.trim()"
-              @click="confirmCreate"
-            >
-              创建
-            </button>
-      </template>
-    </ModalShell>
-
+    <!-- 新建工作空间弹窗（R6 外提组件；允许完全访问的确认弹窗在 PermissionMenu 内） -->
+    <WorkspaceCreateModal v-model="showCreateModal" />
   </div>
 </template>
 
@@ -1399,91 +864,6 @@ onBeforeUnmount(() => {
 }
 
 /* 模型选择 */
-.model-selector {
-  position: relative;
-}
-
-.model-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--kw-color-text-muted);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.model-btn:hover {
-  background: var(--kw-color-brand-soft);
-}
-
-.model-btn svg:first-child {
-  color: var(--kw-color-brand);
-}
-
-.model-dropdown {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  right: 0;
-  min-width: 160px;
-  max-height: 320px;
-  overflow-y: auto;
-  background: var(--kw-color-surface);
-  border: 1px solid var(--kw-color-border-brand);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  z-index: 20;
-}
-
-.model-group-label {
-  padding: 6px 12px 2px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--kw-color-text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.model-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 12px;
-  border: none;
-  background: transparent;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--kw-color-text-secondary);
-  cursor: pointer;
-  text-align: left;
-  transition: background-color 0.1s ease;
-}
-
-.model-option:hover {
-  background: var(--kw-color-brand-hover);
-}
-
-.model-option--active {
-  color: var(--kw-color-brand);
-  font-weight: 600;
-}
-
-.model-option-gap {
-  width: 10px;
-}
-
-/* 弹窗内空间不足时向下展开 */
-.model-dropdown--down {
-  top: calc(100% + 4px);
-  bottom: auto;
-}
-
 /* 发送按钮 */
 .send-btn {
   display: flex;
@@ -1530,25 +910,6 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 0 16px 10px;
   border-top: 1px solid var(--kw-color-border-brand);
-}
-
-.footer-action {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--kw-color-text-muted);
-  font-size: 11px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.footer-action:hover {
-  background: var(--kw-color-brand-hover);
 }
 
 /* 选中项 chips（输入卡左上角：模式） */
@@ -1756,148 +1117,6 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* 权限菜单（默认权限 / 允许完全访问） */
-.perm-selector {
-  position: relative;
-}
-
-.perm-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: 300px;
-  padding: 12px 14px;
-  background: var(--kw-color-surface);
-  border: 1px solid var(--kw-color-border);
-  border-radius: 10px;
-  box-shadow:
-    0 -2px 16px rgba(0, 0, 0, 0.1),
-    0 4px 20px rgba(0, 0, 0, 0.08);
-  z-index: 100;
-}
-
-.perm-desc {
-  margin: 0 0 10px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--kw-color-text-muted);
-}
-
-.perm-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.perm-row-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--kw-color-text);
-}
-
-/* 开关（与 PlusMenu 模式开关同视觉） */
-.perm-switch {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: #e2e8f0;
-  flex-shrink: 0;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.perm-switch--on {
-  background: var(--kw-gradient-brand);
-}
-
-.perm-switch-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--kw-color-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.15s ease;
-}
-
-.perm-switch--on .perm-switch-knob {
-  transform: translateX(13px);
-}
-
-/* 风险确认弹窗 */
-.perm-confirm-body {
-  padding: 0 20px 12px;
-}
-
-.perm-confirm-message {
-  margin: 0 0 14px;
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--kw-color-text-secondary);
-}
-
-.perm-risk {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--kw-color-bg-soft);
-  border: 1px solid var(--kw-color-border);
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--kw-color-text-secondary);
-}
-
-.perm-risk-checkbox {
-  accent-color: var(--kw-color-brand);
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-}
-
-.perm-confirm-btn {
-  padding: 8px 18px;
-  border: none;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    opacity 0.15s ease,
-    background-color 0.15s ease;
-}
-
-.perm-confirm-btn--cancel {
-  background: var(--kw-color-bg-muted);
-  color: var(--kw-color-text-secondary);
-}
-
-.perm-confirm-btn--cancel:hover {
-  background: #e5e7eb;
-}
-
-.perm-confirm-btn--confirm {
-  background: var(--kw-gradient-brand);
-  color: var(--kw-color-on-accent);
-}
-
-.perm-confirm-btn--confirm:hover {
-  opacity: 0.9;
-}
-
-.perm-confirm-btn--confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* 工作空间选择 */
 .workspace-selector {
   position: relative;
@@ -2008,89 +1227,6 @@ onBeforeUnmount(() => {
   border-top: 1px solid #eef2f7;
 }
 
-/* 新建工作空间弹窗 */
-.ws-modal-body {
-  padding: 0 20px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.ws-modal-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--kw-color-text-secondary);
-}
-
-.ws-modal-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 9px 12px;
-  border: 1px solid #d1d9e6;
-  border-radius: 8px;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--kw-color-text);
-  outline: none;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.ws-modal-input:focus {
-  border-color: var(--kw-color-brand);
-  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
-}
-
-.ws-modal-error {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--kw-color-danger);
-}
-
-.ws-modal-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--kw-color-text-subtle);
-}
-
-.ws-modal-btn {
-  padding: 8px 18px;
-  border: none;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    opacity 0.15s ease,
-    background-color 0.15s ease;
-}
-
-.ws-modal-btn--cancel {
-  background: var(--kw-color-bg-muted);
-  color: var(--kw-color-text-secondary);
-}
-
-.ws-modal-btn--cancel:hover {
-  background: #e5e7eb;
-}
-
-.ws-modal-btn--confirm {
-  background: var(--kw-gradient-brand);
-  color: var(--kw-color-on-accent);
-}
-
-.ws-modal-btn--confirm:hover {
-  opacity: 0.9;
-}
-
-.ws-modal-btn--confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* 紧凑变体（对话态） */
 .task-textarea--compact {
   padding: 12px 12px 4px;
@@ -2105,41 +1241,4 @@ onBeforeUnmount(() => {
   padding: 0 12px 2px;
 }
 
-.model-selector--compact .model-btn {
-  padding: 2px 8px;
-  font-size: 11px;
-}
-
-/* 轻量提示 */
-/* 过渡动画 */
-.dropdown-enter-active,
-.dropdown-leave-active {
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
-}
-
-.dropdown-enter-from,
-.dropdown-leave-to {
-  opacity: 0;
-  transform: translateY(4px);
-}
-
-.plus-menu-slide-enter-active {
-  transition: all 0.2s ease-out;
-}
-
-.plus-menu-slide-leave-active {
-  transition: all 0.15s ease-in;
-}
-
-.plus-menu-slide-enter-from {
-  opacity: 0;
-  transform: translateY(8px) scale(0.96);
-}
-
-.plus-menu-slide-leave-to {
-  opacity: 0;
-  transform: translateY(6px) scale(0.97);
-}
 </style>

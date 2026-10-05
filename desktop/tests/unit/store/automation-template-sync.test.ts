@@ -1,11 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAutomationTemplateSyncStore } from '../../../src/renderer/src/store/automationTemplateSync'
-import type {
-  AutomationSchedule,
-  AutomationTemplateSyncProgress,
-  DesktopAutomationTemplate
-} from '../../../src/shared/contracts'
+import { createSyncMockApi, type SyncMockApi } from './sync-mock-api'
+import type { AutomationSchedule, DesktopAutomationTemplate } from '../../../src/shared/contracts'
 
 const SCHEDULE: AutomationSchedule = {
   freqGroup: 'cycle',
@@ -60,27 +57,13 @@ function makeTemplate(id: string): DesktopAutomationTemplate {
 
 type MockFn = ReturnType<typeof vi.fn>
 
-function installMockApi(): {
-  getStatus: MockFn
-  authorize: MockFn
-  sync: MockFn
-  loadLocal: MockFn
-  deleteTemplate: MockFn
-  disconnect: MockFn
-  onSyncProgress: MockFn
-} {
-  let progressCb: ((p: AutomationTemplateSyncProgress) => void) | null = null
-  const getStatus = vi.fn(async () => ({
-    success: true,
-    data: { status: 'authorized', webUser: { id: 'u1', nickname: 'demo', avatar: null } }
-  }))
-  const authorize = vi.fn(async () => ({
-    success: true,
-    data: { webUser: { id: 'u1', nickname: 'demo', avatar: null } }
-  }))
-  const sync = vi.fn(async () => {
-    progressCb?.({ phase: 'fetch', percent: 50, message: '拉取中' })
-    progressCb?.({ phase: 'done', percent: 100, message: '完成' })
+type TemplateMockApi = SyncMockApi & { deleteTemplate: MockFn }
+
+function installMockApi(): TemplateMockApi {
+  const api = createSyncMockApi()
+  api.sync.mockImplementation(async () => {
+    api.pushProgress({ phase: 'fetch', percent: 50, message: '拉取中' })
+    api.pushProgress({ phase: 'done', percent: 100, message: '完成' })
     return {
       success: true,
       data: {
@@ -90,7 +73,7 @@ function installMockApi(): {
       }
     }
   })
-  const loadLocal = vi.fn(async () => ({
+  api.loadLocal.mockImplementation(async () => ({
     success: true,
     data: { templates: [makeTemplate('local')], syncedAt: 111 }
   }))
@@ -101,27 +84,12 @@ function installMockApi(): {
       syncedAt: 111
     }
   }))
-  const disconnect = vi.fn(async () => ({ success: true, data: null }))
-  const onSyncProgress = vi.fn((cb: (p: AutomationTemplateSyncProgress) => void) => {
-    progressCb = cb
-    return () => {
-      progressCb = null
-    }
-  })
   vi.stubGlobal('window', {
     api: {
-      automationTemplateSync: {
-        getStatus,
-        authorize,
-        sync,
-        loadLocal,
-        deleteTemplate,
-        disconnect,
-        onSyncProgress
-      }
+      automationTemplateSync: { ...api, deleteTemplate }
     }
   })
-  return { getStatus, authorize, sync, loadLocal, deleteTemplate, disconnect, onSyncProgress }
+  return { ...api, deleteTemplate }
 }
 
 beforeEach(() => {

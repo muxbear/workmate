@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import SettingToggle from '../SettingToggle.vue'
+import ComingSoon from '../ComingSoon.vue'
 import { useSettingsStore } from '../../../store/settings'
 
 const settingsStore = useSettingsStore()
@@ -11,6 +12,7 @@ const memoryImported = ref(false)
 
 <template>
   <div class="s-page">
+    <ComingSoon variant="banner" />
     <p class="s-intro">
       记忆让 {{ settingsStore.systemName }} 记住你的偏好和习惯，对话越多，它就越懂你。记忆内容遵循
       <button class="s-link">
@@ -30,7 +32,10 @@ const memoryImported = ref(false)
             允许 {{ settingsStore.systemName }} 从对话中提取并记住相关上下文，以便在未来对话中提供更连贯、个性化的回应。
           </p>
         </div>
-        <SettingToggle v-model="conversationMemory" />
+        <SettingToggle
+          v-model="conversationMemory"
+          disabled
+        />
       </div>
       <div class="s-memory-box">
         <p class="s-memory-status">
@@ -65,6 +70,7 @@ const memoryImported = ref(false)
       </div>
       <button
         class="s-import-btn"
+        disabled
         @click="memoryImported = true"
       >
         导入

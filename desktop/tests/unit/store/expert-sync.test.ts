@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { experts, useCatalogStore } from '../../../src/renderer/src/store/catalog'
 import { useExpertSyncStore } from '../../../src/renderer/src/store/expertSync'
-import type { DesktopExpert, ExpertSyncProgress } from '../../../src/shared/contracts'
+import { createSyncMockApi, type SyncMockApi } from './sync-mock-api'
+import type { DesktopExpert } from '../../../src/shared/contracts'
 
 function makeExpert(id: string): DesktopExpert {
   return {
@@ -33,27 +34,13 @@ function makeExpert(id: string): DesktopExpert {
 
 type MockFn = ReturnType<typeof vi.fn>
 
-function installMockApi(): {
-  getStatus: MockFn
-  authorize: MockFn
-  sync: MockFn
-  loadLocal: MockFn
-  deleteExpert: MockFn
-  disconnect: MockFn
-  onSyncProgress: MockFn
-} {
-  let progressCb: ((p: ExpertSyncProgress) => void) | null = null
-  const getStatus = vi.fn(async () => ({
-    success: true,
-    data: { status: 'authorized', webUser: { id: 'u1', nickname: 'demo', avatar: null } }
-  }))
-  const authorize = vi.fn(async () => ({
-    success: true,
-    data: { webUser: { id: 'u1', nickname: 'demo', avatar: null } }
-  }))
-  const sync = vi.fn(async () => {
-    progressCb?.({ phase: 'fetch', percent: 50, message: '拉取中' })
-    progressCb?.({ phase: 'done', percent: 100, message: '完成' })
+type ExpertMockApi = SyncMockApi & { deleteExpert: MockFn }
+
+function installMockApi(): ExpertMockApi {
+  const api = createSyncMockApi()
+  api.sync.mockImplementation(async () => {
+    api.pushProgress({ phase: 'fetch', percent: 50, message: '拉取中' })
+    api.pushProgress({ phase: 'done', percent: 100, message: '完成' })
     return {
       success: true,
       data: {
@@ -63,7 +50,7 @@ function installMockApi(): {
       }
     }
   })
-  const loadLocal = vi.fn(async () => ({
+  api.loadLocal.mockImplementation(async () => ({
     success: true,
     data: { experts: [makeExpert('local')], syncedAt: 111 }
   }))
@@ -71,19 +58,12 @@ function installMockApi(): {
     success: true,
     data: { experts: [makeExpert('local')].filter((expert) => expert.id !== id), syncedAt: 111 }
   }))
-  const disconnect = vi.fn(async () => ({ success: true, data: null }))
-  const onSyncProgress = vi.fn((cb: (p: ExpertSyncProgress) => void) => {
-    progressCb = cb
-    return () => {
-      progressCb = null
-    }
-  })
   vi.stubGlobal('window', {
     api: {
-      expert: { getStatus, authorize, sync, loadLocal, deleteExpert, disconnect, onSyncProgress }
+      expert: { ...api, deleteExpert }
     }
   })
-  return { getStatus, authorize, sync, loadLocal, deleteExpert, disconnect, onSyncProgress }
+  return { ...api, deleteExpert }
 }
 
 beforeEach(() => {

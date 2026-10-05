@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWorkspaceStore } from '@store/workspace'
-import { useAgentStore } from '@store/agent'
+import { useAgentStore, type LiveDocArtifact } from '@store/agent'
 import FileList from './FileList.vue'
 import FilePreviewPane from './file-preview/FilePreviewPane.vue'
 import {
@@ -340,57 +340,77 @@ async function openDocFileByRelPath(relPath: string, opts?: { name?: string }): 
   await openFile({ name, relPath, type: 'file' })
 }
 
-/** 打开正在生成的文档产物（自动展开右侧栏；文本型流式接收 chunk，word/pdf 等 end 后读字节） */
-async function openArtifact(
-  meta: { artifactId: string; name: string; relPath: string; preview: string },
-  initialText?: string
-): Promise<void> {
-  if (!panelWorkspaceId.value) return
+/**
+ * 产物流单源同步（R7 artifact 单一事实源）：直接订阅 store.liveArtifact（不可变更新，
+ * 每个 chunk 触发一次）→ 建/复用标签页 + **全文镜像** + 终态收尾。
+ *
+ * 原实现三跳：store 原地改 + 版本号 → 页面 watch 后按**字符串长度 diff** 切增量 →
+ * 经 defineExpose 命令协议驱动本组件；三处状态（store / 页面 diff 表 / 标签副本）
+ * 可不同步，且长度 diff 在文本被替换（而非追加）时必然漂移。现仅剩 store → 标签镜像一跳。
+ */
+watch(
+  () => agentStore.liveArtifact,
+  async (artifact) => {
+    if (!artifact || !panelWorkspaceId.value) return
+    const existing = fileTabs.value.find((item) => item.artifactId === artifact.artifactId)
+    if (existing) {
+      existing.content = artifact.text
+      if (artifact.phase === 'done' || artifact.phase === 'error') {
+        await finishArtifactTab(existing, artifact.phase === 'done', artifact.error)
+      }
+      return
+    }
+    const tab = startArtifactTab(artifact)
+    if (tab && (artifact.phase === 'done' || artifact.phase === 'error')) {
+      await finishArtifactTab(tab, artifact.phase === 'done', artifact.error)
+    }
+  },
+  { immediate: true }
+)
+
+/** 打开正在生成的文档产物标签页（自动展开右侧栏；后续 chunk 由 watch 镜像全文） */
+function startArtifactTab(artifact: LiveDocArtifact): FileTab | null {
+  if (!panelWorkspaceId.value) return null
   open.value = true
   view.value = 'files'
-  let tab = fileTabs.value.find((item) => item.key === meta.relPath)
+  let tab = fileTabs.value.find((item) => item.key === artifact.relPath)
   const kind =
-    meta.preview === 'word' || meta.preview === 'pdf' || meta.preview === 'video'
-      ? (meta.preview as 'word' | 'pdf' | 'video')
+    artifact.preview === 'word' || artifact.preview === 'pdf' || artifact.preview === 'video'
+      ? (artifact.preview as 'word' | 'pdf' | 'video')
       : ('text' as const)
   if (!tab) {
-    fileTabs.value.push({
-      key: meta.relPath,
-      entry: { name: meta.name, relPath: meta.relPath, type: 'file' },
+    tab = {
+      key: artifact.relPath,
+      entry: { name: artifact.name, relPath: artifact.relPath, type: 'file' },
       kind,
-      content: initialText ?? '',
+      content: artifact.text,
       truncated: false,
       document: undefined,
       wordMode: 'view',
       loading: false,
       error: '',
-      artifactId: meta.artifactId,
+      artifactId: artifact.artifactId,
       artifactPending: kind !== 'text',
       streaming: kind === 'text'
-    })
+    }
+    fileTabs.value.push(tab)
   } else {
-    tab.content = initialText ?? ''
+    tab.content = artifact.text
     tab.document = undefined
     tab.error = ''
     tab.loading = false
-    tab.artifactId = meta.artifactId
+    tab.artifactId = artifact.artifactId
     tab.artifactPending = tab.kind !== 'text'
     tab.streaming = tab.kind === 'text'
   }
-  activeTabKey.value = meta.relPath
+  activeTabKey.value = artifact.relPath
+  return tab
 }
 
-function appendArtifactText(artifactId: string, text: string): void {
-  const tab = fileTabs.value.find((item) => item.artifactId === artifactId)
-  if (!tab) return
-  tab.content += text
-}
-
-/** 产物流结束：文本型收尾（html 切浏览器渲染）；word/pdf 读字节后交给对应组件 */
-async function finishArtifact(artifactId: string, ok: boolean, error?: string): Promise<void> {
-  const idx = fileTabs.value.findIndex((item) => item.artifactId === artifactId)
+/** 产物流终态：文本型收尾（html 切浏览器渲染）；word/pdf 读字节后交给对应组件 */
+async function finishArtifactTab(tab: FileTab, ok: boolean, error?: string): Promise<void> {
+  const idx = fileTabs.value.indexOf(tab)
   if (idx === -1) return
-  const tab = fileTabs.value[idx]
   tab.artifactId = undefined
   tab.artifactPending = false
   tab.streaming = false
@@ -428,10 +448,7 @@ async function finishArtifact(artifactId: string, ok: boolean, error?: string): 
 }
 
 defineExpose({
-  openArtifact,
   openDocFileByRelPath,
-  appendArtifactText,
-  finishArtifact,
   collapse: collapsePanel
 })
 </script>

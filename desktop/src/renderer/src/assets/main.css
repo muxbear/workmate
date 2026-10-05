@@ -49,6 +49,57 @@ button,
   min-height: 0;
 }
 
+/* 设置窗口「即将上线」禁用态（R7-8）：禁用控件统一不可点视觉，
+   覆盖各页自绘的 hover/pointer 样式，避免「悬停仍像可交互」 */
+.settings-card button:disabled,
+.settings-card input:disabled,
+.settings-card select:disabled,
+.settings-card textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 输入卡底部动作按钮（PromptInput 工作空间选择 / PermissionMenu 触发器共用；
+   随 PermissionMenu 外提自 PromptInput 的 scoped 样式） */
+.footer-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--kw-color-text-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.footer-action:hover {
+  background: var(--kw-color-brand-hover);
+}
+
+/* 上滑展开动效（plus-menu / workspace-menu / perm-menu 共用的 Transition 名；
+   随 PermissionMenu 外提自 PromptInput 的 scoped 样式） */
+.plus-menu-slide-enter-active {
+  transition: all 0.2s ease-out;
+}
+
+.plus-menu-slide-leave-active {
+  transition: all 0.15s ease-in;
+}
+
+.plus-menu-slide-enter-from {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+}
+
+.plus-menu-slide-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+}
+
 code {
   font-weight: 600;
   padding: 3px 5px;

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { showToast as showToastBase } from '@renderer/composables/useToast'
 import ModalShell from '@components/ModalShell.vue'
 import SettingToggle from '../SettingToggle.vue'
+import ComingSoon from '../ComingSoon.vue'
 import { useRuntimeStore } from '@store/runtime'
 import { useSettingsStore } from '@store/settings'
 import type { RuntimeId } from '../../../../../shared/contracts'
@@ -158,6 +159,7 @@ const dataRows = [
             <div>
               <h2 class="s-sec-title">
                 沙箱安全
+                <ComingSoon />
               </h2>
               <p class="s-desc s-desc--lg">
                 AI 运行于隔离沙箱，并配置文件、命令、网络访问策略
@@ -184,7 +186,10 @@ const dataRows = [
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
               <path d="M12 17h.01" />
             </svg>
-            <SettingToggle v-model="sandboxEnabled" />
+            <SettingToggle
+              v-model="sandboxEnabled"
+              disabled
+            />
           </div>
         </div>
         <div class="s-inner-list">
@@ -192,6 +197,7 @@ const dataRows = [
             v-for="row in sandboxRows"
             :key="row.title"
             class="s-inner-row"
+            disabled
           >
             <span class="s-inner-icon">
               <!-- 文件安全 -->
@@ -296,7 +302,7 @@ const dataRows = [
                 <path d="M3 3v5h5" />
               </svg>
               <div>
-                <strong class="s-inner-box-title">自动备份</strong>
+                <strong class="s-inner-box-title">自动备份 <ComingSoon /></strong>
                 <span class="s-inner-box-desc">每轮对话修改文件之前自动备份。</span>
               </div>
             </div>
@@ -320,7 +326,10 @@ const dataRows = [
                 <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
                 <path d="M12 17h.01" />
               </svg>
-              <SettingToggle v-model="autoBackupEnabled" />
+              <SettingToggle
+                v-model="autoBackupEnabled"
+                disabled
+              />
             </div>
           </div>
           <div class="s-backup-row">
@@ -328,9 +337,13 @@ const dataRows = [
             <input
               v-model="backupLimit"
               class="s-num-input"
+              disabled
             >
             <span>MB</span>
-            <button class="s-dir-btn">
+            <button
+              class="s-dir-btn"
+              disabled
+            >
               <svg
                 width="17"
                 height="17"
@@ -378,6 +391,7 @@ const dataRows = [
           <div>
             <h2 class="s-sec-title">
               数据安全
+              <ComingSoon />
             </h2>
             <p class="s-desc s-desc--lg">
               数据流转及删除行为的安全防护
@@ -460,7 +474,10 @@ const dataRows = [
               <strong>删除保护</strong>
               <span>开启后优先移到废纸篓/回收站，关闭后按系统删除</span>
             </span>
-            <SettingToggle v-model="deleteProtection" />
+            <SettingToggle
+              v-model="deleteProtection"
+              disabled
+            />
           </div>
           <div class="s-inner-row s-inner-row--static">
             <span class="s-inner-icon">
@@ -484,6 +501,7 @@ const dataRows = [
             <input
               v-model="approvalLimit"
               class="s-num-input s-num-input--sm"
+              disabled
             >
           </div>
         </div>
@@ -517,6 +535,7 @@ const dataRows = [
           <div>
             <h2 class="s-sec-title">
               系统级工具
+              <ComingSoon />
             </h2>
             <p class="s-desc s-desc--lg">
               WSL、wmic、sc、reg、schtasks 等系统级工具可绕过沙箱限制，请谨慎启用
@@ -527,6 +546,7 @@ const dataRows = [
           <select
             v-model="systemToolMode"
             class="s-select s-select--sm s-select--tool"
+            disabled
           >
             <option>禁用</option>
             <option>询问后启用</option>
@@ -676,6 +696,7 @@ const dataRows = [
           <div>
             <h2 class="s-sec-title">
               审计中心
+              <ComingSoon />
             </h2>
             <p class="s-desc s-desc--lg">
               拦截/放行记录与日志导出
@@ -683,11 +704,15 @@ const dataRows = [
           </div>
         </div>
         <div class="s-audit-actions">
-          <button class="s-audit-btn">
+          <button
+            class="s-audit-btn"
+            disabled
+          >
             导出日志
           </button>
           <button
             class="s-audit-btn"
+            disabled
             @click="auditCleared = true"
           >
             清空记录

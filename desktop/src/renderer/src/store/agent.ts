@@ -40,6 +40,17 @@ export interface LiveDocArtifact {
   error?: string
 }
 
+/**
+ * 流式状态机（替代 isStreaming/isThinking 双布尔位：旧表示可进入「thinking=true 且
+ * streaming=false」等无意义组合，10 处分散赋值难审计）。对外保留 isStreaming/isThinking
+ * 两个**派生读值**（由 phase 计算），消费方零改动。
+ * - idle：无在途流；
+ * - thinking：已发起，深度思考（reasoning）输出中；
+ * - streaming：思考结束、正文输出中；
+ * - canceling：用户已取消、等待主进程流收尾（思考指示已停、流未结束）。
+ */
+export type AgentPhase = 'idle' | 'thinking' | 'streaming' | 'canceling'
+
 export interface Conversation {
   id: string
   title: string
@@ -85,14 +96,16 @@ export const useAgentStore = defineStore('agent', () => {
   const conversations = ref<Conversation[]>([])
   const currentConversationId = ref<string | null>(null)
   const selectedMessages = ref<Message[]>([])
-  const isStreaming = ref<boolean>(false)
-  const isThinking = ref<boolean>(false)
+  /** 流式状态机（单一事实源；isStreaming/isThinking 为派生读值） */
+  const phase = ref<AgentPhase>('idle')
+  const isStreaming = computed(() => phase.value !== 'idle')
+  const isThinking = computed(() => phase.value === 'thinking')
   /** 进行中的委派专家（子智能体）任务：delegate-start 加入、delegate-end 移除，用于动态状态提示 */
   const activeDelegations = ref<AgentDelegateStart[]>([])
   const loaded = ref<boolean>(false)
-  // 右侧栏流式文档：当前 live 产物 + 递增版本号（NewTaskPage 监听驱动 ChatSidePanel）
+  // 右侧栏流式文档：当前 live 产物（**不可变更新**，订阅方直接 watch 引用变化——
+  // 单一事实源，ChatSidePanel 自行订阅；见其「产物流单源同步」）
   const liveArtifact = ref<LiveDocArtifact | null>(null)
-  const artifactVersion = ref(0)
   const artifactConversationId = ref<string | null>(null)
 
   // ====== 计算属性(Getters) ======
@@ -155,7 +168,6 @@ export const useAgentStore = defineStore('agent', () => {
     selectedMessages.value = []
     liveArtifact.value = null
     activeDelegations.value = []
-    artifactVersion.value += 1
   }
 
   /**
@@ -176,7 +188,6 @@ export const useAgentStore = defineStore('agent', () => {
     liveArtifact.value = null
     activeDelegations.value = []
     artifactConversationId.value = null
-    artifactVersion.value += 1
     const result = await window.api.getConversation(id)
     if (result.success && result.data) {
       const messages = (result.data as { messages: ConversationMessage[] }).messages
@@ -271,7 +282,8 @@ export const useAgentStore = defineStore('agent', () => {
     })
 
     const unlistenThinkingDone = window.api.onAgentThinkingDone(() => {
-      isThinking.value = false
+      // 仅从 thinking 迁移；迟到的重复事件不改变其他状态（旧实现无条件抹掉布尔位）
+      if (phase.value === 'thinking') phase.value = 'streaming'
     })
 
     // 委派专家（子智能体）状态：进入/结束「正在委派…」动态提示（与当前会话绑定）
@@ -320,15 +332,14 @@ export const useAgentStore = defineStore('agent', () => {
         phase: 'streaming',
         text: ''
       }
-      artifactVersion.value += 1
     })
     const unlistenArtifactChunk = window.api.onAgentArtifactChunk((data) => {
       if (currentConversationId.value !== conv.id) return
       if (artifactConversationId.value !== conv.id) return
       const current = liveArtifact.value
       if (current && current.artifactId === data.artifactId) {
-        current.text += data.text
-        artifactVersion.value += 1
+        // 不可变替换：订阅方按引用变化感知每个 chunk（原实现原地改 + artifactVersion 版本号唤醒）
+        liveArtifact.value = { ...current, text: current.text + data.text }
       }
     })
     const unlistenArtifactEnd = window.api.onAgentArtifactEnd((data) => {
@@ -336,8 +347,7 @@ export const useAgentStore = defineStore('agent', () => {
       if (artifactConversationId.value !== conv.id) return
       const current = liveArtifact.value
       if (current && current.artifactId === data.artifactId) {
-        current.phase = 'done'
-        artifactVersion.value += 1
+        liveArtifact.value = { ...current, phase: 'done' }
       }
     })
     const unlistenArtifactError = window.api.onAgentArtifactError((data) => {
@@ -345,28 +355,35 @@ export const useAgentStore = defineStore('agent', () => {
       if (artifactConversationId.value !== conv.id) return
       const current = liveArtifact.value
       if (current && current.artifactId === data.artifactId) {
-        current.phase = 'error'
-        current.error = data.error
-        artifactVersion.value += 1
+        liveArtifact.value = { ...current, phase: 'error', error: data.error }
       }
     })
 
     const STREAM_TIMEOUT = 120_000 // 2 分钟超时
 
-    // 用 Promise.race 包装流式完成信号 + 超时保护
-    const streamDone = Promise.race([
-      new Promise<void>((resolve) => {
-        const unlistenDone = window.api.onAgentDone(() => {
-          unlistenDone()
-          resolve()
-        })
-      }),
-      new Promise<void>((_, reject) =>
-        setTimeout(() => {
-          reject(new Error('请求超时，请重试'))
-        }, STREAM_TIMEOUT)
-      )
-    ])
+    // 流完成信号 + 超时保护：done 事件与超时两条出口都做清理（卸载 done 监听 + 清定时器），
+    // finally 兜底再清一次（发送失败/异常路径不等完成信号）。
+    // 旧实现的定时器在所有路径都空转满 2 分钟、done 监听残留到下一次流的 done 事件才被调用。
+    let unlistenDone: (() => void) | undefined
+    let doneTimer: ReturnType<typeof setTimeout> | undefined
+    const clearStreamWatch = (): void => {
+      unlistenDone?.()
+      unlistenDone = undefined
+      if (doneTimer !== undefined) {
+        clearTimeout(doneTimer)
+        doneTimer = undefined
+      }
+    }
+    const streamDone = new Promise<void>((resolve, reject) => {
+      unlistenDone = window.api.onAgentDone(() => {
+        clearStreamWatch()
+        resolve()
+      })
+      doneTimer = setTimeout(() => {
+        clearStreamWatch()
+        reject(new Error('请求超时，请重试'))
+      }, STREAM_TIMEOUT)
+    })
 
     try {
       // 主进程从 checkpoint 读取历史 + 追加/截断（会话数据全量由 LangGraph 管理）
@@ -408,8 +425,8 @@ export const useAgentStore = defineStore('agent', () => {
       unlistenArtifactChunk()
       unlistenArtifactEnd()
       unlistenArtifactError()
-      isThinking.value = false
-      isStreaming.value = false
+      clearStreamWatch()
+      phase.value = 'idle'
       activeDelegations.value = []
       conv.updateAt = Date.now()
       const msg = getAssistantMsg()
@@ -466,8 +483,7 @@ export const useAgentStore = defineStore('agent', () => {
     artifactConversationId.value = conv.id
     liveArtifact.value = null
 
-    isStreaming.value = true
-    isThinking.value = true
+    phase.value = 'thinking'
 
     await runStream(conv, assistantMsg, parts, {
       mode: 'append',
@@ -505,8 +521,7 @@ export const useAgentStore = defineStore('agent', () => {
     artifactConversationId.value = conv.id
     liveArtifact.value = null
 
-    isStreaming.value = true
-    isThinking.value = true
+    phase.value = 'thinking'
 
     await runStream(conv, assistantMsg, lastUser.content, {
       mode: 'regenerate',
@@ -519,7 +534,8 @@ export const useAgentStore = defineStore('agent', () => {
 
   function cancelMessage(): void {
     window.api.cancelAgentMessage()
-    isThinking.value = false
+    // 取消发生在思考阶段：思考指示立即停止、等待主进程流收尾（正文阶段取消无需迁移状态）
+    if (phase.value === 'thinking') phase.value = 'canceling'
   }
 
   /**
@@ -527,19 +543,25 @@ export const useAgentStore = defineStore('agent', () => {
    * 主进程的任务停止由 auth:logout 联动 abort 全部流，此处仅重置渲染层流状态
    */
   function stopAllTasks(): void {
-    isStreaming.value = false
-    isThinking.value = false
+    phase.value = 'idle'
     activeDelegations.value = []
     artifactConversationId.value = null
     liveArtifact.value = null
-    artifactVersion.value += 1
   }
 
   // AI 总结标题异步生成完成 → 更新本地会话标题（侧栏即时刷新，无需重新拉取列表）
-  window.api.onConversationTitleUpdated(({ conversationId, title }) => {
+  const unlistenTitleUpdated = window.api.onConversationTitleUpdated(({ conversationId, title }) => {
     const conv = conversations.value.find((c) => c.id === conversationId)
     if (conv) conv.title = title
   })
+  // 根 store 生命周期与页面一致，生产无需退订；仅 HMR 时显式卸载，
+  // 否则旧实例的订阅残留会导致标题更新重复触发（旧实现返回的退订函数被直接丢弃）。
+  // vite/client 的 ImportMeta.hot 类型仅在 web tsconfig 可见，而本文件还会被 node tsconfig
+  // 经测试引用编译，故按最小结构取用（全局增补会与 vite/client 的同名声明类型冲突）
+  const hot = (import.meta as unknown as { hot?: { dispose(cb: () => void): void } }).hot
+  if (hot) {
+    hot.dispose(() => unlistenTitleUpdated())
+  }
 
   return {
     sidebarVisible,
@@ -548,6 +570,7 @@ export const useAgentStore = defineStore('agent', () => {
     regenerate,
     cancelMessage,
     stopAllTasks,
+    phase,
     isStreaming,
     isThinking,
     activeDelegations,
@@ -562,7 +585,6 @@ export const useAgentStore = defineStore('agent', () => {
     currentMessages,
     sortedConversations,
     currentConversation,
-    liveArtifact,
-    artifactVersion
+    liveArtifact
   }
 })

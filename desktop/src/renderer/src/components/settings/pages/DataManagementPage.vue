@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import ComingSoon from '../ComingSoon.vue'
 
 const managedDataItem = ref<string | null>(null)
 
@@ -13,6 +14,7 @@ const items = [
 
 <template>
   <div class="s-page">
+    <ComingSoon variant="banner" />
     <section
       v-for="item in items"
       :key="item.name"
@@ -131,6 +133,7 @@ const items = [
         </div>
         <button
           class="s-manage-btn"
+          disabled
           @click="managedDataItem = item.name"
         >
           {{ managedDataItem === item.name ? '已打开' : '管理' }}
