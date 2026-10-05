@@ -4,7 +4,7 @@ import { join, resolve } from 'path'
 import { unzipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceService } from '../../../src/main/workspace/WorkspaceService'
-import type { WorkspaceRepository } from '../../../src/main/workspace/WorkspaceRepository'
+import type { IWorkspaceStore } from '../../../src/main/workspace/IWorkspaceStore'
 
 /** 清理临时目录：非 ASCII 名先转 ASCII，规避 Windows 递归删除问题 */
 function cleanupTree(dir: string): void {
@@ -19,14 +19,14 @@ function cleanupTree(dir: string): void {
   rmSync(dir, { recursive: true, force: true })
 }
 
-/** 仅实现 getById 的仓储替身（避免依赖 better-sqlite3 原生绑定） */
-function fakeRepo(workDir: string): WorkspaceRepository {
+/** 仅实现 getById 的仓储替身（dependency 已收窄到 IWorkspaceStore 接口，无需具体类） */
+function fakeRepo(workDir: string): IWorkspaceStore {
   return {
     getById: (id: string) =>
       id === 'w1'
         ? ({ id: 'w1', name: '测试空间', path: workDir, source: 'created', userId: 'u1' } as never)
         : undefined,
-  } as unknown as WorkspaceRepository
+  } as unknown as IWorkspaceStore
 }
 
 describe('WorkspaceService.exportZip（打包下载）', () => {

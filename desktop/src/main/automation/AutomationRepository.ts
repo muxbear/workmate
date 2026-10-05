@@ -8,6 +8,7 @@ import type {
   TaskStatus
 } from './types'
 import type { MessagePart } from '../../shared/contracts'
+import type { IAutomationStore } from './IAutomationStore'
 
 /** automation_tasks 行结构（snake_case 与库表一致） */
 interface TaskRow {
@@ -99,7 +100,7 @@ function toRecord(row: TaskRow): AutomationTaskRecord {
 /**
  * 自动化任务仓库：全部方法按 userId 作用域，跨用户读写会被 SQL 条件拦住
  */
-export class AutomationRepository {
+export class AutomationRepository implements IAutomationStore {
   constructor(private readonly db: Database.Database) {}
 
   /** 我的任务列表（未删除，按创建时间倒序） */

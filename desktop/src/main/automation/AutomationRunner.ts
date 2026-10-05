@@ -4,11 +4,11 @@ import type { DesktopExpert } from '../../shared/contracts'
 import type { AgentManager } from '../agent/AgentManager'
 import { invokeSendMessage, toLangChainMessages } from '../agent/service'
 import { expandFileParts } from '../agent/file-parts'
-import type { ConversationStore } from '../agent/ConversationStore'
+import type { IConversationMetaStore } from '../agent/IConversationMetaStore'
 import type { ModelService } from '../model/ModelService'
 import type { WorkspaceService } from '../workspace/WorkspaceService'
-import type { AutomationRepository } from './AutomationRepository'
-import type { AutomationRunRepository } from './AutomationRunRepository'
+import type { IAutomationRunStore } from './IAutomationRunStore'
+import type { IAutomationStore } from './IAutomationStore'
 import type { IAutomationService } from './AutomationService'
 import type { AutomationTaskRecord, RunErrorCode, RunStatus, RunTrigger } from './types'
 import { buildContextHint } from './context-hint'
@@ -54,10 +54,10 @@ function classifyError(err: unknown): { code: RunErrorCode; message: string } {
 }
 
 export interface AutomationRunnerDeps {
-  tasks: AutomationRepository
-  runs: AutomationRunRepository
+  tasks: IAutomationStore
+  runs: IAutomationRunStore
   service: IAutomationService
-  conversationStore: ConversationStore
+  conversationStore: IConversationMetaStore
   workspaceService: WorkspaceService
   modelService: ModelService
   /** 专用 Agent 管理器（与交互式会话隔离） */

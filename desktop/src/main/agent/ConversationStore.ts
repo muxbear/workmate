@@ -1,5 +1,6 @@
 import type { BaseCheckpointSaver, CheckpointTuple } from '@langchain/langgraph-checkpoint'
 import type { Database } from 'better-sqlite3'
+import type { IConversationMetaStore } from './IConversationMetaStore'
 
 /** 会话绑定的工作空间（checkpoint metadata 派生；无绑定为 undefined，归"默认空间"） */
 export interface ConversationWorkspace {
@@ -138,7 +139,7 @@ const DEFAULT_TITLE = '新对话'
  * - 消息历史 = checkpoint state 的 messages 通道（channel_values.messages）
  * - 删除会话 = checkpointer.deleteThread()
  */
-export class ConversationStore {
+export class ConversationStore implements IConversationMetaStore {
   constructor(
     private readonly getCheckpointer: () => BaseCheckpointSaver,
     private readonly getDb?: () => Database

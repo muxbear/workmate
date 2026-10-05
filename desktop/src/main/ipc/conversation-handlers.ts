@@ -1,10 +1,10 @@
-import type { ConversationStore } from '../agent/ConversationStore'
+import type { IConversationMetaStore } from '../agent/IConversationMetaStore'
 import type { SessionService } from '../services/SessionService'
 import type { IpcMain } from 'electron'
 import { createCommandRegistrar } from './command'
 
 interface ConversationHandlerDeps {
-  conversationStore: ConversationStore
+  conversationStore: IConversationMetaStore
   session: SessionService
 }
 

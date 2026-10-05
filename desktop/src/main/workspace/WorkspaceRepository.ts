@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { Database } from 'better-sqlite3'
 import type { WorkspaceRow, WorkspaceSource } from './types'
+import type { IWorkspaceStore } from './IWorkspaceStore'
 
 interface WorkspaceRowDb {
   id: string
@@ -30,8 +31,8 @@ const SELECT_WS = 'SELECT id, name, path, source, user_id, created_at FROM works
  */
 const WS_SCOPE = "(user_id = ? OR (user_id IS NULL AND source = 'default'))"
 
-/** 工作空间仓储：workspaces 表 CRUD（better-sqlite3 prepared statement） */
-export class WorkspaceRepository {
+/** 工作空间仓储：workspaces 表 CRUD（better-sqlite3 prepared statement；契约见 IWorkspaceStore） */
+export class WorkspaceRepository implements IWorkspaceStore {
   constructor(private readonly db: Database.Database) {}
 
   /**

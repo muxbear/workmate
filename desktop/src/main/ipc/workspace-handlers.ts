@@ -1,14 +1,14 @@
 import type { IpcMain } from 'electron'
 import type { WorkspaceService } from '../workspace/WorkspaceService'
 import type { SessionService } from '../services/SessionService'
-import type { ConversationStore } from '../agent/ConversationStore'
+import type { IConversationMetaStore } from '../agent/IConversationMetaStore'
 import { createCommandRegistrar } from './command'
 
 export interface WorkspaceHandlerDeps {
   workspaceService: WorkspaceService
   session: SessionService
   /** 级联删除会话：移除工作空间时先删其下会话数据 */
-  conversationStore: ConversationStore
+  conversationStore: IConversationMetaStore
   /** 选择 zip 保存位置（系统「另存为」）；缺省时导出到工作空间根目录 */
   chooseZipPath?: (defaultName: string) => Promise<string | null>
   /** 导出完成后在系统文件管理器中定位文件 */

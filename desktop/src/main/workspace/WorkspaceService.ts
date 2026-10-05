@@ -1,6 +1,6 @@
 import { homedir } from 'os'
 import { join } from 'path'
-import type { WorkspaceRepository } from './WorkspaceRepository'
+import type { IWorkspaceStore } from './IWorkspaceStore'
 import type { WorkspaceRow } from './types'
 import { WordConversionService } from './WordConversionService'
 import { ZipPackager, type WorkspaceZipExport } from './zip-packager'
@@ -42,7 +42,7 @@ export class WorkspaceService {
   private readonly zipPackager = new ZipPackager()
 
   constructor(
-    repo: WorkspaceRepository,
+    repo: IWorkspaceStore,
     defaultWorkspaceDir: string = join(homedir(), 'KeWork'),
     deps: WorkspaceServiceDeps = {},
     wordConversionService: WordConversionService = new WordConversionService()

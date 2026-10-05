@@ -1,5 +1,5 @@
-import type { AutomationRepository } from './AutomationRepository'
-import type { AutomationRunRepository } from './AutomationRunRepository'
+import type { IAutomationRunStore } from './IAutomationRunStore'
+import type { IAutomationStore } from './IAutomationStore'
 import type {
   AutomationRunRecord,
   AutomationRunStats,
@@ -68,8 +68,8 @@ export interface IAutomationService {
  */
 export class AutomationService implements IAutomationService {
   constructor(
-    private readonly tasks: AutomationRepository,
-    private readonly runs: AutomationRunRepository,
+    private readonly tasks: IAutomationStore,
+    private readonly runs: IAutomationRunStore,
     private readonly deps: AutomationServiceDeps = {}
   ) {}
 

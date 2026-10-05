@@ -7,6 +7,7 @@ import type {
   RunStatus,
   RunTrigger
 } from './types'
+import type { IAutomationRunStore } from './IAutomationRunStore'
 
 /** automation_runs 行结构 */
 interface RunRow {
@@ -90,7 +91,7 @@ function toRecord(row: RunRow): AutomationRunRecord {
 /**
  * 自动化运行记录仓库：写入运行状态、查询历史、统计与清理
  */
-export class AutomationRunRepository {
+export class AutomationRunRepository implements IAutomationRunStore {
   constructor(private readonly db: Database.Database) {}
 
   /** 插入一条 running 记录 */

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { cp, mkdir, readdir, rename, rmdir, rm } from 'fs/promises'
 import { homedir } from 'os'
 import { isAbsolute, join, parse, relative, resolve, sep } from 'path'
-import type { WorkspaceRepository } from './WorkspaceRepository'
+import type { IWorkspaceStore } from './IWorkspaceStore'
 import type { WorkspaceRow } from './types'
 
 /**
@@ -42,7 +42,7 @@ export class WorkspaceRegistryService {
   private defaultWorkspaceDir: string
 
   constructor(
-    private readonly repo: WorkspaceRepository,
+    private readonly repo: IWorkspaceStore,
     defaultWorkspaceDir: string = join(homedir(), 'KeWork'),
     private readonly deps: WorkspaceServiceDeps = {}
   ) {
