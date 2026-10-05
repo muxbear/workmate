@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AutomationTemplateJsonStore } from '../../../src/main/automation/AutomationTemplateJsonStore'
-import type { AutomationSchedule, DesktopAutomationTemplate } from '../../../src/preload/index.d'
+import type { AutomationSchedule, DesktopAutomationTemplate } from '../../../src/shared/contracts'
 
 function createBaseDir(): string {
   return mkdtempSync(join(tmpdir(), 'kw-template-store-'))

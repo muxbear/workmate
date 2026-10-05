@@ -7,7 +7,7 @@ import type {
   TaskSchedule,
   TaskStatus
 } from './types'
-import type { MessagePart } from '../../preload/index.d'
+import type { MessagePart } from '../../shared/contracts'
 
 /** automation_tasks 行结构（snake_case 与库表一致） */
 interface TaskRow {

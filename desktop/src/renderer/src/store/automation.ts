@@ -6,7 +6,7 @@ import type {
   AutomationTask,
   AutomationTaskDraft,
   IpcResult
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 /** 解包 IPC 结果，失败直接抛错（页面统一 toast 展示） */
 function unwrap<T>(res: IpcResult<T>): T {

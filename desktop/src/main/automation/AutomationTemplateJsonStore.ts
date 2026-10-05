@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
-import type { DesktopAutomationTemplate } from '../../preload/index.d'
+import type { DesktopAutomationTemplate } from '../../shared/contracts'
 
 /** ~/.ke-work/automation-templates/templates.json 持久化结构（机器级本地快照） */
 export interface AutomationTemplateJsonFile {

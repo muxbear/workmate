@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useUserStore } from '@store/user'
 import { useSettingsStore } from '../../../store/settings'
 import SettingToggle from '../SettingToggle.vue'
-import type { OAuth2ScopeDescriptor } from '../../../../../preload/index.d'
+import type { OAuth2ScopeDescriptor } from '../../../../../shared/contracts'
 
 defineEmits<{
   logout: []

@@ -8,7 +8,7 @@ import type {
   AutomationSchedule,
   AutomationTaskDraft,
   DesktopAutomationTemplate
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 const automation = useAutomationStore()
 const templateSync = useAutomationTemplateSyncStore()

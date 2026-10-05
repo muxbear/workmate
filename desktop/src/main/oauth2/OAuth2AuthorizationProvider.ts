@@ -1,4 +1,4 @@
-import type { WebUser } from '../../preload/index.d'
+import type { WebUser } from '../../shared/contracts'
 import type { ISecureStorage } from '../security/secure-storage'
 import type { OAuth2ClientService } from './OAuth2ClientService'
 import { DESKTOP_DEFAULT_SCOPES } from './scopes'

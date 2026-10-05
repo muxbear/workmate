@@ -8,6 +8,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { startMockLlmServer, stopMockLlmServer } from './mock-llm-server'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
@@ -29,6 +30,8 @@ function loadDotEnv(): Record<string, string> {
 }
 
 describe('E2E AI 总结标题', () => {
+  /** mock LLM base URL（模型调用立即成功） */
+  let llmBaseUrl = ''
   let dataHome: string
   let app: Awaited<ReturnType<typeof electron.launch>>
   let page: Awaited<ReturnType<typeof electron.launch>> extends {
@@ -39,13 +42,16 @@ describe('E2E AI 总结标题', () => {
 
   async function launchAndLogin(): Promise<void> {
     await app?.close().catch(() => {})
+    await stopMockLlmServer()
+    llmBaseUrl = await startMockLlmServer()
     app = await electron.launch({
       args: [APP_ENTRY],
       env: {
         ...process.env,
         ...loadDotEnv(),
         KE_WORK_HOME: dataHome,
-        KE_WORK_USER_DATA: join(dataHome, 'user-data')
+        KE_WORK_USER_DATA: join(dataHome, 'user-data'),
+        DEEPSEEK_BASE_URL: `${llmBaseUrl}/chat/completions`
       }
     })
     page = await app.firstWindow()

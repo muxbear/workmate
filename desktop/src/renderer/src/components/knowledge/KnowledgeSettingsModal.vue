@@ -12,7 +12,7 @@ import {
 } from './knowledgeFields'
 import { useSettingsStore } from '../../store/settings'
 import { useKnowledgeSettingsStore } from '../../store/knowledgeSettings'
-import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../preload/index.d'
+import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../shared/contracts'
 
 /**
  * 按知识库设置弹窗

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'fs'
 import { extname, join, relative, sep } from 'path'
-import type { SkillRuntimeKind } from '../../preload/index.d'
+import type { SkillRuntimeKind } from '../../shared/contracts'
 import { parseSkillFrontmatter } from './SkillFrontmatter'
 
 /** 运行时探测结果（含探测依据，便于展示与排查） */

@@ -16,11 +16,14 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { startMockLlmServer, stopMockLlmServer } from './mock-llm-server'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
 
 describe('E2E 「AI 改写润色」', () => {
+  /** mock LLM base URL（模型调用立即成功） */
+  let llmBaseUrl = ''
   let dataHome: string
   let app: Awaited<ReturnType<typeof electron.launch>>
   let page: Awaited<ReturnType<typeof electron.launch>> extends {
@@ -35,12 +38,14 @@ describe('E2E 「AI 改写润色」', () => {
       join(process.cwd(), 'tests', 'e2e', 'setup-test-data.mjs'),
       dataHome
     ])
+    llmBaseUrl = await startMockLlmServer()
     app = await electron.launch({
       args: [APP_ENTRY],
       env: {
         ...process.env,
         KE_WORK_HOME: dataHome,
-        KE_WORK_USER_DATA: join(dataHome, 'user-data')
+        KE_WORK_USER_DATA: join(dataHome, 'user-data'),
+        DEEPSEEK_BASE_URL: `${llmBaseUrl}/chat/completions`
       }
     })
     page = await app.firstWindow()
@@ -60,6 +65,7 @@ describe('E2E 「AI 改写润色」', () => {
 
   afterAll(async () => {
     await app?.close().catch(() => {})
+    await stopMockLlmServer()
     rmSync(dataHome, { recursive: true, force: true })
   })
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useKnowledgeStore } from '../../../src/renderer/src/store/knowledge'
-import type { KnowledgeBaseSummary } from '../../../src/preload/index.d'
+import type { KnowledgeBaseSummary } from '../../../src/shared/contracts'
 
 /** 最小知识库记录桩（只填排序 / 置顶用得上的字段） */
 function base(id: string, pinned = false): KnowledgeBaseSummary {

@@ -23,7 +23,7 @@ import {
   MAX_PDF_BYTES,
   MAX_DOCUMENT_BYTES
 } from '../../../src/main/agent/file-parts'
-import type { MessagePart } from '../../../src/preload/index.d'
+import type { MessagePart } from '../../../src/shared/contracts'
 
 function tmpFile(name: string, content: Buffer | string): string {
   const dir = mkdtempSync(join(tmpdir(), 'kw-fp-'))

@@ -1,4 +1,5 @@
-import { ChatDeepSeek } from '@langchain/deepseek'
+import type { ModelService } from '../model/ModelService'
+import { resolveUtilityModel } from './ModelFactory'
 
 /** 改写输入文本长度上限（超出拒绝，控制 token 消耗） */
 export const POLISH_MAX_TEXT_CHARS = 20_000
@@ -9,15 +10,18 @@ export function cleanPolished(raw: string): string {
 }
 
 /**
- * 调用 LLM 改写润色输入文本（表达更清晰、逻辑更有条理、更适合作为任务指令）
+ * 调用 LLM 改写润色输入文本（表达更清晰、逻辑更有条理、更适合作为任务指令）。
+ *
+ * 模型经 `resolveUtilityModel` 解析（与标题总结、对话同一条凭据链路）——
+ * 历史实现直连 @langchain/deepseek 默认端点，绕过用户配置的自定义模型/代理。
  * @throws 调用失败或输出为空时抛错（调用方展示错误）
  */
-export async function polishText(text: string): Promise<string> {
-  const llm = new ChatDeepSeek({
-    model: 'deepseek-chat',
-    temperature: 0.7,
-    maxTokens: 2048
-  })
+export async function polishText(
+  text: string,
+  modelService?: ModelService,
+  customModelId?: string
+): Promise<string> {
+  const llm = await resolveUtilityModel(modelService, customModelId)
   const res = await llm.invoke([
     {
       role: 'system',

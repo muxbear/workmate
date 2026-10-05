@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExpertJsonStore } from '../../../src/main/experts/ExpertJsonStore'
-import type { DesktopExpert } from '../../../src/preload/index.d'
+import type { DesktopExpert } from '../../../src/shared/contracts'
 
 function createBaseDir(): string {
   return mkdtempSync(join(tmpdir(), 'kw-expert-store-'))

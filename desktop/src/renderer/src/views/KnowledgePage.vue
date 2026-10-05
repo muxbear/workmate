@@ -53,7 +53,7 @@ import type {
   KnowledgeDocumentMeta,
   KnowledgeKind,
   KnowledgeQaCitation
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 // ── 知识库数据模型（知识库列表见 components/knowledge/knowledgeList.ts，文件树见 knowledgeTree.ts） ──
 type FileIcon = KnowledgeFileIcon

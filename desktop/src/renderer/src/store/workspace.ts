@@ -7,7 +7,7 @@ import type {
   WorkspaceFileBinary,
   WorkspaceFileContent,
   WorkspaceFileEntry
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 /** localStorage 键：当前选中的工作空间 id（重启后恢复） */
 const CURRENT_ID_KEY = 'ke-work.current-workspace-id'

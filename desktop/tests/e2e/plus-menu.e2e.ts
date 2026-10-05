@@ -18,12 +18,15 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { mkdirSync, writeFileSync } from 'fs'
+import { startMockLlmServer, stopMockLlmServer } from './mock-llm-server'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
 const STORAGE_KEY = 'ke-work:task-selection'
 
 describe('E2E 「+」菜单', () => {
+  let llmBaseUrl = ''
   let dataHome: string
   let app: Awaited<ReturnType<typeof electron.launch>>
   let page: Awaited<ReturnType<typeof electron.launch>> extends {
@@ -38,12 +41,116 @@ describe('E2E 「+」菜单', () => {
       join(process.cwd(), 'tests', 'e2e', 'setup-test-data.mjs'),
       dataHome
     ])
+    // 夹具：本地专家与技能（历史为内置硬编码数据，改真实同步后 e2e 需预置 skills.json/experts.json）
+    const expertsDir = join(dataHome, 'experts')
+    mkdirSync(expertsDir, { recursive: true })
+    writeFileSync(
+      join(expertsDir, 'experts.json'),
+      JSON.stringify({
+        version: 1,
+        syncedAt: Date.now(),
+        syncedBy: null,
+        experts: [
+          {
+            id: '1',
+            name: '林晓雯',
+            title: '内容创作专家',
+            tags: ['文案', '写作'],
+            desc: '擅长各类文案与文章写作',
+            color: 'linear-gradient(135deg,#0891b2,#0e7490)',
+            icon: 'Zap',
+            category: '全部',
+            rating: 4.9,
+            users: '2.3k',
+            initials: '林',
+            systemPrompt: '你是内容创作专家。',
+            tools: [],
+            providerId: null,
+            modelId: null,
+            modelName: null,
+            modelType: null,
+            skills: [],
+            mcpConfigs: [],
+            promptTemplate: '',
+            expertiseAreas: ['内容创作'],
+            isExpert: true
+          },
+          {
+            id: '2',
+            name: '陈法鉴',
+            title: '法务顾问',
+            tags: ['法务', '合同'],
+            desc: '合同审查与法律风险提示',
+            color: 'linear-gradient(135deg,#7c3aed,#5b21b6)',
+            icon: 'Scale',
+            category: '全部',
+            rating: 4.8,
+            users: '1.1k',
+            initials: '陈',
+            systemPrompt: '你是法务顾问。',
+            tools: [],
+            providerId: null,
+            modelId: null,
+            modelName: null,
+            modelType: null,
+            skills: [],
+            mcpConfigs: [],
+            promptTemplate: '',
+            expertiseAreas: ['法务'],
+            isExpert: true
+          }
+        ]
+      }),
+      'utf-8'
+    )
+    const skillsDir = join(dataHome, 'skills')
+    mkdirSync(skillsDir, { recursive: true })
+    writeFileSync(
+      join(skillsDir, 'skills.json'),
+      JSON.stringify({
+        version: 1,
+        syncedAt: Date.now(),
+        skills: [
+          {
+            id: 'pdf-deep-parse',
+            name: 'PDF 深度解析',
+            desc: '按版式解析 PDF 并抽取表格',
+            category: '文档处理',
+            icon: 'FileText',
+            color: 'linear-gradient(135deg,#ef4444,#b91c1c)',
+            enabled: true,
+            isBuiltin: false,
+            source: 'local',
+            dirName: 'pdf-deep-parse',
+            installed: true,
+            installedAt: Date.now()
+          },
+          {
+            id: 'chart-gen',
+            name: '数据图表生成',
+            desc: '把表格数据转成图表',
+            category: '数据',
+            icon: 'BarChart',
+            color: 'linear-gradient(135deg,#059669,#047857)',
+            enabled: true,
+            isBuiltin: false,
+            source: 'local',
+            dirName: 'chart-gen',
+            installed: true,
+            installedAt: Date.now()
+          }
+        ]
+      }),
+      'utf-8'
+    )
+    llmBaseUrl = await startMockLlmServer()
     app = await electron.launch({
       args: [APP_ENTRY],
       env: {
         ...process.env,
         KE_WORK_HOME: dataHome,
-        KE_WORK_USER_DATA: join(dataHome, 'user-data')
+        KE_WORK_USER_DATA: join(dataHome, 'user-data'),
+        DEEPSEEK_BASE_URL: `${llmBaseUrl}/chat/completions`
       }
     })
     page = await app.firstWindow()
@@ -63,6 +170,7 @@ describe('E2E 「+」菜单', () => {
 
   afterAll(async () => {
     await app?.close().catch(() => {})
+    await stopMockLlmServer()
     rmSync(dataHome, { recursive: true, force: true })
   })
 
@@ -343,7 +451,7 @@ describe('E2E 「+」菜单', () => {
     await hoverTop('连接器')
     await page.locator('.plus-submenu-item', { hasText: 'GitHub' }).click()
 
-    await page.locator('.expert-page').waitFor({ state: 'visible', timeout: WAIT })
+    await page.locator('.connector-page').waitFor({ state: 'visible', timeout: WAIT })
     const activeTab = await page.locator('.page-title').textContent()
     expect(activeTab?.trim()).toBe('连接器')
 

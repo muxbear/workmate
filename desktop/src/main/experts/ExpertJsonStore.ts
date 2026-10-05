@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
-import type { DesktopExpert } from '../../preload/index.d'
+import type { DesktopExpert } from '../../shared/contracts'
 
 /** ~/.ke-work/experts/experts.json 持久化结构（机器级本地快照） */
 export interface ExpertJsonFile {

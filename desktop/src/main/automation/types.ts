@@ -1,4 +1,4 @@
-import type { MessagePart } from '../../preload/index.d'
+import type { MessagePart } from '../../shared/contracts'
 
 /** 频率大类：周期 / 间隔 */
 export type FreqGroup = 'cycle' | 'interval'

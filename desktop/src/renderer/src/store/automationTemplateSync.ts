@@ -5,7 +5,7 @@ import type {
   AutomationTemplateSyncStats,
   DesktopAutomationTemplate,
   WebUser
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 export type AutomationTemplateSyncState = 'unknown' | 'unauthorized' | 'authorized'
 

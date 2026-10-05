@@ -6,7 +6,7 @@ import type {
   ExpertSyncStats,
   ExpertSyncStatus,
   WebUser
-} from '../../preload/index.d'
+} from '../../shared/contracts'
 import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_EXPERT_READ } from '../oauth2/scopes'
 import { ExpertJsonStore } from './ExpertJsonStore'

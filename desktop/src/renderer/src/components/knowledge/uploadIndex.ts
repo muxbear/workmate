@@ -1,4 +1,4 @@
-import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../preload/index.d'
+import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../shared/contracts'
 import { KNOWLEDGE_FIELD_DEFS, KNOWLEDGE_FIELD_LIST } from './knowledgeFields'
 
 /**

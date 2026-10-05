@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { registerAutomationTemplateSyncHandlers } from '../../../src/main/ipc/automation-template-sync-handlers'
-import type { AutomationTemplateSyncProgress } from '../../../src/preload/index.d'
+import type { AutomationTemplateSyncProgress } from '../../../src/shared/contracts'
 
 function createFakeIpcMain(): {
   handle: ReturnType<typeof vi.fn>

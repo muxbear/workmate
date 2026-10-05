@@ -5,7 +5,7 @@ import ModalShell from '@components/ModalShell.vue'
 import SettingToggle from '../SettingToggle.vue'
 import { useRuntimeStore } from '@store/runtime'
 import { useSettingsStore } from '@store/settings'
-import type { RuntimeId } from '../../../../../preload/index.d'
+import type { RuntimeId } from '../../../../../shared/contracts'
 
 const sandboxEnabled = ref(true)
 const autoBackupEnabled = ref(true)

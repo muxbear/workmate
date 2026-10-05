@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import ModalShell from '../ModalShell.vue'
-import type { KnowledgeBaseSummary, KnowledgeStats } from '../../../../preload/index.d'
+import type { KnowledgeBaseSummary, KnowledgeStats } from '../../../../shared/contracts'
 
 /**
  * 知识库概览弹窗

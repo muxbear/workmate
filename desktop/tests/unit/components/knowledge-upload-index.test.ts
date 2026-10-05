@@ -13,7 +13,7 @@ import {
   KNOWLEDGE_FIELD_DEFS,
   KNOWLEDGE_FIELD_LIST
 } from '../../../src/renderer/src/components/knowledge/knowledgeFields'
-import type { KnowledgeOverrides } from '../../../src/preload/index.d'
+import type { KnowledgeOverrides } from '../../../src/shared/contracts'
 
 /**
  * 上传弹窗「三选一 + 自定义索引向导」的静态定义验证

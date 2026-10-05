@@ -10,7 +10,7 @@ import {
 import type { DeepAgent } from 'deepagents'
 import type { BackendKind } from './AgentBuilder'
 import type { RawConversationMessage } from './ConversationStore'
-import type { DocArtifactFile, AgentArtifactMeta } from '../../preload/index.d'
+import type { DocArtifactFile, AgentArtifactMeta } from '../../shared/contracts'
 import { randomUUID } from 'crypto'
 import {
   buildArtifactMeta,

@@ -1,4 +1,4 @@
-import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../preload/index.d'
+import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../shared/contracts'
 
 /**
  * 知识库配置字段描述表与草稿工具

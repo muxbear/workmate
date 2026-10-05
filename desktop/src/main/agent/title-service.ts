@@ -1,9 +1,5 @@
 import type { ModelService } from '../model/ModelService'
-import {
-  createModelFromCredential,
-  resolveDefaultModel,
-  type ChatModel
-} from './ModelFactory'
+import { resolveUtilityModel } from './ModelFactory'
 
 /** 标题长度上限（严格限制，超出截断） */
 export const TITLE_MAX_LEN = 20
@@ -34,24 +30,8 @@ export async function summarizeTitle(
   modelService?: ModelService,
   customModelId?: string
 ): Promise<string> {
-  // 标题总结优先跟随欢迎态/对话态当前选择的模型；
-  // 未选择自定义模型时回退到系统默认模型，确保与对话使用的模型一致。
-  const selectedCredential = customModelId
-    ? modelService?.getCredential(customModelId)
-    : undefined
-
-  let llm: ChatModel
-  if (selectedCredential) {
-    llm = await createModelFromCredential(selectedCredential)
-  } else if (modelService) {
-    const resolved = await resolveDefaultModel(modelService, 'deepseek:deepseek-v4-pro')
-    if (typeof resolved === 'string') {
-      throw new Error('请先在“系统设置 -> 模型”中配置一个模型')
-    }
-    llm = resolved
-  } else {
-    throw new Error('请先在“系统设置 -> 模型”中配置一个模型')
-  }
+  // 标题总结优先跟随欢迎态/对话态当前选择的模型；未选择时回退系统默认模型（与对话一致）。
+  const llm = await resolveUtilityModel(modelService, customModelId)
 
   const transcript = messages
     .slice(0, MAX_MESSAGES_FOR_TITLE)

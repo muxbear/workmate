@@ -11,7 +11,7 @@ import {
   type SkillRuntimeManifest
 } from '../../../src/main/skills/SkillInstallService'
 import { SkillJsonStore } from '../../../src/main/skills/SkillJsonStore'
-import type { DesktopSkill, SkillInstallProgress } from '../../../src/preload/index.d'
+import type { DesktopSkill, SkillInstallProgress } from '../../../src/shared/contracts'
 
 const encoder = new TextEncoder()
 

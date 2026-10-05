@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillJsonStore } from '../../../src/main/skills/SkillJsonStore'
-import type { DesktopSkill } from '../../../src/preload/index.d'
+import type { DesktopSkill } from '../../../src/shared/contracts'
 
 function createBaseDir(): string {
   return mkdtempSync(join(tmpdir(), 'kw-skill-store-'))

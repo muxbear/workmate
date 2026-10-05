@@ -4,7 +4,7 @@ import {
   buildExpertDirective,
   createExpertDirectiveMiddleware
 } from '../../../src/main/agent/ExpertDirectiveMiddleware'
-import type { DesktopExpert } from '../../../src/preload/index.d'
+import type { DesktopExpert } from '../../../src/shared/contracts'
 
 /** 专家夹具（默认给检索专家一段带占位符的委派细则） */
 function makeExpert(overrides: Partial<DesktopExpert> = {}): DesktopExpert {

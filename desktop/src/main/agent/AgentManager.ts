@@ -1,5 +1,5 @@
 import type { DeepAgent, SubAgent } from 'deepagents'
-import type { DesktopExpert } from '../../preload/index.d'
+import type { DesktopExpert } from '../../shared/contracts'
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint'
 import type { WorkMode } from '../mode/work-mode'
 import type { ModelService } from '../model/ModelService'

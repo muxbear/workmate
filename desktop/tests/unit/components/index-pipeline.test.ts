@@ -4,7 +4,7 @@ import { renderToString } from '@vue/server-renderer'
 import { createPinia, setActivePinia } from 'pinia'
 import KnowledgeIndexPipeline from '../../../src/renderer/src/components/knowledge/KnowledgeIndexPipeline.vue'
 import { useKnowledgeStore } from '../../../src/renderer/src/store/knowledge'
-import type { KnowledgeDocumentMeta } from '../../../src/preload/index.d'
+import type { KnowledgeDocumentMeta } from '../../../src/shared/contracts'
 
 /**
  * 索引进度流水线面板的渲染验证（SSR，无需 jsdom）

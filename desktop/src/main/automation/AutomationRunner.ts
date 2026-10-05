@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { HumanMessage } from '@langchain/core/messages'
-import type { DesktopExpert } from '../../preload/index.d'
+import type { DesktopExpert } from '../../shared/contracts'
 import type { AgentManager } from '../agent/AgentManager'
 import { invokeSendMessage, toLangChainMessages } from '../agent/service'
 import { expandFileParts } from '../agent/file-parts'

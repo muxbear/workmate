@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { CustomModel, ModelSyncStatus, WebUser } from '../../preload/index.d'
+import type { CustomModel, ModelSyncStatus, WebUser } from '../../shared/contracts'
 import type { ProviderPlanType, ProviderRecord } from '../model/types'
 import type { ModelService } from '../model/ModelService'
 import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'

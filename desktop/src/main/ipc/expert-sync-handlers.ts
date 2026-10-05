@@ -1,7 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { ExpertSyncService } from '../experts/ExpertSyncService'
-import type { ExpertSyncProgress } from '../../preload/index.d'
+import type { ExpertSyncProgress } from '../../shared/contracts'
 
 interface ExpertSyncHandlerDeps {
   expertSyncService: ExpertSyncService

@@ -75,13 +75,13 @@ describe('E2E 添加自定义模型全流程', () => {
 
     // 左侧导航 → 「模型」页
     await page.locator('.settings-aside button', { hasText: '模型' }).click()
-    await page.locator('.m-add-btn').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.getByRole('button', { name: '＋ 添加模型' }).waitFor({ state: 'visible', timeout: 15_000 })
     // 初始空态
     await page.locator('.m-empty').waitFor({ state: 'visible', timeout: 15_000 })
 
     // 打开「＋ 添加模型」弹窗
-    await page.locator('.m-add-btn').click()
-    await page.locator('.am-card').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.getByRole('button', { name: '＋ 添加模型' }).click()
+    await page.locator('.ms-card').waitFor({ state: 'visible', timeout: 15_000 })
     // 默认提供商 DeepSeek + 提供方式 Token Plan（无需填 API 地址）
 
     // 模型名称：选择器输入 gpt-4o（DeepSeek 预设模型列表无此项 → 走「使用输入值」）
@@ -90,13 +90,13 @@ describe('E2E 添加自定义模型全流程', () => {
     await page.locator('.am-picker-option', { hasText: '使用输入值' }).click()
 
     // API Key
-    await page.locator('.am-input').fill('sk-e2e-test')
+    await page.getByPlaceholder('输入你的 API Key').fill('sk-e2e-test')
 
     // 保存
     await page.locator('.am-btn-save').click()
 
     // 弹窗关闭 + 列表出现新模型
-    await page.locator('.am-card').waitFor({ state: 'hidden', timeout: 15_000 })
+    await page.locator('.ms-card').waitFor({ state: 'hidden', timeout: 15_000 })
     await page.locator('.m-model-list', { hasText: 'gpt-4o' }).waitFor({
       state: 'visible',
       timeout: 15_000
@@ -157,7 +157,7 @@ describe('E2E 添加自定义模型全流程', () => {
 
     // 点击列表项的「编辑」图标按钮
     await page.locator('button[aria-label="编辑模型"]').click()
-    await page.locator('.am-card').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.locator('.ms-card').waitFor({ state: 'visible', timeout: 15_000 })
     // 编辑弹窗标题 + 模型名称预填
     expect(await page.locator('.am-title').textContent()).toBe('编辑模型')
     expect(await page.locator('.am-picker-btn span').textContent()).toBe('gpt-4o')
@@ -169,7 +169,7 @@ describe('E2E 添加自定义模型全流程', () => {
     await page.locator('.am-btn-save').click()
 
     // 弹窗关闭 + 列表显示新名称、旧名称消失
-    await page.locator('.am-card').waitFor({ state: 'hidden', timeout: 15_000 })
+    await page.locator('.ms-card').waitFor({ state: 'hidden', timeout: 15_000 })
     await page.locator('.m-model-list', { hasText: 'gpt-4o-mini' }).waitFor({
       state: 'visible',
       timeout: 15_000

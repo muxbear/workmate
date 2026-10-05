@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Mode as CatalogMode } from '@store/catalog'
-import type { MessagePart as PromptPart } from '../../../preload/index.d'
+import type { MessagePart as PromptPart } from '../../../shared/contracts'
 
 /** 发送时交给父级的输入快照（正文 + 附件 + 选中项） */
 export interface PromptPayload {
@@ -38,7 +38,7 @@ import { useModelStore } from '@store/models'
 import { useSettingsStore } from '@store/settings'
 import PlusMenu from './PlusMenu.vue'
 import ModalShell from './ModalShell.vue'
-import type { MessagePart } from '../../../preload/index.d'
+import type { MessagePart } from '../../../shared/contracts'
 import {
   MAX_ATTACH_FILES,
   classifyPath,

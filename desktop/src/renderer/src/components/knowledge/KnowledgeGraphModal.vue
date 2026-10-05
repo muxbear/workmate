@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import ModalShell from '../ModalShell.vue'
 import { useKnowledgeStore } from '../../store/knowledge'
 import { layoutGraph } from './graphLayout'
-import type { KnowledgeGraphView } from '../../../../preload/index.d'
+import type { KnowledgeGraphView } from '../../../../shared/contracts'
 
 /**
  * 知识库图谱可视化（弹窗）

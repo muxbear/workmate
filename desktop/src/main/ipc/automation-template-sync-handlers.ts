@@ -1,7 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { AutomationTemplateSyncService } from '../automation/AutomationTemplateSyncService'
-import type { AutomationTemplateSyncProgress } from '../../preload/index.d'
+import type { AutomationTemplateSyncProgress } from '../../shared/contracts'
 
 interface AutomationTemplateSyncHandlerDeps {
   automationTemplateSyncService: AutomationTemplateSyncService

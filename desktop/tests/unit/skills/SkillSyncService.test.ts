@@ -9,7 +9,7 @@ import type { OAuth2AuthorizationProvider } from '../../../src/main/oauth2/OAuth
 import { hashSkillFileEntries, SkillFileStore } from '../../../src/main/skills/SkillFileStore'
 import { SkillJsonStore, type SkillJsonFile } from '../../../src/main/skills/SkillJsonStore'
 import { SkillSyncService } from '../../../src/main/skills/SkillSyncService'
-import type { SkillSyncProgress } from '../../../src/preload/index.d'
+import type { SkillSyncProgress } from '../../../src/shared/contracts'
 
 function createBaseDir(): string {
   return mkdtempSync(join(tmpdir(), 'kw-skill-sync-'))

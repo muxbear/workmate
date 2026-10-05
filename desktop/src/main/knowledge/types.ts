@@ -6,26 +6,10 @@
  * 取值在索引能力落地前恒为 none / 只上传文件。
  */
 
-/** 知识库来源分组：本地创建 / 他人共享 / 云端 */
-export type KnowledgeKind = 'local' | 'shared' | 'cloud'
+// 与 IPC 契约逐字一致的类型统一从 shared/contracts 复用（契约单一来源，避免两份定义漂移）
+import type { KnowledgeKind, KnowledgeIndexState, KnowledgeDocStatus, KnowledgeIndexStage, KnowledgeHit, RetrievalDebugStage, KnowledgeGraphViewLink, KnowledgeGraphView, KnowledgeImportOutcome, KnowledgeStats } from '../../shared/contracts'
+export type { KnowledgeKind, KnowledgeIndexState, KnowledgeDocStatus, KnowledgeIndexStage, KnowledgeHit, RetrievalDebugStage, KnowledgeGraphViewLink, KnowledgeGraphView, KnowledgeImportOutcome, KnowledgeStats }
 
-/** 文档索引状态（对应列表里的「已建立索引 / 自定义索引 / 未索引」） */
-export type KnowledgeIndexState = 'none' | 'default' | 'custom'
-
-/** 文档处理状态 */
-export type KnowledgeDocStatus = 'none' | 'queued' | 'indexing' | 'indexed' | 'failed'
-
-/** 索引阶段（进度与文案依据；对齐 web 后端的阶段口径） */
-export type KnowledgeIndexStage =
-  | 'queued'
-  | 'parsing'
-  | 'chunking'
-  | 'embedding'
-  | 'bm25'
-  | 'extracting'
-  | 'indexed'
-
-/** 切片策略（与设置页 knowledge.chunkStrategy 枚举一致） */
 export type KnowledgeChunkStrategy = 'semantic' | 'fixed' | 'markdown' | 'recursive'
 
 /** 单个切片（ChunkingService 输出；charStart/charEnd 可还原原文） */
@@ -46,6 +30,7 @@ export interface KnowledgeIndexProgress {
   status: KnowledgeDocStatus
   stage: KnowledgeIndexStage
   progress: number
+  /** 本轮索引已写入的块数（进行中为 0；终态为本次写入值。渲染层按 `chunks || 现值` 保留旧值展示） */
   chunks: number
   entities: number
   relations: number
@@ -54,27 +39,6 @@ export interface KnowledgeIndexProgress {
   warning?: string
 }
 
-/** 检索命中（页面问答与会话工具共用；不返回 storage_path） */
-export interface KnowledgeHit {
-  chunkUid: string
-  chunkId: number
-  docId: string
-  docName: string
-  relPath: string
-  chunkIndex: number
-  heading?: string
-  content: string
-  score: number
-  vecScore?: number
-  bm25Score?: number
-  source?: 'sparse' | 'dense' | 'graph'
-  charStart: number
-  charEnd: number
-  /** 文档导入时间（时间衰减的事实源与调试面板展示用） */
-  uploadedAt?: number
-}
-
-/** 检索模式 */
 export type KnowledgeSearchMode = 'hybrid' | 'vector' | 'bm25'
 
 /**
@@ -104,12 +68,6 @@ export interface KnowledgeSearchResult {
 }
 
 /** 检索调试：单个阶段耗时 */
-export interface RetrievalDebugStage {
-  stage: 'rewrite' | 'recall' | 'fuse' | 'fetch' | 'merge' | 'rerank' | 'decay' | 'mmr' | 'total'
-  ms: number
-}
-
-/** 检索调试：单通道统计（跨改写变体求和） */
 export interface RetrievalDebugChannelStat {
   /** 通道内候选数（跨变体求和；门限挡掉稠密后为 0，见 denseGate） */
   candidates: number
@@ -166,22 +124,6 @@ export interface KnowledgeGraphViewNode {
   docs: number
 }
 
-/** 图谱可视化边（按 (from,to) 折叠：平行边累加 weight，labels 采样） */
-export interface KnowledgeGraphViewLink {
-  from: string
-  to: string
-  labels: string[]
-  weight: number
-}
-
-/** 图谱可视化数据（只读；truncated = 节点或边被上限截断） */
-export interface KnowledgeGraphView {
-  nodes: KnowledgeGraphViewNode[]
-  links: KnowledgeGraphViewLink[]
-  truncated: boolean
-}
-
-/** 知识库行（IPC 直接返回，字段名为 camelCase） */
 export interface KnowledgeBaseRow {
   id: string
   userId: string
@@ -272,13 +214,6 @@ export interface KnowledgeImportItem {
 }
 
 /** 单个文件的导入结果 */
-export interface KnowledgeImportOutcome {
-  name: string
-  relPath: string
-  reason: string
-}
-
-/** 导入汇总 */
 export interface KnowledgeImportResult {
   /** 成功落盘的文档 */
   accepted: KnowledgeDocumentMeta[]
@@ -288,21 +223,6 @@ export interface KnowledgeImportResult {
   failed: KnowledgeImportOutcome[]
 }
 
-/** 概览统计（文件维度 + 索引维度） */
-export interface KnowledgeStats {
-  kbCount: number
-  docCount: number
-  sizeBytes: number
-  latestUpdatedAt: number
-  /** 已建立索引的文档数 / 正在索引的文档数 */
-  indexedDocCount: number
-  indexingDocCount: number
-  /** 切片/实体总量（实时聚合，量级为万级时开销可接受） */
-  chunksCount: number
-  entitiesCount: number
-}
-
-/** 共享记录 */
 export interface KnowledgeShareRow {
   id: string
   userId: string

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { nextTick, ref } from 'vue'
 import { registerResettable } from './sessionReset'
-import type { ExpertSyncStats, WebUser } from '../../../preload/index.d'
+import type { ExpertSyncStats, WebUser } from '../../../shared/contracts'
 import { useCatalogStore } from './catalog'
 
 export type ExpertSyncState = 'unknown' | 'unauthorized' | 'authorized'

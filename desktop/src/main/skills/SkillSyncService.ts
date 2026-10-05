@@ -6,7 +6,7 @@ import type {
   SkillSyncStatus,
   SkillSyncStats,
   WebUser
-} from '../../preload/index.d'
+} from '../../shared/contracts'
 import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_SKILL_READ } from '../oauth2/scopes'
 import { hashSkillFileEntries, SkillFileStore } from './SkillFileStore'

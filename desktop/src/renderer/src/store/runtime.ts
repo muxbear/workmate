@@ -1,6 +1,6 @@
 ﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { RuntimeId, RuntimeInfo, RuntimeProgress } from '../../../preload/index.d'
+import type { RuntimeId, RuntimeInfo, RuntimeProgress } from '../../../shared/contracts'
 
 /**
  * 内置运行时 Store（渲染层）

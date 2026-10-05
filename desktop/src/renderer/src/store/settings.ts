@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useWorkspaceStore } from './workspace'
-import type { KnowledgeOverrides } from '../../../preload/index.d'
+import type { KnowledgeOverrides } from '../../../shared/contracts'
 
 /** 系统设置存储 key（与主进程 settings/schema.ts 对齐；嵌套路径扁平化） */
 export type SettingsKey =

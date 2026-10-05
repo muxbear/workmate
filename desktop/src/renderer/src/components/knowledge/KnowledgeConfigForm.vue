@@ -10,7 +10,7 @@ import {
   type KnowledgeDraft,
   type KnowledgeDraftValue
 } from './knowledgeFields'
-import type { KnowledgeOverrideKey } from '../../../../preload/index.d'
+import type { KnowledgeOverrideKey } from '../../../../shared/contracts'
 
 /**
  * 知识库配置表单（5 张卡片）

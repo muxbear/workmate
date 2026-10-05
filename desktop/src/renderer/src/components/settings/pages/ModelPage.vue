@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useModelStore } from '@store/models'
-import type { CustomModel } from '../../../../../preload/index.d'
+import type { CustomModel } from '../../../../../shared/contracts'
 import AddModelModal from './AddModelModal.vue'
 
 const modelStore = useModelStore()

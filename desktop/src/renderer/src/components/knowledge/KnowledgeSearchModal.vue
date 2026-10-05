@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import ModalShell from '../ModalShell.vue'
 import { useKnowledgeStore } from '../../store/knowledge'
-import type { KnowledgeSearchResult } from '../../../../preload/index.d'
+import type { KnowledgeSearchResult } from '../../../../shared/contracts'
 
 /**
  * 检索调试面板（弹窗）

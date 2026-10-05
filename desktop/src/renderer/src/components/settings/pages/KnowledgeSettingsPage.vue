@@ -12,7 +12,7 @@ import {
   type KnowledgeDraft,
   type KnowledgeDraftValue
 } from '../../knowledge/knowledgeFields'
-import type { KnowledgeOverrideKey } from '../../../../../preload/index.d'
+import type { KnowledgeOverrideKey } from '../../../../../shared/contracts'
 
 /**
  * 「知识库设置」页（全局配置）

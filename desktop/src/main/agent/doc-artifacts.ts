@@ -1,4 +1,4 @@
-import type { DocArtifactFile, AgentArtifactMeta, ArtifactPreviewKind } from '../../preload/index.d'
+import type { DocArtifactFile, AgentArtifactMeta, ArtifactPreviewKind } from '../../shared/contracts'
 
 /** 视频扩展名：与文档一样登记为消息产物，使成片在对话内可见、可播放 */
 export const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set([

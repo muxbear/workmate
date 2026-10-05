@@ -6,7 +6,7 @@ import type {
   SkillInstallProgress,
   SkillSyncStats,
   WebUser
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 import { useCatalogStore } from './catalog'
 
 export type SkillSyncState = 'unknown' | 'unauthorized' | 'authorized' | 'syncing'

@@ -1,6 +1,6 @@
 import { createMiddleware, type AgentMiddleware } from 'langchain'
 import { SystemMessage } from '@langchain/core/messages'
-import type { DesktopExpert } from '../../preload/index.d'
+import type { DesktopExpert } from '../../shared/contracts'
 
 /**
  * 专家委派中间件：选中专家的那一轮给主智能体系统提示词追加强制委派指令。

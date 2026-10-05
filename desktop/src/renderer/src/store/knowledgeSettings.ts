@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useSettingsStore } from './settings'
-import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../preload/index.d'
+import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../shared/contracts'
 
 /**
  * 知识库「按库覆盖」配置（渲染层）

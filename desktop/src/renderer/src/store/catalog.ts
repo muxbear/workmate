@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, nextTick, reactive, ref } from 'vue'
-import type { DesktopSkill } from '../../../preload/index.d'
+import type { DesktopSkill } from '../../../shared/contracts'
 
 /**
  * 目录数据与「+」菜单状态管理（渲染层）

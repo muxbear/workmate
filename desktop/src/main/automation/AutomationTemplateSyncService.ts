@@ -6,7 +6,7 @@ import type {
   AutomationTemplateSyncStatus,
   DesktopAutomationTemplate,
   WebUser
-} from '../../preload/index.d'
+} from '../../shared/contracts'
 import { OAuth2AuthorizationProvider, toWebUser } from '../oauth2/OAuth2AuthorizationProvider'
 import { SCOPE_TEMPLATE_READ } from '../oauth2/scopes'
 import { compareExpertVersion } from '../experts/expertVersion'

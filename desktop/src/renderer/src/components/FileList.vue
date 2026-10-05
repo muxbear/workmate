@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useWorkspaceStore } from '@store/workspace'
-import type { WorkspaceFileEntry } from '../../../preload/index.d'
+import type { WorkspaceFileEntry } from '../../../shared/contracts'
 
 const props = defineProps<{
   workspaceId: string

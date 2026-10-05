@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
-import type { DesktopSkill } from '../../preload/index.d'
+import type { DesktopSkill } from '../../shared/contracts'
 
 /** ~/.ke-work/skills/skills.json 持久化结构（机器级本地快照） */
 export interface SkillJsonFile {

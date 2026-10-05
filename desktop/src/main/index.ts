@@ -19,7 +19,7 @@ import { randomBytes, randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { invokeSendMessage, toLangChainMessages, buildRegenerateInput } from './agent/service'
 import { expandFileParts, normalizeMessageInput } from './agent/file-parts'
-import type { MessagePart, DesktopExpert } from '../preload/index.d'
+import type { MessagePart, DesktopExpert } from '../shared/contracts'
 import { summarizeTitle } from './agent/title-service'
 import { polishText, POLISH_MAX_TEXT_CHARS } from './agent/polish-service'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
@@ -1127,7 +1127,7 @@ app.whenReady().then(() => {
       if (text.length > POLISH_MAX_TEXT_CHARS) {
         return { success: false, error: `改写内容过长（上限 ${POLISH_MAX_TEXT_CHARS} 字符）` }
       }
-      const polished = await polishText(text)
+      const polished = await polishText(text, modelService)
       return { success: true, data: polished }
     } catch (err) {
       console.error('[main] agent:polish failed:', err)

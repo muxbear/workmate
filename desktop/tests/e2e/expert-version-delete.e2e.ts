@@ -19,7 +19,7 @@ import {
   startMockOAuthServer,
   stopMockOAuthServer
 } from './mock-oauth-server'
-import type { DesktopExpert } from '../../src/preload/index.d'
+import type { DesktopExpert } from '../../src/shared/contracts'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
@@ -178,8 +178,8 @@ describe('E2E 专家版本同步与本地删除', () => {
 
         // ① 同步：版本比对（甲更新到 1.0.1，乙保留本地 9.9.9）
         await page.locator('.sync-btn').click()
-        await page.locator('.expert-toast').waitFor({ state: 'visible', timeout: WAIT })
-        const toast = (await page.locator('.expert-toast').textContent()) ?? ''
+        await page.locator('.kw-toast').waitFor({ state: 'visible', timeout: WAIT })
+        const toast = (await page.locator('.kw-toast').textContent()) ?? ''
         expect(toast).toContain('更新 1 个')
         expect(toast).toContain('保留本地 1 个')
 
@@ -207,7 +207,7 @@ describe('E2E 专家版本同步与本地删除', () => {
         await cardOf(page, '甲专家').hover()
         await cardOf(page, '甲专家').locator('.expert-delete-btn').click()
         await page.locator('.confirm-btn--danger').click()
-        await page.locator('.expert-toast').waitFor({ state: 'visible', timeout: 5_000 })
+        await page.locator('.kw-toast').waitFor({ state: 'visible', timeout: 5_000 })
         expect(await page.locator('.expert-card').count()).toBe(1)
         expect(await page.locator('.expert-card', { hasText: '乙专家' }).count()).toBe(1)
         expect(readLocalExperts(dataHome).map((e) => e.id)).toEqual(['e-b'])

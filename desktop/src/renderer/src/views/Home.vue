@@ -22,7 +22,7 @@ import { resetUserSession } from '@renderer/store/sessionReset'
 import type { ThemeName } from '@renderer/store/settings'
 import type { NavIconName } from '../components/navIcon'
 import type { Conversation } from '@renderer/store/agent'
-import type { Workspace } from '../../../preload/index.d'
+import type { Workspace } from '../../../shared/contracts'
 
 const router = useRouter()
 const userStore = useUserStore()

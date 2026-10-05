@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 // 渲染层 window.api 类型（preload 的全局声明；node tsconfig 下需此处显式合并）
-import type { KeWorkWindowApi } from '../../../preload/index.d'
-import type { CustomModel, ModelProvider, ModelProtocol } from '../../../preload/index.d'
+import type { KeWorkWindowApi } from '../../../shared/contracts'
+import type { CustomModel, ModelProvider, ModelProtocol } from '../../../shared/contracts'
 
 declare global {
   interface Window {

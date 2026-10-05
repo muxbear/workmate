@@ -3,7 +3,7 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
 import { dirname, join, relative, sep } from 'path'
 import { unzipSync } from 'fflate'
-import type { SkillFileEntry } from '../../preload/index.d'
+import type { SkillFileEntry } from '../../shared/contracts'
 import { parseSkillFrontmatter, resolveSkillDirName } from './SkillFrontmatter'
 
 /** 单技能包体积上限（与服务端上传限制对齐） */

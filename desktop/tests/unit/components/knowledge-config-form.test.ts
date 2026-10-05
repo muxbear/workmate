@@ -8,7 +8,7 @@ import {
   KNOWLEDGE_FIELD_LIST
 } from '../../../src/renderer/src/components/knowledge/knowledgeFields'
 import { defaultSettings } from '../../../src/main/settings/schema'
-import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../src/preload/index.d'
+import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../src/shared/contracts'
 
 /**
  * 共享表单的运行时渲染验证（SSR，无需 jsdom）

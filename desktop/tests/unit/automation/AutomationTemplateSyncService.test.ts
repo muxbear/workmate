@@ -11,7 +11,7 @@ import type {
   AutomationSchedule,
   AutomationTemplateSyncProgress,
   DesktopAutomationTemplate
-} from '../../../src/preload/index.d'
+} from '../../../src/shared/contracts'
 
 const ENDPOINT = '/api/automation-template-sync/list'
 

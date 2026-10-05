@@ -1,7 +1,7 @@
 import { readFile, stat } from 'fs/promises'
 import { basename } from 'path'
 import { loadFileText } from '../workspace/FileLoaders'
-import type { MessagePart } from '../../preload/index.d'
+import type { MessagePart } from '../../shared/contracts'
 import {
   MAX_ATTACH_FILES,
   MAX_ATTACH_TEXT_CHARS,

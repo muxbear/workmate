@@ -85,3 +85,22 @@ export async function resolveDefaultModel(
     '未找到默认模型凭据：请设置 DEEPSEEK_API_KEY，或在“系统设置 -> 模型”中添加一个自定义模型。'
   )
 }
+
+/**
+ * 文本类小任务（标题总结 / 改写润色）的模型解析：
+ * 优先跟随当前选择的自定义模型，否则走系统默认模型链路 —— 与对话同一凭据来源，
+ * 自定义端点/代理设置因此对这两条链路同样生效（历史实现 polish 直连 ChatDeepSeek 默认端点，
+ * 不走用户配置）。
+ */
+export async function resolveUtilityModel(
+  modelService: ModelService | undefined,
+  customModelId?: string
+): Promise<ChatModel> {
+  const selectedCredential = customModelId ? modelService?.getCredential(customModelId) : undefined
+  if (selectedCredential) return createModelFromCredential(selectedCredential)
+  if (modelService) {
+    const resolved = await resolveDefaultModel(modelService, 'deepseek:deepseek-v4-pro')
+    if (typeof resolved !== 'string') return resolved
+  }
+  throw new Error('请先在“系统设置 -> 模型”中配置一个模型')
+}

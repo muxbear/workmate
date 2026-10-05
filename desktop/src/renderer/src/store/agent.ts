@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 // 渲染层 window.api 类型（preload 的全局声明；node tsconfig 下需此处显式合并）
-import type { KeWorkWindowApi, MessagePart, DocArtifactFile } from '../../../preload/index.d'
-import type { ConversationMessage } from '../../../preload/index.d'
-import type { AgentDelegateStart } from '../../../preload/index.d'
+import type { KeWorkWindowApi, MessagePart, DocArtifactFile } from '../../../shared/contracts'
+import type { ConversationMessage } from '../../../shared/contracts'
+import type { AgentDelegateStart } from '../../../shared/contracts'
 import { useWorkspaceStore } from './workspace'
 
 declare global {

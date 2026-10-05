@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { experts, useCatalogStore } from '../../../src/renderer/src/store/catalog'
 import { useExpertSyncStore } from '../../../src/renderer/src/store/expertSync'
-import type { DesktopExpert, ExpertSyncProgress } from '../../../src/preload/index.d'
+import type { DesktopExpert, ExpertSyncProgress } from '../../../src/shared/contracts'
 
 function makeExpert(id: string): DesktopExpert {
   return {

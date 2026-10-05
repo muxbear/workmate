@@ -3,7 +3,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { loadMcpTools } from '@langchain/mcp-adapters'
 import type { DynamicStructuredTool } from '@langchain/core/tools'
-import type { DesktopMcpConfig } from '../../../preload/index.d'
+import type { DesktopMcpConfig } from '../../../shared/contracts'
 import type { McpAuthBinding, McpAuthFailure } from '../../oauth2/mcpAuth'
 
 /** MCP 连接超时（毫秒） */

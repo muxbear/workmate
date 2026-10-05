@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ExpertSyncService } from '../../../src/main/experts/ExpertSyncService'
 import { ExpertJsonStore } from '../../../src/main/experts/ExpertJsonStore'
 import type { OAuth2AuthorizationProvider } from '../../../src/main/oauth2/OAuth2AuthorizationProvider'
-import type { DesktopExpert, ExpertSyncProgress } from '../../../src/preload/index.d'
+import type { DesktopExpert, ExpertSyncProgress } from '../../../src/shared/contracts'
 
 function createBaseDir(): string {
   return mkdtempSync(join(tmpdir(), 'kw-expert-sync-'))

@@ -22,7 +22,7 @@ import {
 import { useKnowledgeSettingsStore } from '../../store/knowledgeSettings'
 import { useModelStore } from '../../store/models'
 import { useSettingsStore } from '../../store/settings'
-import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../preload/index.d'
+import type { KnowledgeOverrideKey, KnowledgeOverrides } from '../../../../shared/contracts'
 
 /**
  * 上传文件弹窗

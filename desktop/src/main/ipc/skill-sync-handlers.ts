@@ -2,7 +2,7 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { SessionService } from '../services/SessionService'
 import type { SkillSyncService } from '../skills/SkillSyncService'
 import type { SkillInstallService } from '../skills/SkillInstallService'
-import type { SkillInstallProgress, SkillSyncProgress } from '../../preload/index.d'
+import type { SkillInstallProgress, SkillSyncProgress } from '../../shared/contracts'
 
 interface SkillSyncHandlerDeps {
   skillSyncService: SkillSyncService

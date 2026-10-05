@@ -5,7 +5,7 @@ import type {
   CloudKbSummary,
   CloudLoadState,
   CloudShareEntry
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 /**
  * 云知识库（只读）——侧栏三个云分组的数据源。

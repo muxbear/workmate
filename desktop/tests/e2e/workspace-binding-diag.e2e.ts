@@ -11,12 +11,14 @@ import { join } from 'path'
 import { execFileSync } from 'child_process'
 import Database from 'better-sqlite3'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { startMockLlmServer, stopMockLlmServer } from './mock-llm-server'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
 const LOG = join(tmpdir(), 'kw-binding-diag.log')
 
 describe('诊断: 非默认工作空间绑定', () => {
+  let llmBaseUrl = ''
   let dataHome: string
   let app: Awaited<ReturnType<typeof electron.launch>>
   let page: Awaited<ReturnType<typeof electron.launch>> extends {
@@ -32,12 +34,14 @@ describe('诊断: 非默认工作空间绑定', () => {
       join(process.cwd(), 'tests', 'e2e', 'setup-test-data.mjs'),
       dataHome
     ])
+    llmBaseUrl = await startMockLlmServer()
     app = await electron.launch({
       args: [APP_ENTRY],
       env: {
         ...process.env,
         KE_WORK_HOME: dataHome,
-        KE_WORK_USER_DATA: join(dataHome, 'user-data')
+        KE_WORK_USER_DATA: join(dataHome, 'user-data'),
+        DEEPSEEK_BASE_URL: `${llmBaseUrl}/chat/completions`
       }
     })
     page = await app.firstWindow()
@@ -51,6 +55,7 @@ describe('诊断: 非默认工作空间绑定', () => {
 
   afterAll(async () => {
     await app?.close().catch(() => {})
+    await stopMockLlmServer()
     rmSync(dataHome, { recursive: true, force: true })
   })
 
@@ -62,7 +67,7 @@ describe('诊断: 非默认工作空间绑定', () => {
     // 打开工作空间选择器 → 新建工作空间
     await page.locator('[data-workspace-menu-trigger]').click()
     await page.getByText('新建工作空间').click()
-    await page.locator('#ws-create-name').fill(wsName)
+    await page.locator('#prompt-ws-create-name').fill(wsName)
     await page.getByRole('button', { name: '创建', exact: true }).click()
     // 等待创建完成并自动选中（触发按钮应显示空间名）
     await page

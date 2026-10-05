@@ -13,7 +13,7 @@ import type {
   KnowledgeSearchResult,
   KnowledgeShare,
   KnowledgeStats
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 
 /**
  * IPC 调用被 reject 时的兜底文案。

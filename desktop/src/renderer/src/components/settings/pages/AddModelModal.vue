@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import ModalShell from '@components/ModalShell.vue'
 import { useModelStore } from '@store/models'
-import type { CustomModel, ModelProtocol } from '../../../../../preload/index.d'
+import type { CustomModel, ModelProtocol } from '../../../../../shared/contracts'
 import ProviderLogo from './ProviderLogo.vue'
 
 const PROTOCOL_OPTIONS: { value: ModelProtocol; label: string }[] = [

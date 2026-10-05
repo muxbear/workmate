@@ -5,43 +5,206 @@ import type { KnowledgeChunkStrategy } from './types'
 /** 全局独占（不参与按库覆盖）的知识库配置项（短 key） */
 type GlobalOnlyKey = 'embeddingBaseUrl' | 'embeddingApiKey' | 'rerankBaseUrl' | 'rerankApiKey'
 
+/** 四种切片策略（收值与快照校验共用） */
+const CHUNK_STRATEGIES = ['semantic', 'fixed', 'markdown', 'recursive'] as const
+
 /**
- * 生效配置 → 引擎消费的强类型视图。
- *
  * 配置三层来源（全局 ← 按库覆盖 → 上传快照）的合并已由
  * `KnowledgeSettingsService.getEffective()` 完成；本模块只负责：
  * 1. 把 `Record<key, unknown>` 收成引擎直接可用的类型（容错：越界/缺失回退默认）；
  * 2. 生成**上传快照**（14 个索引项）与**索引口径指纹**（配置变了才需要重建）。
+ *
+ * 历史问题：快照键清单 / 指纹键清单 / 默认值 / 收值逻辑 / 快照校验是五份手工并行的清单，
+ * 新增配置项要改五处、漏一处即静默失效。现已全部收敛到下方 `OVERRIDE_FIELDS` 注册表派生。
  */
 
-/** 索引相关配置项（上传快照包含的项；与渲染层 uploadIndex.ts 的 INDEX_FIELD_KEYS 对应） */
-export const INDEX_SNAPSHOT_KEYS = [
-  'chunkStrategy',
-  'chunkSize',
-  'chunkOverlap',
-  'embeddingModel',
-  'vectorDimensions',
-  'sparseRetrieval',
-  'bm25K1',
-  'bm25B',
-  'hybridWeight',
-  'rerankEnabled',
-  'rerankModel',
-  'topK',
-  'graphEnabled',
-  'graphModel'
-] as const satisfies readonly KnowledgeOverrideKey[]
+/**
+ * 「按库可覆盖」配置项注册表 —— 五份清单的唯一来源。
+ *
+ * - **顺序即序列**：INDEX_SNAPSHOT_KEYS / SIGNATURE_KEYS 按此声明顺序派生；指纹 sha1
+ *   对参与项顺序敏感，调整顺序必须通过 `knowledge-config-signature.test.ts` 红线测试；
+ * - `satisfies Record<KnowledgeOverrideKey, …>`：KnowledgeOverrideKey 增删而此处漏配即编译错误；
+ * - `fallback` 是默认值的唯一副本；`coerce` 是收值口径的唯一副本
+ *   （越界回退/钳制语义与历史逐字段一致，见 coerceField）；
+ * - 上传限制项（maxUploadSize 等 3 项）由 KnowledgeFileService 消费、不属于引擎视图，
+ *   以 `scope: 'upload'` 占位登记（保证 Registry 对 22 项覆盖完整，但不进默认值/快照/指纹）。
+ */
+type OverrideField =
+  | {
+      scope: 'engine'
+      fallback: string | number | boolean
+      coerce:
+        | 'str'
+        | 'bool'
+        | 'num'
+        | 'positiveInt'
+        | 'nonNegativeInt'
+        | 'clamp01'
+        | 'chunkStrategy'
+      /** 进入上传快照（pickIndexSnapshot / normalizeIndexSnapshot / overlaySnapshot） */
+      inSnapshot: boolean
+      /** 参与索引口径指纹（indexSignature；检索侧参数不参与：改 topK 不需要重建索引） */
+      inSignature: boolean
+      /** 快照值合法性校验（仅快照项；normalize 对非法值抛错，overlay 跳过非法项） */
+      validateSnapshot?: (value: unknown) => boolean
+    }
+  /** 上传限制项：引擎视图不含它，仅登记以完成 22 项穷举 */
+  | { scope: 'upload' }
 
-/** 影响「索引产物」的配置项（检索侧参数不参与指纹：改 topK 不需要重建索引） */
-const SIGNATURE_KEYS = [
-  'chunkStrategy',
-  'chunkSize',
-  'chunkOverlap',
-  'embeddingModel',
-  'vectorDimensions',
-  'graphEnabled',
-  'graphModel'
-] as const satisfies readonly KnowledgeOverrideKey[]
+const OVERRIDE_FIELDS = {
+  chunkStrategy: {
+    scope: 'engine',
+    fallback: 'recursive',
+    coerce: 'chunkStrategy',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => CHUNK_STRATEGIES.includes(v as KnowledgeChunkStrategy)
+  },
+  chunkSize: {
+    scope: 'engine',
+    fallback: 800,
+    coerce: 'positiveInt',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => Number.isInteger(v) && (v as number) >= 100 && (v as number) <= 8192
+  },
+  chunkOverlap: {
+    scope: 'engine',
+    fallback: 120,
+    coerce: 'nonNegativeInt',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 4096
+  },
+  embeddingModel: {
+    scope: 'engine',
+    fallback: '',
+    coerce: 'str',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => typeof v === 'string' && v.trim().length > 0
+  },
+  vectorDimensions: {
+    scope: 'engine',
+    fallback: 1024,
+    coerce: 'positiveInt',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => [1024, 1536, 3072].includes(v as number)
+  },
+  sparseRetrieval: {
+    scope: 'engine',
+    fallback: true,
+    coerce: 'bool',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => typeof v === 'boolean'
+  },
+  bm25K1: {
+    scope: 'engine',
+    fallback: 1.5,
+    coerce: 'num',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => typeof v === 'number' && v >= 0 && v <= 10
+  },
+  bm25B: {
+    scope: 'engine',
+    fallback: 0.75,
+    coerce: 'num',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => typeof v === 'number' && v >= 0 && v <= 1
+  },
+  hybridWeight: {
+    scope: 'engine',
+    fallback: 0.65,
+    coerce: 'num',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => typeof v === 'number' && v >= 0 && v <= 1
+  },
+  rerankEnabled: {
+    scope: 'engine',
+    fallback: false,
+    coerce: 'bool',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => typeof v === 'boolean'
+  },
+  rerankModel: {
+    scope: 'engine',
+    fallback: '',
+    coerce: 'str',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => typeof v === 'string' && v.trim().length > 0
+  },
+  topK: {
+    scope: 'engine',
+    fallback: 12,
+    coerce: 'positiveInt',
+    inSnapshot: true,
+    inSignature: false,
+    validateSnapshot: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100
+  },
+  minSimilarity: { scope: 'engine', fallback: 0.53, coerce: 'clamp01', inSnapshot: false, inSignature: false },
+  queryRewriteEnabled: { scope: 'engine', fallback: false, coerce: 'bool', inSnapshot: false, inSignature: false },
+  mmrEnabled: { scope: 'engine', fallback: false, coerce: 'bool', inSnapshot: false, inSignature: false },
+  mmrLambda: { scope: 'engine', fallback: 0.7, coerce: 'clamp01', inSnapshot: false, inSignature: false },
+  timeDecayHalfLifeDays: {
+    scope: 'engine',
+    fallback: 0,
+    coerce: 'nonNegativeInt',
+    inSnapshot: false,
+    inSignature: false
+  },
+  graphEnabled: {
+    scope: 'engine',
+    fallback: false,
+    coerce: 'bool',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => typeof v === 'boolean'
+  },
+  graphModel: {
+    scope: 'engine',
+    fallback: '',
+    coerce: 'str',
+    inSnapshot: true,
+    inSignature: true,
+    validateSnapshot: (v) => typeof v === 'string' && v.trim().length > 0
+  },
+  // ── 上传限制项（KnowledgeFileService 消费；不进引擎视图/快照/指纹）──
+  maxUploadSize: { scope: 'upload' },
+  uploadTimeout: { scope: 'upload' },
+  maxFilesPerBatch: { scope: 'upload' }
+} satisfies Record<KnowledgeOverrideKey, OverrideField>
+
+/** 全部按库覆盖项（短 key，声明顺序） */
+const OVERRIDE_KEYS = Object.keys(OVERRIDE_FIELDS) as KnowledgeOverrideKey[]
+
+/** 取引擎项的注册信息（上传限制项无引擎语义，调用方仅对引擎项使用） */
+function engineField(key: KnowledgeOverrideKey): Extract<OverrideField, { scope: 'engine' }> {
+  const field = OVERRIDE_FIELDS[key]
+  if (field.scope !== 'engine') throw new Error(`配置项 ${key} 不是引擎项`)
+  return field
+}
+
+/** 引擎项清单（顺序即快照/指纹的序列来源） */
+const ENGINE_KEYS: readonly KnowledgeOverrideKey[] = OVERRIDE_KEYS.filter(
+  (key) => OVERRIDE_FIELDS[key].scope === 'engine'
+)
+
+/** 上传快照包含的项（与渲染层 uploadIndex.ts 的 INDEX_FIELD_KEYS 对应；顺序被红线测试钉死） */
+export const INDEX_SNAPSHOT_KEYS: readonly KnowledgeOverrideKey[] = ENGINE_KEYS.filter(
+  (key) => engineField(key).inSnapshot
+)
+
+/** 影响「索引产物」的配置项（指纹参与项；sha1 对顺序敏感，勿调整） */
+const SIGNATURE_KEYS: readonly KnowledgeOverrideKey[] = ENGINE_KEYS.filter(
+  (key) => engineField(key).inSignature
+)
 
 export interface KnowledgeEngineConfig {
   chunkStrategy: KnowledgeChunkStrategy
@@ -75,91 +238,70 @@ export interface KnowledgeEngineConfig {
   graphModel: string
 }
 
-const FALLBACK: KnowledgeEngineConfig = {
-  chunkStrategy: 'recursive',
-  chunkSize: 800,
-  chunkOverlap: 120,
-  embeddingModel: '',
-  vectorDimensions: 1024,
-  embeddingBaseUrl: '',
-  embeddingApiKey: '',
-  sparseRetrieval: true,
-  bm25K1: 1.5,
-  bm25B: 0.75,
-  hybridWeight: 0.65,
-  rerankEnabled: false,
-  rerankModel: '',
-  rerankBaseUrl: '',
-  rerankApiKey: '',
-  topK: 12,
-  minSimilarity: 0.53,
-  queryRewriteEnabled: false,
-  mmrEnabled: false,
-  mmrLambda: 0.7,
-  timeDecayHalfLifeDays: 0,
-  graphEnabled: false,
-  graphModel: ''
+/** 引擎默认值：引擎项取自注册表，全局端点项显式给出 */
+function buildFallback(): KnowledgeEngineConfig {
+  const base: Record<string, unknown> = {
+    embeddingBaseUrl: '',
+    embeddingApiKey: '',
+    rerankBaseUrl: '',
+    rerankApiKey: ''
+  }
+  for (const key of ENGINE_KEYS) base[key] = engineField(key).fallback
+  return base as unknown as KnowledgeEngineConfig
 }
 
 /**
  * 把生效配置收成强类型。
  *
- * - `effective`：`getEffective().effective`（22 项按库可覆盖的短 key）；
+ * - `effective`：`getEffective().effective`（19 项按库可覆盖的短 key）；
  * - `global`：全局设置快照（补 4 个端点 key —— 它们不参与按库覆盖）。
  */
 export function toEngineConfig(
   effective: Record<string, unknown>,
   global: Record<string, unknown>
 ): KnowledgeEngineConfig {
-  const read = (key: KnowledgeOverrideKey, fallback: unknown): unknown => {
-    const value = effective[key]
-    return value === undefined ? fallback : value
+  const config = buildFallback()
+  const target = config as unknown as Record<string, unknown>
+  for (const key of ENGINE_KEYS) {
+    const field = engineField(key)
+    const raw = effective[key]
+    target[key] = raw === undefined ? field.fallback : coerceField(key, raw)
   }
   /** 全局独占项（不进按库覆盖）：直接用 settings key 读全局快照 */
   const readGlobal = (key: GlobalOnlyKey): unknown => global[`knowledge.${key}`]
-  const strategy = read('chunkStrategy', FALLBACK.chunkStrategy) as string
+  config.embeddingBaseUrl = str(readGlobal('embeddingBaseUrl')).trim()
+  config.embeddingApiKey = str(readGlobal('embeddingApiKey'))
+  config.rerankBaseUrl = str(readGlobal('rerankBaseUrl')).trim()
+  config.rerankApiKey = str(readGlobal('rerankApiKey'))
+  return config
+}
 
-  return {
-    chunkStrategy: (['semantic', 'fixed', 'markdown', 'recursive'] as const).includes(
-      strategy as KnowledgeChunkStrategy
-    )
-      ? (strategy as KnowledgeChunkStrategy)
-      : FALLBACK.chunkStrategy,
-    chunkSize: positiveInt(read('chunkSize', FALLBACK.chunkSize), FALLBACK.chunkSize),
-    chunkOverlap: nonNegativeInt(read('chunkOverlap', FALLBACK.chunkOverlap), FALLBACK.chunkOverlap),
-    embeddingModel: str(read('embeddingModel', FALLBACK.embeddingModel)),
-    vectorDimensions: positiveInt(
-      read('vectorDimensions', FALLBACK.vectorDimensions),
-      FALLBACK.vectorDimensions
-    ),
-    embeddingBaseUrl: str(readGlobal('embeddingBaseUrl')).trim(),
-    embeddingApiKey: str(readGlobal('embeddingApiKey')),
-    sparseRetrieval: bool(read('sparseRetrieval', FALLBACK.sparseRetrieval), FALLBACK.sparseRetrieval),
-    bm25K1: num(read('bm25K1', FALLBACK.bm25K1), FALLBACK.bm25K1),
-    bm25B: num(read('bm25B', FALLBACK.bm25B), FALLBACK.bm25B),
-    hybridWeight: num(read('hybridWeight', FALLBACK.hybridWeight), FALLBACK.hybridWeight),
-    rerankEnabled: bool(read('rerankEnabled', FALLBACK.rerankEnabled), FALLBACK.rerankEnabled),
-    rerankModel: str(read('rerankModel', FALLBACK.rerankModel)),
-    rerankBaseUrl: str(readGlobal('rerankBaseUrl')).trim(),
-    rerankApiKey: str(readGlobal('rerankApiKey')),
-    topK: positiveInt(read('topK', FALLBACK.topK), FALLBACK.topK),
-    minSimilarity: clamp01(num(read('minSimilarity', FALLBACK.minSimilarity), FALLBACK.minSimilarity)),
-    queryRewriteEnabled: bool(
-      read('queryRewriteEnabled', FALLBACK.queryRewriteEnabled),
-      FALLBACK.queryRewriteEnabled
-    ),
-    mmrEnabled: bool(read('mmrEnabled', FALLBACK.mmrEnabled), FALLBACK.mmrEnabled),
-    mmrLambda: clamp01(num(read('mmrLambda', FALLBACK.mmrLambda), FALLBACK.mmrLambda)),
-    timeDecayHalfLifeDays: nonNegativeInt(
-      read('timeDecayHalfLifeDays', FALLBACK.timeDecayHalfLifeDays),
-      FALLBACK.timeDecayHalfLifeDays
-    ),
-    graphEnabled: bool(read('graphEnabled', FALLBACK.graphEnabled), FALLBACK.graphEnabled),
-    graphModel: str(read('graphModel', FALLBACK.graphModel))
+/** 按注册表的 coerce 类型收值（越界回退/钳制口径与历史实现逐字段一致） */
+function coerceField(key: KnowledgeOverrideKey, raw: unknown): string | number | boolean {
+  const field = engineField(key)
+  switch (field.coerce) {
+    case 'str':
+      return str(raw)
+    case 'bool':
+      return bool(raw, field.fallback as boolean)
+    case 'num':
+      return num(raw, field.fallback as number)
+    case 'positiveInt':
+      return positiveInt(raw, field.fallback as number)
+    case 'nonNegativeInt':
+      return nonNegativeInt(raw, field.fallback as number)
+    case 'clamp01':
+      return clamp01(num(raw, field.fallback as number))
+    case 'chunkStrategy':
+      return CHUNK_STRATEGIES.includes(raw as KnowledgeChunkStrategy)
+        ? (raw as KnowledgeChunkStrategy)
+        : (field.fallback as KnowledgeChunkStrategy)
+    default:
+      throw new Error(`未知收值类型：${(field as { coerce?: string }).coerce ?? 'undefined'}`)
   }
 }
 
-/** 上传快照：只取 14 个索引项（JSON 字符串直接落 `knowledge_base_documents.config`） */
+/** 上传快照：只取快照项（JSON 字符串直接落 `knowledge_base_documents.config`） */
 export function pickIndexSnapshot(config: KnowledgeEngineConfig): string {
   const snapshot: Record<string, unknown> = {}
   for (const key of INDEX_SNAPSHOT_KEYS) snapshot[key] = config[key]
@@ -215,34 +357,11 @@ export function indexSignature(config: KnowledgeEngineConfig, embeddingUsed: boo
   return createHash('sha1').update(parts.join('|')).digest('hex')
 }
 
+/** 快照值校验：查注册表（非快照项/未知 key 一律不合法，与历史 default:false 口径一致） */
 function isSnapshotValueValid(key: string, value: unknown): boolean {
-  switch (key) {
-    case 'chunkSize':
-      return Number.isInteger(value) && (value as number) >= 100 && (value as number) <= 8192
-    case 'chunkOverlap':
-      return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 4096
-    case 'vectorDimensions':
-      return [1024, 1536, 3072].includes(value as number)
-    case 'bm25K1':
-      return typeof value === 'number' && value >= 0 && value <= 10
-    case 'bm25B':
-    case 'hybridWeight':
-      return typeof value === 'number' && value >= 0 && value <= 1
-    case 'topK':
-      return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 100
-    case 'sparseRetrieval':
-    case 'rerankEnabled':
-    case 'graphEnabled':
-      return typeof value === 'boolean'
-    case 'chunkStrategy':
-      return ['semantic', 'fixed', 'markdown', 'recursive'].includes(value as string)
-    case 'embeddingModel':
-    case 'rerankModel':
-    case 'graphModel':
-      return typeof value === 'string' && value.trim().length > 0
-    default:
-      return false
-  }
+  const field = (OVERRIDE_FIELDS as Record<string, OverrideField | undefined>)[key]
+  if (!field || field.scope !== 'engine' || !field.validateSnapshot) return false
+  return field.validateSnapshot(value)
 }
 
 function str(value: unknown): string {

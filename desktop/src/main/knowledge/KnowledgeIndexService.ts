@@ -254,9 +254,12 @@ export class KnowledgeIndexService {
         status: 'indexing',
         stage,
         progress: STAGE_PROGRESS[stage],
-        chunks: doc.chunksCount,
-        entities: doc.entitiesCount,
-        relations: doc.relationsCount,
+        // 计数语义 =「本轮索引已写入的事实」：完成前一律 0（渲染层按
+        // `progress.chunks || doc.chunksCount` 保留旧值展示）；终态由 indexed 发射点带真实计数。
+        // 历史实现直接下发任务开始时的 doc 快照：重建索引期间徽标会短暂显示上一轮的旧值。
+        chunks: 0,
+        entities: 0,
+        relations: 0,
         ...extra
       })
     }
@@ -282,7 +285,8 @@ export class KnowledgeIndexService {
           chunks: store.listChunksForDoc(doc.id),
           config,
           signal: controller.signal,
-          emit
+          emit,
+          emitTerminal: true
         })
         store.recountBaseIndex(doc.kbId)
         return
@@ -377,7 +381,8 @@ export class KnowledgeIndexService {
             chunks: store.listChunksForDoc(doc.id),
             config,
             signal: controller.signal,
-            emit
+            emit,
+            emitTerminal: false
           })
         : { entities: 0, relations: 0, graphError: null as string | null }
       const entities = graphOutcome.entities
@@ -454,6 +459,12 @@ export class KnowledgeIndexService {
    *
    * 失败**绝不静默**：错误写进 `graph_error`，文档保持 indexed；
    * 已抽到的部分已经落库（GraphService 先落库后抛错），可按篇重抽补齐。
+   *
+   * 终态发射约定（`emitTerminal`）：
+   * - 主索引流程传 false —— 由外层 indexed 发射点统一带全部终态事实（含 chunk 告警），避免双发；
+   * - 「重抽图谱」独立流程传 true —— 本阶段自行发射终态。
+   * 计数一律为**文档级事实**（历史实现下发的是整库 `countChunks(kbId)`，
+   * 会把该文档的块数徽标写成全库总数）。
    */
   private async runGraphStage(input: {
     docId: string
@@ -464,6 +475,8 @@ export class KnowledgeIndexService {
     config: KnowledgeEngineConfig
     signal: AbortSignal
     emit: (stage: KnowledgeIndexStage, extra?: Partial<KnowledgeIndexProgress>) => void
+    /** 是否由本阶段发射 indexed 终态（重抽图谱流程为 true；主索引流程为 false） */
+    emitTerminal: boolean
   }): Promise<{ entities: number; relations: number; graphError: string | null }> {
     const store = this.deps.store
     if (!this.deps.graph) {
@@ -485,17 +498,19 @@ export class KnowledgeIndexService {
         relationsCount: outcome.relations,
         graphError: null
       })
-      this.deps.onProgress?.({
-        kbId: input.kbId,
-        docId: input.docId,
-        relPath: input.relPath,
-        status: 'indexed',
-        stage: 'indexed',
-        progress: 100,
-        chunks: store.countChunks(input.kbId),
-        entities: outcome.entities,
-        relations: outcome.relations
-      })
+      if (input.emitTerminal) {
+        this.deps.onProgress?.({
+          kbId: input.kbId,
+          docId: input.docId,
+          relPath: input.relPath,
+          status: 'indexed',
+          stage: 'indexed',
+          progress: 100,
+          chunks: input.chunks.length,
+          entities: outcome.entities,
+          relations: outcome.relations
+        })
+      }
       return { ...outcome, graphError: null }
     } catch (err) {
       const graphError = err instanceof Error ? err.message : String(err)
@@ -507,18 +522,20 @@ export class KnowledgeIndexService {
         relationsCount: counts.relations,
         graphError
       })
-      this.deps.onProgress?.({
-        kbId: input.kbId,
-        docId: input.docId,
-        relPath: input.relPath,
-        status: 'indexed',
-        stage: 'indexed',
-        progress: 100,
-        chunks: store.countChunks(input.kbId),
-        entities: counts.entities,
-        relations: counts.relations,
-        warning: `图谱抽取失败：${graphError}`
-      })
+      if (input.emitTerminal) {
+        this.deps.onProgress?.({
+          kbId: input.kbId,
+          docId: input.docId,
+          relPath: input.relPath,
+          status: 'indexed',
+          stage: 'indexed',
+          progress: 100,
+          chunks: input.chunks.length,
+          entities: counts.entities,
+          relations: counts.relations,
+          warning: `图谱抽取失败：${graphError}`
+        })
+      }
       return { entities: counts.entities, relations: counts.relations, graphError }
     }
   }

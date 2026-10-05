@@ -1,4 +1,4 @@
-import type { MessagePart } from '../../preload/index.d'
+import type { MessagePart } from '../../shared/contracts'
 import type {
   ContextMode,
   CycleKind,

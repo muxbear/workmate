@@ -10,7 +10,7 @@ import {
   prefersBrowserPreview
 } from './file-preview/previewKind'
 import BrowserPanel from './BrowserPanel.vue'
-import type { Workspace, WorkspaceFileEntry } from '../../../preload/index.d'
+import type { Workspace, WorkspaceFileEntry } from '../../../shared/contracts'
 
 
 const props = defineProps<{ fullscreen: boolean; ratioMode?: boolean }>()

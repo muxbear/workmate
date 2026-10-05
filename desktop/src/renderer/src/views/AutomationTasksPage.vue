@@ -6,7 +6,7 @@ import type {
   AutomationSchedule,
   AutomationTask,
   AutomationTaskDraft
-} from '../../../preload/index.d'
+} from '../../../shared/contracts'
 import PromptInput, { type PromptPayload } from '@components/PromptInput.vue'
 import ConfirmDialog from '@components/ConfirmDialog.vue'
 import { useSettingsStore } from '@store/settings'

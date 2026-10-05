@@ -20,11 +20,14 @@ import { join } from 'path'
 import { execFileSync } from 'child_process'
 import { makeDocx } from '../unit/workspace/file-fixtures'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { startMockLlmServer, stopMockLlmServer } from './mock-llm-server'
 
 const APP_ENTRY = join(process.cwd(), 'out', 'main', 'index.js')
 const WAIT = 30_000
 
 describe('E2E 文件附件', () => {
+  /** mock LLM base URL（模型调用立即成功，避免重试退避拖累发送流程） */
+  let llmBaseUrl = ''
   let dataHome: string
   let app: Awaited<ReturnType<typeof electron.launch>>
   let page: Awaited<ReturnType<typeof electron.launch>> extends {
@@ -39,12 +42,15 @@ describe('E2E 文件附件', () => {
       join(process.cwd(), 'tests', 'e2e', 'setup-test-data.mjs'),
       dataHome
     ])
+    llmBaseUrl = await startMockLlmServer()
     app = await electron.launch({
       args: [APP_ENTRY],
       env: {
         ...process.env,
         KE_WORK_HOME: dataHome,
-        KE_WORK_USER_DATA: join(dataHome, 'user-data')
+        KE_WORK_USER_DATA: join(dataHome, 'user-data'),
+        // 指向 mock LLM（默认格式带 /chat/completions，主进程工厂会剥后缀）
+        DEEPSEEK_BASE_URL: `${llmBaseUrl}/chat/completions`
       }
     })
     page = await app.firstWindow()
@@ -67,6 +73,7 @@ describe('E2E 文件附件', () => {
 
   afterAll(async () => {
     await app?.close().catch(() => {})
+    await stopMockLlmServer()
     rmSync(dataHome, { recursive: true, force: true })
   })
 
