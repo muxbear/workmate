@@ -68,6 +68,8 @@ export function useKbQa(deps: KbQaDeps) {
     ask,
     cancelAsk,
     openCitation,
+    /** 当前选中知识库 id（'' = 未选择；回答区 Markdown 相对图片按其解析） */
+    selectedKbId: deps.selectedKbId,
     qaModelName,
     qaModelMenuOpen,
     qaModelStore,

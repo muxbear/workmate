@@ -1,4 +1,4 @@
-appId: com.electron.app
+appId: com.kework.desktop
 productName: ke-work
 directories:
   buildResources: build
@@ -43,8 +43,7 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates
+# 自动更新：electron-updater 未接线（全仓无 autoUpdater 引用），publish 配置整体移除——
+# 原 generic + example.com 占位会误导发布流程（若将来接入更新服务再补真实源）。
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

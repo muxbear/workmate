@@ -189,3 +189,24 @@ describe('AuthService token 与登出', () => {
     expect(log.length).toBe(1)
   })
 })
+
+describe('AuthService 展示资料（session:check 权威来源）', () => {
+  let ctx: Awaited<ReturnType<typeof setup>>
+
+  beforeEach(async () => {
+    ctx = await setup(1_000_000)
+    const hash = await hashPassword('Secret123!')
+    await ctx.repo.createUser({ username: 'wangke', passwordHash: hash, mobile: '13800138000' })
+  })
+
+  it('AUTH-11: getProfileById 返回 id/username/mobile（不含口令哈希等敏感字段）', async () => {
+    const user = await ctx.repo.findByAccount('wangke')
+    const profile = await ctx.service.getProfileById(user!.id)
+    expect(profile).toEqual({ id: user!.id, username: 'wangke', mobile: '13800138000' })
+    expect(Object.keys(profile!)).not.toContain('passwordHash')
+  })
+
+  it('AUTH-12: getProfileById 对不存在的用户返回 null（不抛错）', async () => {
+    await expect(ctx.service.getProfileById('no-such-id')).resolves.toBeNull()
+  })
+})

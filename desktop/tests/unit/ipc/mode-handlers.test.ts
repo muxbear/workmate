@@ -106,20 +106,26 @@ describe('mode IPC handlers', () => {
     expect(result.data!.loggedIn).toBe(false)
   })
 
-  it('session:check 已登录返回 loggedIn=true', async () => {
+  it('session:check 已登录返回 loggedIn=true + 权威用户资料（渲染层展示名自愈）', async () => {
     const ipc = createFakeIpcMain()
     const session = new SessionService()
     session.setCurrentUser('u1')
+    const getProfileById = vi
+      .fn()
+      .mockResolvedValue({ id: 'u1', username: 'wangke', mobile: '15091545831' })
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local' } as never,
       agentManager: { switchMode: vi.fn() } as never,
-      authService: { logout: vi.fn() } as never,
+      authService: { logout: vi.fn(), getProfileById } as never,
       session
     })
-    const result = await ipc.invoke<{ success: boolean; data?: { loggedIn: boolean } }>(
-      'session:check'
-    )
+    const result = await ipc.invoke<{
+      success: boolean
+      data?: { loggedIn: boolean; user?: { id: string; username: string } | null }
+    }>('session:check')
     expect(result.success).toBe(true)
     expect(result.data!.loggedIn).toBe(true)
+    expect(getProfileById).toHaveBeenCalledWith('u1')
+    expect(result.data!.user?.username).toBe('wangke')
   })
 })

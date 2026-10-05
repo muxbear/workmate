@@ -24,6 +24,7 @@ import { summarizeTitle } from './agent/title-service'
 import { polishText, POLISH_MAX_TEXT_CHARS } from './agent/polish-service'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { detectOS } from './platform'
+import { appendFileSync } from 'fs'
 import { getDataDirectory, initDataDirectory, migrateLegacyConfigFiles } from './data-dir'
 import { WorkModeStore } from './mode/work-mode'
 import { DataSourceFactory } from './database/DataSourceFactory'
@@ -119,6 +120,51 @@ registerRemoteImageScheme(protocol)
 if (process.env.KE_WORK_USER_DATA) {
   app.setPath('userData', process.env.KE_WORK_USER_DATA)
 }
+
+// 单实例锁（生产交付必备）：双开会让自动化调度器双跑（定时任务重复执行）、
+// SQLite 双写竞争。放在 userData 覆盖之后——锁按 userData 目录隔离，
+// 隔离测试实例（各自 KE_WORK_USER_DATA）互不影响。
+if (!app.requestSingleInstanceLock()) {
+  // 已有实例在运行：退出本进程。不能只 quit() 继续往下走——quit 是异步的，
+  // 后续 whenReady 仍会建窗；第二实例此刻尚未初始化任何资源，直接退出是安全的。
+  app.quit()
+  process.exit(0)
+}
+
+app.on('second-instance', () => {
+  // 重复启动时聚焦已有实例主窗口（用户预期行为）
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+})
+
+// 主进程错误落盘（生产诊断）：logs/main-error.log（数据目录已预建 logs 子目录）。
+// uncaughtException 保持"崩溃即退出"的原有语义，只是先留下现场；unhandledRejection
+// 记录但不退出（拒绝多为可容忍异常，桌面端不应因此丢用户工作）。
+function logMainError(kind: string, detail: unknown): void {
+  const text = detail instanceof Error ? `${detail.message}\n${detail.stack ?? ''}` : String(detail)
+  const line = `[${new Date().toISOString()}] [${kind}] ${text}\n`
+  console.error(line.trimEnd())
+  try {
+    const logsDir = getDataDirectory().ensureDir('logs')
+    appendFileSync(join(logsDir, 'main-error.log'), line)
+  } catch {
+    // 数据目录尚未初始化（启动早期崩溃）：仅 console，不因日志失败再抛
+  }
+}
+process.on('uncaughtException', (err) => {
+  logMainError('uncaughtException', err)
+  app.exit(1)
+})
+process.on('unhandledRejection', (reason) => {
+  logMainError('unhandledRejection', reason)
+})
+app.on('render-process-gone', (_event, _webContents, details) => {
+  logMainError('render-process-gone', `reason=${details.reason} exitCode=${details.exitCode}`)
+})
 
 // 取消控制器映射（按窗口 ID）
 const abortControllers = new Map<number, AbortController>()

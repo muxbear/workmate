@@ -240,7 +240,9 @@ export interface ModeAPI {
   getWorkMode(): Promise<IpcResult<'local' | 'cloud'>>
   setWorkMode(mode: 'local' | 'cloud'): Promise<IpcResult<string>>
   /** 校验主进程会话（localStorage token 可能残留，主进程为权威） */
-  checkSession(): Promise<IpcResult<{ loggedIn: boolean }>>
+  checkSession(): Promise<
+    IpcResult<{ loggedIn: boolean; user?: { id: string; username: string; mobile?: string } | null }>
+  >
 }
 
 /** 工作空间（workspaces 表行；source: created=新建 / external=打开本地文件夹 / timestamp=旧版时间戳 / default=默认工作空间；userId 为 null 表示机器级共享的默认空间） */

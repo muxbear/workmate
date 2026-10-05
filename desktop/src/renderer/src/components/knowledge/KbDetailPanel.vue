@@ -2,6 +2,7 @@
 import type { ComponentPublicInstance, Ref } from 'vue'
 import KnowledgeIndexPipeline from './KnowledgeIndexPipeline.vue'
 import FilePreviewPane from '../file-preview/FilePreviewPane.vue'
+import MessageContent from '../MessageContent.vue'
 import type { FilePreviewSource } from '../file-preview/types'
 import type { useKbQa } from '@renderer/composables/useKbQa'
 
@@ -54,6 +55,7 @@ const {
   ask,
   cancelAsk,
   openCitation,
+  selectedKbId,
   qaModelName,
   qaModelMenuOpen,
   qaModelStore,
@@ -232,8 +234,15 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
           知识库中没有找到与「{{ askState.question }}」相关的内容。
         </p>
         <template v-else>
+          <!-- 回答走与聊天一致的 Markdown 管线（此前 `{{ }}` 纯文本：** 加粗/列表/代码块原样外露）；
+               相对图片按当前库只读解析（knowledgeId 透传） -->
           <div class="kb-answer-text">
-            {{ askState.answer }}<span v-if="askState.streaming" class="kb-answer-caret"></span>
+            <MessageContent
+              :content="askState.answer"
+              :knowledge-id="selectedKbId || undefined"
+              :breaks="true"
+            />
+            <span v-if="askState.streaming" class="kb-answer-caret"></span>
           </div>
           <p v-if="askState.canceled" class="kb-answer-note">已取消</p>
           <p v-if="askState.invalidCitations.length" class="kb-answer-note">
@@ -665,8 +674,16 @@ const setTabBar = (el: Element | ComponentPublicInstance | null): void => {
   max-height: 46%;
 }
 .kb-answer-text {
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Markdown 渲染后段落间距收敛（面板窄，保持紧凑） */
+.kb-answer-text :deep(.message-content > :first-child) {
+  margin-top: 0;
+}
+
+.kb-answer-text :deep(.message-content > :last-child) {
+  margin-bottom: 0;
 }
 .kb-answer-caret {
   display: inline-block;

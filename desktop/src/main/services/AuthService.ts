@@ -61,6 +61,21 @@ export class AuthService {
     this.refreshTokenTtlSec = deps.refreshTokenTtlSec ?? REFRESH_TTL_SEC
   }
 
+  // ── 会话资料 ──
+
+  /**
+   * 按用户 id 读取展示资料（渲染层用户名展示用）。
+   * 主进程会话是唯一权威：渲染层 localStorage 可能残留上一账号的 user_info，
+   * 由 session:check 每次带回权威资料纠正。
+   */
+  async getProfileById(
+    userId: string
+  ): Promise<{ id: string; username: string; mobile?: string } | null> {
+    const user = await this.repo.findById(userId)
+    if (!user) return null
+    return { id: user.id, username: user.username, mobile: user.mobile ?? undefined }
+  }
+
   // ── 密码登录 ──
 
   async loginByPassword(account: string, password: string): Promise<AuthResult> {

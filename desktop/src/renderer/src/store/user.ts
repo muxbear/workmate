@@ -43,7 +43,18 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('user_info')
   }
 
+  /**
+   * 用主进程权威会话资料纠正展示信息（session:check 每次带回）。
+   * 场景：localStorage 残留上一账号的 user_info，而主进程会话已是另一账号——
+   * 仅校验 loggedIn 布尔无法自愈，会一直显示错误用户名到下次登录。
+   */
+  function syncFromSession(user: { id: string; username: string; mobile?: string } | null | undefined): void {
+    if (!user?.id) return
+    userInfo.value = { id: user.id, username: user.username, mobile: user.mobile }
+    localStorage.setItem('user_info', JSON.stringify(userInfo.value))
+  }
+
   restoreUserInfo()
 
-  return { token, refreshToken, userInfo, isLoggedIn, setLogin, logout }
+  return { token, refreshToken, userInfo, isLoggedIn, setLogin, logout, syncFromSession }
 })

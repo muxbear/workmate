@@ -26,6 +26,8 @@ router.beforeEach(async (to, _from, next) => {
   try {
     const result = await window.api.checkSession()
     mainLoggedIn = result.success && result.data?.loggedIn === true
+    // 会话权威资料同步：纠正 localStorage 残留的上一账号展示信息
+    if (mainLoggedIn) userStore.syncFromSession(result.data?.user)
   } catch {
     mainLoggedIn = false
   }

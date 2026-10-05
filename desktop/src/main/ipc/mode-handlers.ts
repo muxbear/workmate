@@ -29,10 +29,20 @@ export function registerModeHandlers(ipc: IpcMain, deps: ModeHandlerDeps): void 
     execute: () => modeStore.getMode()
   })
 
-  // 会话校验：渲染层路由守卫依赖（localStorage token 可能残留，主进程 session 为权威）
-  registerCommand<[], { loggedIn: boolean }>(ipc, 'session:check', {
+  // 会话校验：渲染层路由守卫依赖（localStorage token 可能残留，主进程 session 为权威）。
+  // 同时带回权威账号资料——渲染层 localStorage 的 user_info 可能残留上一账号，
+  // 仅凭 loggedIn 无法自愈，展示名会错到下次登录（2026-10-05 真实数据走查现场发现）。
+  registerCommand<
+    [],
+    { loggedIn: boolean; user?: { id: string; username: string; mobile?: string } | null }
+  >(ipc, 'session:check', {
     auth: 'none',
-    execute: () => ({ loggedIn: deps.session.getCurrentUserId() !== null })
+    execute: async () => {
+      const userId = deps.session.getCurrentUserId()
+      if (!userId) return { loggedIn: false }
+      const user = await authService.getProfileById(userId)
+      return { loggedIn: true, user }
+    }
   })
 
   registerCommand<[unknown], 'local' | 'cloud'>(ipc, 'mode:set', {
