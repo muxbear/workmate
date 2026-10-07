@@ -16,6 +16,7 @@ import type {
   SkillInstallProgress,
   SkillSyncProgress
 } from './index.d'
+import type { WindowCloseChoice } from '../shared/contracts'
 
 // Custom APIs for renderer
 /** 问答事件订阅（4 个 ask-* 事件同一约定：返回取消订阅函数） */
@@ -33,6 +34,18 @@ function subscribeKnowledgeAskEvent<T>(
 const api = {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openWebHome: () => ipcRenderer.invoke('web:open-home'),
+  // ── 主窗口关闭行为（首次询问 → 记住选择；主进程状态机见 services/windowCloseBehavior.ts）──
+  onCloseConfirmRequest(callback: () => void): () => void {
+    const handler = (): void => callback()
+    ipcRenderer.on('app:close-confirm-request', handler)
+    return () => ipcRenderer.removeListener('app:close-confirm-request', handler)
+  },
+  answerCloseConfirm(choice: WindowCloseChoice | null) {
+    return ipcRenderer.invoke('app:close-confirm-answer', choice)
+  },
+  quitApp() {
+    return ipcRenderer.invoke('app:quit')
+  },
   sendAgentMessage(
     conversationId: string,
     parts: ({ type: 'text'; text: string } | { type: 'file'; path: string })[] | string,

@@ -50,7 +50,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Transition name="ms-modal">
+  <!-- :duration 显式声明 200ms（与下方 CSS 过渡一致）：离场不移除依赖 transitionend ——
+       窗口被最小化/遮挡时 Chromium 暂停渲染，transitionend 永不到达会致元素滞留 DOM -->
+  <Transition
+    name="ms-modal"
+    :duration="200"
+  >
     <div
       v-if="visible"
       class="ms-mask"

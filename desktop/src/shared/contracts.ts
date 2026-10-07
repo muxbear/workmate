@@ -1579,6 +1579,24 @@ export interface AutomationTemplateSyncAPI {
   onSyncProgress(callback: (data: AutomationTemplateSyncProgress) => void): () => void
 }
 
+/**
+ * 关闭按钮行为三态（settings.json 的 ui.closeAction）：
+ * 'ask' = 每次询问；'tray' = 最小化到托盘（任务栏右下角图标）；'close' = 直接关闭窗口
+ */
+export type WindowCloseAction = 'ask' | 'tray' | 'close'
+/** 关闭确认框的用户选择（null = 取消：本次不关、不保存） */
+export type WindowCloseChoice = 'tray' | 'close'
+
+/** 窗口/应用生命周期（机器级，不依赖登录态） */
+export interface AppWindowAPI {
+  /** 监听主进程「关闭确认」请求（仅在 ui.closeAction='ask' 且用户点窗口关闭按钮时推送） */
+  onCloseConfirmRequest(callback: () => void): () => void
+  /** 对「关闭确认」作答：'tray' | 'close'；null = 取消 */
+  answerCloseConfirm(choice: WindowCloseChoice | null): Promise<IpcResult<null>>
+  /** 用户菜单「退出应用」（主进程先 latch 退出标志再 quit，不触发关闭确认弹窗） */
+  quitApp(): Promise<IpcResult<null>>
+}
+
 export interface KeWorkWindowApi
   extends
     AgentAPI,
@@ -1590,7 +1608,8 @@ export interface KeWorkWindowApi
     ModelAPI,
     BrowserAPI,
     RuntimeAPI,
-    KnowledgeAPI {
+    KnowledgeAPI,
+    AppWindowAPI {
   oauth2: OAuth2API
   skillSync: SkillSyncAPI
   expert: ExpertSyncAPI

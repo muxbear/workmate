@@ -416,6 +416,16 @@ const handleLogout = async (): Promise<void> => {
   }
 }
 
+/**
+ * 退出应用（用户菜单）：主进程先 latch 退出标志再 app.quit()，
+ * 不会触发「关闭确认」弹窗（选了「最小化到任务栏」后的唯一正常退出入口）。
+ * 不 await 返回：应用随即退出，invoke 响应可能不会送达。
+ */
+const quitApp = (): void => {
+  userMenuOpen.value = false
+  void window.api.quitApp()
+}
+
 // ── 设置窗口 ──
 const settingsOpen = ref(false)
 
@@ -1173,6 +1183,24 @@ const adjustMenuDirection = (): void => {
                 >
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
+              </button>
+              <button
+                class="menu-item"
+                @click="quitApp"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                >
+                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                  <line x1="12" y1="2" x2="12" y2="12" />
+                </svg>
+                <span>退出应用</span>
               </button>
             </div>
             <!-- Logout -->

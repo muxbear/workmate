@@ -38,7 +38,8 @@ describe('SettingsStore', () => {
       fontSize: 20,
       theme: 'light',
       systemName: 'Ke-Work',
-      brandLogo: ''
+      brandLogo: '',
+      closeAction: 'ask'
     })
     expect(raw['skills'] as unknown).toEqual({ autoUpdate: true, safeInstall: false }) // 默认值也写盘
   })

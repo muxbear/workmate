@@ -32,6 +32,11 @@ const SOUND_OPTIONS = [
   { value: 'crisp', label: '清脆' },
   { value: 'soft', label: '柔和' }
 ] as const
+const CLOSE_ACTION_OPTIONS = [
+  { value: 'ask', label: '每次询问' },
+  { value: 'tray', label: '最小化到托盘' },
+  { value: 'close', label: '直接关闭窗口' }
+] as const
 
 /** 即时保存：离散值 change 即写库（store 内 300ms 防抖合并） */
 function onToggle(key: SettingsKey, value: boolean): void {
@@ -597,6 +602,51 @@ onUnmounted(() => {
           >
             <option
               v-for="opt in SOUND_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </option>
+          </select>
+          <svg
+            class="s-select-chevron"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- 窗口 -->
+    <h2 class="s-group-title">
+      窗口
+    </h2>
+    <section class="s-card">
+      <div class="s-row">
+        <div>
+          <h3 class="s-sec-title">
+            关闭行为
+          </h3>
+          <p class="s-desc s-desc--mt">
+            点击标题栏关闭按钮时的行为；「最小化到托盘」会隐藏窗口并在任务栏右下角显示图标，右键图标可退出应用。
+          </p>
+        </div>
+        <div class="s-select-wrap">
+          <select
+            :value="settingsStore.closeAction"
+            class="s-select s-select--lg"
+            @change="onSelect('ui.closeAction', ($event.target as HTMLSelectElement).value)"
+          >
+            <option
+              v-for="opt in CLOSE_ACTION_OPTIONS"
               :key="opt.value"
               :value="opt.value"
             >

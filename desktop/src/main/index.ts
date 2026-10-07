@@ -4,6 +4,9 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
+  Tray,
+  nativeImage,
   safeStorage,
   session as electronSession,
   powerSaveBlocker,
@@ -108,6 +111,13 @@ import { OAuth2ClientService } from './oauth2/OAuth2ClientService'
 import { OAuth2AuthorizationProvider } from './oauth2/OAuth2AuthorizationProvider'
 import { buildPlatformMcpPolicy, createMcpAuthBinding, McpTokenProvider } from './oauth2/mcpAuth'
 import { resetMcpClients } from './agent/tools/McpToolRegistry'
+import {
+  createCloseConfirmBroker,
+  createWindowCloseBehavior,
+  type CloseAction
+} from './services/windowCloseBehavior'
+import { createAppTray } from './services/appTray'
+import { registerWindowHandlers } from './ipc/window-handlers'
 
 import icon from '../../resources/icon.png?asset'
 
@@ -318,6 +328,85 @@ app.whenReady().then(() => {
   const readSystemName = (): string => {
     const name = settingsStore.get('ui.systemName')
     return typeof name === 'string' && name.trim() ? name : DEFAULT_SYSTEM_NAME
+  }
+
+  // ── 主窗口关闭行为（标题栏 ✕ 首次询问 → 记住选择，见 services/windowCloseBehavior.ts）──
+  // 询问应答经 IPC 由渲染层 App.vue 的全局弹窗作答；超时/渲染层不可用按取消处理
+  const closeConfirmBroker = createCloseConfirmBroker()
+
+  /** 从托盘唤回主窗口（左键单击/双击托盘图标、托盘菜单「显示主窗口」） */
+  const showMainWindow = (): void => {
+    // brandWindows 只登记主窗口（OAuth/微信授权窗不登记），不会误唤子窗
+    const win = [...brandWindows].find((w) => !w.isDestroyed())
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+
+  /** 退出应用（用户菜单 / 托盘菜单共用）：先 latch 退出标志再 quit，close 拦截一律放行、不弹确认框 */
+  // （将来接入 electron-updater 时，quitAndInstall() 前同样要先 markQuitting()）
+  const quitApp = (): void => {
+    closeBehavior.markQuitting()
+    app.quit()
+  }
+
+  // 系统托盘（懒创建：用过「最小化到托盘」才出现图标；创建后保持到退出，避免图标闪烁）
+  const appTray = createAppTray({
+    createTray: () => {
+      // 资源图标是 512px 应用大图标，通知区按 16px 展示
+      const image = nativeImage.createFromPath(icon)
+      return new Tray(image.isEmpty() ? icon : image.resize({ width: 16, height: 16 }))
+    },
+    buildMenu: (template) => Menu.buildFromTemplate(template),
+    getTooltip: readSystemName,
+    handlers: { showWindow: showMainWindow, quit: quitApp }
+  })
+
+  const closeBehavior = createWindowCloseBehavior({
+    getAction: () => settingsStore.get('ui.closeAction') as CloseAction,
+    // 落盘异常由状态机兜底捕获并告警（落盘失败不阻断关闭）
+    persistChoice: (choice) => settingsStore.set('ui.closeAction', choice),
+    askUser: (win) => {
+      const answered = closeConfirmBroker.request()
+      // 兜底：窗口被其他路径销毁（进程被杀等）时按取消收尾，防止在途询问悬挂
+      const onClosed = (): void => {
+        closeConfirmBroker.answer(null)
+      }
+      win.once('closed', onClosed)
+      let sent = false
+      try {
+        if (!win.isDestroyed()) {
+          win.webContents.send('app:close-confirm-request')
+          sent = true
+        }
+      } catch (err) {
+        // 竞态：检查与发送之间窗口恰好销毁 —— 按取消收尾，不等 15s 超时
+        console.warn('[window] 关闭确认请求发送失败:', err)
+      }
+      if (!sent) closeConfirmBroker.answer(null)
+      return answered.finally(() => win.off('closed', onClosed))
+    },
+    minimizeToTray: (win) => {
+      try {
+        appTray.ensure()
+        win.hide()
+      } catch (err) {
+        // 托盘不可用（极端环境/图标资源异常）：退化为最小化，保证窗口能被找回
+        console.warn('[window] 最小化到托盘失败，退化为最小化:', err)
+        if (!win.isMinimized()) win.minimize()
+      }
+    }
+  })
+  registerWindowHandlers(ipcMain, {
+    answerCloseConfirm: (choice) => closeConfirmBroker.answer(choice),
+    quitApp
+  })
+  /** 主窗口创建唯一入口：关闭行为只挂主窗口（OAuth/微信授权窗不挂） */
+  const createMainWindow = (backgroundColor?: string): BrowserWindow => {
+    const win = createWindow(backgroundColor)
+    closeBehavior.attach(win)
+    return win
   }
 
   // ── 统一 HTTP 客户端代理解析（R8-5）：所有 axios 出网（同步/登录/云知识库/图片生成/嵌入重排）
@@ -1011,6 +1100,11 @@ app.whenReady().then(() => {
     void automationScheduler.handleResume()
   })
   app.on('before-quit', () => {
+    // 先 latch 关闭拦截的退出标志（否则选了「最小化到托盘」时 quit 会被自己拦下），
+    // 并让在途的关闭确认弹窗按取消收尾；托盘图标同步销毁（Windows 通知区防残留）
+    closeBehavior.markQuitting()
+    closeConfirmBroker.cancelPending()
+    appTray.destroy()
     automationScheduler.stop()
     // 索引队列：中止在跑的任务并停止消费；下次启动时 recoverOnStartup 会把
     // 残留的 queued/indexing 置为 failed（「应用退出中断」）
@@ -1223,7 +1317,7 @@ app.whenReady().then(() => {
     }
   }
 
-  createWindow(getThemeBackground(initialSettings.settings['ui.theme']))
+  createMainWindow(getThemeBackground(initialSettings.settings['ui.theme']))
   // 窗口标题按系统名称初始化（渲染层加载后由 document.title 接管同一文案）
   applySystemName(readSystemName())
 
@@ -1231,7 +1325,7 @@ app.whenReady().then(() => {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+      createMainWindow()
       applySystemName(readSystemName())
     }
   })

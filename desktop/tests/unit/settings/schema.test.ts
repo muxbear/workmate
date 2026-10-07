@@ -19,8 +19,8 @@ describe('settings schema', () => {
     expect(isSettingsKey('ui')).toBe(false)
   })
 
-  it('44 项配置全部在 schema 内且类型/默认值合法', () => {
-    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(44)
+  it('45 项配置全部在 schema 内且类型/默认值合法', () => {
+    expect(Object.keys(SETTINGS_SCHEMA)).toHaveLength(45)
     for (const [key, entry] of Object.entries(SETTINGS_SCHEMA)) {
       expect(isSettingsKey(key)).toBe(true)
       expect(['string', 'number', 'boolean']).toContain(entry.type)
@@ -36,6 +36,7 @@ describe('settings schema', () => {
     expect(d['ui.theme']).toBe('light')
     expect(d['ui.systemName']).toBe('Ke-Work')
     expect(d['ui.brandLogo']).toBe('')
+    expect(d['ui.closeAction']).toBe('ask')
     expect(d['skills.autoUpdate']).toBe(true)
     expect(d['skills.safeInstall']).toBe(false)
     expect(d['lockScreen.remoteLock']).toBe(false)
@@ -97,6 +98,12 @@ describe('settings schema', () => {
     expect(isValidSettingsValue('ui.theme', 'sepia')).toBe(false)
     expect(isValidSettingsValue('ui.theme', 'dark')).toBe(true)
     expect(isValidSettingsValue('ui.theme', 'light')).toBe(true)
+    // 关闭行为：三态枚举（默认 'ask' = 每次询问）
+    expect(isValidSettingsValue('ui.closeAction', 'ask')).toBe(true)
+    expect(isValidSettingsValue('ui.closeAction', 'tray')).toBe(true)
+    expect(isValidSettingsValue('ui.closeAction', 'close')).toBe(true)
+    expect(isValidSettingsValue('ui.closeAction', 'bogus')).toBe(false)
+    expect(isValidSettingsValue('ui.closeAction', 'minimize')).toBe(false)
     expect(isValidSettingsValue('network.proxyMode', 'bogus')).toBe(false)
     expect(isValidSettingsValue('network.proxyUrl', 'not-a-url')).toBe(false)
     expect(isValidSettingsValue('network.proxyUrl', 'http://127.0.0.1:7890')).toBe(true)

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useWorkspaceStore } from './workspace'
-import type { KnowledgeOverrides } from '../../../shared/contracts'
+import type { KnowledgeOverrides, WindowCloseAction } from '../../../shared/contracts'
 
 /** 系统设置存储 key（与主进程 settings/schema.ts 对齐；嵌套路径扁平化） */
 export type SettingsKey =
@@ -10,6 +10,7 @@ export type SettingsKey =
   | 'ui.theme'
   | 'ui.systemName'
   | 'ui.brandLogo'
+  | 'ui.closeAction'
   | 'skills.autoUpdate'
   | 'skills.safeInstall'
   | 'lockScreen.remoteLock'
@@ -100,6 +101,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const brandLogoFileName = ref('')
   /** 自定义 LOGO 的 data URL（空 = 使用内置默认 LOGO） */
   const brandLogoDataUrl = ref('')
+  /** 关闭按钮行为（'ask' = 每次询问；主进程在窗口 close 时实时读取设置文件） */
+  const closeAction = ref<WindowCloseAction>('ask')
   const skillAutoUpdate = ref(true)
   const safeSkillInstall = ref(false)
   const remoteLock = ref(false)
@@ -154,6 +157,7 @@ export const useSettingsStore = defineStore('settings', () => {
     'ui.theme': theme,
     'ui.systemName': systemName,
     'ui.brandLogo': brandLogoFileName,
+    'ui.closeAction': closeAction,
     'skills.autoUpdate': skillAutoUpdate,
     'skills.safeInstall': safeSkillInstall,
     'lockScreen.remoteLock': remoteLock,
@@ -426,6 +430,7 @@ export const useSettingsStore = defineStore('settings', () => {
     systemName,
     brandLogoFileName,
     brandLogoDataUrl,
+    closeAction,
     hasCustomLogo,
     skillAutoUpdate,
     safeSkillInstall,

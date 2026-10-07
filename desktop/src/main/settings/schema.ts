@@ -15,6 +15,7 @@ export type SettingsKey =
   | 'ui.theme'
   | 'ui.systemName'
   | 'ui.brandLogo'
+  | 'ui.closeAction'
   | 'skills.autoUpdate'
   | 'skills.safeInstall'
   | 'lockScreen.remoteLock'
@@ -68,6 +69,9 @@ const LANGUAGE_OPTIONS = ['zh-CN', 'zh-TW', 'en']
 const THEME_OPTIONS = ['light', 'dark']
 const PROXY_MODES = ['direct', 'system', 'manual']
 const SOUND_OPTIONS = ['none', 'crisp', 'soft']
+
+/** 关闭行为：「每次询问」/「最小化到托盘」/「直接关闭窗口」（主进程在窗口 close 时实时读取） */
+const CLOSE_ACTIONS = ['ask', 'tray', 'close']
 
 /** 系统名称（品牌名）默认值与长度上限（「系统设置 → 系统标识」） */
 export const DEFAULT_SYSTEM_NAME = 'Ke-Work'
@@ -128,6 +132,13 @@ export const SETTINGS_SCHEMA: Record<SettingsKey, SettingsSchemaEntry> = {
     default: '',
     applyTiming: 'instant',
     validate: (v) => typeof v === 'string' && (v === '' || BRAND_LOGO_FILE_RE.test(v))
+  },
+  // 关闭按钮行为：'ask' = 每次询问（首次点 ✕ 弹确认框并记住选择）
+  'ui.closeAction': {
+    type: 'string',
+    default: 'ask',
+    applyTiming: 'instant',
+    validate: (v) => CLOSE_ACTIONS.includes(v as string)
   },
   'skills.autoUpdate': { type: 'boolean', default: true, applyTiming: 'pending' },
   'skills.safeInstall': { type: 'boolean', default: false, applyTiming: 'pending' },
