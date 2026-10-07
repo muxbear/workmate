@@ -226,14 +226,13 @@ type NavGroupKey = 'agent' | 'automation'
 interface NavEntry {
   label: NavKey
   icon: NavIconName
-  tag?: string
   /** 该项之后插入的分组（按数组顺序渲染） */
   groupAfter?: NavGroupKey[]
 }
 
 const navItems: NavEntry[] = [
   { label: '知识库', icon: 'book', groupAfter: ['agent', 'automation'] },
-  { label: '更多', icon: 'more', tag: '资库·灵感' }
+  { label: '更多', icon: 'more' }
 ]
 
 /** 智能体子菜单（父菜单紧跟在「知识库」之后，可折叠展开；默认展开） */
@@ -605,7 +604,6 @@ const adjustMenuDirection = (): void => {
               <NavIcon :name="item.icon" />
             </span>
             <span class="nav-label">{{ item.label }}</span>
-            <span v-if="item.tag" class="nav-tag">{{ item.tag }}</span>
           </button>
 
           <template v-for="group in item.groupAfter ?? []" :key="group">
@@ -1567,15 +1565,6 @@ const adjustMenuDirection = (): void => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.nav-tag {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--kw-color-brand-soft);
-  color: var(--kw-color-brand);
-  flex-shrink: 0;
 }
 
 /* 智能体父菜单 */
