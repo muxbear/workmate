@@ -7,11 +7,8 @@ import KnowledgeSettingsPage from './pages/KnowledgeSettingsPage.vue'
 import PersonalizationPage from './pages/PersonalizationPage.vue'
 import MemoryPage from './pages/MemoryPage.vue'
 import ModelPage from './pages/ModelPage.vue'
-import AssistantSettingsPage from './pages/AssistantSettingsPage.vue'
-import DataManagementPage from './pages/DataManagementPage.vue'
 import ShortcutsPage from './pages/ShortcutsPage.vue'
 import SecurityPage from './pages/SecurityPage.vue'
-import HelpFeedbackPage from './pages/HelpFeedbackPage.vue'
 import BrandMark from '../brand/BrandMark.vue'
 import { useSettingsStore } from '../../store/settings'
 
@@ -23,11 +20,8 @@ type PageKey =
   | 'personal'
   | 'memory'
   | 'model'
-  | 'assistant'
-  | 'data'
   | 'shortcuts'
   | 'security'
-  | 'help'
 
 const props = defineProps<{
   open: boolean
@@ -65,11 +59,8 @@ const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: 'personal', label: '个性化', icon: 'sparkles' },
   { key: 'memory', label: '记忆', icon: 'brain' },
   { key: 'model', label: '模型', icon: 'box' },
-  { key: 'assistant', label: '助理设置', icon: 'user-cog' },
-  { key: 'data', label: '数据管理', icon: 'database' },
   { key: 'shortcuts', label: '快捷键', icon: 'keyboard' },
   { key: 'security', label: '安全中心', icon: 'shield' },
-  { key: 'help', label: '帮助与反馈', icon: 'help' },
 ]
 
 const subtitles: Partial<Record<PageKey, string>> = {
@@ -243,57 +234,6 @@ const subtitles: Partial<Record<PageKey, string>> = {
                   <path d="m3.3 7 8.7 5 8.7-5" />
                   <path d="M12 22V12" />
                 </svg>
-                <!-- 助理设置 -->
-                <svg
-                  v-else-if="item.icon === 'user-cog'"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle
-                    cx="10"
-                    cy="8"
-                    r="4"
-                  />
-                  <path d="M4 21a6 6 0 0 1 12 0" />
-                  <circle
-                    cx="18.5"
-                    cy="17.5"
-                    r="3"
-                  />
-                  <path d="M18.5 12.5v1" />
-                  <path d="M18.5 21.5v1" />
-                  <path d="m15 14.5.87.5" />
-                  <path d="m21 20.5.87.5" />
-                  <path d="m15 20.5.87-.5" />
-                  <path d="m21 14.5.87-.5" />
-                </svg>
-                <!-- 数据管理 -->
-                <svg
-                  v-else-if="item.icon === 'database'"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <ellipse
-                    cx="12"
-                    cy="5"
-                    rx="9"
-                    ry="3"
-                  />
-                  <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-                  <path d="M3 12A9 3 0 0 0 21 12" />
-                </svg>
                 <!-- 快捷键 -->
                 <svg
                   v-else-if="item.icon === 'keyboard'"
@@ -338,25 +278,6 @@ const subtitles: Partial<Record<PageKey, string>> = {
                     d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
                   />
                   <path d="m9 12 2 2 4-4" />
-                </svg>
-                <!-- 帮助与反馈 -->
-                <svg
-                  v-else-if="item.icon === 'help'"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                >
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="10"
-                  />
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                  <path d="M12 17h.01" />
                 </svg>
               </span>
               <span>{{ item.label }}</span>
@@ -419,11 +340,8 @@ const subtitles: Partial<Record<PageKey, string>> = {
             <PersonalizationPage v-else-if="activeKey === 'personal'" />
             <MemoryPage v-else-if="activeKey === 'memory'" />
             <ModelPage v-else-if="activeKey === 'model'" />
-            <AssistantSettingsPage v-else-if="activeKey === 'assistant'" />
-            <DataManagementPage v-else-if="activeKey === 'data'" />
             <ShortcutsPage v-else-if="activeKey === 'shortcuts'" />
             <SecurityPage v-else-if="activeKey === 'security'" />
-            <HelpFeedbackPage v-else-if="activeKey === 'help'" />
           </div>
         </main>
       </div>
