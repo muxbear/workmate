@@ -191,11 +191,6 @@ const toggleSpaceCollapse = (spaceName: string): void => {
   collapsedSpaces[spaceName] = !collapsedSpaces[spaceName]
 }
 
-const handleAddSpaceItem = (spaceName: string): void => {
-  // Placeholder for adding a new item under the space.
-  console.log('Add item to', spaceName)
-}
-
 // ── Navigation ──
 type NavKey = '新建任务' | '知识库' | '更多'
 type AgentNavKey = '专家' | '技能' | '连接器'
@@ -810,25 +805,6 @@ const adjustMenuDirection = (): void => {
                         从列表中删除
                       </button>
                     </div>
-                    <button
-                      class="space-header-btn space-header-add"
-                      type="button"
-                      title="添加子项"
-                      @click.stop="handleAddSpaceItem(group.ws.name)"
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                      >
-                        <line x1="12" y1="5" x2="12" y2="19" />
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                    </button>
                   </div>
                   <button
                     class="space-header-btn space-header-collapse"
