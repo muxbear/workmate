@@ -3,6 +3,7 @@ import type { WorkModeStore } from '../mode/work-mode'
 import type { AgentManager } from '../agent/AgentManager'
 import type { AuthService } from '../services/AuthService'
 import type { SessionService } from '../services/SessionService'
+import type { UserProfile } from '../../shared/contracts'
 import { createCommandRegistrar } from './command'
 
 interface ModeHandlerDeps {
@@ -32,10 +33,7 @@ export function registerModeHandlers(ipc: IpcMain, deps: ModeHandlerDeps): void 
   // 会话校验：渲染层路由守卫依赖（localStorage token 可能残留，主进程 session 为权威）。
   // 同时带回权威账号资料——渲染层 localStorage 的 user_info 可能残留上一账号，
   // 仅凭 loggedIn 无法自愈，展示名会错到下次登录（2026-10-05 真实数据走查现场发现）。
-  registerCommand<
-    [],
-    { loggedIn: boolean; user?: { id: string; username: string; mobile?: string } | null }
-  >(ipc, 'session:check', {
+  registerCommand<[], { loggedIn: boolean; user?: UserProfile | null }>(ipc, 'session:check', {
     auth: 'none',
     execute: async () => {
       const userId = deps.session.getCurrentUserId()

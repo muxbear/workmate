@@ -26,6 +26,7 @@ interface AuthHandlerDeps {
  * 注册认证相关 IPC 通道
  * 鉴权声明均为 none：登录动作先于会话存在；logout 不强制登录态
  * （会话可能已失效，仍要完成本地清理）。
+ * 例外：auth:update-nickname 写的是「当前登录用户」的资料，声明 auth: 'user'。
  */
 export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void {
   const registerCommand = createCommandRegistrar(() => deps.session.requireUserId())
@@ -109,5 +110,12 @@ export function registerAuthHandlers(ipc: IpcMain, deps: AuthHandlerDeps): void 
       deps.session.clear()
       return null
     }
+  })
+
+  registerCommand<[string], unknown>(ipc, 'auth:update-nickname', {
+    auth: 'user',
+    // 只做类型收窄：空串是合法的「清除」指令，非空/长度等业务规则在服务层（鉴权之后）
+    parse: ([nickname]) => (typeof nickname === 'string' ? [nickname] : null),
+    execute: (ctx, nickname) => deps.authService.updateNickname(ctx.userId as string, nickname)
   })
 }

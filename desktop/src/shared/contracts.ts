@@ -176,6 +176,15 @@ export interface AgentAPI {
   setExperts(experts: DesktopExpert[]): Promise<IpcResult<{ mcpWarnings: McpLoadFailure[] }>>
 }
 
+/** 主进程权威账号展示资料（session:check 与昵称更新通道的统一返回形状） */
+export interface UserProfile {
+  id: string
+  username: string
+  mobile?: string
+  /** 本地可编辑昵称（未设置为 undefined；与 Web 账号昵称 webNickname 的只读镜像语义不同） */
+  nickname?: string
+}
+
 export interface AuthAPI {
   loginByPassword(account: string, password: string): Promise<IpcResult<AuthResult>>
   loginBySms(mobile: string, code: string): Promise<IpcResult<AuthResult>>
@@ -184,6 +193,8 @@ export interface AuthAPI {
   loginByOAuth2(): Promise<IpcResult<OAuth2LoginResponse>>
   confirmOAuth2Link(action: OAuth2LoginAction): Promise<IpcResult<OAuth2LoginResponse>>
   logout(account: string): Promise<IpcResult<null>>
+  /** 更新当前账号昵称（空串/纯空白 = 清除并回退显示名）；返回更新后的权威资料 */
+  updateNickname(nickname: string): Promise<IpcResult<UserProfile>>
 }
 
 /** 会话绑定的工作空间（checkpoint metadata 派生；无绑定为 undefined，归"默认空间"） */
@@ -240,9 +251,7 @@ export interface ModeAPI {
   getWorkMode(): Promise<IpcResult<'local' | 'cloud'>>
   setWorkMode(mode: 'local' | 'cloud'): Promise<IpcResult<string>>
   /** 校验主进程会话（localStorage token 可能残留，主进程为权威） */
-  checkSession(): Promise<
-    IpcResult<{ loggedIn: boolean; user?: { id: string; username: string; mobile?: string } | null }>
-  >
+  checkSession(): Promise<IpcResult<{ loggedIn: boolean; user?: UserProfile | null }>>
 }
 
 /** 工作空间（workspaces 表行；source: created=新建 / external=打开本地文件夹 / timestamp=旧版时间戳 / default=默认工作空间；userId 为 null 表示机器级共享的默认空间） */
@@ -1593,8 +1602,6 @@ export interface AppWindowAPI {
   onCloseConfirmRequest(callback: () => void): () => void
   /** 对「关闭确认」作答：'tray' | 'close'；null = 取消 */
   answerCloseConfirm(choice: WindowCloseChoice | null): Promise<IpcResult<null>>
-  /** 用户菜单「退出应用」（主进程先 latch 退出标志再 quit，不触发关闭确认弹窗） */
-  quitApp(): Promise<IpcResult<null>>
 }
 
 export interface KeWorkWindowApi

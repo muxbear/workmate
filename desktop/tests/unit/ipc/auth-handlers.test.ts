@@ -37,7 +37,8 @@ describe('auth IPC handlers', () => {
       'auth:login-sms',
       'auth:send-sms-code',
       'auth:login-wechat',
-      'auth:logout'
+      'auth:logout',
+      'auth:update-nickname'
     ]) {
       expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
@@ -146,5 +147,49 @@ describe('auth IPC handlers', () => {
     expect(result.success).toBe(false)
     expect(result.error).toBe('db error')
     expect(session.getCurrentUserId()).toBe('u1')
+  })
+
+  it('IPC-08: auth:update-nickname 未登录被拒（auth=user 守卫），service 未被调用', async () => {
+    const ipc = createFakeIpcMain()
+    const updateNickname = vi.fn()
+    registerAuthHandlers(ipc as never, deps({ authService: { updateNickname } }))
+    const result = await ipc.invoke<{ success: boolean; error?: string }>(
+      'auth:update-nickname',
+      '老王'
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未登录')
+    expect(updateNickname).not.toHaveBeenCalled()
+  })
+
+  it('IPC-09: auth:update-nickname 非字符串入参返回参数错误，且 service 未被调用', async () => {
+    const ipc = createFakeIpcMain()
+    const updateNickname = vi.fn()
+    const session = new SessionService()
+    session.setCurrentUser('u1')
+    registerAuthHandlers(ipc as never, deps({ authService: { updateNickname }, session }))
+    const result = await ipc.invoke<{ success: boolean; error?: string }>('auth:update-nickname')
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('参数错误')
+    expect(updateNickname).not.toHaveBeenCalled()
+  })
+
+  it('IPC-10: auth:update-nickname 已登录以当前 userId 调服务并原样返回资料', async () => {
+    const ipc = createFakeIpcMain()
+    const updateNickname = vi.fn().mockResolvedValue({
+      id: 'u1',
+      username: 'wangke',
+      nickname: '老王'
+    })
+    const session = new SessionService()
+    session.setCurrentUser('u1')
+    registerAuthHandlers(ipc as never, deps({ authService: { updateNickname }, session }))
+    const result = await ipc.invoke<{ success: boolean; data?: { nickname?: string } }>(
+      'auth:update-nickname',
+      '老王'
+    )
+    expect(result.success).toBe(true)
+    expect(updateNickname).toHaveBeenCalledWith('u1', '老王')
+    expect(result.data!.nickname).toBe('老王')
   })
 })

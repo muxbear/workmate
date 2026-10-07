@@ -209,4 +209,50 @@ describe('AuthService 展示资料（session:check 权威来源）', () => {
   it('AUTH-12: getProfileById 对不存在的用户返回 null（不抛错）', async () => {
     await expect(ctx.service.getProfileById('no-such-id')).resolves.toBeNull()
   })
+
+  it('AUTH-13: updateNickname trim 后落库，返回最新资料并写审计', async () => {
+    const user = await ctx.repo.findByAccount('wangke')
+    const profile = await ctx.service.updateNickname(user!.id, '  老王  ')
+    expect(profile).toEqual({
+      id: user!.id,
+      username: 'wangke',
+      mobile: '13800138000',
+      nickname: '老王'
+    })
+    expect((await ctx.repo.findById(user!.id))!.nickname).toBe('老王')
+    const log = ctx.repo['ds']
+      .getDb()
+      .prepare('SELECT * FROM audit_logs WHERE action = ?')
+      .all('update_nickname')
+    expect(log.length).toBeGreaterThan(0)
+  })
+
+  it('AUTH-14: 空串/纯空白 = 清除昵称（显示名回退登录账号）', async () => {
+    const user = await ctx.repo.findByAccount('wangke')
+    await ctx.service.updateNickname(user!.id, '老王')
+    const cleared = await ctx.service.updateNickname(user!.id, '   ')
+    expect(cleared.nickname).toBeUndefined()
+    expect((await ctx.repo.findById(user!.id))!.nickname).toBeUndefined()
+  })
+
+  it('AUTH-15: 超长与控制字符被拒且不落库', async () => {
+    const user = await ctx.repo.findByAccount('wangke')
+    await expect(ctx.service.updateNickname(user!.id, 'a'.repeat(21))).rejects.toThrow(
+      '昵称不能超过 20 个字符'
+    )
+    const withNewline = `老${String.fromCharCode(10)}王`
+    await expect(ctx.service.updateNickname(user!.id, withNewline)).rejects.toThrow(
+      '昵称不能包含非法字符'
+    )
+    expect((await ctx.repo.findById(user!.id))!.nickname).toBeUndefined()
+  })
+
+  it('AUTH-16: 不存在的账号抛「账号不存在」且不写审计', async () => {
+    await expect(ctx.service.updateNickname('no-such-id', '老王')).rejects.toThrow('账号不存在')
+    const log = ctx.repo['ds']
+      .getDb()
+      .prepare('SELECT * FROM audit_logs WHERE action = ?')
+      .all('update_nickname')
+    expect(log.length).toBe(0)
+  })
 })

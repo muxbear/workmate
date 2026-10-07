@@ -21,6 +21,7 @@ import { useSkillSyncStore } from '@renderer/store/skillSync'
 import { useExpertSyncStore } from '@renderer/store/expertSync'
 import { resetUserSession } from '@renderer/store/sessionReset'
 import { formatRelativeTime } from '@renderer/composables/formatTime'
+import { resolveAvatarInitial, resolveDisplayName } from '@renderer/util/user-display'
 import { buildSpaceDeleteMessage, resolveConversationSpaceId } from '../components/space/spaceList'
 import type { ThemeName } from '@renderer/store/settings'
 import type { NavIconName } from '../components/navIcon'
@@ -36,15 +37,12 @@ const skillSyncStore = useSkillSyncStore()
 const expertSyncStore = useExpertSyncStore()
 
 // ── 当前登录用户展示 ──
-/** 显示名：用户名 → 手机号 → 兜底文案 */
-const displayName = computed(
-  () =>
-    userStore.userInfo?.username ||
-    userStore.userInfo?.mobile ||
-    settingsStore.systemName + '用户'
+/** 显示名：昵称 → 用户名 → 手机号 → 兜底文案（与设置-账户管理页共用 util） */
+const displayName = computed(() =>
+  resolveDisplayName(userStore.userInfo, settingsStore.systemName)
 )
 /** 头像取显示名首字符 */
-const avatarInitial = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'K')
+const avatarInitial = computed(() => resolveAvatarInitial(displayName.value))
 
 // ── Sidebar state ──
 const sidebarCollapsed = ref(false)
@@ -413,16 +411,6 @@ const handleLogout = async (): Promise<void> => {
   } finally {
     logoutPending.value = false
   }
-}
-
-/**
- * 退出应用（用户菜单）：主进程先 latch 退出标志再 app.quit()，
- * 不会触发「关闭确认」弹窗（选了「最小化到任务栏」后的唯一正常退出入口）。
- * 不 await 返回：应用随即退出，invoke 响应可能不会送达。
- */
-const quitApp = (): void => {
-  userMenuOpen.value = false
-  void window.api.quitApp()
 }
 
 // ── 设置窗口 ──
@@ -1140,32 +1128,6 @@ const adjustMenuDirection = (): void => {
                   stroke-width="2"
                   stroke-linecap="round"
                 >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                  <path d="M12 17h.01" />
-                </svg>
-                <span>帮助与反馈</span>
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
-              <button class="menu-item">
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                >
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                   <polyline points="17 8 12 3 7 8" />
                   <line x1="12" y1="3" x2="12" y2="15" />
@@ -1181,24 +1143,6 @@ const adjustMenuDirection = (): void => {
                 >
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
-              </button>
-              <button
-                class="menu-item"
-                @click="quitApp"
-              >
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                >
-                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
-                  <line x1="12" y1="2" x2="12" y2="12" />
-                </svg>
-                <span>退出应用</span>
               </button>
             </div>
             <!-- Logout -->

@@ -7,6 +7,8 @@ export interface UserRecord {
   mobile?: string
   wechatOpenid?: string
   avatar?: string
+  /** 本地可编辑昵称（NULL/未设置为 undefined；与 webNickname 的 Web 只读镜像语义不同） */
+  nickname?: string
   workMode: WorkMode
   createdAt: number
   updatedAt: number
@@ -113,6 +115,8 @@ export interface ILocalAuthStore {
   ): Promise<{ attempts: number; lockedUntil: number | null }>
   resetLoginFailures(userId: string): Promise<void>
   updateToken(userId: string, tokenHash: string | null, expireAt: number | null): Promise<void>
+  /** 更新本地可编辑昵称（null = 清除）；写 updated_at */
+  updateNickname(userId: string, nickname: string | null): Promise<void>
   saveSmsCode(mobile: string, codeHash: string, expiresAt: number): Promise<void>
   findSmsCode(mobile: string): Promise<SmsCodeRecord | null>
   markSmsCodeUsed(mobile: string): Promise<void>

@@ -2,7 +2,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { useUserStore } from '@store/user'
 import { useSettingsStore } from '../../../store/settings'
+import { showToast } from '@renderer/composables/useToast'
+import { resolveAvatarInitial, resolveDisplayName } from '@renderer/util/user-display'
 import SettingToggle from '../SettingToggle.vue'
+import NicknameEditModal from './NicknameEditModal.vue'
 import type { OAuth2ScopeDescriptor } from '../../../../../shared/contracts'
 
 defineEmits<{
@@ -18,14 +21,11 @@ const scopeLoading = ref(false)
 /** 正在切换的 scope key（行内 loading / 防重复点击） */
 const busyKey = ref('')
 
-/** 显示名：用户名 → 手机号 → 兜底文案（与主页侧栏用户信息一致） */
-const displayName = computed(
-  () =>
-    userStore.userInfo?.username || userStore.userInfo?.mobile || settingsStore.systemName + '用户'
-)
+/** 显示名：昵称 → 用户名 → 手机号 → 兜底文案（与主页侧栏用户信息共用 util） */
+const displayName = computed(() => resolveDisplayName(userStore.userInfo, settingsStore.systemName))
 
 /** 头像取显示名首字符 */
-const avatarInitial = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'K')
+const avatarInitial = computed(() => resolveAvatarInitial(displayName.value))
 
 /** 副标题：展示与主显示名不同的另一项真实账号信息（手机号 / 用户名） */
 const accountDetail = computed(() => {
@@ -34,6 +34,41 @@ const accountDetail = computed(() => {
   if (username && username !== displayName.value) return '用户名：' + username
   return ''
 })
+
+// ── 昵称编辑（自助修改；空串 = 清除，显示名回退登录账号）──
+const nicknameOpen = ref(false)
+const nicknameError = ref('')
+const nicknameSaving = ref(false)
+
+/** 弹窗打开时的初始值（未设置则为空串） */
+const nicknameCurrent = computed(() => userStore.userInfo?.nickname ?? '')
+
+function openNicknameEdit(): void {
+  nicknameError.value = ''
+  nicknameOpen.value = true
+}
+
+function closeNicknameEdit(): void {
+  if (nicknameSaving.value) return
+  nicknameOpen.value = false
+}
+
+/** 提交昵称：长度等校验在主进程（权威），错误留在弹窗内展示 */
+async function submitNickname(nickname: string): Promise<void> {
+  nicknameSaving.value = true
+  nicknameError.value = ''
+  try {
+    const result = await window.api.updateNickname(nickname)
+    if (!result.success) throw new Error(result.error || '保存失败')
+    userStore.syncFromSession(result.data)
+    nicknameOpen.value = false
+    showToast('昵称已更新')
+  } catch (err) {
+    nicknameError.value = err instanceof Error ? err.message : '保存失败'
+  } finally {
+    nicknameSaving.value = false
+  }
+}
 
 const grantedCount = computed(() => scopes.value.filter((scope) => scope.granted).length)
 
@@ -130,6 +165,13 @@ onMounted(() => {
           </svg>
         </button>
       </div>
+      <div class="s-row s-row--divider">
+        <div>
+          <h2 class="s-sec-title">昵称</h2>
+          <p class="s-desc s-desc--mt">{{ userStore.userInfo?.nickname || '未设置' }}</p>
+        </div>
+        <button class="s-btn nickname-edit-btn" @click="openNicknameEdit">编辑</button>
+      </div>
     </section>
 
     <!-- 授权管理：Web 端 OAuth2 权限（默认全开，可按需关闭） -->
@@ -175,6 +217,16 @@ onMounted(() => {
     </section>
 
     <button class="s-logout-btn" @click="$emit('logout')">退出登录</button>
+
+    <NicknameEditModal
+      :open="nicknameOpen"
+      :current="nicknameCurrent"
+      :error="nicknameError"
+      :saving="nicknameSaving"
+      :maxlength="20"
+      @close="closeNicknameEdit"
+      @submit="submitNickname"
+    />
   </div>
 </template>
 
@@ -189,6 +241,13 @@ onMounted(() => {
 
 .s-desc--mt {
   margin-top: 4px;
+}
+
+/* 账户卡内第二行（昵称）：与头像行分隔 */
+.s-row--divider {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f3f4f6;
 }
 
 .s-account {

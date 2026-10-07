@@ -344,7 +344,7 @@ app.whenReady().then(() => {
     win.focus()
   }
 
-  /** 退出应用（用户菜单 / 托盘菜单共用）：先 latch 退出标志再 quit，close 拦截一律放行、不弹确认框 */
+  /** 退出应用（托盘菜单）：先 latch 退出标志再 quit，close 拦截一律放行、不弹确认框 */
   // （将来接入 electron-updater 时，quitAndInstall() 前同样要先 markQuitting()）
   const quitApp = (): void => {
     closeBehavior.markQuitting()
@@ -392,15 +392,27 @@ app.whenReady().then(() => {
         appTray.ensure()
         win.hide()
       } catch (err) {
-        // 托盘不可用（极端环境/图标资源异常）：退化为最小化，保证窗口能被找回
+        // 托盘不可用（极端环境/图标资源异常）：退化为最小化，保证窗口能被找回。
+        // 必须同时弹框告知——原来只 console.warn，用户只看到「选了最小化到托盘却缩到任务栏」，
+        // 无任何线索（2026-10-07 实机反馈排查耗时的直接原因）。弹框不带窗口父级：窗口刚被最小化，
+        // 挂在父级上可能不可见。
         console.warn('[window] 最小化到托盘失败，退化为最小化:', err)
         if (!win.isMinimized()) win.minimize()
+        const detail = err instanceof Error ? err.message : String(err)
+        void dialog
+          .showMessageBox({
+            type: 'warning',
+            title: '托盘不可用',
+            message: '最小化到托盘失败，已改为最小化到任务栏',
+            detail: `原因：${detail}\n\n可下次关窗重试；或在「系统设置 → 关闭行为」中改选「直接关闭窗口」。`,
+            buttons: ['知道了']
+          })
+          .catch(() => {})
       }
     }
   })
   registerWindowHandlers(ipcMain, {
-    answerCloseConfirm: (choice) => closeConfirmBroker.answer(choice),
-    quitApp
+    answerCloseConfirm: (choice) => closeConfirmBroker.answer(choice)
   })
   /** 主窗口创建唯一入口：关闭行为只挂主窗口（OAuth/微信授权窗不挂） */
   const createMainWindow = (backgroundColor?: string): BrowserWindow => {

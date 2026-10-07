@@ -43,9 +43,6 @@ const api = {
   answerCloseConfirm(choice: WindowCloseChoice | null) {
     return ipcRenderer.invoke('app:close-confirm-answer', choice)
   },
-  quitApp() {
-    return ipcRenderer.invoke('app:quit')
-  },
   sendAgentMessage(
     conversationId: string,
     parts: ({ type: 'text'; text: string } | { type: 'file'; path: string })[] | string,
@@ -221,6 +218,10 @@ const api = {
   },
   logout(account: string) {
     return ipcRenderer.invoke('auth:logout', account)
+  },
+  /** 更新当前账号昵称（'' = 清除）；返回主进程权威资料 */
+  updateNickname(nickname: string) {
+    return ipcRenderer.invoke('auth:update-nickname', nickname)
   },
   // ── 会话 API（基于 LangGraph checkpointer）──
   listConversations() {

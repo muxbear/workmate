@@ -260,6 +260,15 @@ ALTER TABLE automation_runs ADD COLUMN model TEXT;
 ALTER TABLE workspaces ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_workspaces_user_sort ON workspaces(user_id, sort_order ASC);
 `
+  },
+  {
+    // 本地可编辑昵称（NULL=未设置，显示名回退 username/mobile）；
+    // 与 v8 的 web_nickname（Web 账号只读镜像）语义不同，勿混用
+    version: 14,
+    name: 'user_nickname',
+    sql: `
+ALTER TABLE users ADD COLUMN nickname TEXT;
+`
   }
 ]
 

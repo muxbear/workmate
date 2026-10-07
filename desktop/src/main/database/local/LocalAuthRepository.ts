@@ -16,6 +16,7 @@ interface UserRow {
   mobile: string | null
   wechat_openid: string | null
   avatar: string | null
+  nickname: string | null
   work_mode: WorkMode
   token_hash: string | null
   token_expire: number | null
@@ -38,6 +39,7 @@ function toUserRecord(row: UserRow): UserRecord {
     mobile: row.mobile ?? undefined,
     wechatOpenid: row.wechat_openid ?? undefined,
     avatar: row.avatar ?? undefined,
+    nickname: row.nickname ?? undefined,
     workMode: row.work_mode,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -287,6 +289,13 @@ export class LocalAuthRepository implements ILocalAuthStore {
         'UPDATE users SET token_hash = ?, token_expire = ?, updated_at = ? WHERE id = ?'
       )
       .run(tokenHash, expireAt, Date.now(), userId)
+  }
+
+  async updateNickname(userId: string, nickname: string | null): Promise<void> {
+    this.ds
+      .getDb()
+      .prepare('UPDATE users SET nickname = ?, updated_at = ? WHERE id = ?')
+      .run(nickname, Date.now(), userId)
   }
 
   async saveSmsCode(

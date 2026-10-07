@@ -6,8 +6,7 @@
  * B. 已保存「直接关闭窗口」→ 应用正常退出（waitForEvent close，验证退出路径不被自身拦截）；
  * C. 首次（无配置）→ 弹应用内确认框 → 选「最小化到托盘」→ 落盘 settings.json → 再关不再询问；
  * D. 首次 → 弹框后 Esc 取消 → 窗口保持、不落盘；
- * E. 系统设置页改「关闭行为」→ 即时生效（设置浮层开着点关闭也按新选择执行）；
- * F. 用户菜单「退出应用」→ 默认「每次询问」下也直接退出（quit 不被关闭拦截拦下）。
+ * E. 系统设置页改「关闭行为」→ 即时生效（设置浮层开着点关闭也按新选择执行）。
  *
  * 托盘图标本身是原生 UI（Playwright 点不到），其菜单/唤回接线由单测
  * tests/unit/services/app-tray.test.ts 钉住；这里断言的是「窗口隐藏 + 进程存活」这一可观测结果。
@@ -239,18 +238,6 @@ describe('主窗口关闭行为（最小化到托盘 / 直接关闭）', () => {
         .toBe(false)
       expect((await mainWindowState(app))?.destroyed).toBe(false)
       expect(await dialogOption(page).count()).toBe(0)
-    } finally {
-      await teardown(app, dataHome)
-    }
-  })
-
-  it('用户菜单「退出应用」：默认「每次询问」下也直接退出（不弹确认框、不被拦截）', async () => {
-    const { app, page, dataHome } = await launchApp()
-    try {
-      await login(page)
-      await page.locator('.user-avatar-btn').click()
-      await page.locator('.menu-item', { hasText: '退出应用' }).click()
-      await app.waitForEvent('close', { timeout: 20_000 })
     } finally {
       await teardown(app, dataHome)
     }

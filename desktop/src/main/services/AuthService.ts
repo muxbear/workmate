@@ -35,6 +35,8 @@ export interface OAuth2LoginResult {
 
 const ACCESS_TTL_SEC = 2 * 60 * 60
 const REFRESH_TTL_SEC = 30 * 24 * 60 * 60
+/** 昵称长度上限（UTF-16 码元，与渲染层输入框 maxlength 一致） */
+const NICKNAME_MAX_LEN = 20
 
 export class AuthService {
   private readonly repo: ILocalAuthStore
@@ -70,10 +72,46 @@ export class AuthService {
    */
   async getProfileById(
     userId: string
-  ): Promise<{ id: string; username: string; mobile?: string } | null> {
+  ): Promise<{ id: string; username: string; mobile?: string; nickname?: string } | null> {
     const user = await this.repo.findById(userId)
     if (!user) return null
-    return { id: user.id, username: user.username, mobile: user.mobile ?? undefined }
+    return {
+      id: user.id,
+      username: user.username,
+      mobile: user.mobile ?? undefined,
+      nickname: user.nickname ?? undefined
+    }
+  }
+
+  /**
+   * 更新本地昵称（账户管理页自助编辑）。
+   * 空串/纯空白 = 清除昵称（落库 NULL，显示名回退 username/mobile）。
+   * 返回更新后的权威资料，供渲染层 syncFromSession 一次同步。
+   */
+  async updateNickname(
+    userId: string,
+    raw: string
+  ): Promise<{ id: string; username: string; mobile?: string; nickname?: string }> {
+    const profile = await this.getProfileById(userId)
+    if (!profile) throw new Error('账号不存在')
+    const trimmed = raw.trim()
+    if (trimmed.length > NICKNAME_MAX_LEN) {
+      throw new Error(`昵称不能超过 ${NICKNAME_MAX_LEN} 个字符`)
+    }
+    // IPC 是信任边界：输入框无法输入控制字符，但通道可被任意调用
+    const hasControlChar = [...trimmed].some((ch) => {
+      const code = ch.codePointAt(0)
+      return code !== undefined && (code < 0x20 || code === 0x7f)
+    })
+    if (hasControlChar) throw new Error('昵称不能包含非法字符')
+    const next = trimmed === '' ? null : trimmed
+    await this.repo.updateNickname(userId, next)
+    await this.repo.addAuditLog({
+      userId,
+      action: 'update_nickname',
+      detail: JSON.stringify({ nickname: next })
+    })
+    return { ...profile, nickname: next ?? undefined }
   }
 
   // ── 密码登录 ──

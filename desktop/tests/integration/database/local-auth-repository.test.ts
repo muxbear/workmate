@@ -67,6 +67,24 @@ describe('LocalAuthRepository', () => {
     expect((await repo.findByAccount('wangke'))!.tokenHash).toBeNull()
   })
 
+  it('新用户 nickname 未设置；updateNickname 写入/清除并刷新 updated_at', async () => {
+    const user = await repo.createUser({ username: 'wangke', passwordHash: 'h' })
+    expect(user.nickname).toBeUndefined()
+    const before = (await repo.findById(user.id))!.updatedAt
+    await repo.updateNickname(user.id, '老王')
+    const set = (await repo.findById(user.id))!
+    expect(set.nickname).toBe('老王')
+    expect(set.updatedAt).toBeGreaterThanOrEqual(before)
+    await repo.updateNickname(user.id, null)
+    expect((await repo.findById(user.id))!.nickname).toBeUndefined()
+  })
+
+  it('createWebOnlyUser 的 nickname 同为未设置（与 webNickname 相互独立）', async () => {
+    const user = await repo.createWebOnlyUser({ webAccountId: 'w1', webNickname: 'Web名' })
+    expect(user.nickname).toBeUndefined()
+    expect(user.webNickname).toBe('Web名')
+  })
+
   it('saveSmsCode / findSmsCode / markSmsCodeUsed 生命周期', async () => {
     await repo.saveSmsCode('13800138000', 'code-hash', 9999)
     const code = await repo.findSmsCode('13800138000')

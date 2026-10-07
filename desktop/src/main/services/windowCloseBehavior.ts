@@ -41,7 +41,7 @@ export interface CloseBehaviorDeps {
 
 export interface WindowCloseBehavior {
   attach(win: CloseGuardWindow): void
-  /** 应用级退出（before-quit / 用户菜单「退出应用」）时置位：此后 close 一律放行 */
+  /** 应用级退出（before-quit / 托盘菜单「退出应用」）时置位：此后 close 一律放行 */
   markQuitting(): void
   isQuitting(): boolean
 }

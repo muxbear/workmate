@@ -110,9 +110,12 @@ describe('mode IPC handlers', () => {
     const ipc = createFakeIpcMain()
     const session = new SessionService()
     session.setCurrentUser('u1')
-    const getProfileById = vi
-      .fn()
-      .mockResolvedValue({ id: 'u1', username: 'wangke', mobile: '15091545831' })
+    const getProfileById = vi.fn().mockResolvedValue({
+      id: 'u1',
+      username: 'wangke',
+      mobile: '15091545831',
+      nickname: '老王'
+    })
     registerModeHandlers(ipc as never, {
       modeStore: { getMode: () => 'local' } as never,
       agentManager: { switchMode: vi.fn() } as never,
@@ -121,11 +124,15 @@ describe('mode IPC handlers', () => {
     })
     const result = await ipc.invoke<{
       success: boolean
-      data?: { loggedIn: boolean; user?: { id: string; username: string } | null }
+      data?: {
+        loggedIn: boolean
+        user?: { id: string; username: string; nickname?: string } | null
+      }
     }>('session:check')
     expect(result.success).toBe(true)
     expect(result.data!.loggedIn).toBe(true)
     expect(getProfileById).toHaveBeenCalledWith('u1')
     expect(result.data!.user?.username).toBe('wangke')
+    expect(result.data!.user?.nickname).toBe('老王')
   })
 })
