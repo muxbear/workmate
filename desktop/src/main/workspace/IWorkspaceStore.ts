@@ -27,6 +27,22 @@ export interface IWorkspaceStore {
   /** 迁移工作空间路径（改默认空间目录后跟随新位置；id 不变，会话绑定不失效） */
   updatePath(id: string, path: string): void
 
+  /**
+   * 重命名（仅展示名，path 不变；归属校验由服务层先行完成，镜像 updatePath 的分层约定）
+   * @returns 实际改写行数（0 = 不存在）
+   */
+  rename(id: string, name: string): number
+
+  /**
+   * 拖拽排序：按 orderedIds 顺序回写 sort_order（0 起，越小越靠前）。
+   * WHERE 带 user_id → 默认空间（user_id 恒为 NULL）与他人记录天然写不到。
+   * @returns 实际改写行数
+   */
+  reorder(userId: string, orderedIds: string[]): number
+
+  /** 同名查重（范围同 listForUser：本人 + 默认空间；排除 excludeId 自身） */
+  findByName(name: string, userId: string, excludeId: string): WorkspaceRow | undefined
+
   /** 收敛多余默认记录（仅删记录，磁盘目录保留；保留 keepId 那条） */
   removeOtherDefaults(keepId: string): void
 

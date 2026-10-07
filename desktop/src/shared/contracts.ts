@@ -253,6 +253,8 @@ export interface Workspace {
   source: 'created' | 'external' | 'timestamp' | 'default'
   userId: string | null
   createdAt: number
+  /** 拖拽排序位（越小越靠前）；默认空间不参与排序，恒为 0 */
+  sortOrder: number
 }
 
 /** 工作空间文件列表条目（relPath 为 '/' 分隔的相对路径） */
@@ -303,6 +305,10 @@ export interface WorkspaceAPI {
   openDefaultWorkspace(): Promise<IpcResult<null>>
   /** 从列表中删除工作空间（仅删记录，不动磁盘文件夹） */
   deleteWorkspace(id: string): Promise<IpcResult<null>>
+  /** 重命名工作空间（仅改展示名，不动磁盘文件夹；默认空间不可改） */
+  renameWorkspace(id: string, name: string): Promise<IpcResult<Workspace>>
+  /** 拖拽排序：orderedIds 为当前用户非默认空间的全量 id（顺序即目标顺序）；返回排序后的全量列表 */
+  reorderWorkspaces(orderedIds: string[]): Promise<IpcResult<Workspace[]>>
   /** 列出工作空间下相对路径目录的条目（顶层传空串） */
   listWorkspaceFiles(
     workspaceId: string,

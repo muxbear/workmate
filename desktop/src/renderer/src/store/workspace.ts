@@ -33,13 +33,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     () => workspaces.value.find((w) => w.source === 'default') ?? null
   )
 
+  /**
+   * 输入卡上拉菜单的空间列表（顺序直接沿用服务端顺序：默认空间恒置顶 → 拖拽位 → 创建时间降序）。
+   * 排序规则单点在主进程 listForUser 的 ORDER BY，本层不再二次排序（避免两套规则漂移）
+   */
   const filteredWorkspaces = computed(() => {
     const keyword = query.value.trim().toLowerCase()
-    const list = keyword
+    return keyword
       ? workspaces.value.filter((w) => w.name.toLowerCase().includes(keyword))
       : [...workspaces.value]
-    // 默认空间置顶（首屏可见）
-    return list.sort((a, b) => Number(b.source === 'default') - Number(a.source === 'default'))
   })
 
   // ====== 方法(Actions) ======
@@ -85,26 +87,69 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     persistCurrentId()
   }
 
+  /**
+   * 新空间插入「可排序区最前」（默认空间恒在首位，不能被挤掉）。
+   * 排序规则单点在主进程，这里只保证本地立即一致（不依赖重新拉取）
+   */
+  function insertAfterDefault(ws: Workspace): void {
+    if (workspaces.value.some((w) => w.id === ws.id)) return
+    const defIndex = workspaces.value.findIndex((w) => w.source === 'default')
+    workspaces.value.splice(defIndex + 1, 0, ws)
+  }
+
   /** 新建工作空间（主进程在默认工作空间目录下创建同名文件夹）；失败抛错（渲染层展示 error） */
   async function create(name: string): Promise<Workspace> {
     const result = await window.api.createWorkspace(name)
     if (!result.success || !result.data) {
       throw new Error(result.error || '新建工作空间失败')
     }
-    workspaces.value.unshift(result.data)
+    insertAfterDefault(result.data)
     currentId.value = result.data.id
     persistCurrentId()
     return result.data
+  }
+
+  /**
+   * 重命名工作空间（仅展示名，不动磁盘目录）。
+   * 乐观更新 → 失败回滚并抛错（主进程 sanitize/默认空间/同名守卫是权威，文案原样透出）
+   */
+  async function rename(id: string, name: string): Promise<void> {
+    const index = workspaces.value.findIndex((w) => w.id === id)
+    const prev = index >= 0 ? workspaces.value[index] : null
+    if (prev) workspaces.value[index] = { ...prev, name: name.trim() }
+    const result = await window.api.renameWorkspace(id, name)
+    if (!result.success || !result.data) {
+      if (prev) workspaces.value[index] = prev
+      throw new Error(result.error || '重命名工作空间失败')
+    }
+    // 以主进程回传为准（sanitize 规范化后的名字）
+    if (index >= 0) workspaces.value[index] = result.data
+  }
+
+  /**
+   * 拖拽排序：orderedIds 为非默认空间的全量 id（顺序即目标顺序）。
+   * 乐观重排本地（默认空间仍置顶）→ 失败回滚并抛错 → 成功直接采用服务端返回的全量顺序
+   */
+  async function reorder(orderedIds: string[]): Promise<void> {
+    const prev = workspaces.value
+    const byId = new Map(prev.map((w) => [w.id, w]))
+    const sortable = orderedIds.map((id) => byId.get(id)).filter((w): w is Workspace => !!w)
+    const defaultWs = prev.find((w) => w.source === 'default')
+    workspaces.value = defaultWs ? [defaultWs, ...sortable] : sortable
+    const result = await window.api.reorderWorkspaces(orderedIds)
+    if (!result.success || !result.data) {
+      workspaces.value = prev
+      throw new Error(result.error || '保存排序失败')
+    }
+    workspaces.value = result.data
   }
 
   /** 打开本地文件夹作为工作空间；返回是否已选中（用户取消为 false） */
   async function selectExternal(): Promise<boolean> {
     const result = await window.api.selectWorkspaceDir()
     if (!result.success || !result.data) return false
-    if (!workspaces.value.some((w) => w.id === result.data!.id)) {
-      workspaces.value.unshift(result.data!)
-    }
-    currentId.value = result.data!.id
+    insertAfterDefault(result.data)
+    currentId.value = result.data.id
     persistCurrentId()
     return true
   }
@@ -116,10 +161,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       console.error('[workspace] useDefault failed:', result.error)
       return
     }
-    if (!workspaces.value.some((w) => w.id === result.data!.id)) {
-      workspaces.value.unshift(result.data!)
-    }
-    currentId.value = result.data!.id
+    insertAfterDefault(result.data)
+    currentId.value = result.data.id
     persistCurrentId()
   }
 
@@ -194,6 +237,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     load,
     select,
     create,
+    rename,
+    reorder,
     remove,
     selectExternal,
     useDefault,

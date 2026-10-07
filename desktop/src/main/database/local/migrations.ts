@@ -250,6 +250,16 @@ CREATE INDEX IF NOT EXISTS idx_auto_runs_user ON automation_runs(user_id, starte
 ALTER TABLE automation_runs ADD COLUMN output_text TEXT;
 ALTER TABLE automation_runs ADD COLUMN model TEXT;
 `
+  },
+  {
+    // 工作空间拖拽排序：sort_order 越小越靠前；默认空间不参与（列表 SQL 强制置顶），存量行统一 0
+    // （存量行全 0 时靠 created_at DESC, rowid DESC 兜底，与旧顺序完全一致）
+    version: 13,
+    name: 'workspaces_sort_order',
+    sql: `
+ALTER TABLE workspaces ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_workspaces_user_sort ON workspaces(user_id, sort_order ASC);
+`
   }
 ]
 

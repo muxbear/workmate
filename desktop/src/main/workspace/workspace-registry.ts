@@ -249,6 +249,48 @@ export class WorkspaceRegistryService {
     console.log(`[workspace] deleted workspace record: ${id}`)
   }
 
+  /**
+   * 重命名工作空间（仅改展示名，不动磁盘目录 —— 目录名变更会连带改 path、
+   * conversation_workspaces.workspace_dir 与自动化任务目录快照，且可能与既有目录冲突）。
+   * 默认空间为机器级共享记录，不可重命名。
+   * @throws 不存在 / 默认空间 / 名字非法 / 同名已存在
+   */
+  renameWorkspace(id: string, userId: string, name: string): WorkspaceRow {
+    const ws = this.repo.getById(id, userId)
+    if (!ws) throw new Error('工作空间不存在')
+    if (ws.source === 'default') throw new Error('默认工作空间不可重命名')
+    const safe = this.sanitizeName(name)
+    // 同名改自身：幂等空操作（不报错，也不写库）
+    if (safe === ws.name) return ws
+    // 同名守卫：展示名不与本用户其他空间重复。新建空间按目录名查重，改名却不动目录，
+    // 缺这道守卫会出现两个同名空间（如 A 改名为 B 后，新建 B 的目录不存在 → 创建成功）
+    if (this.repo.findByName(safe, userId, id)) throw new Error(`工作空间已存在：${safe}`)
+    if (this.repo.rename(id, safe) === 0) throw new Error('工作空间不存在')
+    console.log(`[workspace] renamed workspace ${id} -> ${safe}`)
+    return { ...ws, name: safe }
+  }
+
+  /**
+   * 拖拽排序：orderedIds 必须是当前用户可见的**非默认空间全量 id**（顺序即目标顺序）。
+   * 集合不符即拒绝（多窗口/陈旧列表会把顺序写成半截），刷新后按服务端顺序重建。
+   * @returns 排序后的全量列表（含默认空间，默认空间恒在首位）
+   */
+  async reorderWorkspaces(userId: string, orderedIds: string[]): Promise<WorkspaceRow[]> {
+    // 与渲染层所见同源：list() 先 ensureDefaultWorkspace + adoptOrphanWorkspaces
+    const sortable = (await this.list(userId)).filter((row) => row.source !== 'default')
+    const sortableIds = new Set(sortable.map((row) => row.id))
+    const unique = new Set(orderedIds)
+    if (
+      unique.size !== orderedIds.length ||
+      orderedIds.length !== sortableIds.size ||
+      orderedIds.some((id) => !sortableIds.has(id))
+    ) {
+      throw new Error('排序列表与工作空间列表不一致，请刷新后重试')
+    }
+    this.repo.reorder(userId, orderedIds)
+    return this.repo.listForUser(userId)
+  }
+
   /** 在系统资源管理器中打开工作空间目录（只接受表内本人 id） */
   async openWorkspace(id: string, userId: string): Promise<void> {
     const ws = this.repo.getById(id, userId)

@@ -8,6 +8,7 @@ import ConnectorPage from './ConnectorPage.vue'
 import KnowledgePage from './KnowledgePage.vue'
 import AutomationTasksPage from './AutomationTasksPage.vue'
 import AutomationTemplatesPage from './AutomationTemplatesPage.vue'
+import SpaceManagePage from './SpaceManagePage.vue'
 import NewTaskPage from './NewTaskPage.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import BrandMark from '../components/brand/BrandMark.vue'
@@ -19,6 +20,8 @@ import { THEME_OPTIONS, useSettingsStore } from '@renderer/store/settings'
 import { useSkillSyncStore } from '@renderer/store/skillSync'
 import { useExpertSyncStore } from '@renderer/store/expertSync'
 import { resetUserSession } from '@renderer/store/sessionReset'
+import { formatRelativeTime } from '@renderer/composables/formatTime'
+import { buildSpaceDeleteMessage, resolveConversationSpaceId } from '../components/space/spaceList'
 import type { ThemeName } from '@renderer/store/settings'
 import type { NavIconName } from '../components/navIcon'
 import type { Conversation } from '@renderer/store/agent'
@@ -199,8 +202,22 @@ const handleAddSpaceItem = (spaceName: string): void => {
 type NavKey = '新建任务' | '知识库' | '更多'
 type AgentNavKey = '专家' | '技能' | '连接器'
 type AutomationNavKey = '定时任务' | '定时模板'
-type AppNav = NavKey | AgentNavKey | AutomationNavKey
+/** 空间管理页：不在侧栏菜单树里，只由「空间」行的 hover「管理」按钮进入 */
+type SpaceNavKey = '空间管理'
+type AppNav = NavKey | AgentNavKey | AutomationNavKey | SpaceNavKey
 const activeNav = ref<AppNav>('新建任务')
+
+/** 进入管理页前的来源页（供管理页「返回」恢复） */
+const manageReturnNav = ref<AppNav>('新建任务')
+
+/** 进入空间管理页（侧栏「空间」行 hover 的「管理」按钮）；收起可能的浮层 */
+const openSpaceManage = (): void => {
+  activeSpaceMenu.value = null
+  activeChatMenu.value = null
+  userMenuOpen.value = false
+  if (activeNav.value !== '空间管理') manageReturnNav.value = activeNav.value
+  activeNav.value = '空间管理'
+}
 
 /** 可折叠分组（父级菜单不是页面，只是分组的展开/收起开关） */
 type NavGroupKey = 'agent' | 'automation'
@@ -268,19 +285,16 @@ interface ConversationGroup {
 }
 
 const conversationGroups = computed<ConversationGroup[]>(() => {
-  // 默认空间置顶，其余保持列表序（创建时间降序）
-  const wsList = [...workspaceStore.workspaces].sort(
-    (a, b) => Number(b.source === 'default') - Number(a.source === 'default')
-  )
+  // 顺序直接沿用服务端（默认空间置顶 → 拖拽位 → 创建时间降序），本层不再二次排序
+  const wsList = workspaceStore.workspaces
   const groups = wsList.map<ConversationGroup>((ws) => ({ key: ws.id, ws, chats: [] }))
   const byId = new Map(groups.map((g) => [g.ws.id, g]))
-  // 工作空间已被删除（记录不在列表）→ 该会话归"默认空间"（metadata 保留但不再展示旧分组）
-  const defaultGroup = workspaceStore.defaultWorkspace
-    ? byId.get(workspaceStore.defaultWorkspace.id)
-    : undefined
+  // 归属规则单点在 spaceList.resolveConversationSpaceId（与管理页共用，防两处口径漂移）：
+  // 无绑定 / 绑定空间已被删除 → 默认空间
+  const spaceIds = new Set(groups.map((g) => g.ws.id))
   for (const c of agentStore.sortedConversations) {
-    const target = c.workspace?.id ? byId.get(c.workspace.id) : undefined
-    ;(target ?? defaultGroup)?.chats.push(c)
+    const spaceId = resolveConversationSpaceId(c, spaceIds, workspaceStore.defaultWorkspace?.id ?? null)
+    if (spaceId) byId.get(spaceId)?.chats.push(c)
   }
   return groups
 })
@@ -364,22 +378,6 @@ const confirmRename = async (): Promise<void> => {
   } finally {
     renaming.value = false
   }
-}
-
-/** 相对时间格式化：今天 HH:mm / 昨天 / N天前 */
-const formatRelativeTime = (ts: number): string => {
-  if (!ts) return ''
-  const diff = Date.now() - ts
-  const minute = 60_000
-  const hour = 60 * minute
-  const day = 24 * hour
-  if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.floor(diff / minute)}分钟前`
-  if (diff < day) return `${Math.floor(diff / hour)}小时前`
-  if (diff < 2 * day) return '昨天'
-  if (diff < 7 * day) return `${Math.floor(diff / day)}天前`
-  const d = new Date(ts)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 // ── Logout ──
@@ -647,23 +645,50 @@ const adjustMenuDirection = (): void => {
 
       <div class="sidebar-divider"></div>
 
-      <!-- Spaces -->
+      <!-- Spaces（行内两个兄弟按钮：折叠开关 + hover 显形的「管理」；button 不能嵌套 button） -->
       <div class="sidebar-spaces">
-        <button class="spaces-toggle" @click="spaceOpen = !spaceOpen">
-          <svg
-            :class="{ 'rotate-n90': !spaceOpen }"
-            width="11"
-            height="11"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
+        <div class="spaces-row" :class="{ 'spaces-row--active': activeNav === '空间管理' }">
+          <button class="spaces-toggle" @click="spaceOpen = !spaceOpen">
+            <svg
+              :class="{ 'rotate-n90': !spaceOpen }"
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            <span>空间 ({{ conversationGroups.length }})</span>
+          </button>
+          <button
+            class="spaces-manage"
+            type="button"
+            data-spaces-manage
+            title="空间管理"
+            aria-label="空间管理"
+            @click.stop="openSpaceManage"
           >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-          <span>空间 ({{ conversationGroups.length }})</span>
-        </button>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <circle cx="3.5" cy="6" r="1" />
+              <circle cx="3.5" cy="12" r="1" />
+              <circle cx="3.5" cy="18" r="1" />
+            </svg>
+          </button>
+        </div>
         <Transition name="space-collapse">
           <div v-show="spaceOpen" class="spaces-list">
             <div v-for="group in conversationGroups" :key="group.key" class="space-group">
@@ -1192,11 +1217,11 @@ const adjustMenuDirection = (): void => {
       @cancel="deleteTarget = null"
     />
 
-    <!-- 移除工作空间确认弹窗（文案含动态任务数；confirmText 用组件默认「确认」，红色危险风格） -->
+    <!-- 移除工作空间确认弹窗（文案含动态任务数；与管理页共用同一串文案，confirmText 用组件默认「确认」） -->
     <ConfirmDialog
       v-if="deleteWsTarget"
       title="移除工作空间"
-      :message="`该工作空间下有 ${deleteWsTarget.count} 个任务，移除工作空间后这些任务将被同时删除且无法恢复，确认移除？`"
+      :message="buildSpaceDeleteMessage(deleteWsTarget.count)"
       @confirm="confirmDeleteWorkspace"
       @cancel="deleteWsTarget = null"
     />
@@ -1265,6 +1290,12 @@ const adjustMenuDirection = (): void => {
         <KnowledgePage v-else-if="activeNav === '知识库'" key="knowledge" />
         <AutomationTasksPage v-else-if="activeNav === '定时任务'" key="automation-tasks" />
         <AutomationTemplatesPage v-else-if="activeNav === '定时模板'" key="automation-templates" />
+        <SpaceManagePage
+          v-else-if="activeNav === '空间管理'"
+          key="space-manage"
+          @back="activeNav = manageReturnNav"
+          @open-task="activeNav = '新建任务'"
+        />
         <div v-else key="placeholder" class="placeholder-page">
           <div class="placeholder-icon">
             <svg
@@ -1581,11 +1612,19 @@ const adjustMenuDirection = (): void => {
   display: none;
 }
 
+/* 「空间」行容器：折叠开关与「管理」按钮为兄弟节点（button 内不能再嵌 button） */
+.spaces-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .spaces-toggle {
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 6px 12px;
   border: none;
   background: transparent;
@@ -1603,6 +1642,44 @@ const adjustMenuDirection = (): void => {
 .spaces-toggle:hover {
   color: var(--kw-color-text-muted);
   background: var(--kw-color-brand-subtle);
+}
+
+/* 「管理」入口：悬停该行 / 键盘聚焦 / 管理页打开时常显 */
+.spaces-manage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--kw-color-text-faint);
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.spaces-row:hover .spaces-manage,
+.spaces-manage:focus-visible,
+.spaces-row--active .spaces-manage {
+  opacity: 1;
+  visibility: visible;
+}
+
+.spaces-manage:hover {
+  background: var(--kw-color-brand-soft);
+  color: var(--kw-color-brand-strong);
+}
+
+.spaces-row--active .spaces-manage {
+  color: var(--kw-color-brand-strong);
 }
 
 .spaces-toggle svg {

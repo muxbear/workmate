@@ -267,6 +267,100 @@ describe('WorkspaceService', () => {
     })
   })
 
+  describe('renameWorkspace', () => {
+    it('改名成功：只改展示名，磁盘目录与其他字段不变', async () => {
+      const ws = service.createWorkspace('旧名', 'u1')
+      const renamed = service.renameWorkspace(ws.id, 'u1', '  新名  ')
+      expect(renamed.name).toBe('新名')
+      expect(renamed.path).toBe(ws.path)
+      expect(renamed.sortOrder).toBe(ws.sortOrder)
+      expect(existsSync(ws.path)).toBe(true)
+      const got = (await service.list('u1')).find((r) => r.id === ws.id)
+      expect(got?.name).toBe('新名')
+      // 磁盘目录名不变（本方案明确不改目录，避免 path/绑定快照连锁变更）
+      expect(existsSync(join(baseDir, '旧名'))).toBe(true)
+    })
+
+    it('默认空间不可重命名', async () => {
+      const def = await service.ensureDefaultWorkspace()
+      expect(() => service.renameWorkspace(def.id, 'u1', '想改名')).toThrow(
+        /默认工作空间不可重命名/
+      )
+    })
+
+    it('他人空间（不可见）改名抛错', () => {
+      const ws = service.createWorkspace('他人', 'u2')
+      expect(() => service.renameWorkspace(ws.id, 'u1', '新名')).toThrow(/工作空间不存在/)
+    })
+
+    it('非法名透传 sanitize 的文案', () => {
+      const ws = service.createWorkspace('合法', 'u1')
+      expect(() => service.renameWorkspace(ws.id, 'u1', 'a/b')).toThrow(/不能包含/)
+      expect(() => service.renameWorkspace(ws.id, 'u1', '   ')).toThrow(/不能为空/)
+    })
+
+    it('同名守卫：与其他空间重名抛错，改回自身同名幂等不抛', async () => {
+      const a = service.createWorkspace('项目A', 'u1')
+      service.createWorkspace('项目B', 'u1')
+      expect(() => service.renameWorkspace(a.id, 'u1', '项目B')).toThrow(/工作空间已存在：项目B/)
+      // 同名改自身：幂等空操作（不写库也不报错）
+      const same = service.renameWorkspace(a.id, 'u1', '项目A')
+      expect(same.name).toBe('项目A')
+      // 默认空间的名字也在同域内：不允许改成"默认工作空间"
+      await service.ensureDefaultWorkspace()
+      expect(() => service.renameWorkspace(a.id, 'u1', '默认工作空间')).toThrow(/工作空间已存在/)
+    })
+  })
+
+  describe('reorderWorkspaces', () => {
+    it('按传入顺序回写并返回全量列表（默认空间仍在首位）', async () => {
+      const a = service.createWorkspace('A', 'u1')
+      const b = service.createWorkspace('B', 'u1')
+      const c = service.createWorkspace('C', 'u1')
+      const rows = await service.reorderWorkspaces('u1', [c.id, a.id, b.id])
+      expect(rows.map((r) => r.name)).toEqual(['默认工作空间', 'C', 'A', 'B'])
+      expect(rows[0].source).toBe('default')
+      // 再拉一次列表：顺序已持久化
+      expect((await service.list('u1')).map((r) => r.name)).toEqual([
+        '默认工作空间',
+        'C',
+        'A',
+        'B'
+      ])
+    })
+
+    it.each([
+      ['缺 id', (ids: string[]) => ids.slice(0, 2)],
+      ['多出未知 id', (ids: string[]) => [...ids, 'ghost']],
+      ['含重复 id', (ids: string[]) => [ids[0], ids[0], ids[2]]]
+    ])('集合与可见空间不一致（%s）时拒绝', async (_label, mutate) => {
+      const a = service.createWorkspace('A', 'u1')
+      const b = service.createWorkspace('B', 'u1')
+      const c = service.createWorkspace('C', 'u1')
+      const ids = [c.id, b.id, a.id]
+      await expect(service.reorderWorkspaces('u1', mutate(ids))).rejects.toThrow(
+        /排序列表与工作空间列表不一致/
+      )
+    })
+
+    it('混入他人空间 id 或默认空间 id 时拒绝', async () => {
+      const a = service.createWorkspace('A', 'u1')
+      const b = service.createWorkspace('B', 'u1')
+      const foreign = service.createWorkspace('X', 'u2')
+      const def = await service.ensureDefaultWorkspace()
+      await expect(service.reorderWorkspaces('u1', [a.id, b.id, foreign.id])).rejects.toThrow(
+        /不一致/
+      )
+      await expect(service.reorderWorkspaces('u1', [a.id, b.id, def.id])).rejects.toThrow(/不一致/)
+    })
+
+    it('无空间时传空数组通过（幂等）', async () => {
+      await service.ensureDefaultWorkspace()
+      const rows = await service.reorderWorkspaces('u1', [])
+      expect(rows.map((r) => r.source)).toEqual(['default'])
+    })
+  })
+
   describe('resolveWorkspace', () => {
     it('目录存在返回运行参数', () => {
       const ws = service.createWorkspace('解析', 'u1')

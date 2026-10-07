@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import ModalShell from './ModalShell.vue'
 import { useWorkspaceStore } from '@store/workspace'
+import type { Workspace } from '../../../shared/contracts'
 
 /**
  * 新建工作空间弹窗（R6：自 PromptInput 模板外提）。
@@ -10,6 +11,9 @@ import { useWorkspaceStore } from '@store/workspace'
  * 打开时重置输入与错误（对齐原「openCreateModal 先清空再显示」的行为）。
  */
 const visible = defineModel<boolean>({ required: true })
+
+/** 创建成功事件（空间管理页据此选中新空间；输入卡等既有调用方不监听，行为不变） */
+const emit = defineEmits<{ created: [workspace: Workspace] }>()
 
 const workspaceStore = useWorkspaceStore()
 
@@ -31,9 +35,10 @@ const confirmCreate = async (): Promise<void> => {
   creating.value = true
   createError.value = ''
   try {
-    await workspaceStore.create(name)
+    const workspace = await workspaceStore.create(name)
     visible.value = false
     createName.value = ''
+    emit('created', workspace)
   } catch (err) {
     createError.value = err instanceof Error ? err.message : '新建工作空间失败'
   } finally {

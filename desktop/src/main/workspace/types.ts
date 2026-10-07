@@ -15,4 +15,6 @@ export interface WorkspaceRow {
   source: WorkspaceSource
   userId: string | null
   createdAt: number
+  /** 拖拽排序位（越小越靠前）；默认空间不参与排序，恒为 0 */
+  sortOrder: number
 }

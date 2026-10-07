@@ -94,6 +94,16 @@ export class WorkspaceService {
     this.registry.deleteWorkspace(id, userId)
   }
 
+  /** 重命名工作空间（仅改展示名，不动磁盘目录；默认空间不可改） */
+  renameWorkspace(id: string, userId: string, name: string): WorkspaceRow {
+    return this.registry.renameWorkspace(id, userId, name)
+  }
+
+  /** 拖拽排序（传入非默认空间全量 id，返回排序后的全量列表；见注册表实现） */
+  async reorderWorkspaces(userId: string, orderedIds: string[]): Promise<WorkspaceRow[]> {
+    return this.registry.reorderWorkspaces(userId, orderedIds)
+  }
+
   /** 在系统资源管理器中打开工作空间目录（只接受表内本人 id） */
   async openWorkspace(id: string, userId: string): Promise<void> {
     return this.registry.openWorkspace(id, userId)

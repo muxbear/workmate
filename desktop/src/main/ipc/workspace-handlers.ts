@@ -68,6 +68,30 @@ export function registerWorkspaceHandlers(ipc: IpcMain, deps: WorkspaceHandlerDe
     }
   })
 
+  registerCommand<[string, string], unknown>(ipc, 'workspace:rename', {
+    auth: 'user',
+    parse: ([id, name]) =>
+      typeof id === 'string' && id && typeof name === 'string' && name.trim() ? [id, name] : null,
+    execute: (ctx, id, name) => {
+      const userId = ctx.userId as string
+      const renamed = workspaceService.renameWorkspace(id, userId, name)
+      // 绑定表存的是名称快照（会话列表直接读取它），改名后必须同步，否则会话列表回显旧名
+      // （与 delete 级联同理：跨表一致性由 handler 编排）
+      conversationStore.syncWorkspaceNames([{ workspaceId: renamed.id, name: renamed.name }])
+      return renamed
+    }
+  })
+
+  registerCommand<[string[]], unknown>(ipc, 'workspace:reorder', {
+    auth: 'user',
+    // 只做类型收窄；归属与集合完整性校验属业务规则（走鉴权之后，放服务层）
+    parse: ([ids]) =>
+      Array.isArray(ids) && ids.every((item) => typeof item === 'string' && item)
+        ? [ids as string[]]
+        : null,
+    execute: (ctx, ids) => workspaceService.reorderWorkspaces(ctx.userId as string, ids)
+  })
+
   registerCommand<[string, string], unknown>(ipc, 'workspace:list-files', {
     auth: 'user',
     parse: ([id, relPath]) => {

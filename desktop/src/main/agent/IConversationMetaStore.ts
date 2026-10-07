@@ -28,6 +28,9 @@ export interface IConversationMetaStore {
   /** 工作空间目录迁移后同步会话绑定表里的目录快照（按 workspace_id 全量更新） */
   syncWorkspaceDirs(moves: Array<{ workspaceId: string; to: string }>): void
 
+  /** 工作空间改名后同步会话绑定表里的名称快照（按 workspace_id 全量更新） */
+  syncWorkspaceNames(renames: Array<{ workspaceId: string; name: string }>): void
+
   /** 构造 thread_id（用户隔离单点：入参不信任，统一由 userId 合成） */
   buildThreadId(userId: string, conversationId: string): string
 

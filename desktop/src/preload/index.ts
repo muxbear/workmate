@@ -261,6 +261,12 @@ const api = {
   deleteWorkspace(id: string) {
     return ipcRenderer.invoke('workspace:delete', id)
   },
+  renameWorkspace(id: string, name: string) {
+    return ipcRenderer.invoke('workspace:rename', id, name)
+  },
+  reorderWorkspaces(ids: string[]) {
+    return ipcRenderer.invoke('workspace:reorder', ids)
+  },
   listWorkspaceFiles(workspaceId: string, relPath?: string) {
     return ipcRenderer.invoke('workspace:list-files', workspaceId, relPath)
   },

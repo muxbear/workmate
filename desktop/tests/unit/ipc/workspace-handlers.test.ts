@@ -251,6 +251,103 @@ describe('workspace IPC handlers', () => {
     expect(deleteWorkspace).not.toHaveBeenCalled()
   })
 
+  it('注册 workspace:rename/reorder 通道：rename 缺参/空名返回错误', async () => {
+    const ipc = createFakeIpcMain()
+    registerWorkspaceHandlers(ipc as never, createDeps())
+    for (const channel of ['workspace:rename', 'workspace:reorder']) {
+      expect(ipc.handle).toHaveBeenCalledWith(channel, expect.any(Function))
+    }
+    for (const args of [[], ['ws-1'], ['ws-1', ''], ['ws-1', '   '], [undefined, '新名']]) {
+      const result = await ipc.invoke<{ success: boolean; error?: string }>(
+        'workspace:rename',
+        ...args
+      )
+      expect(result.success, JSON.stringify(args)).toBe(false)
+      expect(result.error).toBeTruthy()
+    }
+  })
+
+  it('rename 合法参数：注入 userId、返回重命名结果并同步会话绑定表的名称快照', async () => {
+    const ipc = createFakeIpcMain()
+    const renamed = { ...fakeWorkspace, name: '新名' }
+    const renameWorkspace = vi.fn().mockReturnValue(renamed)
+    const syncWorkspaceNames = vi.fn()
+    registerWorkspaceHandlers(
+      ipc as never,
+      createDeps({
+        workspaceService: { renameWorkspace },
+        conversationStore: { syncWorkspaceNames }
+      })
+    )
+    const result = await ipc.invoke<{ success: boolean; data?: { name: string } }>(
+      'workspace:rename',
+      'ws-1',
+      '  新名  '
+    )
+    // 名字原样交给服务（按 sanitize 的权威规则 trim/校验，handler 不预处理）
+    expect(renameWorkspace).toHaveBeenCalledWith('ws-1', 'real-user', '  新名  ')
+    expect(syncWorkspaceNames).toHaveBeenCalledWith([{ workspaceId: 'ws-1', name: '新名' }])
+    expect(result.success).toBe(true)
+    expect(result.data!.name).toBe('新名')
+  })
+
+  it('rename 业务错误（默认空间守卫）透传 fail 且不同步快照', async () => {
+    const ipc = createFakeIpcMain()
+    const renameWorkspace = vi.fn().mockImplementation(() => {
+      throw new Error('默认工作空间不可重命名')
+    })
+    const syncWorkspaceNames = vi.fn()
+    registerWorkspaceHandlers(
+      ipc as never,
+      createDeps({
+        workspaceService: { renameWorkspace },
+        conversationStore: { syncWorkspaceNames }
+      })
+    )
+    const result = await ipc.invoke<{ success: boolean; error?: string }>(
+      'workspace:rename',
+      'ws-default',
+      '新名'
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('默认工作空间不可重命名')
+    expect(syncWorkspaceNames).not.toHaveBeenCalled()
+  })
+
+  it('reorder 非数组/含非字符串返回错误；合法参数注入 userId 并返回列表', async () => {
+    const ipc = createFakeIpcMain()
+    const reordered = [fakeDefault, fakeWorkspace]
+    const reorderWorkspaces = vi.fn().mockResolvedValue(reordered)
+    registerWorkspaceHandlers(ipc as never, createDeps({ workspaceService: { reorderWorkspaces } }))
+
+    for (const args of [[undefined], ['ws-1'], [['ws-1', 2]], [['ws-1', '']]]) {
+      const bad = await ipc.invoke<{ success: boolean; error?: string }>('workspace:reorder', ...args)
+      expect(bad.success, JSON.stringify(args)).toBe(false)
+    }
+    expect(reorderWorkspaces).not.toHaveBeenCalled()
+
+    const result = await ipc.invoke<{ success: boolean; data?: unknown[] }>('workspace:reorder', [
+      'ws-2',
+      'ws-1'
+    ])
+    expect(reorderWorkspaces).toHaveBeenCalledWith('real-user', ['ws-2', 'ws-1'])
+    expect(result.success).toBe(true)
+    expect(result.data).toHaveLength(2)
+  })
+
+  it('reorder 业务错误（集合不一致）透传 fail', async () => {
+    const ipc = createFakeIpcMain()
+    const reorderWorkspaces = vi.fn().mockRejectedValue(
+      new Error('排序列表与工作空间列表不一致，请刷新后重试')
+    )
+    registerWorkspaceHandlers(ipc as never, createDeps({ workspaceService: { reorderWorkspaces } }))
+    const result = await ipc.invoke<{ success: boolean; error?: string }>('workspace:reorder', [
+      'ws-1'
+    ])
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('不一致')
+  })
+
   it('注册 workspace:list-files/read-file 通道', async () => {
     const ipc = createFakeIpcMain()
     registerWorkspaceHandlers(ipc as never, createDeps())
@@ -358,6 +455,8 @@ describe('workspace IPC handlers', () => {
       ['workspace:default', []],
       ['workspace:open', ['ws-1']],
       ['workspace:delete', ['ws-1']],
+      ['workspace:rename', ['ws-1', '新名']],
+      ['workspace:reorder', [['ws-1']]],
       ['workspace:list-files', ['ws-1', '']],
       ['workspace:read-file', ['ws-1', 'a.txt']]
     ] as const) {

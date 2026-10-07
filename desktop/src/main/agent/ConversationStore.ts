@@ -225,6 +225,17 @@ export class ConversationStore implements IConversationMetaStore {
     }
   }
 
+  /** 工作空间改名后同步会话绑定表里的名称快照（按 workspace_id 全量更新） */
+  syncWorkspaceNames(renames: Array<{ workspaceId: string; name: string }>): void {
+    if (!this.getDb || renames.length === 0) return
+    const stmt = this.getDb().prepare(
+      'UPDATE conversation_workspaces SET workspace_name = ? WHERE workspace_id = ?'
+    )
+    for (const rename of renames) {
+      stmt.run(rename.name, rename.workspaceId)
+    }
+  }
+
   /** 构造 thread_id（用户隔离单点：入参不信任，统一由 userId 合成） */
   buildThreadId(userId: string, conversationId: string): string {
     return `${THREAD_PREFIX}${userId}:${conversationId}`
