@@ -342,81 +342,92 @@ onBeforeUnmount(() => {
                   <p class="task-name">{{ task.title }}</p>
                   <p class="task-desc">{{ task.promptText }}</p>
                   <div class="task-foot">
-                    <span class="task-meta"
-                      ><span class="task-freq">{{ task.freqSummary }}</span
-                      ><span class="task-validity">{{ task.validitySummary }}</span
-                      ><span class="task-next">{{ formatNextRun(task) }}</span
-                      ><span v-if="task.runCount > 0" class="task-runs"
-                        >运行 {{ task.runCount }} 次 / 失败 {{ task.failCount }} 次</span
-                      ></span
-                    >
-                    <div class="task-status">
-                      <span
-                        :class="['status-dot', task.enabled ? 'status-dot--green' : 'status-dot--paused']"
-                      ></span>
-                      {{ task.enabled ? '运行中' : '已暂停' }}
+                    <div class="task-meta">
+                      <span class="task-freq">{{ task.freqSummary }}</span>
+                      <span class="task-validity">{{ task.validitySummary }}</span>
+                      <span class="task-next">{{ formatNextRun(task) }}</span>
                     </div>
-                    <div class="task-actions">
-                      <button
-                        class="task-action-btn"
-                        type="button"
-                        :title="task.enabled ? '暂停' : '继续'"
-                        @click="toggleEnabled(task)"
+                    <div class="task-runtime">
+                      <span v-if="task.runCount > 0" class="task-runs"
+                        >运行 {{ task.runCount }} 次 / 失败 {{ task.failCount }} 次</span
                       >
-                        <svg
-                          v-if="task.enabled"
-                          width="13"
-                          height="13"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
+                      <div class="task-status">
+                        <span
+                          :class="[
+                            'status-dot',
+                            task.enabled ? 'status-dot--green' : 'status-dot--paused'
+                          ]"
+                        ></span>
+                        {{ task.enabled ? '运行中' : '已暂停' }}
+                      </div>
+                      <div class="task-actions">
+                        <button
+                          class="task-action-btn"
+                          type="button"
+                          :title="task.enabled ? '暂停' : '继续'"
+                          @click="toggleEnabled(task)"
                         >
-                          <rect x="6" y="5" width="4" height="14" rx="1" />
-                          <rect x="14" y="5" width="4" height="14" rx="1" />
-                        </svg>
-                        <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                          <polygon points="6 4 20 12 6 20 6 4" />
-                        </svg>
-                      </button>
-                      <button
-                        class="task-action-btn"
-                        type="button"
-                        title="编辑"
-                        @click="openEditModal(task)"
-                      >
-                        <svg
-                          width="13"
-                          height="13"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
+                          <svg
+                            v-if="task.enabled"
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <rect x="6" y="5" width="4" height="14" rx="1" />
+                            <rect x="14" y="5" width="4" height="14" rx="1" />
+                          </svg>
+                          <svg
+                            v-else
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                          >
+                            <polygon points="6 4 20 12 6 20 6 4" />
+                          </svg>
+                        </button>
+                        <button
+                          class="task-action-btn"
+                          type="button"
+                          title="编辑"
+                          @click="openEditModal(task)"
                         >
-                          <path d="M12 20h9" />
-                          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                        </svg>
-                      </button>
-                      <button
-                        class="task-action-btn task-action-btn--danger"
-                        type="button"
-                        title="删除"
-                        @click="askDelete(task)"
-                      >
-                        <svg
-                          width="13"
-                          height="13"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
+                          <svg
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                          </svg>
+                        </button>
+                        <button
+                          class="task-action-btn task-action-btn--danger"
+                          type="button"
+                          title="删除"
+                          @click="askDelete(task)"
                         >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6" />
-                          <path d="M14 11v6" />
-                        </svg>
-                      </button>
+                          <svg
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -908,6 +919,7 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   background: var(--kw-color-surface-soft);
   border: 1px solid var(--kw-color-border-brand);
+  min-width: 0;
 }
 .task-icon {
   font-size: 20px;
@@ -937,10 +949,18 @@ onBeforeUnmount(() => {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* 任务卡片底栏：第一行计划徽标，第二行运行次数 / 状态（或 hover 操作按钮） */
 .task-foot {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.task-runtime {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .task-freq {
   font-size: 10px;
@@ -952,9 +972,11 @@ onBeforeUnmount(() => {
 .task-status {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 6px;
   font-size: 10px;
   color: #10b981;
+  white-space: nowrap;
 }
 .status-dot {
   width: 6px;
@@ -1403,12 +1425,17 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-/* 任务卡片：频率 + 有效期 */
+/* 任务卡片：频率 + 有效期 + 下次运行（放不下时整块换行，文案不折断） */
 .task-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+.task-meta > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 /* 运行结果详情 */
@@ -1520,7 +1547,7 @@ onBeforeUnmount(() => {
   color: var(--kw-color-text-faint);
 }
 
-/* 任务卡片：运行次数 */
+/* 任务卡片：运行次数（第二行靠左；同行右侧留给状态 / 操作按钮） */
 .task-runs {
   padding: 2px 6px;
   border-radius: 4px;
@@ -1528,6 +1555,8 @@ onBeforeUnmount(() => {
   color: var(--kw-color-text-muted);
   font-size: 10px;
   white-space: nowrap;
+  flex: 0 0 auto;
+  margin-right: auto;
 }
 
 /* 下次运行时间 */
