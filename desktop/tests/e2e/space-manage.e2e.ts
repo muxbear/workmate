@@ -31,6 +31,9 @@ describe('E2E 空间管理页', () => {
   /** 排序用例创建的第二个空间 */
   let wsName2 = ''
   let wsDir2 = ''
+  /** 分页用例的空间（11 条会话，够两页） */
+  let pageWsName = ''
+  let pageWsDir = ''
 
   beforeAll(async () => {
     dataHome = mkdtempSync(join(tmpdir(), 'kw-spacemanage-'))
@@ -65,7 +68,7 @@ describe('E2E 空间管理页', () => {
     await stopMockLlmServer()
     rmSync(dataHome, { recursive: true, force: true })
     // 空间目录落在真实用户目录 ~/KeWork/<name>（删空间只删记录），须一并清理
-    for (const dir of [wsDir, wsDir2]) {
+    for (const dir of [wsDir, wsDir2, pageWsDir]) {
       if (dir) rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -114,6 +117,24 @@ describe('E2E 空间管理页', () => {
   /** 左列按名字定位空间行 */
   function spaceRow(name: string): ReturnType<typeof page.locator> {
     return page.locator('.space-row').filter({ hasText: name }).first()
+  }
+
+  /**
+   * 精简版发送（分页用例要连发 11 条，省掉固定等待，改为等侧栏会话数到位）。
+   * expectTotal 为本次发送后侧栏应有的会话总数 —— 用正反馈替代固定 sleep，避免发送未落库就进下一条。
+   */
+  async function sendMessageFast(text: string, expectTotal: number): Promise<void> {
+    await page.getByText('新建任务').first().click()
+    await page.locator('.task-textarea').first().fill(text)
+    await page.locator('.send-btn').first().click()
+    await page
+      .locator('.send-btn--stop')
+      .first()
+      .waitFor({ state: 'hidden', timeout: 20_000 })
+      .catch(() => {})
+    await expect
+      .poll(() => page.locator('.space-chat').count(), { timeout: 20_000 })
+      .toBe(expectTotal)
   }
 
   it('前置: 新建空间 + 发送 1 条消息（1 条任务绑定该空间）', async () => {
@@ -262,6 +283,88 @@ describe('E2E 空间管理页', () => {
     await expect.poll(() => page.locator('.sm-task').count(), { timeout: 5_000 }).toBe(0)
     const group = page.locator('.space-group').filter({ hasText: wsName })
     await expect.poll(() => group.locator('.space-chat').count(), { timeout: 5_000 }).toBe(0)
+  }, 90_000)
+
+  it('分页前置: 新建空间 + 连发 11 条消息（够两页）', async () => {
+    pageWsName = `sm-page-${Date.now().toString(36)}`
+    await createSpaceFromInputCard(pageWsName)
+    pageWsDir = join(homedir(), 'KeWork', pageWsName)
+    const base = await page.locator('.space-chat').count()
+    for (let i = 1; i <= 11; i += 1) {
+      await sendMessageFast(`分页用例 ${i}`, base + i)
+    }
+    const group = page.locator('.space-group').filter({ hasText: pageWsName })
+    await expect
+      .poll(() => group.locator('.space-chat').count(), { timeout: 60_000 })
+      .toBe(11)
+  }, 300_000)
+
+  it('分页: 总条数 / 翻页 / 跳页（含越界夹取）/ 改每页条数', async () => {
+    await openManagePage()
+    await spaceRow(pageWsName).click()
+    await page.locator('.sm-task').first().waitFor({ state: 'visible', timeout: 5_000 })
+
+    // ① 展示条数：抬头与分页条都给出总数
+    expect(await page.locator('.sm-detail-meta').textContent()).toContain('11 个任务')
+    expect(await page.locator('.sm-pager-total').textContent()).toContain('共 11 条')
+
+    // ② 首页：10 行，页码 1/2，上一页禁用
+    expect(await page.locator('.sm-task').count()).toBe(10)
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 1 / 2 页')
+    expect(await page.locator('.sm-pager-btn').first().isDisabled()).toBe(true)
+
+    // ③ 翻页：下一页 → 第 2 页只剩 1 行，下一页禁用
+    await page.getByRole('button', { name: '下一页' }).click()
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 2 / 2 页')
+    expect(await page.locator('.sm-task').count()).toBe(1)
+    expect(await page.getByRole('button', { name: '下一页' }).isDisabled()).toBe(true)
+
+    // ④ 跳页：越界输入夹取到最后一页
+    await page.locator('.sm-pager-input').fill('99')
+    await page.getByRole('button', { name: '跳转' }).click()
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 2 / 2 页')
+    // 跳回第 1 页
+    await page.locator('.sm-pager-input').fill('1')
+    await page.getByRole('button', { name: '跳转' }).click()
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 1 / 2 页')
+    expect(await page.locator('.sm-task').count()).toBe(10)
+
+    // ⑤ 改每页条数：20 条/页 → 单页，翻页按钮都禁用
+    await page.locator('.sm-pager-select').selectOption('20')
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 1 / 1 页')
+    expect(await page.locator('.sm-task').count()).toBe(11)
+    expect(await page.locator('.sm-pager-btn').first().isDisabled()).toBe(true)
+    expect(await page.getByRole('button', { name: '下一页' }).isDisabled()).toBe(true)
+    // 切回 10 条/页恢复两页
+    await page.locator('.sm-pager-select').selectOption('10')
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 1 / 2 页')
+
+    // ⑥ 切到别的空间再回来：回到第 1 页（不被上一空间的分页状态带偏）
+    await page.locator('.sm-pager-input').fill('2')
+    await page.getByRole('button', { name: '跳转' }).click()
+    await spaceRow(wsName2).click()
+    await spaceRow(pageWsName).click()
+    expect(await page.locator('.sm-pager-indicator').textContent()).toContain('第 1 / 2 页')
+  }, 120_000)
+
+  it('分页: 删除末页唯一一条后页码自动回落（不停在空页）', async () => {
+    await spaceRow(pageWsName).click()
+    await page.locator('.sm-pager-select').selectOption('10')
+    await page.locator('.sm-pager-input').fill('2')
+    await page.getByRole('button', { name: '跳转' }).click()
+    expect(await page.locator('.sm-task').count()).toBe(1)
+
+    await page.locator('.sm-task').first().hover()
+    await page.locator('.sm-task-btn--danger').click()
+    await page.locator('.ms-mask').waitFor({ state: 'visible', timeout: 5_000 })
+    await page.locator('.confirm-btn--danger').click()
+
+    // 10 条 → 仍停在唯一的第 1 页，不会留在空的第 2 页
+    await expect
+      .poll(() => page.locator('.sm-pager-indicator').textContent(), { timeout: 5_000 })
+      .toContain('第 1 / 1 页')
+    await expect.poll(() => page.locator('.sm-task').count(), { timeout: 5_000 }).toBe(10)
+    expect(await page.locator('.sm-pager-total').textContent()).toContain('共 10 条')
   }, 90_000)
 
   it('左列: 删除空间 → 确认文案含任务数 → 确认后行与侧栏分组消失', async () => {
