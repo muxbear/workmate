@@ -117,11 +117,18 @@ import {
   type CloseAction
 } from './services/windowCloseBehavior'
 import { createAppTray } from './services/appTray'
+import { resolveAppIconPath } from './services/appIcon'
 import { registerWindowHandlers } from './ipc/window-handlers'
 
-import icon from '../../resources/icon.png?asset'
-
 import 'dotenv/config'
+
+// 应用图标路径（Linux 窗口 / 托盘共用）。不用 electron-vite 的 `?asset`：
+// 构建 cwd 大小写不同会让资源被静默打进 out/main/chunks，随后被下次构建清空——
+// 故障复盘与解析策略见 services/appIcon.ts
+const appIconPath = resolveAppIconPath({
+  dirname: __dirname,
+  resourcesPath: process.resourcesPath
+})
 
 // 远程图片缓存协议：特权 scheme 必须在 app ready 之前注册（渲染层 img-src 白名单含 ke-img:）
 registerRemoteImageScheme(protocol)
@@ -210,7 +217,7 @@ function createWindow(backgroundColor = '#ffffff'): BrowserWindow {
     backgroundColor,
     autoHideMenuBar: true,
     fullscreenable: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    ...(process.platform === 'linux' ? { icon: appIconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -355,8 +362,8 @@ app.whenReady().then(() => {
   const appTray = createAppTray({
     createTray: () => {
       // 资源图标是 512px 应用大图标，通知区按 16px 展示
-      const image = nativeImage.createFromPath(icon)
-      return new Tray(image.isEmpty() ? icon : image.resize({ width: 16, height: 16 }))
+      const image = nativeImage.createFromPath(appIconPath)
+      return new Tray(image.isEmpty() ? appIconPath : image.resize({ width: 16, height: 16 }))
     },
     buildMenu: (template) => Menu.buildFromTemplate(template),
     getTooltip: readSystemName,
